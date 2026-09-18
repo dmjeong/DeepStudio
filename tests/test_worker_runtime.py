@@ -394,3 +394,19 @@ def test_container_entrypoint_loads_dotted_pack_module_without_global_import_col
     manifest.write_text('{"model_id":"dotted","worker_entrypoint":"plugin.worker:factory"}', encoding="utf-8")
     handlers = _load_handlers(manifest)
     assert handlers["describe"]({}, {})["model"] == "dotted"
+
+
+def test_container_entrypoint_normalizes_factory_contract_errors(tmp_path: Path):
+    (tmp_path / "plugin.py").write_text(
+        "def factory(manifest):\n"
+        "    raise RuntimeError('private plugin failure')\n",
+        encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"worker_entrypoint":"plugin:factory"}', encoding="utf-8")
+    with pytest.raises(ContainerEntrypointError, match="factory failed"):
+        _load_handlers(manifest)
+
+    (tmp_path / "not_callable.py").write_text("factory = 7\n", encoding="utf-8")
+    manifest.write_text('{"worker_entrypoint":"not_callable:factory"}', encoding="utf-8")
+    with pytest.raises(ContainerEntrypointError, match="not callable"):
+        _load_handlers(manifest)

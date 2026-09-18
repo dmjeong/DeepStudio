@@ -92,7 +92,12 @@ def _load_handlers(manifest_path: Path):
         factory = getattr(_load_pack_module(models_root, module_name), factory_name)
     except AttributeError as exc:
         raise ContainerEntrypointError(f"cannot load worker entrypoint: {entrypoint}") from exc
-    handlers = factory(manifest)
+    if not callable(factory):
+        raise ContainerEntrypointError(f"worker entrypoint factory is not callable: {entrypoint}")
+    try:
+        handlers = factory(manifest)
+    except Exception as exc:
+        raise ContainerEntrypointError(f"worker entrypoint factory failed: {entrypoint}") from exc
     if not isinstance(handlers, Mapping):
         raise ContainerEntrypointError("worker entrypoint must return a command mapping")
     return handlers
