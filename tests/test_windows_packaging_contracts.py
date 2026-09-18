@@ -214,9 +214,20 @@ def test_windows_workflow_builds_real_gui_and_native_runtime():
     assert 'version = "1.20.1"' in workflow
     assert "onnxruntime-win-x64-$version.zip" in workflow
     assert "python gui/build_exe.py" in workflow
-    assert 'source "app=$app"' in workflow
-    assert 'source "sdk/native=$native"' in workflow
+    assert '"--source", "app=$app"' in workflow
+    assert '"--source", "sdk/native=$native"' in workflow
     assert "release-contract" not in workflow
+
+
+def test_windows_workflow_keeps_offline_wsl_as_an_explicit_release_gate():
+    workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
+    assert "require_offline_wsl" in workflow
+    assert 'type: boolean' in workflow
+    assert '$requireWsl = $env:REQUIRE_OFFLINE_WSL -eq "true"' in workflow
+    assert 'if ($requireWsl)' in workflow
+    assert 'if ($env:REQUIRE_OFFLINE_WSL -eq "true") { $releaseArgs += "-RequireOfflineWsl" }' in workflow
+    assert 'DeepVisionStudio/packaging/model-pack-template/**' in workflow
+    assert 'DeepVisionStudio/tests/test_model_pack_template.py' in workflow
 
 
 def test_real_payload_layout_contains_managed_and_native_sdk_runtime(tmp_path):
