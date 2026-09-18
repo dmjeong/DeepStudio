@@ -95,6 +95,40 @@ def test_registry_discovers_installed_packs_without_hiding_builtins(tmp_path):
     assert registry.get("vendor.extra").release_status == "scoped"
 
 
+def test_registry_activates_current_pack_over_catalog_without_loading_old_versions(tmp_path):
+    root = tmp_path / "installed" / "resnet18"
+    first = root / "1.0.0"
+    second = root / "2.0.0"
+    for version, target in (("1.0.0", first), ("2.0.0", second)):
+        target.mkdir(parents=True)
+        (target / "manifest.json").write_text(json.dumps({
+            "schema_version": 1, "model_id": "resnet18", "family": "ResNet",
+            "variant": "18", "task": "classify", "runtimes": ["onnx"],
+            "capabilities": ["infer", "export_onnx", "csharp", "cpp"],
+            "input_size": [224, 224], "input_channels": [1, 3],
+            "release_status": "release_ready", "pack_version": version, "notes": version,
+        }), encoding="utf-8")
+    (root / "current.json").write_text(json.dumps({"path": str(first)}), encoding="utf-8")
+    registry, errors = registry_with_installed_packs(tmp_path / "installed")
+    assert not errors
+    assert registry.get("resnet18").notes == "1.0.0"
+    assert registry.get("resnet18").release_status == "release_ready"
+
+
+def test_registry_rejects_installed_pack_that_downgrades_catalog_status(tmp_path):
+    root = tmp_path / "installed" / "resnet18" / "1.0.0"
+    root.mkdir(parents=True)
+    (root / "manifest.json").write_text(json.dumps({
+        "schema_version": 1, "model_id": "resnet18", "family": "ResNet",
+        "variant": "18", "task": "classify", "runtimes": ["onnx"],
+        "capabilities": ["infer"], "input_size": [224, 224],
+        "input_channels": [1, 3], "release_status": "requested",
+    }), encoding="utf-8")
+    registry, errors = registry_with_installed_packs(tmp_path / "installed")
+    assert registry.get("resnet18").release_status == "export_verified"
+    assert errors and "downgrade" in errors[0]
+
+
 def test_registry_rejects_unknown_manifest_schema(tmp_path):
     pack = tmp_path / "unknown-schema.dvmodel"
     with zipfile.ZipFile(pack, "w") as archive:

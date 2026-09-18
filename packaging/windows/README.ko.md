@@ -32,6 +32,9 @@ ResNet/ConvNeXt/DeepLab V3+/U-Net의 native adapter는 weight-free 구조로 제
 모든 기본 모델군에 학습/fit·추론·ONNX 배포·C#/C++ 실행을 제공하는 것이 출시 조건이다.
 LibreYOLO 라이브러리의 모든 모델/변형을 기본 제공한다는 뜻은 아니다.
 세부 모델·가중치·라이선스 확인과 Windows 검증을 끝낸 버전을 정식 지원표에 적는다.
+설치 payload에는 `models/default-model-catalog.json`을 함께 넣어 기본 모델 ID와 검증 상태를
+오프라인에서 표시한다. 이 카탈로그는 가중치를 포함하지 않으며, 가중치와 third-party 코드는
+각각 재배포 근거가 확인된 팩에만 넣는다.
 
 ## 최소사양 — 초기 검증 기준
 
@@ -152,6 +155,8 @@ Docker 추가가 자동으로 더 빠른 추론을 뜻하지 않는다.
 `licenses/`, `THIRD_PARTY_NOTICES.md`, `sbom.cdx.json`, `release-manifest.json`을 함께 제공한다.
 코드, pretrained 가중치, OS 패키지, GPU 라이브러리의 배포 조건을 각각 확인한다.
 상업적 이용/재배포 근거가 없는 가중치를 기본 설치파일에 넣지 않는다.
+`release_ready`로 표시하는 `.dvmodel`은 `THIRD_PARTY_NOTICES.md`와 `licenses/` 파일을
+반드시 포함해야 하며, 빌더와 설치기가 이 조건을 거부한다.
 
 정식 배포 전 필수 확인: 실제 단일 EXE 생성·서명, 정확한 OS/runtime/driver 최소 버전,
 모델별 Windows 학습·ONNX·C#/C++ 결과 일치, 오프라인 Docker 추가, 위 사양에서의 메모리 실측.

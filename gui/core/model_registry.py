@@ -30,6 +30,11 @@ SUPPORTED_STATUSES = frozenset({
     "requested", "scoped", "runtime_verified", "trained_verified",
     "export_verified", "sdk_verified", "release_ready",
 })
+STATUS_ORDER = {
+    "requested": 0, "scoped": 1, "runtime_verified": 2,
+    "trained_verified": 3, "export_verified": 4, "sdk_verified": 5,
+    "release_ready": 6,
+}
 
 
 class ModelRegistryError(ValueError):
@@ -196,17 +201,34 @@ class ModelRegistry:
 
     def __init__(self, specs: Iterable[ModelSpec] = ()) -> None:
         self._models: dict[str, ModelSpec] = {}
+        self._builtin_ids: set[str] = set()
         for spec in specs:
             self.register(spec)
 
     @classmethod
     def builtin(cls) -> "ModelRegistry":
-        return cls(builtin_model_specs())
+        registry = cls(builtin_model_specs())
+        registry._builtin_ids = set(registry._models)
+        return registry
 
     def register(self, spec: ModelSpec) -> None:
         validate_model_spec(spec)
         if spec.model_id in self._models:
             raise ModelRegistryError(f"duplicate model id: {spec.model_id}")
+        self._models[spec.model_id] = spec
+
+    def _register_installed(self, spec: ModelSpec) -> None:
+        """Activate a pack over its catalog entry without allowing downgrades."""
+        current = self._models.get(spec.model_id)
+        if current is None:
+            self.register(spec)
+            return
+        if spec.model_id not in self._builtin_ids:
+            raise ModelRegistryError(f"duplicate model id: {spec.model_id}")
+        if STATUS_ORDER[spec.release_status] < STATUS_ORDER[current.release_status]:
+            raise ModelRegistryError(
+                f"installed model would downgrade {spec.model_id}: "
+                f"{current.release_status} -> {spec.release_status}")
         self._models[spec.model_id] = spec
 
     def get(self, model_id: str) -> ModelSpec:
@@ -252,7 +274,7 @@ class ModelRegistry:
         except (OSError, zipfile.BadZipFile, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ModelRegistryError(f"cannot read model pack: {pack}") from exc
         spec = _spec_from_mapping(manifest)
-        self.register(spec)
+        self._register_installed(spec)
         return spec
 
     def load_installed_pack(self, path: str | Path) -> ModelSpec:
@@ -277,7 +299,7 @@ class ModelRegistry:
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             raise ModelRegistryError("invalid installed model pack") from exc
         spec = _spec_from_mapping(manifest)
-        self.register(spec)
+        self._register_installed(spec)
         return spec
 
     def load_installed_root(self, root: str | Path) -> tuple[ModelSpec, ...]:
@@ -286,8 +308,24 @@ class ModelRegistry:
         if not base.is_absolute() or not base.is_dir() or base.is_symlink():
             raise ModelRegistryError("installed model root must be an absolute directory")
         loaded = []
-        for manifest in sorted(base.glob("*/*/manifest.json")):
-            loaded.append(self.load_installed_pack(manifest.parent))
+        for model_dir in sorted(path for path in base.iterdir()
+                                if path.is_dir() and not path.is_symlink()):
+            pointer = model_dir / "current.json"
+            selected: Path | None = None
+            if pointer.is_file() and not pointer.is_symlink():
+                try:
+                    value = json.loads(pointer.read_text(encoding="utf-8"))
+                    candidate = Path(value.get("path", "")).expanduser()
+                    if candidate.is_absolute() and candidate.resolve().parent == model_dir.resolve():
+                        selected = candidate.resolve()
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+                    selected = None
+            if selected is None:
+                versions = sorted(path for path in model_dir.iterdir()
+                                  if path.is_dir() and not path.is_symlink())
+                selected = versions[-1] if versions else None
+            if selected is not None and (selected / "manifest.json").is_file():
+                loaded.append(self.load_installed_pack(selected))
         return tuple(loaded)
 
 
@@ -312,11 +350,29 @@ def registry_with_installed_packs(root: str | Path | None = None) -> tuple[Model
     errors: list[str] = []
     if not base.is_dir() or base.is_symlink():
         return registry, ()
-    for manifest in sorted(base.glob("*/*/manifest.json")):
+    for model_dir in sorted(path for path in base.iterdir()
+                            if path.is_dir() and not path.is_symlink()):
+        pointer = model_dir / "current.json"
+        selected: Path | None = None
+        if pointer.is_file() and not pointer.is_symlink():
+            try:
+                value = json.loads(pointer.read_text(encoding="utf-8"))
+                candidate = Path(value.get("path", "")).expanduser()
+                if candidate.is_absolute() and candidate.resolve().parent == model_dir.resolve():
+                    selected = candidate.resolve()
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+                selected = None
+        if selected is None:
+            versions = sorted(path for path in model_dir.iterdir()
+                              if path.is_dir() and not path.is_symlink())
+            selected = versions[-1] if versions else None
+        if selected is None or not (selected / "manifest.json").is_file():
+            continue
+        manifest = selected / "manifest.json"
         try:
-            registry.load_installed_pack(manifest.parent)
+            registry.load_installed_pack(selected)
         except ModelRegistryError as exc:
-            errors.append(f"{manifest.parent}: {exc}")
+            errors.append(f"{selected}: {exc}")
     return registry, tuple(errors)
 
 

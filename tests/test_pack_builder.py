@@ -57,3 +57,16 @@ def test_special_model_pack_requires_its_graph_contract(tmp_path):
     (source / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(PackBuildError, match="contracts"):
         build_pack(source, tmp_path / "redetr.dvmodel", allow_unsigned=True)
+
+
+def test_release_ready_pack_requires_redistribution_notices(tmp_path):
+    source = _source(tmp_path)
+    manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    manifest["release_status"] = "release_ready"
+    (source / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(PackBuildError, match="THIRD_PARTY_NOTICES"):
+        build_pack(source, tmp_path / "release.dvmodel", allow_unsigned=True)
+    (source / "THIRD_PARTY_NOTICES.md").write_text("notice", encoding="utf-8")
+    (source / "licenses").mkdir()
+    (source / "licenses" / "model.txt").write_text("license", encoding="utf-8")
+    assert build_pack(source, tmp_path / "release.dvmodel", allow_unsigned=True).is_file()

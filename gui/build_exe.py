@@ -49,6 +49,7 @@ import shutil
 GUI_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(GUI_DIR)
 PYTHON_DIR = os.path.join(PROJECT_ROOT, "python")
+MODEL_CATALOG_DIR = os.path.join(PROJECT_ROOT, "packaging", "windows", "models")
 RESOURCES_DIR = os.path.join(GUI_DIR, "resources")
 DIST_DIR = os.path.join(GUI_DIR, "dist")
 BUILD_DIR = os.path.join(GUI_DIR, "build")
@@ -122,6 +123,7 @@ def build():
         "--add-data", f"{RESOURCES_DIR}{os.pathsep}resources",
         "--add-data", f"{PYTHON_DIR}{os.pathsep}python",
         "--add-data", f"{os.path.join(PROJECT_ROOT, 'model_sdk', 'schemas')}{os.pathsep}model_sdk/schemas",
+        "--add-data", f"{MODEL_CATALOG_DIR}{os.pathsep}packaging/windows/models",
 
         # 숨겨진 임포트 (PyInstaller가 자동 감지 못하는 것)
         "--hidden-import", "PySide6.QtWidgets",

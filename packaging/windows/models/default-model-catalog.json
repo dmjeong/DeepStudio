@@ -1,0 +1,702 @@
+{
+  "schema_version": 1,
+  "catalog_id": "deepvisionstudio-builtin-models",
+  "offline": true,
+  "release_ready_only": false,
+  "redistribution_policy": {
+    "weights_included": false,
+    "require_third_party_notices": true,
+    "require_license_files_for_release_packs": true
+  },
+  "models": [
+    {
+      "model_id": "efficientnet_b0",
+      "family": "EfficientNet",
+      "variant": "B0",
+      "task": "classify",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "sdk_verified",
+      "pretrained_asset": "",
+      "notes": "",
+      "metadata": {}
+    },
+    {
+      "model_id": "efficientnet_b1",
+      "family": "EfficientNet",
+      "variant": "B1",
+      "task": "classify",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        240,
+        240
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "sdk_verified",
+      "pretrained_asset": "",
+      "notes": "224x224는 별도 학습 프로필",
+      "metadata": {}
+    },
+    {
+      "model_id": "resnet18",
+      "family": "ResNet",
+      "variant": "18",
+      "task": "classify",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "",
+      "notes": "weight-free native adapter",
+      "metadata": {}
+    },
+    {
+      "model_id": "resnet50",
+      "family": "ResNet",
+      "variant": "50",
+      "task": "classify",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "",
+      "notes": "weight-free native adapter",
+      "metadata": {}
+    },
+    {
+      "model_id": "convnext_v1_tiny",
+      "family": "ConvNeXt V1",
+      "variant": "Tiny",
+      "task": "classify",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "",
+      "notes": "weight-free native adapter",
+      "metadata": {}
+    },
+    {
+      "model_id": "libreyolo_classify_mobilenetv4_small",
+      "family": "LibreYOLO",
+      "variant": "MobileNetV4 Small",
+      "task": "classify",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "",
+      "metadata": {}
+    },
+    {
+      "model_id": "patchcore_wide_resnet50_2",
+      "family": "PatchCore",
+      "variant": "Wide-ResNet50-2",
+      "task": "anomaly",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "fit",
+        "infer"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "memory bank와 kNN 포함",
+      "metadata": {}
+    },
+    {
+      "model_id": "patchcore_resnet18",
+      "family": "PatchCore",
+      "variant": "ResNet18",
+      "task": "anomaly",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "fit",
+        "infer"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "memory bank와 kNN 포함",
+      "metadata": {}
+    },
+    {
+      "model_id": "re_detr_v4_small",
+      "family": "Re-DETR v4",
+      "variant": "Small",
+      "task": "detect",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "requested family fixed by product requirement",
+      "metadata": {
+        "contracts": {
+          "onnx": {
+            "file": "redetr.onnx",
+            "input_name": "input_image",
+            "boxes_name": "pred_boxes",
+            "logits_name": "pred_logits",
+            "boxes_format": "normalized_cxcywh",
+            "score_activation": "sigmoid"
+          }
+        }
+      }
+    },
+    {
+      "model_id": "re_detr_v4_medium",
+      "family": "Re-DETR v4",
+      "variant": "Medium",
+      "task": "detect",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        800,
+        800
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "requested family fixed by product requirement",
+      "metadata": {
+        "contracts": {
+          "onnx": {
+            "file": "redetr.onnx",
+            "input_name": "input_image",
+            "boxes_name": "pred_boxes",
+            "logits_name": "pred_logits",
+            "boxes_format": "normalized_cxcywh",
+            "score_activation": "sigmoid"
+          }
+        }
+      }
+    },
+    {
+      "model_id": "re_detr_v4_large",
+      "family": "Re-DETR v4",
+      "variant": "Large",
+      "task": "detect",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        1024,
+        1024
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "requested family fixed by product requirement",
+      "metadata": {
+        "contracts": {
+          "onnx": {
+            "file": "redetr.onnx",
+            "input_name": "input_image",
+            "boxes_name": "pred_boxes",
+            "logits_name": "pred_logits",
+            "boxes_format": "normalized_cxcywh",
+            "score_activation": "sigmoid"
+          }
+        }
+      }
+    },
+    {
+      "model_id": "libreyolo_detect_9t",
+      "family": "LibreYOLO",
+      "variant": "9 Tiny",
+      "task": "detect",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "",
+      "metadata": {}
+    },
+    {
+      "model_id": "sam2_hiera_tiny",
+      "family": "SAM2",
+      "variant": "Hiera Tiny",
+      "task": "segment",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "prompt",
+        "train",
+        "video"
+      ],
+      "input_size": [
+        1024,
+        1024
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "image/prompt/video 계약은 별도 검증",
+      "metadata": {
+        "contracts": {
+          "graphs": {
+            "encoder": {
+              "file": "sam2_encoder.onnx",
+              "inputs": {
+                "image": "input_image"
+              },
+              "outputs": [
+                "image_embeddings"
+              ]
+            },
+            "decoder": {
+              "file": "sam2_decoder.onnx",
+              "inputs": {
+                "image_embeddings": "image_embeddings",
+                "point_coords": "point_coords",
+                "point_labels": "point_labels",
+                "mask_input": "mask_input",
+                "has_mask_input": "has_mask_input",
+                "orig_im_size": "orig_im_size"
+              },
+              "outputs": [
+                "low_res_mask_logits",
+                "iou_predictions"
+              ]
+            }
+          },
+          "prompt_types": [
+            "point",
+            "box",
+            "mask"
+          ],
+          "video_state": true
+        }
+      }
+    },
+    {
+      "model_id": "sam2_hiera_small",
+      "family": "SAM2",
+      "variant": "Hiera Small",
+      "task": "segment",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "prompt",
+        "train",
+        "video"
+      ],
+      "input_size": [
+        1024,
+        1024
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "image/prompt/video 계약은 별도 검증",
+      "metadata": {
+        "contracts": {
+          "graphs": {
+            "encoder": {
+              "file": "sam2_encoder.onnx",
+              "inputs": {
+                "image": "input_image"
+              },
+              "outputs": [
+                "image_embeddings"
+              ]
+            },
+            "decoder": {
+              "file": "sam2_decoder.onnx",
+              "inputs": {
+                "image_embeddings": "image_embeddings",
+                "point_coords": "point_coords",
+                "point_labels": "point_labels",
+                "mask_input": "mask_input",
+                "has_mask_input": "has_mask_input",
+                "orig_im_size": "orig_im_size"
+              },
+              "outputs": [
+                "low_res_mask_logits",
+                "iou_predictions"
+              ]
+            }
+          },
+          "prompt_types": [
+            "point",
+            "box",
+            "mask"
+          ],
+          "video_state": true
+        }
+      }
+    },
+    {
+      "model_id": "sam2_hiera_base_plus",
+      "family": "SAM2",
+      "variant": "Hiera Base+",
+      "task": "segment",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "prompt",
+        "train",
+        "video"
+      ],
+      "input_size": [
+        1024,
+        1024
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "image/prompt/video 계약은 별도 검증",
+      "metadata": {
+        "contracts": {
+          "graphs": {
+            "encoder": {
+              "file": "sam2_encoder.onnx",
+              "inputs": {
+                "image": "input_image"
+              },
+              "outputs": [
+                "image_embeddings"
+              ]
+            },
+            "decoder": {
+              "file": "sam2_decoder.onnx",
+              "inputs": {
+                "image_embeddings": "image_embeddings",
+                "point_coords": "point_coords",
+                "point_labels": "point_labels",
+                "mask_input": "mask_input",
+                "has_mask_input": "has_mask_input",
+                "orig_im_size": "orig_im_size"
+              },
+              "outputs": [
+                "low_res_mask_logits",
+                "iou_predictions"
+              ]
+            }
+          },
+          "prompt_types": [
+            "point",
+            "box",
+            "mask"
+          ],
+          "video_state": true
+        }
+      }
+    },
+    {
+      "model_id": "sam2_hiera_large",
+      "family": "SAM2",
+      "variant": "Hiera Large",
+      "task": "segment",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "prompt",
+        "train",
+        "video"
+      ],
+      "input_size": [
+        1024,
+        1024
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "image/prompt/video 계약은 별도 검증",
+      "metadata": {
+        "contracts": {
+          "graphs": {
+            "encoder": {
+              "file": "sam2_encoder.onnx",
+              "inputs": {
+                "image": "input_image"
+              },
+              "outputs": [
+                "image_embeddings"
+              ]
+            },
+            "decoder": {
+              "file": "sam2_decoder.onnx",
+              "inputs": {
+                "image_embeddings": "image_embeddings",
+                "point_coords": "point_coords",
+                "point_labels": "point_labels",
+                "mask_input": "mask_input",
+                "has_mask_input": "has_mask_input",
+                "orig_im_size": "orig_im_size"
+              },
+              "outputs": [
+                "low_res_mask_logits",
+                "iou_predictions"
+              ]
+            }
+          },
+          "prompt_types": [
+            "point",
+            "box",
+            "mask"
+          ],
+          "video_state": true
+        }
+      }
+    },
+    {
+      "model_id": "deeplabv3plus_resnet34",
+      "family": "DeepLab V3+",
+      "variant": "ResNet34",
+      "task": "segment",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        512,
+        512
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "",
+      "notes": "weight-free native adapter",
+      "metadata": {}
+    },
+    {
+      "model_id": "unet_resnet18",
+      "family": "U-Net",
+      "variant": "ResNet18",
+      "task": "segment",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        512,
+        512
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "",
+      "notes": "weight-free native adapter",
+      "metadata": {}
+    }
+  ]
+}

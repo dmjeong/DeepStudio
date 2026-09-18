@@ -55,3 +55,21 @@ def test_signed_pack_is_idempotent(tmp_path):
     first = PackInstaller(root).install(pack)
     second = PackInstaller(root).install(pack)
     assert first == second
+
+
+def test_installer_rejects_release_ready_pack_without_redistribution_notices(tmp_path):
+    pack = tmp_path / "release.dvmodel"
+    files = {
+        "manifest.json": json.dumps({
+            "schema_version": 1, "model_id": "vendor.release", "pack_version": "1.0.0",
+            "release_status": "release_ready",
+        }).encode(),
+        "model.onnx": b"fixture",
+    }
+    checksums = {name: hashlib.sha256(value).hexdigest() for name, value in files.items()}
+    with zipfile.ZipFile(pack, "w") as archive:
+        for name, value in files.items():
+            archive.writestr(name, value)
+        archive.writestr("checksums.json", json.dumps({"files": checksums}))
+    with pytest.raises(PackInstallError, match="THIRD_PARTY_NOTICES"):
+        PackInstaller(tmp_path / "installed").install(pack, allow_unsigned=True)

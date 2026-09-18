@@ -29,6 +29,17 @@ MAX_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024
 SHA256_HEX = 64
 
 
+def _validate_release_notices(manifest: Mapping[str, Any], files) -> None:
+    """Require redistribution notices before a pack can claim release-ready."""
+    if manifest.get("release_status", "requested") != "release_ready":
+        return
+    names = set(files)
+    if "THIRD_PARTY_NOTICES.md" not in names:
+        raise PackInstallError("release-ready model pack requires THIRD_PARTY_NOTICES.md")
+    if not any(name.startswith("licenses/") and name != "licenses/" for name in names):
+        raise PackInstallError("release-ready model pack requires licenses/")
+
+
 def _safe_name(name: str) -> str:
     if not isinstance(name, str) or not name or "\x00" in name:
         raise PackInstallError("model pack contains an invalid path")
@@ -166,6 +177,7 @@ class PackInstaller:
                 raise PackInstallError("unsigned development pack rejected")
             expected_files = {_safe_name(info.filename) for info in infos
                               if not info.is_dir() and _safe_name(info.filename) != "checksums.json"}
+            _validate_release_notices(manifest, expected_files)
             try:
                 validate_special_assets(manifest, expected_files)
             except SpecialContractError as exc:

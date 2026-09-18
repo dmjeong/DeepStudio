@@ -15,7 +15,7 @@ import tempfile
 from typing import Any, Mapping
 import zipfile
 
-from .pack_installer import _safe_name, _sha256
+from .pack_installer import _safe_name, _sha256, _validate_release_notices
 from .special_contracts import SpecialContractError, validate_special_assets, validate_special_manifest
 
 
@@ -87,6 +87,10 @@ def build_pack(source: str | Path, output: str | Path, *, manifest: str | Path |
     try:
         validate_special_assets(definition, {name for name, _ in files})
     except SpecialContractError as exc:
+        raise PackBuildError(str(exc)) from exc
+    try:
+        _validate_release_notices(definition, {name for name, _ in files})
+    except ValueError as exc:
         raise PackBuildError(str(exc)) from exc
 
     checksums = {name: _sha256(path) for name, path in files}

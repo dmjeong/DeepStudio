@@ -8,6 +8,8 @@ import runpy
 import sys
 import pytest
 
+from core.model_registry import builtin_model_specs
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS = ROOT / "packaging" / "windows"
@@ -40,6 +42,17 @@ def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk()
         assert f'"--hidden-import", "{module}"' in script
     assert "VISION_NATIVE_RUNTIME_DIR" in script
     assert "--add-binary" in script
+    assert "packaging" in script and "windows" in script and "models" in script
+
+
+def test_offline_default_model_catalog_matches_registry():
+    catalog = json.loads((WINDOWS / "models" / "default-model-catalog.json").read_text(encoding="utf-8"))
+    assert catalog["schema_version"] == 1
+    assert catalog["offline"] is True
+    assert catalog["redistribution_policy"]["weights_included"] is False
+    expected = {spec.model_id for spec in builtin_model_specs()}
+    actual = {item["model_id"] for item in catalog["models"]}
+    assert actual == expected
 
 
 def test_pyinstaller_native_runtime_argument_is_opt_in_and_filters_library_files(tmp_path, monkeypatch):
