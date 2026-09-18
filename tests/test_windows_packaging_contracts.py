@@ -348,6 +348,9 @@ def test_windows_workflow_builds_real_gui_and_native_runtime():
     assert "python gui/build_exe.py" in workflow
     assert '"--source", "app=$app"' in workflow
     assert '"--source", "sdk/native=$native"' in workflow
+    assert '"DeepVisionStudio/python/export_onnx.py"' in workflow
+    assert '"DeepVisionStudio/python/export_sam2_onnx.py"' in workflow
+    assert '"DeepVisionStudio/tests/test_export_contracts.py"' in workflow
     assert "release-contract" not in workflow
 
 
