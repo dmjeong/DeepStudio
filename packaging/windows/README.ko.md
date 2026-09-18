@@ -19,9 +19,9 @@
 | Classification | ConvNeXt V1 | Tiny |
 | Classification | LibreYOLO | MobileNetV4 Small 분류 모델 |
 | Anomaly detection | PatchCore | Wide-ResNet50-2, ResNet18 백본 |
-| Object detection | Re-detr | 정확한 모델명 확인 후 확정 |
+| Object detection | Re-DETR v4 | Small, Medium, Large |
 | Object detection | LibreYOLO | LibreYOLO9 Tiny |
-| Segmentation | SAM2 | SAM2.1 Hiera Tiny, 단일 이미지 프롬프트 분할 |
+| Segmentation | SAM2 | SAM2.1 Hiera Tiny, Small, Base+, Large; image/prompt/video 계약 |
 | Segmentation | DeepLab V3+ | ResNet34 encoder |
 | Segmentation | U-Net | ResNet18 encoder |
 
@@ -93,9 +93,10 @@ BIOS 설정이나 조직 정책 때문에 가상화를 사용할 수 없다면 �
 - EfficientNet B1의 기본 사전학습 입력은 B0와 다르다. 모델과 함께 저장된 전처리를 적용한다.
 - PatchCore 학습은 정상 이미지의 특징 bank 생성/선택과 threshold 보정이다. 일반 epoch 학습과 구분한다.
 - DeepLab V3+/U-Net의 초기 가중치는 encoder 사전학습일 수 있으며, 사용자 클래스 분할 head는 학습해야 한다.
-- SAM2 기본 모드는 점·박스로 대상을 지정하는 이미지 분할이다. 사용자 클래스 전체를 자동 분류하는 모델과 다르다.
-  자동 전체 mask 생성과 영상 추적의 포함 범위는 확정 전이다.
-- `Re-detr`는 RT-DETR/RF-DETR 중 정확한 모델명을 확인한 뒤 표시한다.
+- SAM2는 Hiera Tiny/Small/Base+/Large를 모두 제공 대상으로 관리한다. 점·박스·이전 mask prompt,
+  자동 mask와 영상 state는 각각의 export/runtime 검증을 통과한 기능만 활성화한다.
+- Re-DETR v4는 Small/Medium/Large 세 변형만 제공 대상으로 관리하며, 실제 검증 전에는 설치기에서
+  release-ready로 표시하지 않는다.
 
 ## ONNX 배포와 C#/C++
 

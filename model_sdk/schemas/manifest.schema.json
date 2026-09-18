@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deepvisionstudio.local/schemas/model-pack-manifest-v1.json",
+  "title": "Deep Vision Studio model pack manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "model_id",
+    "family",
+    "variant",
+    "task",
+    "runtimes",
+    "capabilities",
+    "input_size"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "model_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,79}$"},
+    "family": {"type": "string", "minLength": 1},
+    "variant": {"type": "string", "minLength": 1},
+    "task": {"enum": ["classify", "anomaly", "detect", "segment"]},
+    "runtimes": {"type": "array", "minItems": 1, "items": {"enum": ["windows_native", "onnx", "container"]}},
+    "capabilities": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "input_size": {"type": "array", "prefixItems": [{"type": "integer", "minimum": 1}, {"type": "integer", "minimum": 1}], "minItems": 2, "maxItems": 2},
+    "input_channels": {"type": "array", "items": {"enum": [1, 3]}, "minItems": 1},
+    "release_status": {"enum": ["requested", "scoped", "runtime_verified", "trained_verified", "export_verified", "sdk_verified", "release_ready"]},
+    "assets": {"type": "object"},
+    "contracts": {"type": "object"},
+    "runtime_requirements": {"type": "object"}
+  }
+}

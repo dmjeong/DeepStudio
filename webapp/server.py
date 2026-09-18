@@ -214,7 +214,9 @@ def create_app(state_dir=None):
             project = store.project
             project_summary = {"filepath": ProjectManager.get_active_filepath(project),
                                "revision": store.revision} if project else None
+            from core.model_registry import ModelRegistry
             return {"version": APP_VERSION, "project": project_view(project) if project and not summary else None,
+                    "model_catalog": ModelRegistry.builtin().as_dict(),
                     "project_summary": project_summary, "warnings": jobs.warnings,
                     "recent": store.recent, "error": store.error, "active_job": jobs.active_id,
                     "jobs": jobs.list(project_path=ProjectManager.get_active_filepath(project) if project else None), "home": str(Path.home()),
@@ -307,6 +309,20 @@ def create_app(state_dir=None):
             raise ValueError("EfficientNet은 분류 태스크만 지원")
         return {"metrics": [{"value": value, "label": LABELS[value]} for value in available_metrics(engine, task)],
                 "models": capabilities["models"], "capabilities": capabilities}
+
+    @app.get("/api/models")
+    def models(task: str | None = None, release_ready: bool = False):
+        """기본 모델/팩 카탈로그를 제공한다.
+
+        ``release_ready``는 아직 런타임을 등록부에서 필터링하는 다음 단계의 호환 인자다.
+        현재는 모든 항목의 검증 상태를 그대로 반환해 UI가 요청/검증 중임을 표시할 수 있다.
+        """
+        from core.model_registry import ModelRegistry
+        if task is not None and task not in {"classify", "anomaly", "detect", "segment"}:
+            raise ValueError("모델 카탈로그 태스크 오류")
+        registry = ModelRegistry.builtin()
+        selected = registry.list(task, release_ready=release_ready)
+        return {"models": [spec.to_dict() for spec in selected], "release_ready": release_ready}
 
     @app.get("/api/files")
     def files(path: str = "", offset: int = Query(0, ge=0)):

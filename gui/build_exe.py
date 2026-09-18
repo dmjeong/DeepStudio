@@ -116,6 +116,8 @@ def build():
 
         # GPU/디바이스 관리 (DeviceManager 싱글톤)
         "--hidden-import", "core.device_manager",
+        "--hidden-import", "core.model_registry",
+        "--hidden-import", "core.container_worker",
 
         # Grad-CAM 시각화 모듈
         "--hidden-import", "core.gradcam",

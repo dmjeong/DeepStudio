@@ -406,5 +406,5 @@ release-manifest/README에 구체적인 버전으로 고정한다. 그 값이 �
 서로 다른 프로세스의 clock 원점을 빼지 않고 host 전체시간과 worker duration을 별도 측정한다.
 배포 SDK의 core 시간과 추론 버튼 전체시간을 모두 기록하며 B0 8ms 목표를 다른 모델의 보장으로 확장하지 않는다.
 
-P0 미통과 항목과 Re-detr/SAM2 사용범위 확인은 설계의 남은 결정으로 표시한다.
+P0 미통과 항목과 Re-DETR v4/SAM2의 실제 upstream·checkpoint·Windows runtime 검증은 구현의 남은 작업으로 표시한다.
 설계 문서가 완성되었다는 이유로 실행코드·EXE·모델별 Windows 검증이 완료되었다고 표시하지 않는다.

@@ -1,6 +1,6 @@
 # 기본 모델 카탈로그와 지원 판정 설계
 
-2026-09-18 · 요구사항 개정 2 · 아래 값은 구현 목표이며 현재 제품 지원 완료표가 아니다.
+2026-09-18 · 요구사항 개정 3 · 아래 값은 등록부의 구현 범위이며 실제 release-ready 판정은 별도다.
 
 ## 1. 기본 탑재 모델
 
@@ -14,14 +14,14 @@
 | 분류 / ConvNeXt V1 | Tiny | TorchVision V1 초기 가중치; V2로 대체하지 않음 | 분류 logits, LayerNorm·레이아웃 export |
 | 분류 / LibreYOLO | LibreMobileNetV4 Small | Libre 분류 어댑터와 해당 초기 가중치 | 224; Libre 프레임워크의 모든 분류 모델을 뜻하지 않음 |
 | 이상 탐지 / PatchCore | Wide-ResNet50-2, 경량 ResNet18 | pretrained backbone + 정상 특징 bank/coreset 생성 | bank·kNN·map·score까지 전체 ONNX, threshold 보존 |
-| 객체 탐지 / Re-detr | 정확한 명칭 확인 중 | RT-DETR R18 또는 RF-DETR Nano가 후보 | 명칭 결정 전 라이브러리·checkpoint·후처리 고정 금지 |
+| 객체 탐지 / Re-DETR v4 | Small, Medium, Large | 세 변형을 고정된 제품 ID로 관리 | upstream·checkpoint·후처리별 ONNX 검증 필요 |
 | 객체 탐지 / LibreYOLO | LibreYOLO9 Tiny | 검토된 기본 체크포인트, 검출 head fine-tune | raw output decode·NMS·원본 좌표 복원 |
-| 분할 / SAM2 | SAM2.1 Hiera Tiny | 이미지/객체 마스크에서 prompt 기반 fine-tune | image encoder + prompt decoder ONNX, 이미지 캐시·프롬프트 계약 |
+| 분할 / SAM2 | SAM2.1 Hiera Tiny, Small, Base+, Large | 네 변형 모두 image/prompt/video 계약으로 관리 | image encoder + prompt decoder ONNX, 이미지 캐시·프롬프트·영상 state 계약 |
 | 분할 / DeepLab V3+ | SMP DeepLabV3Plus, ResNet34 encoder | encoder ImageNet 초기화 + segmentation head 신규 학습 | semantic logits, binary/multiclass 구분 |
 | 분할 / U-Net | SMP Unet, ResNet18 encoder | encoder ImageNet 초기화 + segmentation head 신규 학습 | semantic logits, ignore index·원본 크기 복원 |
 
 ResNet50도 기본 배포 목록에 넣되 최소사양 인수는 ResNet18과 별도 기록한다.
-더 큰 ConvNeXt/SAM2/탐지 변형은 첫 목록에 암묵적으로 포함하지 않는다.
+카탈로그에 없는 ConvNeXt/SAM2/탐지 변형은 첫 목록에 암묵적으로 포함하지 않는다.
 
 ## 2. 분류 모델의 계약
 
@@ -41,13 +41,14 @@ freeze/unfreeze, 클래스별 weight, augmentation, resume도 실제 지원하�
 [MobileNetV4](https://www.libreyolo.com/docs/models/mobilenetv4),
 [해당 가중치](https://huggingface.co/LibreYOLO/LibreMobileNetV4s-cls)
 
-## 3. 객체 탐지와 미확정 이름
+## 3. Re-DETR v4와 객체 탐지
 
-사용자가 적은 `Re-detr`는 그대로 요구 ID `requested.re-detr`에 보관한다.
-확정 전 RT-DETR/RF-DETR 중 하나를 지원 완료 모델로 등록하지 않는다.
+제품 ID는 `re_detr_v4_small`, `re_detr_v4_medium`, `re_detr_v4_large`로 고정한다.
+세 변형은 등록부에서 각각 독립적인 입력 크기·runtime·checkpoint·후처리 계약을 갖는다.
+실제 upstream 구현을 선택하기 전에는 모두 `requested` 상태이며 release-ready로 표시하지 않는다.
 
-- RT-DETR이면 저자 공식 PyTorch 구현의 R18부터 학습·ONNX 계약을 검증한다.
-- RF-DETR이면 Nano부터 검증한다. 별도 라이선스의 Plus/XL 계열을 기본 목록에 넣지 않는다.
+- class offset, query 선택, sigmoid/softmax, decode, resize 방식은 변형별 manifest에 기록한다.
+- NMS가 없는 모델에는 임의 NMS를 넣지 않는다. Libre 탐지의 NMS 규칙은 별도 계약이다.
 - 두 구현체의 class offset, query 선택, sigmoid/softmax, decode, resize 방식이 같다고 가정하지 않는다.
 - NMS가 없는 모델에는 임의 NMS를 넣지 않는다. Libre 탐지의 NMS 규칙은 별도 계약이다.
 

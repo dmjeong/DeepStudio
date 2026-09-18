@@ -81,6 +81,9 @@ class DataConfig:
 @dataclass
 class ModelConfig:
     """모델 아키텍처 설정"""
+    # 모델 팩/어댑터를 식별하는 안정적인 ID. 빈 값은 구형 프로젝트다.
+    # 학습 모드나 표시 이름과 달리 버전이 있는 모델 계약을 참조한다.
+    model_id: str = ""
     backbone_channels: List[int] = field(
         default_factory=lambda: [32, 64, 128, 256, 512]
     )
@@ -328,10 +331,18 @@ class ProjectManager:
         if len({c.casefold() for c in class_names}) != len(class_names):
             raise ValueError("중복 클래스 이름 사용 불가")
 
+        default_model = {
+            "classify": "efficientnet_b0",
+            "anomaly": "patchcore_wide_resnet50_2",
+            "detect": "re_detr_v4_small",
+            "segment": "deeplabv3plus_resnet34",
+            "obb": "",
+        }[task]
         project = ProjectData(
             name=name,
             task=task,
             project_dir=project_dir,
+            model=ModelConfig(model_id=default_model),
             training=TrainingConfig(
                 input_size=info["default_input_size"],
                 batch_size=info["default_batch_size"],

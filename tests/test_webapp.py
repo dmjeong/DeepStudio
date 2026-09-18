@@ -111,6 +111,13 @@ class WebAppTests(unittest.TestCase):
                          headers={"X-Studio-Request": ""}).status_code, 403)
         self.assertEqual(self.client.get("/api/options?task=invalid").status_code, 400)
 
+    def test_model_catalog_exposes_requested_variants_without_claiming_release(self):
+        response = self.client.get("/api/models?task=detect")
+        self.assertEqual(response.status_code, 200, response.text)
+        models = {item["model_id"]: item for item in response.json()["models"]}
+        self.assertEqual({"re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large", "libreyolo_detect_9t"}, set(models))
+        self.assertTrue(all(item["release_status"] != "release_ready" for item in models.values()))
+
     def test_real_class_delete_process_and_backup(self):
         project = self.project()
         original = Path(project["data"]["train_dir"]) / "NG" / "source.png"

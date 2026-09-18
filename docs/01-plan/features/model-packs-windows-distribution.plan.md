@@ -1,6 +1,6 @@
 # Windows 학습툴 기본 모델·ONNX SDK·단일 설치 배포 계획
 
-2026-09-18 · 요구사항 개정 2 · 기준 커밋 `d88d275` · 계획/설계 단계, 구현 전
+2026-09-18 · 요구사항 개정 3 · 기준 커밋 `d88d275` · 등록부/worker 구현 진행 중
 
 ## 1. 이번 요구사항
 
@@ -13,8 +13,8 @@ Windows 응용프로그램에 아래 모델군의 **학습·추론·ONNX 내보�
 |---|---|
 | Classification | EfficientNet B0/B1, ResNet, ConvNeXt V1, LibreYOLO |
 | Anomaly detection | PatchCore |
-| Object detection | Re-detr, LibreYOLO |
-| Segmentation | SAM2, DeepLab V3+, U-Net |
+| Object detection | Re-DETR v4 Small/Medium/Large, LibreYOLO |
+| Segmentation | SAM2 Hiera Tiny/Small/Base+/Large, DeepLab V3+, U-Net |
 
 위 표는 출시 요구사항이다. 현재 저장소가 모두 지원한다는 뜻은 아니다.
 세부 변형, 학습 방식, 내보내기 위험은 [모델 지원 설계표](model-catalog.md)에 명시한다.
@@ -81,9 +81,10 @@ Docker를 통해 추론 속도가 자동 향상된다고 가정하지 않는다.
 기본 세부 모델은 모델 지원 설계표의 작은 변형을 우선한다. 라이브러리의 모든 변형·모든 해상도·모든
 학습 기법을 일괄 지원하지 않는다. 작은 배치의 로컬 학습을 기본으로 하고 다중 GPU·분산 학습은 후속 범위다.
 
-- `Re-detr`: RT-DETR인지 RF-DETR인지 사용자 확인 중. 해당 어댑터/가중치 선택만 보류한다.
-- SAM2: 우선 단일 이미지와 점·박스 프롬프트를 기준으로 설계하며 자동 전체 분할/영상 필요 여부 확인 중.
-  영상 상태 기반 ONNX 추적을 이미지 encoder/decoder 내보내기의 완료와 혼동하지 않는다.
+- `Re-DETR v4`: 제품 카탈로그 변형은 Small/Medium/Large로 고정했다. 실제 upstream
+  구현·checkpoint·ONNX 수치 검증은 각 변형별로 남아 있다.
+- SAM2: Hiera Tiny/Small/Base+/Large를 모두 카탈로그에 포함한다. 이미지·점·박스 prompt와
+  video capability를 계약에 표시했으며, 각 그래프와 영상 state의 Windows/ONNX 검증은 남아 있다.
 - 프리트레인드: 전체 모델 가중치인지 encoder 초기화 가중치인지 구분한다. 재배포 근거를 파일별로 확정한다.
 - Windows 최소사양: README에 설계 검증 기준을 먼저 기재하고 실제 모델별 실측 후 지원 최소값으로 확정한다.
 
