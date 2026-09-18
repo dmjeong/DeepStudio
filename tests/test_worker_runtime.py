@@ -267,6 +267,20 @@ def test_configured_docker_command_discovers_owned_marker_without_env(tmp_path: 
     )
 
 
+def test_managed_wsl_rejects_symlinked_ownership_marker(tmp_path: Path):
+    outside = tmp_path / "outside-marker.json"
+    outside.write_text(
+        '{"schema_version":1,"owned":true,"distro":"DeepVisionStudio"}',
+        encoding="utf-8",
+    )
+    marker = tmp_path / "owned-distro.json"
+    marker.symlink_to(outside)
+    manager = ManagedWsl("DeepVisionStudio", tmp_path)
+    assert manager.is_owned() is False
+    with pytest.raises(ManagedWslError, match="cannot be a symlink"):
+        configured_docker_command(environ={}, state_dir=tmp_path)
+
+
 def test_worker_manager_owns_and_stops_container_lifecycle():
     class FakeWorker:
         def __init__(self):

@@ -85,7 +85,7 @@ class ManagedWsl:
         return tuple(line.strip() for line in result.stdout.splitlines() if line.strip())
 
     def is_owned(self) -> bool:
-        if not self.marker.is_file():
+        if self.marker.is_symlink() or not self.marker.is_file():
             return False
         try:
             value = json.loads(self.marker.read_text(encoding="utf-8"))
@@ -196,6 +196,8 @@ def configured_docker_command(*, environ: Mapping[str, str] | None = None,
     configured_state = Path(configured_state).expanduser()
     distro = str(env.get("DEEPVISION_WSL_DISTRO", "")).strip()
     marker = configured_state / "owned-distro.json"
+    if marker.is_symlink():
+        raise ManagedWslError("owned WSL distro marker cannot be a symlink")
     if not distro and marker.is_file():
         try:
             marker_value = json.loads(marker.read_text(encoding="utf-8"))
