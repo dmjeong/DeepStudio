@@ -14,6 +14,10 @@ ConvNeXt, DeepLab V3+, U-Net의 export 파일은 Python 없이 같은 C ABI를 �
 실행한 뒤 번들 안의 설정 JSON 경로를 `dv_create_session`에 넘긴다. 런타임은 설정 JSON과
 그래프 계약을 검사하므로 ONNX 파일만 따로 복사해 실행하지 않는다.
 
+디렉터리 번들을 직접 열려면 `dv_create_session_from_bundle("model.dvdeploy", ...)`를 사용한다.
+이 함수는 `manifest.json`의 설정 경로를 안전하게 해석한 뒤 같은 세션 생성 경로로 넘긴다.
+zip 파일은 실행 전에 Python 검증 도구로 풀어 디렉터리 번들로 배치한다.
+
 현재 C ABI에서 검증된 결과 종류는 `classify`, semantic `segment`, generic
 `detect`, Re-DETR v4 `detect`, reconstruction `anomaly`다. generic `detect`는
 `[1,N,5+C]` ONNX 출력에 sigmoid score와 class-aware NMS를 적용한다. Re-DETR v4는

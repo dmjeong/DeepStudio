@@ -93,6 +93,30 @@ public sealed class VisionSession : SafeHandle
         finally { Marshal.FreeCoTaskMem(runtimeUtf8); }
     }
 
+    public static VisionSession OpenBundle(string bundlePath, string runtime = "onnxruntime", int numThreads = -1)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(bundlePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(runtime);
+        if (numThreads < -1) throw new ArgumentOutOfRangeException(nameof(numThreads));
+
+        IntPtr runtimeUtf8 = Marshal.StringToCoTaskMemUTF8(runtime);
+        try
+        {
+            var options = new NativeSessionOptions
+            {
+                StructSize = (uint)Marshal.SizeOf<NativeSessionOptions>(),
+                AbiVersion = AbiVersion,
+                RuntimeUtf8 = runtimeUtf8,
+                NumThreads = numThreads,
+            };
+            var status = Native.dv_create_session_from_bundle(bundlePath, ref options, out var raw);
+            if (status != 0 || raw == IntPtr.Zero)
+                throw new InvalidOperationException($"Vision bundle session creation failed ({StatusName(status)}).");
+            return new VisionSession(raw);
+        }
+        finally { Marshal.FreeCoTaskMem(runtimeUtf8); }
+    }
+
     public ClassificationResult InferClassification(byte[] image, int width, int height, int channels,
                                                      int strideBytes = 0)
     {
@@ -434,6 +458,10 @@ public sealed class VisionSession : SafeHandle
     {
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
         internal static extern int dv_create_session([MarshalAs(UnmanagedType.LPUTF8Str)] string configPath,
+            ref NativeSessionOptions options, out IntPtr session);
+
+        [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        internal static extern int dv_create_session_from_bundle([MarshalAs(UnmanagedType.LPUTF8Str)] string bundlePath,
             ref NativeSessionOptions options, out IntPtr session);
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]

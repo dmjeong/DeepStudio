@@ -3,9 +3,11 @@
 #include <opencv2/core.hpp>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+
 
 namespace fs = std::filesystem;
 
@@ -29,6 +31,19 @@ int main(int argc, char** argv)
                 "C ABI invalid create arguments were not diagnosed.");
         require(dv_create_session(config.c_str(), &options, &session) == DV_STATUS_OK && session,
                 "C ABI session creation failed.");
+        const auto bundle = fs::u8path(argv[1]) / "classify.dvdeploy";
+        fs::remove_all(bundle);
+        fs::create_directories(bundle);
+        fs::copy_file(fs::u8path(argv[1]) / "classify.json", bundle / "classify.json");
+        fs::copy_file(fs::u8path(argv[1]) / "classify.onnx", bundle / "classify.onnx");
+        std::ofstream(bundle / "manifest.json")
+            << "{\"schema_version\":1,\"bundle_type\":\"onnx-deployment\","
+               "\"config\":\"classify.json\",\"files\":{}}";
+        dv_session* bundle_session = nullptr;
+        require(dv_create_session_from_bundle(bundle.u8string().c_str(), &options, &bundle_session) == DV_STATUS_OK &&
+                    bundle_session,
+                "C ABI deployment bundle session creation failed.");
+        dv_close_session(bundle_session);
         cv::Mat gray = (cv::Mat_<uchar>(2, 3) << 0, 127, 255, 0, 127, 255);
         dv_image_view view{sizeof(dv_image_view), DV_ABI_VERSION, gray.data, gray.cols, gray.rows,
                            gray.channels(), static_cast<int32_t>(gray.step)};

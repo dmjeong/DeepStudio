@@ -7,11 +7,14 @@
 #include <algorithm>
 #include <cstring>
 #include <exception>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <new>
 #include <stdexcept>
 #include <string>
+
+#include <nlohmann/json.hpp>
 
 struct dv_session {
     VisionInference engine;
@@ -177,6 +180,28 @@ std::unique_ptr<dv_result> make_sam_result(const Sam2Result& source) {
     if (result->preprocess_ms < 0.0) result->preprocess_ms = 0.0;
     return result;
 }
+
+std::string bundle_config_path(const char* bundle_path_utf8) {
+    if (!bundle_path_utf8 || !*bundle_path_utf8)
+        throw std::invalid_argument("Deployment bundle path is empty.");
+    const auto root = std::filesystem::u8path(bundle_path_utf8);
+    if (!std::filesystem::is_directory(root) || std::filesystem::is_symlink(root))
+        throw std::invalid_argument("Deployment bundle must be a directory.");
+    std::ifstream stream(root / "manifest.json");
+    if (!stream) throw std::invalid_argument("Deployment bundle manifest.json is missing.");
+    const auto manifest = nlohmann::json::parse(stream);
+    if (!manifest.is_object() || manifest.value("schema_version", 0) != 1)
+        throw std::invalid_argument("Unsupported deployment bundle manifest.");
+    const auto name = manifest.value("config", std::string());
+    if (name.empty()) throw std::invalid_argument("Deployment bundle config is missing.");
+    const auto relative = std::filesystem::u8path(name);
+    if (relative.is_absolute() || relative.has_parent_path() && relative.parent_path() != ".")
+        throw std::invalid_argument("Deployment bundle config path is unsafe.");
+    const auto config = root / relative;
+    if (!std::filesystem::is_regular_file(config) || std::filesystem::is_symlink(config))
+        throw std::invalid_argument("Deployment bundle config is missing.");
+    return config.lexically_normal().u8string();
+}
 } // namespace
 
 extern "C" {
@@ -227,6 +252,19 @@ dv_status dv_create_session(const char* config_path_utf8, const dv_session_optio
     catch (...) {
         // No session exists to carry an error string. The status remains the ABI's
         // stable signal; callers can use the configuration log for diagnostics.
+        return classify_exception(nullptr);
+    }
+}
+
+dv_status dv_create_session_from_bundle(const char* bundle_path_utf8,
+                                        const dv_session_options* options,
+                                        dv_session** out_session) {
+    try {
+        const auto config = bundle_config_path(bundle_path_utf8);
+        return dv_create_session(config.c_str(), options, out_session);
+    }
+    catch (...) {
+        if (out_session) *out_session = nullptr;
         return classify_exception(nullptr);
     }
 }

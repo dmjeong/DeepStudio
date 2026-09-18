@@ -109,6 +109,10 @@ DV_API const char* dv_status_name(dv_status status);
 DV_API dv_status dv_create_session(const char* config_path_utf8,
                                    const dv_session_options* options,
                                    dv_session** out_session);
+/* Open a verified .dvdeploy directory by resolving its manifest config. */
+DV_API dv_status dv_create_session_from_bundle(const char* bundle_path_utf8,
+                                               const dv_session_options* options,
+                                               dv_session** out_session);
 DV_API dv_status dv_infer(dv_session* session, const dv_image_view* image,
                           dv_result** out_result);
 DV_API dv_status dv_sam_encode(dv_session* session, const dv_image_view* image,

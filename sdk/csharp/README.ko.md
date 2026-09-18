@@ -15,6 +15,7 @@ classification/segmentation API로 읽는다. 모델 가중치는 SDK에 포함�
 배포할 때는 ONNX와 JSON을 개별 복사하지 않고 `.dvdeploy` 번들을 만든다.
 `tools/build_deployment_bundle.py`가 그래프, SAM2 encoder/decoder, PatchCore bank와 external data,
 전처리 설정, SHA-256 manifest를 묶으며 `VisionSession.Open`에는 번들 안의 설정 경로를 넘긴다.
+디렉터리 번들을 바로 열 때는 `VisionSession.OpenBundle("model.dvdeploy")`를 사용한다.
 
 ```csharp
 using DeepVisionStudio;
