@@ -72,7 +72,10 @@ def _container_image(manifest: Mapping[str, Any]) -> str:
 class ModelPackWorker:
     """Long-lived worker for one installed `.dvmodel` directory."""
 
-    COMMANDS = frozenset({"hello", "describe", "prepare", "train", "infer", "export", "cancel"})
+    # ``close`` is part of the DVW1 lifecycle.  Keeping it in the host
+    # allowlist lets ``close()`` perform a graceful protocol shutdown before
+    # the process fallback terminates the container.
+    COMMANDS = frozenset({"hello", "describe", "prepare", "train", "infer", "export", "cancel", "close"})
 
     def __init__(self, worker: ContainerWorker, model_id: str, manifest: Mapping[str, Any]):
         self._worker = worker

@@ -278,6 +278,20 @@ def create_app(state_dir=None):
             project = copy.deepcopy(project_required())
             project.training = update_dataclass(project.training, body.training)
             project.model = update_dataclass(project.model, body.model)
+            # A model selection from the catalog is enough for the API caller;
+            # fill the active state-directory pack path before validation.
+            if getattr(project.model, "model_id", "") and not getattr(project.model, "pack_path", ""):
+                from core.model_registry import installed_model_path, registry_with_installed_packs
+                selected_registry, _ = registry_with_installed_packs(model_root)
+                try:
+                    selected_spec = selected_registry.get(project.model.model_id)
+                except ValueError:
+                    selected_spec = None
+                if (selected_spec is not None and "container" in selected_spec.runtimes and
+                        "windows_native" not in selected_spec.runtimes):
+                    selected_path = installed_model_path(project.model.model_id, model_root)
+                    if selected_path is not None:
+                        project.model.pack_path = str(selected_path)
             cfg = project.training
             from center_crop import configured_center_crop
             configured_center_crop(cfg)

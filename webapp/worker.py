@@ -49,6 +49,41 @@ class JobContext:
             stream.write(message + "\n")
 
 
+def _container_model_spec(project):
+    """Return a container-only catalog spec, if the project selects one."""
+    model_id = getattr(project.model, "model_id", "")
+    if not model_id:
+        return None
+    try:
+        from core.model_registry import registry_with_installed_packs
+        registry, _ = registry_with_installed_packs()
+        spec = registry.get(model_id)
+    except (ImportError, KeyError, ValueError):
+        spec = None
+    if spec is not None:
+        return spec if "container" in spec.runtimes and "windows_native" not in spec.runtimes else None
+    # Web jobs can use a state-directory model root that is different from
+    # the worker process' default user-data root.  The project stores the
+    # activated pack path, so inspect only its manifest as a safe fallback.
+    pack_path = getattr(project.model, "pack_path", "")
+    if not isinstance(pack_path, str) or not pack_path:
+        return None
+    try:
+        pack_root = Path(pack_path).expanduser().resolve(strict=True)
+        manifest_path = pack_root / "manifest.json"
+        if manifest_path.is_symlink() or not manifest_path.is_file():
+            return None
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if (isinstance(manifest, dict) and manifest.get("model_id") == model_id and
+            "container" in manifest.get("runtimes", ()) and
+            "windows_native" not in manifest.get("runtimes", ())):
+        from types import SimpleNamespace
+        return SimpleNamespace(display_name=(manifest.get("family") or model_id), runtimes=("container",))
+    return None
+
+
 def _train_builtin_project(context, project, device):
     """Train a registered weight-free adapter through the normal job path."""
     from core.project import ProjectManager, RunRecord
@@ -117,6 +152,16 @@ def train(context, payload):
     project = restore_project(payload["project"])
     from core.training_modes import validate_training_options
     validate_training_options(project)
+    container_spec = _container_model_spec(project)
+    if container_spec is not None:
+        # A pack request has a different result/event contract and must go
+        # through ``/api/jobs/model-pack/{operation}``.  Failing here is safer
+        # than silently training the selected Re-DETR/SAM2/LibreYOLO ID with
+        # the legacy Custom CSP engine.
+        raise RuntimeError(
+            f"{container_spec.display_name}은 일반 train 작업에서 실행할 수 없습니다. "
+            "설치된 모델 팩 경로로 pack_train 작업을 사용하세요."
+        )
     from core.device_manager import get_device_manager
     from core.accelerator import runtime_report
     device = get_device_manager().get_device(project.training.device)

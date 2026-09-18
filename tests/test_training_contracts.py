@@ -16,6 +16,11 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 
+import sys
+sys.path[:0] = [str(ROOT / "gui"), str(ROOT / "python")]
+from core.project import ProjectData
+from core.training_modes import validate_training_options
+
 
 def source_objects(path, names, namespace):
     """무거운 프레임워크 import만 피하고 실제 함수/클래스 본문을 사용한다."""
@@ -106,6 +111,7 @@ class DataContracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "학습에 없는"):
                 ns["create_classification_loaders"](str(root))
 
+
     def test_small_auto_split_is_nonempty_and_repeatable(self):
         ns = dataset_namespace()
         with tempfile.TemporaryDirectory() as temp:
@@ -157,6 +163,31 @@ class DataContracts(unittest.TestCase):
             self.assertTrue(val.dataset.dataset.is_train)  # reconstruction-pair contract
             self.assertTrue(all("good" in p for p in train.dataset.dataset.samples))
             self.assertFalse(set(train.dataset.indices) & set(val.dataset.indices))
+
+
+class ContainerModelTrainingContracts(unittest.TestCase):
+    def _project(self):
+        project = ProjectData()
+        project.task = "detect"
+        project.model.model_id = "re_detr_v4_small"
+        project.training.training_mode = "custom"
+        project.training.in_channels = 3
+        return project
+
+    def test_container_catalog_model_cannot_fall_back_to_custom_csp(self):
+        with self.assertRaisesRegex(ValueError, "Docker 모델 팩"):
+            validate_training_options(self._project())
+
+    def test_container_catalog_model_accepts_matching_installed_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "manifest.json").write_text(json.dumps({
+                "schema_version": 1, "model_id": "re_detr_v4_small",
+                "runtimes": ["container"],
+            }), encoding="utf-8")
+            project = self._project()
+            project.model.pack_path = str(root)
+            validate_training_options(project)
 
 
 class MetadataAndAdapters(unittest.TestCase):

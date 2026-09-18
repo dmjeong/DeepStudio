@@ -84,6 +84,9 @@ class ModelConfig:
     # 모델 팩/어댑터를 식별하는 안정적인 ID. 빈 값은 구형 프로젝트다.
     # 학습 모드나 표시 이름과 달리 버전이 있는 모델 계약을 참조한다.
     model_id: str = ""
+    # 설치된 Docker 모델 팩의 검증된 절대 경로. 컨테이너 전용 모델은
+    # 이 경로를 통해서만 학습/추론 작업에 연결되어야 한다.
+    pack_path: str = ""
     backbone_channels: List[int] = field(
         default_factory=lambda: [32, 64, 128, 256, 512]
     )

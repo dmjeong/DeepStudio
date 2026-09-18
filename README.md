@@ -8,8 +8,8 @@
 | 태스크 | 학습·추론 엔진 | 데이터 |
 |---|---|---|
 | 분류 | EfficientNet B0/B1, ResNet 18/50, ConvNeXt V1 Tiny, Custom CSP | 클래스별 이미지 폴더 |
-| 시맨틱 분할 | DeepLab V3+ ResNet34, U-Net ResNet18, Custom CSP | 이미지와 클래스 인덱스 마스크 |
-| 박스 탐지 | Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
+| 시맨틱 분할 | SAM2 Hiera Tiny/Small/Base+/Large (설치된 모델 팩), DeepLab V3+ ResNet34, U-Net ResNet18, Custom CSP | 이미지와 클래스 인덱스 마스크 |
+| 박스 탐지 | Re-DETR v4 Small/Medium/Large (설치된 모델 팩), LibreYOLO9 Tiny (설치된 모델 팩), Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
 | 이상 탐지 | PatchCore 또는 Custom CSP 재구성 | 정상 이미지, 선택적 평가용 불량 이미지 |
 | 회전 박스 | 데이터 편집·크롭만 지원 | 클래스와 네 꼭짓점의 정규화 좌표 |
 
@@ -53,6 +53,10 @@ python tools/cpu_benchmark.py --weights model.pt --images images --runtime auto 
 기본 ResNet/ConvNeXt/DeepLab/U-Net adapter 학습은 `python/train_builtin.py`를 사용한다.
 이 스크립트는 기존 이미지·마스크 loader를 사용하고 `builtin` backend checkpoint를 저장한다.
 가중치 다운로드는 수행하지 않는다.
+
+Re-DETR v4, SAM2, LibreYOLO처럼 `container` 전용으로 등록된 모델은 설치된 `.dvmodel`의
+검증된 경로를 프로젝트에 저장한 뒤 `pack_train`·`pack_infer`·`pack_export` DVW1 작업으로 실행한다.
+일반 Custom CSP 학습기로 자동 대체하지 않으며, 팩이 없거나 manifest의 모델 ID가 다르면 작업을 거부한다.
 
 C++ 공개 헤더는 `vision_inference.h`, 클래스는 `VisionInference`, 정적 라이브러리는
 `vision_inference`입니다. 모델과 작업자는 초기화 후 재사용합니다.

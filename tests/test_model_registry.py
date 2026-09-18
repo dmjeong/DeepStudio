@@ -9,7 +9,8 @@ import pytest
 
 from core.container_worker import ContainerCommand, ContainerWorker, Frame, ContainerWorkerError, build_container_command
 from core.model_registry import (ModelRegistry, ModelRegistryError,
-                                 builtin_model_specs, registry_with_installed_packs)
+                                 builtin_model_specs, installed_model_path,
+                                 registry_with_installed_packs)
 
 
 def test_requested_catalog_contains_every_product_family_and_redetr_sizes():
@@ -113,6 +114,16 @@ def test_registry_activates_current_pack_over_catalog_without_loading_old_versio
     assert not errors
     assert registry.get("resnet18").notes == "1.0.0"
     assert registry.get("resnet18").release_status == "release_ready"
+
+
+def test_installed_model_path_follows_current_pointer_safely(tmp_path):
+    root = tmp_path / "installed" / "vendor.extra"
+    version = root / "1.0.0"
+    version.mkdir(parents=True)
+    (version / "manifest.json").write_text("{}", encoding="utf-8")
+    (root / "current.json").write_text(json.dumps({"path": str(version)}), encoding="utf-8")
+    assert installed_model_path("vendor.extra", tmp_path / "installed") == version.resolve()
+    assert installed_model_path("../escape", tmp_path / "installed") is None
 
 
 def test_registry_rejects_installed_pack_that_downgrades_catalog_status(tmp_path):

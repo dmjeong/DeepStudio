@@ -110,6 +110,12 @@ class TrainingWidget(TrainingForm, QWidget):
             if errors:
                 raise ValueError("; ".join(errors))
             if self.project is not None and registry.get(installed.model_id).task == self.project.task:
+                # Importing a pack makes it the explicit model selection for
+                # this project.  Persist the directory so the worker cannot
+                # accidentally use the legacy native training engine.
+                self.project.model.model_id = installed.model_id
+                self.project.model.pack_path = str(installed.path)
+                ProjectManager.save(self.project)
                 self._set_model_options(self.project)
             QMessageBox.information(
                 self, "모델 팩 설치 완료",
@@ -124,13 +130,18 @@ class TrainingWidget(TrainingForm, QWidget):
             return
         model_id = self.model_id_combo.currentData() or ""
         try:
-            from core.model_registry import registry_with_installed_packs
+            from core.model_registry import installed_model_path, registry_with_installed_packs
             registry, _ = registry_with_installed_packs()
             spec = registry.get(model_id)
             if len(spec.input_channels) == 1:
                 self.project.training.in_channels = spec.input_channels[0]
             if hasattr(self, "input_size_spin") and model_id not in {"efficientnet_b0", "efficientnet_b1"}:
                 self.input_size_spin.setValue(spec.input_size[0])
+            if "container" in spec.runtimes and "windows_native" not in spec.runtimes:
+                installed = installed_model_path(model_id)
+                self.project.model.pack_path = str(installed) if installed else ""
+            else:
+                self.project.model.pack_path = ""
         except ValueError:
             spec = None
         if model_id not in {"efficientnet_b0", "efficientnet_b1"}:

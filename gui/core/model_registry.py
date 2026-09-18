@@ -65,6 +65,37 @@ def default_installed_model_root(state_dir: str | Path | None = None) -> Path:
     return root.resolve()
 
 
+def installed_model_path(model_id: str, root: str | Path | None = None) -> Path | None:
+    """Resolve the active installed version for a model without loading code."""
+    if not isinstance(model_id, str) or not MODEL_ID_RE.fullmatch(model_id):
+        return None
+    base = default_installed_model_root() if root is None else Path(root).expanduser()
+    if not base.is_absolute() or (base.exists() and base.is_symlink()):
+        return None
+    base = base.resolve()
+    model_dir = base / model_id
+    if not model_dir.is_dir() or model_dir.is_symlink():
+        return None
+    selected: Path | None = None
+    pointer = model_dir / "current.json"
+    if pointer.is_file() and not pointer.is_symlink():
+        try:
+            value = json.loads(pointer.read_text(encoding="utf-8"))
+            candidate = Path(value.get("path", "")).expanduser()
+            if candidate.is_absolute() and candidate.resolve().parent == model_dir.resolve():
+                selected = candidate.resolve()
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            selected = None
+    if selected is None:
+        versions = sorted(path for path in model_dir.iterdir()
+                          if path.is_dir() and not path.is_symlink())
+        selected = versions[-1] if versions else None
+    if selected is None or selected.parent != model_dir.resolve() or selected.is_symlink():
+        return None
+    manifest = selected / "manifest.json"
+    return selected if manifest.is_file() and not manifest.is_symlink() else None
+
+
 @dataclass(frozen=True)
 class ModelSpec:
     """모델 하나의 UI/학습/배포 계약을 설명하는 불변 정의."""
@@ -378,5 +409,5 @@ def registry_with_installed_packs(root: str | Path | None = None) -> tuple[Model
 
 __all__ = [
     "ModelRegistry", "ModelRegistryError", "ModelSpec", "builtin_model_specs",
-    "default_installed_model_root", "registry_with_installed_packs",
+    "default_installed_model_root", "installed_model_path", "registry_with_installed_packs",
 ]

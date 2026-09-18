@@ -1,4 +1,7 @@
 """학습 엔진과 태스크별 지원 옵션의 공통 계약."""
+
+import json
+from pathlib import Path
 MODE_LABELS = {
     "efficientnet_finetune": "EfficientNet 사전학습 모델로 시작",
     "efficientnet_transfer": "EfficientNet 내 가중치로 추가 학습",
@@ -60,6 +63,29 @@ def validate_training_options(project):
                 raise ValueError(f"선택한 모델 {model_id}은 {project.task} 태스크와 맞지 않습니다.")
             if cfg.in_channels not in spec.input_channels:
                 raise ValueError(f"선택한 모델 {model_id}은 입력 채널 {cfg.in_channels}을 지원하지 않습니다.")
+            # Container-only catalog entries must never fall through to the
+            # legacy Custom CSP engine.  The installed pack is deliberately a
+            # project setting so a saved project can be reproduced offline.
+            if "container" in spec.runtimes and "windows_native" not in spec.runtimes:
+                pack_path = getattr(project.model, "pack_path", "")
+                if not isinstance(pack_path, str) or not pack_path.strip():
+                    raise ValueError(
+                        f"{spec.display_name}은 설치된 Docker 모델 팩에서만 학습할 수 있습니다. "
+                        "모델 팩을 설치하고 pack_path를 지정하세요."
+                    )
+                pack_root = Path(pack_path).expanduser()
+                if not pack_root.is_absolute() or pack_root.is_symlink() or not pack_root.is_dir():
+                    raise ValueError("모델 팩 경로는 검증된 절대 디렉터리여야 합니다.")
+                try:
+                    pack_root = pack_root.resolve(strict=True)
+                    manifest_path = pack_root / "manifest.json"
+                    if manifest_path.is_symlink() or not manifest_path.is_file():
+                        raise ValueError("설치된 모델 팩의 manifest.json이 없습니다.")
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                    raise ValueError("설치된 모델 팩 manifest.json을 읽을 수 없습니다.") from exc
+                if not isinstance(manifest, dict) or manifest.get("model_id") != model_id:
+                    raise ValueError("프로젝트 모델 ID와 설치된 모델 팩이 일치하지 않습니다.")
     if type(cfg.efficientnet_no_decay) is not bool:
         raise ValueError("EfficientNet weight decay 제외 옵션은 boolean 필요")
     if capabilities["engine"] == "efficientnet" and cfg.efficientnet_model not in capabilities["models"]:
