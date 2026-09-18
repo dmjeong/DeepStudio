@@ -362,6 +362,13 @@ def test_ci_cpp_runtime_pin_matches_measured_onnx_runtime():
     assert "onnxruntime-linux-x64-1.29.0\"" in workflow
 
 
+def test_python_requirements_pin_the_same_onnx_runtime_release():
+    for relative in ("gui/requirements.txt", "python/requirements.txt",
+                     "python/requirements-efficientnet-cpu.txt", "webapp/requirements.txt"):
+        requirements = (ROOT / relative).read_text(encoding="utf-8")
+        assert "onnxruntime==1.29.0" in requirements, relative
+
+
 def test_windows_workflow_keeps_offline_wsl_as_an_explicit_release_gate():
     workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
     assert "require_offline_wsl" in workflow
