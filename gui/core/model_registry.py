@@ -318,15 +318,23 @@ class ModelRegistry:
         root = Path(path).expanduser()
         if not root.is_absolute() or not root.is_dir() or root.is_symlink():
             raise ModelRegistryError("installed model pack must be an absolute directory")
-        manifest_path = (root / "manifest.json").resolve()
-        if manifest_path.parent != root.resolve() or not manifest_path.is_file() or manifest_path.is_symlink():
+        manifest_path = root / "manifest.json"
+        if manifest_path.is_symlink() or not manifest_path.is_file():
             raise ModelRegistryError("installed model pack manifest.json missing")
+        manifest_path = manifest_path.resolve()
+        if manifest_path.parent != root.resolve():
+            raise ModelRegistryError("installed model pack manifest.json escapes its root")
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if not isinstance(manifest, Mapping):
                 raise ValueError("manifest must be an object")
-            validate_special_assets(manifest, {path.relative_to(root).as_posix()
-                                               for path in root.rglob("*") if path.is_file()})
+            files = set()
+            for entry in root.rglob("*"):
+                if entry.is_symlink():
+                    raise ValueError("installed model pack cannot contain symlinks")
+                if entry.is_file():
+                    files.add(entry.relative_to(root).as_posix())
+            validate_special_assets(manifest, files)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             raise ModelRegistryError("invalid installed model pack") from exc
         spec = _spec_from_mapping(manifest)

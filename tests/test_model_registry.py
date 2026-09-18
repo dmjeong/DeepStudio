@@ -81,6 +81,16 @@ def test_registry_loads_activated_pack_manifests_after_restart(tmp_path):
     assert loaded[0].model_id == "vendor.example-classifier"
 
 
+def test_registry_rejects_symlinked_installed_manifest(tmp_path):
+    root = tmp_path / "installed" / "vendor.example" / "1.0.0"
+    root.mkdir(parents=True)
+    external = tmp_path / "external-manifest.json"
+    external.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+    (root / "manifest.json").symlink_to(external)
+    with pytest.raises(ModelRegistryError, match="manifest"):
+        ModelRegistry.builtin().load_installed_pack(root)
+
+
 def test_registry_discovers_installed_packs_without_hiding_builtins(tmp_path):
     root = tmp_path / "installed" / "vendor.extra" / "1.0.0"
     root.mkdir(parents=True)
