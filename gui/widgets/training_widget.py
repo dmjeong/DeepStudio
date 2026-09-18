@@ -4,6 +4,7 @@ import os
 import time
 import copy
 from dataclasses import asdict
+from pathlib import Path
 import numpy as np
 from PySide6.QtWidgets import QWidget, QFileDialog, QMessageBox
 from PySide6.QtCore import QTimer
@@ -26,6 +27,8 @@ class TrainingWidget(TrainingForm, QWidget):
         super().__init__(parent)
         self.project = None
         self.worker = None
+        self._pack_job = None
+        self._pack_error = ""
         self._run_project = None
         self._run_snapshot = None
         self._pending_result = None
@@ -72,6 +75,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self._update_selection_options()
         # Refresh the metric list before settings callbacks validate its value.
         self._on_patchcore_settings_changed()
+        self._update_pack_controls()
 
     def _set_model_options(self, project):
         """Filter the shared catalog to the current task and restore model_id."""
@@ -117,6 +121,7 @@ class TrainingWidget(TrainingForm, QWidget):
                 self.project.model.pack_path = str(installed.path)
                 ProjectManager.save(self.project)
                 self._set_model_options(self.project)
+                self._update_pack_controls()
             QMessageBox.information(
                 self, "모델 팩 설치 완료",
                 f"{installed.model_id} {installed.pack_version} 팩을 설치했습니다.\n{installed.path}"
@@ -152,6 +157,142 @@ class TrainingWidget(TrainingForm, QWidget):
                     self.mode_combo.setCurrentIndex(custom)
         if model_id in {"efficientnet_b0", "efficientnet_b1"}:
             self._on_efficientnet_model_changed()
+        self._update_pack_controls()
+
+    def _selected_container_spec(self):
+        """Return the selected container-only model and its installed pack path."""
+        if self.project is None:
+            return None, None
+        model_id = getattr(self.project.model, "model_id", "")
+        if not model_id:
+            return None, None
+        try:
+            from core.model_registry import registry_with_installed_packs
+            registry, _ = registry_with_installed_packs()
+            spec = registry.get(model_id)
+        except ValueError:
+            return None, None
+        if "container" not in spec.runtimes or "windows_native" in spec.runtimes:
+            return None, None
+        pack_path = Path(getattr(self.project.model, "pack_path", "")).expanduser()
+        if not pack_path.is_absolute() or pack_path.is_symlink() or not pack_path.is_dir():
+            return spec, None
+        return spec, pack_path.resolve()
+
+    def _update_pack_controls(self):
+        """Show Docker pack actions only for an installed container-only model."""
+        controls = getattr(self, "model_pack_train_button", None)
+        if controls is None:
+            return
+        spec, pack_path = self._selected_container_spec()
+        visible = spec is not None and pack_path is not None and self._pack_job is None
+        for name in ("model_pack_train_button", "model_pack_infer_button", "model_pack_export_button"):
+            getattr(self, name).setVisible(visible)
+        if visible:
+            self.model_pack_train_button.setToolTip(f"{spec.display_name} 팩의 학습 작업 실행\n{pack_path}")
+            self.model_pack_infer_button.setToolTip(f"{spec.display_name} 팩의 추론 작업 실행\n{pack_path}")
+            self.model_pack_export_button.setToolTip(f"{spec.display_name} 팩의 ONNX export 실행\n{pack_path}")
+
+    def _start_model_pack_operation(self, operation: str):
+        """Run a container model pack from the desktop training page."""
+        if operation not in {"train", "infer", "export"} or self._pack_job is not None:
+            return
+        if self._run_project is not None or self._pack_job is not None or (self.worker and self.worker.isRunning()):
+            QMessageBox.warning(self, "작업 진행 중", "현재 작업이 끝난 뒤 모델 팩 작업을 실행하세요.")
+            return
+        from core.job_manager import desktop_manager
+        try:
+            # Fail before saving or changing the page when an inference,
+            # training, or dataset job already owns the process lock.
+            desktop_manager().require_idle()
+        except RuntimeError as exc:
+            QMessageBox.warning(self, "작업 진행 중", str(exc))
+            return
+        spec, pack_path = self._selected_container_spec()
+        if spec is None or pack_path is None:
+            QMessageBox.warning(self, "모델 팩 필요", "서명된 컨테이너 모델 팩을 먼저 설치하고 선택하세요.")
+            self._update_pack_controls()
+            return
+        data_dir = Path(getattr(self.project.data, "root", "")).expanduser()
+        if not data_dir.is_absolute() or not data_dir.is_dir() or data_dir.is_symlink():
+            QMessageBox.warning(self, "데이터 경로 확인", "모델 팩 작업에 사용할 데이터 루트가 없습니다.")
+            return
+        data_dir = data_dir.resolve()
+        project_dir = Path(getattr(self.project, "project_dir", "")).expanduser()
+        if not project_dir.is_absolute() or project_dir.is_symlink() or not project_dir.is_dir():
+            project_dir = data_dir
+        work_dir = (project_dir.resolve() / ".deepvision-model-pack-work")
+        work_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            ProjectManager.save(self.project)
+            from core.desktop_jobs import DesktopJob
+            request = {
+                "task": self.project.task,
+                "model": asdict(self.project.model),
+                "training": asdict(self.project.training),
+                "data": asdict(self.project.data),
+                "project_path": ProjectManager.get_active_filepath(self.project),
+            }
+            payload = {
+                "operation": operation,
+                "pack_dir": str(pack_path),
+                "data_dir": str(data_dir),
+                "work_dir": str(work_dir),
+                "request": request,
+                "cpus": max(1, min(128, os.cpu_count() or 4)),
+                "memory": "8g",
+            }
+            self._pack_error = ""
+            self._pack_job = DesktopJob("pack_" + operation, payload, self)
+            self._pack_job.event.connect(self._on_pack_event)
+            self._pack_job.failed.connect(self._on_pack_failed)
+            self._pack_job.completed.connect(self._on_pack_completed)
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
+            self.settings_panel.setEnabled(False)
+            self.progress_bar.setRange(0, 0)
+            self.status_label.setText(f"{spec.display_name} 팩 {operation} 중...")
+            self.run_identity_label.setText(f"팩 작업: {operation} · {pack_path}")
+            self._on_log_message(f"모델 팩 작업 시작: {operation} / {spec.model_id}")
+            self._pack_job.start()
+        except Exception as exc:
+            self._pack_job = None
+            self.settings_panel.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            QMessageBox.critical(self, "팩 작업 시작 오류", str(exc))
+
+    def _on_pack_event(self, event: str, args):
+        if event == "log_message":
+            self._on_log_message(str(args[0] if args else ""))
+        elif event == "model_pack_prepared":
+            self._on_log_message(f"팩 준비 완료: {args[0] if args else {}}")
+        elif event == "model_pack_result":
+            self._on_log_message(f"팩 결과 수신: {args[0] if args else {}}")
+
+    def _on_pack_failed(self, message: str):
+        self._pack_error = str(message)
+        self._on_log_message(f"팩 작업 실패: {message}")
+
+    def _on_pack_completed(self, job):
+        """Release the desktop job and show its opaque pack result."""
+        error = self._pack_error or str(job.get("error", ""))
+        status = job.get("status", "failed")
+        output = job.get("output") or {}
+        current = self._pack_job
+        self._pack_job = None
+        if current is not None:
+            current.deleteLater()
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.settings_panel.setEnabled(True)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100 if status == "completed" and not error else 0)
+        self.status_label.setText("팩 작업 완료" if status == "completed" and not error else "팩 작업 실패")
+        self._update_pack_controls()
+        if error or status != "completed":
+            QMessageBox.critical(self, "팩 작업 실패", error or "모델 팩 작업이 실패했습니다.")
+        else:
+            QMessageBox.information(self, "팩 작업 완료", f"{output}")
 
     def _training_capabilities(self):
         if self.mode_combo.currentData() not in MODE_LABELS or (self.project and self.project.task == "obb"):
@@ -726,6 +867,11 @@ class TrainingWidget(TrainingForm, QWidget):
 
     def _stop_training(self):
         """학습 중지"""
+        if self._pack_job is not None:
+            self._pack_job.stop()
+            self.status_label.setText("팩 작업 중지 요청 중...")
+            self.stop_btn.setEnabled(False)
+            return
         if self.worker:
             self._cancel_requested = True
             self.worker.stop()

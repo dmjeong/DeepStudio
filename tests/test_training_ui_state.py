@@ -178,6 +178,54 @@ def test_completed_resume_displays_worker_config_and_class_order(prepared_page, 
     assert page.settings_panel.isEnabled()
 
 
+def test_installed_container_pack_actions_start_dvw1_job(prepared_page, monkeypatch, tmp_path):
+    """The desktop page exposes the same pack lifecycle as the web API."""
+    from core.desktop_jobs import DesktopJob
+    from core.project import ProjectManager
+
+    page = prepared_page
+    project = copy.deepcopy(page.project)
+    project.task = "detect"
+    project.training.training_mode = "custom"
+    project.model.model_id = "re_detr_v4_small"
+    data_root = tmp_path / "detect-data"
+    pack_root = tmp_path / "re-detr-pack"
+    data_root.mkdir()
+    pack_root.mkdir()
+    project.data.root = str(data_root)
+    project.model.pack_path = str(pack_root)
+    page.set_project(project)
+    # The registry normally supplies this path after a real .dvmodel install;
+    # the fixture supplies the already-validated directory directly.
+    page.project.model.pack_path = str(pack_root)
+    page._update_pack_controls()
+
+    assert not page.model_pack_train_button.isHidden()
+    assert not page.model_pack_infer_button.isHidden()
+    assert not page.model_pack_export_button.isHidden()
+
+    start = MagicMock()
+    monkeypatch.setattr(DesktopJob, "start", start)
+    monkeypatch.setattr(ProjectManager, "get_active_filepath",
+                        lambda current: str(tmp_path / "detect.dvproj"))
+    page._start_model_pack_operation("train")
+
+    assert start.call_count == 1
+    assert page._pack_job is not None
+    assert page._pack_job.kind == "pack_train"
+    assert page._pack_job.payload["pack_dir"] == str(pack_root.resolve())
+    assert page._pack_job.payload["data_dir"] == str(data_root.resolve())
+    assert page._pack_job.payload["request"]["model"]["model_id"] == "re_detr_v4_small"
+    assert not page.start_btn.isEnabled()
+    assert not page.settings_panel.isEnabled()
+
+    page._on_pack_completed({"status": "completed", "output": {"result": "ok"}})
+    assert page._pack_job is None
+    assert page.start_btn.isEnabled()
+    assert page.settings_panel.isEnabled()
+    assert not page.model_pack_train_button.isHidden()
+
+
 def test_layer_observation_controls_and_result_reset(page):
     change_mode(page, "efficientnet_finetune")
     page.debug_check.setChecked(True)

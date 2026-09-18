@@ -69,6 +69,22 @@ class TrainingForm:
         if hasattr(self, "_install_model_pack"):
             self.model_pack_install_button.clicked.connect(self._install_model_pack)
         model_layout.addWidget(self.model_pack_install_button)
+        pack_actions = QHBoxLayout()
+        self.model_pack_train_button = QPushButton("팩 학습")
+        self.model_pack_infer_button = QPushButton("팩 추론")
+        self.model_pack_export_button = QPushButton("팩 ONNX export")
+        for button, operation in (
+            (self.model_pack_train_button, "train"),
+            (self.model_pack_infer_button, "infer"),
+            (self.model_pack_export_button, "export"),
+        ):
+            button.setVisible(False)
+            button.setToolTip("설치된 Docker 모델 팩의 DVW1 작업을 실행합니다.")
+            callback = getattr(self, "_start_model_pack_operation", None)
+            if callable(callback):
+                button.clicked.connect(lambda _checked=False, op=operation: callback(op))
+            pack_actions.addWidget(button)
+        model_layout.addLayout(pack_actions)
         left_layout.addWidget(model_group)
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

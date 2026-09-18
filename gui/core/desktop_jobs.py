@@ -50,6 +50,11 @@ class DesktopJob(QThread):
         except Exception as exc:
             self.error = str(exc)
             self.failed.emit(self.error)
+            # ``failed`` is informational; the owner also needs the same
+            # terminal event used by JobManager failures to release controls
+            # and the QThread reference.  Without this, a startup/read error
+            # could leave a model-pack button disabled indefinitely.
+            self.completed.emit({"status": "failed", "error": self.error, "output": {}})
 
 
 class PersistentInferenceCache:
