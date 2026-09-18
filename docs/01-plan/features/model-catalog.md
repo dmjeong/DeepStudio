@@ -94,7 +94,9 @@ DeepLab/U-Net의 클래스별 semantic mask와 혼동하지 않는다.
 최소사양 실증은 Tiny, batch1, encoder freeze + decoder fine-tune부터 수행한다.
 전체 encoder fine-tune은 별도 VRAM 프로필을 통과한 경우 제공한다.
 영상 memory/state 학습·추적과 ONNX export는 사용자 필요 여부 확정 후 별도 계약·인수 항목으로 추가한다.
-자동 전체 mask 생성도 grid prompt와 중복 제거가 필요한 별도 실행 모드다.
+자동 전체 mask 생성은 `positive_point_grid_union` 모드로 네이티브 SDK에 구현한다. 축마다 1~32
+grid prompt를 순회하고 quality threshold를 적용해 선택 mask를 union한다. upstream 영상
+memory/state와는 별도 계약으로 유지한다.
 
 Meta는 Windows에서 WSL을 권장한다. 따라서 이 제품의 **Windows native 학습 worker**는
 P0 실증이 필요하다. 선택적 CUDA extension 미사용 시 빠지는 작은 구멍/점 제거 후처리를

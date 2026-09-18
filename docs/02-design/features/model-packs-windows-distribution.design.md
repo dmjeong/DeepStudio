@@ -237,6 +237,9 @@ PatchCore는 backbone·bank·kNN·upsample·Gaussian·score를 포함하는 전�
 SAM2는 encoder/decoder 두 그래프와 prompt 변환을 제공한다. image hash·model hash·입력 규약이 일치할 때만
 embedding을 재사용하고 다른 이미지/모델에서는 폐기한다. decoder 출력 quality와 multiple mask 선택 규칙을
 명시한다. 영상 memory state는 별도 미확정 범위이며 이미지 exporter 성공으로 지원 완료를 선언하지 않는다.
+네이티브 SDK의 automatic-mask는 1~32 격자의 positive point prompt를 순회하고 quality threshold를
+통과한 선택 mask를 union하는 `positive_point_grid_union` 계약으로 제공한다. 이는 이미지 자동 마스크
+primitive이며 upstream 영상 memory propagation 계약을 대신하지 않는다.
 SAM2 결과는 `low_res_mask_logits`와 선택 mask index를 제공한다. 기본 1024 프로필은 이미지당
 FP32 `[M,256,256]`을 SDK 규약으로 정규화하고 원시 그래프의 batch 축/shape는 manifest에 기록한다.
 이진 mask나 원본 크기로 확대한 mask를 이전 logits 대신 사용하지 않는다. `image_context`에는
