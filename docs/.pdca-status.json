@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-18T03:45:52.134319+00:00",
+  "lastUpdated": "2026-09-18T04:25:56.036783+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -94,7 +94,9 @@
       "iterationCount": 0,
       "documents": {
         "plan": "docs/01-plan/features/model-packs-windows-distribution.plan.md",
-        "design": "docs/02-design/features/model-packs-windows-distribution.design.md"
+        "design": "docs/02-design/features/model-packs-windows-distribution.design.md",
+        "catalog": "docs/01-plan/features/model-catalog.md",
+        "distributionReadme": "packaging/windows/README.ko.md"
       },
       "taskChain": [
         {
@@ -127,10 +129,17 @@
       ],
       "timestamps": {
         "started": "2026-09-18T03:37:37.984Z",
-        "lastUpdated": "2026-09-18T03:45:52.134319+00:00"
+        "lastUpdated": "2026-09-18T04:25:56.036783+00:00"
       },
-      "designStatus": "completed",
-      "implementationStatus": "not_started"
+      "designStatus": "revised_with_open_decisions",
+      "implementationStatus": "not_started",
+      "requirementsRevision": 2,
+      "openDecisions": [
+        "Re-detr exact family: RT-DETR or RF-DETR",
+        "SAM2 prompt / automatic / video scope",
+        "P0 single EXE payload size and signature, Windows SAM2, PatchCore full ONNX, offline WSL",
+        "Hardware/driver minima require measured model profiles before release"
+      ]
     }
   },
   "pipeline": {
@@ -245,6 +254,12 @@
       "action": "plan_and_design_completed",
       "implementation": "not_started",
       "timestamp": "2026-09-18T03:45:52.134319+00:00"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "requirements_revision_2_design_written",
+      "timestamp": "2026-09-18T04:25:56.036783+00:00",
+      "implementation": "not_started"
     }
   ]
 }

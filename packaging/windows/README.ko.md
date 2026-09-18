@@ -1,0 +1,134 @@
+# Deep Vision Studio — Windows 학습툴
+
+**배포 README 설계 초안 · 2026-09-18**
+이 파일은 다음 배포판에 동봉할 문서다. 아래 모델 지원과 최소사양은 개발·검증 목표이며,
+현재 저장소 또는 아직 생성하지 않은 설치파일의 기능을 보장하는 릴리스 공지가 아니다.
+정식 배포 시 고정한 모델/런타임/드라이버 버전과 실제 검증된 사양으로 갱신한다.
+
+## 제품 구성
+
+하나의 `DeepVisionStudio-Setup-<version>-win-x64.exe`에 Windows 프로그램, 기본 모델,
+재배포 조건을 확인한 초기 가중치, 필요한 런타임, C#/C++ SDK, 문서와 라이선스 고지를 넣는다.
+지원사양에 맞는 PC에서는 Python·pip·conda·Node·Git·CUDA Toolkit을 따로 설치하지 않는다.
+기본 모델의 최초 실행도 인터넷 다운로드 없이 동작하도록 구성한다.
+
+| 태스크 | 기본 제공 목표 | 초기 세부 변형 제안 |
+|---|---|---|
+| Classification | EfficientNet B0/B1 | B0, B1 |
+| Classification | ResNet | 18, 50 |
+| Classification | ConvNeXt V1 | Tiny |
+| Classification | LibreYOLO | MobileNetV4 Small 분류 모델 |
+| Anomaly detection | PatchCore | Wide-ResNet50-2, ResNet18 백본 |
+| Object detection | Re-detr | 정확한 모델명 확인 후 확정 |
+| Object detection | LibreYOLO | LibreYOLO9 Tiny |
+| Segmentation | SAM2 | SAM2.1 Hiera Tiny, 단일 이미지 프롬프트 분할 |
+| Segmentation | DeepLab V3+ | ResNet34 encoder |
+| Segmentation | U-Net | ResNet18 encoder |
+
+모든 기본 모델군에 학습/fit·추론·ONNX 배포·C#/C++ 실행을 제공하는 것이 출시 조건이다.
+LibreYOLO 라이브러리의 모든 모델/변형을 기본 제공한다는 뜻은 아니다.
+세부 모델·가중치·라이선스 확인과 Windows 검증을 끝낸 버전을 정식 지원표에 적는다.
+
+## 최소사양 — 초기 검증 기준
+
+아래는 아직 실측으로 확정하지 않은 설계 사양이다. 큰 해상도·batch·모델에서는 더 많은 메모리가 필요하다.
+
+| 항목 | UI·라벨링·경량 CPU 추론 | 기본 GPU 학습 검증 기준 | 큰 모델/고해상도 권장 검증 기준 |
+|---|---|---|---|
+| OS | 지원 중인 Windows 11 x64 | 동일 | 동일 |
+| CPU | AVX2 지원 4코어 이상 | AVX2 지원 8코어 이상 | 8코어 이상 |
+| RAM | 16GB 이상 | 32GB 이상 | 64GB 이상 |
+| GPU | 필수 아님 | 지원하는 NVIDIA CUDA GPU, VRAM12GB 이상 | VRAM24GB 이상 |
+| 여유 저장공간 | SSD50GB + 데이터 | SSD100GB + 데이터 | NVMe200GB + 데이터 |
+| 설치 권한 | 시스템 구성용 관리자 권한 | 동일 | 동일 |
+| 앱 실행 | 일반 사용자 권한 | 동일 | 동일 |
+
+- CPU 추론 사양은 전체 모델 학습 속도·메모리를 보장하는 사양이 아니다.
+- GPU의 지원 세대/compute capability와 최소 Windows 드라이버 버전은 배포 runtime을 고정한 뒤 실측하여
+  정식 README와 `release-manifest.json`에 적는다. 현재 해당 값은 확정 전이며, 미기재 상태로 정식 배포하지 않는다.
+- 호환 NVIDIA 드라이버는 PC 사전조건이다. 번들 CUDA runtime은 그래픽 드라이버를 대체하지 않는다.
+- 실제 설치 여유공간은 임시 해제, 설치물, 이전 버전 복구, WSL 가상디스크와 모델 이미지까지 계산한다.
+  설치기가 표시하는 계산값이 위 설계값보다 크면 계산값을 적용한다. 데이터/학습 결과 공간은 별도다.
+- Windows 10, Windows Server, Windows ARM64, AMD/Intel GPU 학습은 초기 지원으로 표시하지 않는다.
+
+최소 GPU 인수 테스트는 작은 기본 변형, batch1에서 시작한다. 기본 입력은 분류224(B1은240),
+탐지640 후보, semantic 분할512, PatchCore224/bank≤4096, SAM2 Tiny1024다.
+SAM2의 최소 프로필은 encoder를 고정한 decoder fine-tune이다. 전체 encoder 학습과 큰 batch는
+별도의 RAM/VRAM 테스트 결과를 확인해야 한다. 12GB로 모든 설정이 학습된다는 뜻은 아니다.
+
+## Docker 모델 확장 사전조건
+
+추가 모델은 앱의 `모델 관리 → 모델 팩 가져오기`에서 `.dvmodel`을 선택한다.
+이미지와 의존성이 들어 있는 팩을 로컬로 가져와 실행하며 설치 중 Docker Hub/pip/apt 다운로드를 하지 않는다.
+
+설치 프로그램이 앱 전용 WSL2와 Docker Engine 환경을 구성한다. 다음 조건은 필요하다.
+
+- WSL2/SLAT를 지원하는 CPU, BIOS/UEFI 가상화 활성화.
+- Windows 가상화 기능을 사용할 수 있는 회사 보안 정책.
+- 관리자 설치 권한과 필요 시 재부팅 허용.
+- WSL 이미지·모델 이미지·작업 복사본을 저장할 추가 공간.
+- GPU 컨테이너 사용 시 WSL GPU를 지원하는 호환 Windows NVIDIA 드라이버.
+
+BIOS 설정이나 조직 정책 때문에 가상화를 사용할 수 없다면 설치기가 이를 우회하지 않는다.
+기본 Windows 모델은 사용할 수 있어도 Docker 확장까지 준비된 상태는 아니다.
+별도로 Docker Desktop을 설치하거나 그 설정을 바꿀 필요가 없도록 앱 전용 환경을 사용한다.
+기존 사용자 WSL 배포판이나 Docker 환경을 덮어쓰지 않는다. 앱 전용 환경은 실제 Windows 사용자별로
+등록하며 두 번째 사용자는 첫 실행 시 설치된 로컬 자산으로 자동 초기화한다. 추가 다운로드는 필요하지 않다.
+
+## 설치와 첫 사용
+
+1. 최소사양과 GPU 드라이버/가상화 조건을 확인한다.
+2. Setup을 실행해 경로·구성·라이선스 고지를 확인한다.
+3. 설치기가 번들 파일과 필요한 Windows 구성요소를 검사·설치한다. 필요하면 재부팅 후 이어간다.
+4. 설치 완료 검사에서 기본 모델/가중치와 Docker 확장 준비 상태를 확인한다.
+5. 새 프로젝트에서 태스크와 모델을 선택하고 로컬 데이터를 등록한다.
+6. 학습/fit 결과를 저장한 후 추론하거나 `ONNX 배포 내보내기`를 사용한다.
+
+한글·공백 경로와 일반 사용자 실행을 지원하도록 검증한다.
+프로젝트·원본 이미지·학습 결과는 사용자가 지정한 폴더에 저장한다.
+사용자 데이터나 모델을 외부 서버로 업로드하는 절차는 없다.
+
+## 모델별 알아둘 점
+
+- EfficientNet B1의 기본 사전학습 입력은 B0와 다르다. 모델과 함께 저장된 전처리를 적용한다.
+- PatchCore 학습은 정상 이미지의 특징 bank 생성/선택과 threshold 보정이다. 일반 epoch 학습과 구분한다.
+- DeepLab V3+/U-Net의 초기 가중치는 encoder 사전학습일 수 있으며, 사용자 클래스 분할 head는 학습해야 한다.
+- SAM2 기본 모드는 점·박스로 대상을 지정하는 이미지 분할이다. 사용자 클래스 전체를 자동 분류하는 모델과 다르다.
+  자동 전체 mask 생성과 영상 추적의 포함 범위는 확정 전이다.
+- `Re-detr`는 RT-DETR/RF-DETR 중 정확한 모델명을 확인한 뒤 표시한다.
+
+## ONNX 배포와 C#/C++
+
+내보내기 결과에는 ONNX 그래프, 필요한 external data, 전후처리/클래스/threshold 설정,
+검증 결과와 고지가 들어간다. SAM2는 encoder/decoder 그래프를 함께 배포한다.
+PatchCore는 memory bank와 점수 계산을 포함한 배포 결과를 사용한다.
+
+C++17 또는 C# SDK는 이 배포 폴더를 열어 추론한다. 추론 프로그램에 Python·학습툴·Docker 설치를 요구하지 않는다.
+C# 기본 예제는 .NET 10 self-contained, C++ 예제는 Windows x64 Release로 제공하는 것이 목표다.
+.NET Framework 4.8 지원은 별도 검증 전까지 표시하지 않는다.
+개발 프로젝트를 빌드하는 도구는 개발자에게 필요하지만 완성된 프로그램의 일반 사용자에게 요구하지 않는다.
+
+모델을 한 번 초기화하고 여러 이미지를 반복 처리한다. 입력 buffer 수명·background 큐·결과 메모리 해제는
+SDK 설명을 따른다. ONNX 파일만 복사하고 설정이나 external data를 빼면 정상 배포가 아니다.
+
+## 속도와 오류
+
+표시 시간은 파일 읽기·전처리·모델·후처리·큐·통신·화면 시간을 구분한다.
+EfficientNet B0 224에서 8ms는 특정 Windows/i7 실측으로 확인할 목표이며 전체 모델의 보장 수치가 아니다.
+Docker 추가가 자동으로 더 빠른 추론을 뜻하지 않는다.
+
+가중치 누락, 잘못된 팩/런타임, 수치 검증 실패, GPU 메모리 부족, 큐 포화는 다른 오류로 표시한다.
+수치 검증을 통과하지 못한 모델을 허용 오차를 자동 늘려 배포하지 않는다.
+다른 모델의 기능과 UI는 계속 사용할 수 있어야 한다.
+
+## 업데이트·제거·라이선스
+
+프로젝트는 모델 팩 버전과 가중치를 고정한다. 업데이트만으로 모델을 바꾸지 않는다.
+제거 시 사용자 프로젝트·학습 결과는 보존한다. 앱 전용 WSL/모델 이미지 삭제는 별도 선택 사항이다.
+
+`licenses/`, `THIRD_PARTY_NOTICES`, `sbom.cdx.json`, `release-manifest.json`을 함께 제공한다.
+코드, pretrained 가중치, OS 패키지, GPU 라이브러리의 배포 조건을 각각 확인한다.
+상업적 이용/재배포 근거가 없는 가중치를 기본 설치파일에 넣지 않는다.
+
+정식 배포 전 필수 확인: 실제 단일 EXE 생성·서명, 정확한 OS/runtime/driver 최소 버전,
+모델별 Windows 학습·ONNX·C#/C++ 결과 일치, 오프라인 Docker 추가, 위 사양에서의 메모리 실측.

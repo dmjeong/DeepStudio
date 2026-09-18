@@ -73,3 +73,17 @@ npm run build
 
 데스크톱 실행에는 Qt 의존성이 필요합니다. C++17 Release/CTest 절차는 위 C++ 안내에
 있습니다. 경로/API 이름 정리의 범위와 검증 결과는 [정리 보고서](docs/04-report/studio-cleanup.report.md)를 참고하세요.
+
+## 다음 배포판 설계
+
+기본 모델의 학습·추론·ONNX C#/C++ 배포, Docker 모델 확장과 단일 Windows 설치 EXE를 설계 중입니다.
+아래 문서는 구현 목표이며 위의 현재 지원 기능과 구분합니다.
+
+- [기본 모델 목록과 지원 판정](docs/01-plan/features/model-catalog.md)
+- [개정 계획](docs/01-plan/features/model-packs-windows-distribution.plan.md)
+- [상세 설계](docs/02-design/features/model-packs-windows-distribution.design.md)
+- [설치파일에 동봉할 README·최소사양 초안](packaging/windows/README.ko.md)
+
+최소사양은 UI/CPU 추론, GPU 학습, Docker 확장으로 구분하며 모델별 실측 후 확정합니다.
+현재 초안은 RAM16GB/CPU 실행, RAM32GB·VRAM12GB/GPU 학습을 검증 기준으로 제시하며,
+모든 모델·해상도의 실행 보장을 뜻하지 않습니다.

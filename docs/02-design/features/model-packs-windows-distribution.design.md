@@ -1,432 +1,410 @@
-# 모델 팩과 Windows EXE 상세 설계
+# Windows 학습툴·모델 확장·ONNX C#/C++ 배포 설계
 
-작성일: 2026-09-18 · 기준: `73e680f` · 상태: 설계안 작성 완료, 실행 코드 구현 전
+2026-09-18 · 개정 2 · 기준 `d88d275` · 설계 산출물, 구현/Windows 인수 전
 
-관련 문서: [계획](../../01-plan/features/model-packs-windows-distribution.plan.md)
+관련: [계획](../../01-plan/features/model-packs-windows-distribution.plan.md),
+[모델 카탈로그](../../01-plan/features/model-catalog.md),
+[동봉 README 초안](../../../packaging/windows/README.ko.md)
 
-## 1. 설계 결정
+## 1. 제품 계약과 결정
 
-1. EXE 본체는 현재 Qt/Python 앱을 유지한다. 기존 CPU 학습·추론·Grad-CAM·PyTorch fallback을 포함한다.
-2. 모델 팩 `.dvmodel`을 등록하면 GUI와 웹에 지원 태스크·학습 옵션이 나타나게 한다.
-3. 실행 방식은 `builtin`, `onnx`, `container`로 나눈다. 사용자 화면에서는 실행 가능한 기능과 준비 상태를 보여준다.
-4. Docker/WSL2는 선택 의존성이다. 새 모델의 학습·내보내기와 특수 런타임에 사용한다.
-5. 지연시간에 민감한 C++17 추론은 ONNX Runtime을 프로그램 안에서 직접 호출한다.
-6. 배포는 PyInstaller `onedir`를 NSIS 설치 EXE로 포장한다. 대용량 모델 팩은 설치기 옆 오프라인 파일로 분리할 수 있다.
-7. 프레임워크·DLL·가중치의 버전과 파일 hash를 고정한다. 모델 이름만 같다는 이유로 새 버전을 자동 적용하지 않는다.
+사용자가 지정한 모든 기본 모델군은 학습·추론·ONNX 내보내기·C#/C++ 배포가 출시 요건이다.
+지원 완료는 변형별 Windows 실증 후에만 표시한다. 설치는 모든 기본 모델과 필요한 프로그램을 포함한
+오프라인 Setup EXE 하나로 제공한다. 모델을 제외하거나 설치 후 다운로드하면서 같은 요구를 충족했다고 하지 않는다.
 
-`Model Pack`은 Docker 이미지와 동의어가 아니다. 모델·가중치·입출력 규약·실행 방법을 설명하는 배포 단위다.
-팩이 필요로 할 때 Docker 이미지가 포함되며, ONNX 팩은 Docker 없이 실행된다.
+기본 모델은 Windows native worker에서 CPU/CUDA로 실행한다. 런타임 차이는 독립 프로세스와 버전별
+runtime ID로 분리한다. Docker는 나중에 추가할 모델을 위한 별도 실행 방식이다.
+C#/C++ 추론에는 학습툴·Python·Docker가 필요하지 않도록 ONNX와 native SDK만 배포한다.
 
-## 2. 전체 구조
+## 2. 구성
 
 ```mermaid
 flowchart TB
-    UI[Windows EXE / 기존 로컬 웹 UI] --> REG[ModelRegistry\n팩·버전·기능 조회]
-    REG --> RM[RuntimeManager\n시작·준비·작업·취소·종료]
-    RM --> BI[BuiltinAdapter\n기존 학습·추론]
-    RM --> ON[OnnxAdapter\nWindows 직접 실행]
-    RM --> CO[ContainerAdapter\nDocker / WSL2]
-    CO --> WK[모델 Worker\n학습·내보내기·추론]
-    WK --> AR[검증된 ONNX + model.json]
-    AR --> ON
-    AR --> CPP[C++17 VisionInference\nClassificationWorker]
-    BI --> RES[공통 진행 이벤트·결과·아티팩트]
-    ON --> RES
-    WK --> RES
-    RES --> UI
+    SETUP[단일 오프라인 Setup EXE] --> APP[Windows 학습툴 UI]
+    SETUP --> WP[Windows 모델 workers\nPython·CPU/CUDA·기본 가중치]
+    SETUP --> EXT[앱 전용 WSL2 / Docker Engine]
+    SETUP --> SDK[C# / C++17 SDK·예제·README]
+    APP --> REG[ModelRegistry / JobManager]
+    REG --> WP
+    REG --> CW[Container worker]
+    EXT --> CW
+    WP --> CK[학습 결과 checkpoint]
+    CW --> CK
+    CK --> EXP[모델별 exporter / 수치 검증]
+    EXP --> PK[ONNX 배포 번들]
+    PK --> CPP[공통 C++17 추론 core]
+    SDK --> CPP
+    CPP --> RESULT[분류·탐지·이상·분할 결과]
 ```
 
-Docker Worker는 UI 객체를 알지 못한다. Qt 없는 `TrainingEvents`, `InferenceResult` 및
-현재 작업 관리자(`gui/core/training_engine.py`, `desktop_jobs.py`, `webapp/jobs.py`)를 연결 지점으로 삼는다.
-모델 등록부는 Qt나 FastAPI에 의존하지 않는 공통 모듈로 둔다.
+Qt를 기본 응용 UI로 유지한다. 기존 로컬 웹 UI도 같은 등록부·작업 계약을 사용한다.
+UI 프로세스는 무거운 학습 라이브러리를 직접 import하지 않는다. 프로젝트/데이터 편집·렌더링과
+모델 실행을 분리해 worker의 DLL 충돌이나 학습 실패가 앱 전체를 종료시키지 않게 한다.
 
-## 3. 새 파일과 기존 변경 위치
-
-다음은 구현할 경로이며 현재 존재하는 기능으로 표시하지 않는다.
+## 3. 코드 구성과 이전
 
 ```text
 model_sdk/
-  manifest.schema.json       # 팩 메타데이터
-  contracts/                 # 태스크별 입출력·학습 이벤트
-  adapter.py                 # 실행기 공통 인터페이스
-  worker_protocol.py         # 프레임 송수신
+  schemas/manifest.schema.json
+  schemas/job.schema.json
+  contracts/                       # image, classification, detection, anomaly, semantic, prompted
+  worker_protocol.py
 model_runtime/
-  registry.py                # 팩 탐색·호환성·버전 선택
-  installer.py               # 안전한 추출·검증·원자적 활성화
-  assets.py                  # 가중치와 데이터 파일 조회
-  manager.py                 # 수명주기·자원·작업 관리
-  adapters/
-    builtin.py
-    onnx.py
-    container.py
-model_packs/builtin/         # 기존 모델의 manifest, 사용자 가중치는 제외
+  registry.py                      # 목록·상태·호환성·버전
+  installer.py                     # 팩 검증·활성화·롤백
+  assets.py                        # 로컬 가중치 조회
+  manager.py                       # worker 준비·큐·자원·취소
+  windows_worker.py
+  container_worker.py
+  managed_wsl.py
+model_adapters/
+  efficientnet/
+  resnet/
+  convnext_v1/
+  libre_classification/
+  patchcore/
+  detr/                            # 정확한 family 확인 후 구현체 고정
+  libre_detection/
+  sam2/
+  deeplab_v3plus/
+  unet/
+cpp/
+  include/vision_runtime.h          # 다중 태스크 C++ API
+  include/vision_runtime_c.h        # 고정 C ABI
+  src/model_session.cpp
+  src/preprocess.cpp
+  src/postprocess.cpp
+  src/sam_session.cpp
+sdk/csharp/                        # SafeHandle 기반 C ABI 래퍼·NuGet·예제
 packaging/windows/
-  DeepVisionStudio.spec
-  installer.nsi
-  profiles/                 # Windows CPU 잠금 파일·빌드 설정
-  collect_assets.py
-  collect_notices.py
-tools/model_pack.py          # 개발자용 validate/build/verify 명령
-tests/model_packs/           # 계약·호환성·업데이트·복구 검증
+  bootstrapper/                    # WiX Burn 후보, 오프라인 orchestration
+  manifests/                      # 파일·런타임·가중치·라이선스 잠금
+  profiles/                       # native CPU/CUDA 및 managed WSL
+  README.ko.md
+  collect_payloads.py
+  validate_payloads.py
 ```
 
-기존 `training_modes.py`는 등록부를 조회하는 호환 창구로 남긴 뒤 고정 분기를 점진적으로 제거한다.
-`webapp/server.py`의 options와 Qt 모델 선택 UI도 같은 capability 응답을 사용한다.
-`python/onnx_classifier.py`의 기존 schema 5 검증을 삭제하지 않는다. 기존 EfficientNet 어댑터로 유지하고
-새 계약을 지원하는 범용 실행기를 별도로 추가한다.
+새 경로는 구현 목표다. 현재 `training_modes.py`, `webapp/server.py`, `webapp/worker.py`,
+GUI의 모델 분기를 등록부로 옮긴다. 기존 엔진을 먼저 adapter로 감싸 수치·프로젝트 회귀를 검사한다.
+현재 `VisionInference`/`ClassificationWorker`는 호환 API로 유지하고 새 공통 core에 위임한다.
+기존 `python/onnx_classifier.py` schema 5 검사는 해당 adapter 안에서 유지하며 이름 검사만 제거해 범용화하지 않는다.
 
-## 4. 모델 팩 형식과 식별
+## 4. 모델 등록부·학습 UI
 
-`.dvmodel`은 버전이 있는 ZIP 컨테이너다. 데이터만 있는 팩과 실행 이미지가 있는 팩이 같은 최상위 규약을 쓴다.
+카탈로그는 `task → family → variant → training_profile → runtime`을 제공한다.
+LibreYOLO처럼 library와 architecture가 다른 항목은 화면에도 둘을 표시한다.
+사용 가능한 모델만 골라 쓰게 하되, 누락 파일·호환 불가·미검증 상태도 이유를 볼 수 있게 한다.
+
+선언 필드:
+
+- `id/version/content_hash`, source revision, runtime ID, OS/arch/CPU/GPU 요건.
+- `train/infer/export/resume/fit/gradcam` capabilities와 실제 지원 학습 옵션.
+- 이미지·라벨·태스크·output schema, 입력 크기/채널·클래스 순서.
+- 전처리·후처리·score 계약의 ID/버전.
+- 초기 가중치와 학습 결과의 구분, asset hash·크기·출처·재배포 검토 상태.
+- 지원 shape/batch/정밀도/opset/ORT 범위, 연산/custom op 요구.
+- 검증 결과와 지원 상태, 라이선스/NOTICE/SBOM 참조.
+
+학습 옵션은 허용된 JSON Schema 숫자·범위·enum·boolean·기본값으로 폼을 생성한다.
+학습 재개는 model/runtime/optimizer schema가 일치할 때만 활성화한다.
+PatchCore는 fit/bank 갱신으로 표시한다. SAM2는 객체 mask와 prompt 설정을 별도로 표시한다.
+Grad-CAM과 자동 분할 같은 부가 기능은 모든 모델에 임의 활성화하지 않는다.
+
+## 5. Windows worker와 의존성
+
+서명·검증된 내장 worker launcher가 번들 runtime의 절대 경로로 프로세스를 시작한다.
+각 runtime은 자체 Python/torch/torchvision/SMP/Libre/SAM 의존 버전을 잠근다.
+호환되는 adapter는 같은 runtime ID를 공유할 수 있지만 버전 충돌을 억지로 한 환경에 넣지 않는다.
+동일 내용의 런타임·가중치는 installer의 content hash 저장소에서 중복 수집하지 않는다.
+
+CPU/CUDA 처리 방식은 P0에서 같은 PyTorch CUDA 번들의 CPU 경로를 먼저 검증한다.
+CPU만 있는 PC에서 드라이버 DLL 누락 때문에 import가 실패하지 않아야 한다. 별도 CPU 런타임이 필요하면
+그 크기도 단일 EXE 예산에 포함한다. CUDA/cuDNN의 재배포 허용 DLL만 번들하고 CUDA Toolkit 설치는 요구하지 않는다.
+호스트 NVIDIA 드라이버는 장비 사전조건이며 번들 CUDA runtime으로 대체되지 않는다.
+
+Windows `spawn`, `multiprocessing.freeze_support`, `__main__` guard, frozen worker 실행 모드를 검증한다.
+최소 프로필에서는 DataLoader workers=0으로 시작하고 프로세스형 loader는 통과한 프로필에서만 사용한다.
+앱이 다시 뜨는 재귀 spawn, 부모 종료 후 고아 worker, DLL 검색 경로 오염을 막는다.
+Windows Job Object로 소유 프로세스를 묶고 정상 취소 뒤 남은 자식 프로세스를 종료한다.
+
+SAM2는 공식 Windows native 보장이 아닌 제품 검증 과제다. WSL 권장 upstream을 그대로 감춘 채 native 지원이라
+표시하지 않는다. 순수 PyTorch 학습 경로, attention/AMP, 선택 CUDA extension 대체, 작은 후처리까지
+native worker에서 실증해야 한다. 실패 시 기본 모델을 몰래 Docker 전용으로 변경하지 않고 P0 미통과로 남긴다.
+[공식 SAM2 설치](https://github.com/facebookresearch/sam2/blob/main/INSTALL.md)
+
+## 6. 공통 작업 프로토콜
+
+논리 명령은 `hello`, `describe`, `prepare`, `train`, `infer`, `export`, `cancel`, `close`다.
+작업에는 request/job/frame ID, model ref, dataset snapshot, seed, 파라미터, 출력 경로, checkpoint ref가 들어간다.
+progress는 epoch/step/metrics/status, 결과는 task payload·timings·runtime ID·artifact refs로 반환한다.
+stdout은 바이너리 프레임 전용, stderr는 제한된 로그 전용이다. UI 프레임워크 객체를 worker로 넘기지 않는다.
 
 ```text
-manifest.json
-checksums.json
-signature.json
-artifacts/model.onnx         # 추론 가능한 팩에 포함, external data도 manifest에 열거
-artifacts/model.json         # 전처리·출력·클래스·런타임 계약
-weights/pretrained.pth       # 초기 학습용 가중치, 포함 가능 여부 검토 필요
-runtime/image.tar           # container 팩만 포함, linux/amd64
-validation/report.json
-licenses/THIRD_PARTY_NOTICES.html
-licenses/...
-sbom.cdx.json
-```
-
-컨테이너에는 실행 환경과 코드만 넣고, 비공개 가중치·데이터·학습 결과는 로컬 mount로 전달한다.
-동일 image hash의 팩 여러 개는 검증된 이미지 저장소를 공유한다.
-
-manifest의 핵심 필드:
-
-| 필드 | 의미와 검증 |
-|---|---|
-| `schema_version`, `sdk_api` | 구조 버전과 worker 계약 버전; 모르는 major는 거부 |
-| `id`, `version`, `publisher` | 소문자 ID·SemVer·발행자 식별; 같은 버전의 다른 내용은 충돌 |
-| `app_compatibility` | 최소/최대 호환 앱·계약 버전 |
-| `task`, `capabilities` | train/infer/export_onnx/resume/gradcam, 입력 채널·학습 옵션·선정 지표 |
-| `runtimes` | builtin/onnx/container별 필요한 OS·CPU 아키텍처·런타임·opset·연산 |
-| `contracts` | 입력·전처리·출력 계약 ID와 버전 |
-| `assets` | 파일 역할·상대 경로·크기·SHA-256, external data 포함 |
-| `pretrained` | 초기 가중치 원본·버전·학습 데이터 출처·배포 검토 상태 |
-| `licenses` | 코드/가중치/컨테이너 OS 패키지의 조건·고지 파일·필요 소스 |
-| `validation` | 수치 검증, 실제 환경·데이터 범위·정확도 평가 근거 |
-
-개념 예시(가중치와 hash가 없는 설명용 manifest이며 바로 설치할 수 있는 파일은 아니다):
-
-```json
-{
-  "schema_version": 1,
-  "sdk_api": "1.0",
-  "id": "company.example-classifier",
-  "version": "1.0.0",
-  "task": "classify",
-  "capabilities": {"train": true, "infer": true, "export_onnx": true, "resume": true, "gradcam": false},
-  "runtimes": {"train": "container", "infer": "onnx", "export": "container"},
-  "contracts": {
-    "input": "image-u8.v1",
-    "preprocess": "opencv-classification.v1",
-    "output": "classification-logits.v1"
-  },
-  "runtime_requirements": {"container_platform": "linux/amd64", "native_platform": "windows/amd64"}
-}
-```
-
-manifest는 임의 Python import 경로, shell 스크립트 또는 다운로드 URL의 자동 실행을 허용하지 않는다.
-컨테이너 entrypoint는 검증된 이미지에 들어 있으며 실행 인수는 호스트 실행기가 구성한다.
-데이터 전용 ONNX 팩은 앱에 등록된 전후처리 계약만 선택한다. 새 DLL/custom op를 로드하려면
-코드 실행을 포함하는 별도 신뢰·호환성 검증이 필요하다.
-
-`checksums.json`은 자신과 서명 파일을 제외한 모든 팩 파일의 hash·크기를 담는다.
-`signature.json`은 발행자 key ID와 정확한 checksums 파일 바이트의 서명을 담는다.
-공식 배포는 내장된 신뢰 키로 검증하며, 사내 팩은 관리자가 로컬 신뢰 키를 등록한다.
-개발용 미서명 팩은 명시적인 개발 모드에서만 허용한다. 해시 확인만으로 제작자를 신뢰하지 않는다.
-
-## 5. 입출력과 모델 추가의 경계
-
-| 태스크 | 공통 결과 규약 |
-|---|---|
-| 분류 | 클래스 순서 고정, logits/probabilities 구분, class_id·confidence |
-| 박스 탐지 | 원본 좌표계의 xyxy, class_id·confidence, NMS 여부·설정 명시 |
-| 시맨틱 분할 | 원본 영상과 대응되는 클래스 인덱스 마스크, background·ignore index 명시 |
-| 이상 탐지 | score·threshold·판정, 선택적 원본 좌표 heatmap |
-| 회전 박스 | 네 꼭짓점 순서와 원본 좌표를 명시한 계약을 구현한 팩에서만 infer 노출 |
-
-입력에는 shape/dtype/NCHW·NHWC/색상/채널/원본 크기를 명시한다. 전처리 계약은 resize 알고리즘,
-stretch·crop·letterbox, mean/std, 1채널 변환 방식, 좌표 복원 정보를 포함한다.
-후처리에는 softmax 중복 적용 방지, 클래스 순서, 박스 인코딩, threshold, mask 복원을 명시한다.
-같은 이미지가 학습·Python 추론·ONNX·C++에서 같은 규약을 거치도록 계약 fixture를 공유한다.
-
-새 아키텍처라도 기존 계약에 맞는 ONNX라면 앱 재빌드 없이 추가할 수 있다. 새로운 출력 표현이나
-특수 시각화·Grad-CAM 계층 탐색이 필요하면 SDK/어댑터 구현이 필요하다. 모든 팩에 학습·resume·Grad-CAM을
-강제로 켜지 않고, 실제 지원 기능만 화면에 보여준다. 학습 옵션은 SDK가 허용하는 JSON Schema의
-숫자·범위·enum·boolean·기본값으로 선언하여 일반 폼을 만든다. 새 팩이 임의 UI 코드를 로드하게 하지 않는다.
-
-현재 클래스 이름·전처리·입력 채널을 추정하는 관행을 추가하지 않는다. 특히 사전학습 RGB 모델을
-1채널 모델로 바꾼 팩은 입력 adapter와 가중치 변환 방식을 명시하고 별도로 검증한다.
-
-## 6. 실행기 API와 작업 수명주기
-
-공통 논리 API:
-
-```text
-describe() -> ModelDescriptor
-prepare(model_ref, runtime_options) -> ReadyInfo
-train(job_spec) -> JobHandle
-infer(frame_id, image, inference_options) -> InferenceResult
-export(job_spec) -> ArtifactSet
-cancel(job_id) -> CancelAck
-close() -> Closed
-```
-
-`job_spec`에는 팩 참조, 데이터셋 계약·분할·클래스 순서, 파라미터, seed, 저장 폴더,
-checkpoint 참조가 들어간다. resume은 해당 팩 버전·학습 상태 형식의 호환 여부를 확인한다.
-결과에는 `request_id`, `job_id`, `frame_id`, 상태, 모델/팩/runtime 식별자, 타이밍, 아티팩트 상대 경로가 들어간다.
-
-모델 수명주기: `DISCOVERED → VERIFIED → STARTING → WARMING → READY → BUSY → READY → STOPPING → STOPPED`.
-실패 시 원인을 가진 `FAILED`로 전환한다. 학습 중 취소는 `CANCELLING → CANCELLED`로 기록한다.
-호스트는 준비 완료 후에만 infer를 받는다. 컨테이너·모델·ONNX 세션을 매 이미지마다 만들지 않는다.
-
-기존 C++ `ClassificationWorker`처럼 모델 실행 자원은 한 worker가 소유한다. 큐 기본 대기 한도는 2이며,
-가득 차면 명시적 busy 오류를 반환한다. 검사용 이미지를 몰래 버리지 않는다. 취소 신호 후 설정된 유예시간이
-지나면 해당 worker만 종료하고, 완료되지 않은 출력은 최종 결과로 노출하지 않는다.
-정상 종료는 대기열 처리/취소 정책을 명시한 뒤 join하며 UI 종료를 무기한 막지 않는다.
-
-## 7. Docker 실행과 통신
-
-첫 지원 범위는 Windows x64 + Docker Desktop WSL2의 Linux 컨테이너다.
-CPU 모델은 CPU로, GPU 팩은 검증된 NVIDIA/WSL2 조합에서만 GPU 기능을 노출한다.
-`i7` 명칭만으로 GPU 지원이나 적정 thread 수를 결정하지 않는다.
-
-### 오프라인 준비
-
-빌드 환경에서 고정된 base image·패키지·소스를 사용해 이미지를 만들고 `docker image save` archive로 배포한다.
-사용자 PC에서는 archive hash와 팩 서명을 확인한 뒤 `docker image load`한다. 태그 문자열에 의존하지 않고,
-load 후 OS/architecture와 예상 image ID를 검증한다. registry manifest digest와 로컬 image ID는 별도 필드로
-보관한다. archive hash, registry digest, image ID를 서로 같은 값으로 취급하지 않는다.
-대상 PC에서 Docker build, pip 설치, image pull 또는 모델 다운로드를 자동 수행하지 않는다.
-
-### 실행 정책
-
-호스트는 Docker 설치·daemon·WSL2·Linux mode·플랫폼·디스크·RAM을 검사한다.
-기본 실행 정책은 `--network none`, `--pull=never`, `--read-only`, `--cap-drop=ALL`,
-`--security-opt=no-new-privileges`, `--log-driver=none`, `--init`, `-i`이며 `-t`는 사용하지 않는다.
-컨테이너 사용자·메모리·CPU·임시 공간 한도를 정하고 필요한 `/tmp`만 tmpfs로 제공한다.
-사용자 Docker socket이나 전체 드라이브를 mount하지 않는다.
-
-- `/models`: 선택한 팩/가중치만 읽기 전용.
-- `/data`: 사용자가 선택한 데이터셋만 읽기 전용.
-- `/work`: 현재 작업의 결과·checkpoint만 쓰기 가능.
-
-경로는 호스트 실행기가 mount별 상대 경로로 변환한다. 한국어·공백·UNC 경로는 실제 Windows에서 검증하고,
-허용된 루트를 벗어나는 traversal·symlink·junction을 거부한다. 명령은 shell 문자열이 아닌 인수 배열로 구성한다.
-Windows/WSL 파일 경계가 학습 병목이면 로컬 Docker volume에 선택적으로 staging할 수 있다.
-추가 복사본의 위치·용량·삭제 정책을 표시하며 기본적으로 사용자 원본을 변경하지 않는다.
-
-### worker 프로토콜 v1
-
-지속되는 stdin/stdout으로 요청을 전달하며 stdout은 프로토콜 전용, stderr는 로그 전용이다.
-TCP 포트를 열지 않는다. 초기 `hello` 응답에서 SDK 버전·지원 명령·프레임 한도를 협상한다.
-
-```text
-4 bytes magic "DVW1"
-4 bytes little-endian unsigned JSON header length
-8 bytes little-endian unsigned binary payload length
+4 bytes magic DVW1
+4 bytes little-endian JSON header length
+8 bytes little-endian binary payload length
 UTF-8 JSON header
 binary payload
 ```
 
-header에는 `type`, `request_id`, `operation`, `frame_id/job_id`, payload 형식이 들어간다.
-응답 type은 `result`, `progress`, `error`, `heartbeat`로 구분한다. 한 writer가 frame을 직렬화하고,
-호스트·worker 모두 partial read/write와 EOF를 처리한다. JSON header 기본 한도는 64 KiB,
-이미지 payload는 기본 64 MiB로 제한하고 실제 shape·dtype 크기와 일치해야 한다.
-큰 데이터셋·ONNX·checkpoint는 작업 폴더의 아티팩트 ID로 전달한다.
-일반 이미지 요청은 연속된 raw GRAY/RGB 바이트로 전달하여 base64 변환을 하지 않는다.
+header 기본 상한 64 KiB, 이미지 payload 기본 상한 64 MiB를 협상한다. 대형 mask/weights는 작업 폴더의
+artifact ID로 전달한다. partial read/write·EOF·timeout·손상된 길이를 처리하고 단일 writer가 프레임을 직렬화한다.
+이미지는 raw RGB/GRAY 또는 명시한 encoded 포맷이며 base64를 쓰지 않는다. host/worker가 형상·dtype·stride를 검증한다.
 
-취소 명령을 학습 중에도 읽을 수 있도록 worker의 제어 입력 처리와 연산 루프를 분리한다.
-로그 소비가 막혀 worker가 멈추지 않도록 stderr를 계속 읽으며 크기 제한과 회전을 적용한다.
-프레임 손상·timeout·worker crash는 해당 세션을 실패 처리하고 요청 결과를 확정한다.
-모델 준비 실패 후 재시도는 준비 단계까지만 자동화하며 학습/내보내기 작업을 몰래 재실행하지 않는다.
-Docker daemon에도 binary stdout이 누적되지 않도록 `--log-driver=none`을 적용하고, 필요한 stderr만
-호스트가 제한적으로 보관한다. 이미지/텐서 payload를 진단 로그에 기록하지 않는다.
+수명주기: `VERIFIED → STARTING → WARMING → READY → BUSY → READY → STOPPING → STOPPED`.
+실패는 원인이 있는 `FAILED`, 취소는 `CANCELLING → CANCELLED`다. 모델은 한 번 준비해 반복 사용한다.
+학습 중에도 취소 명령을 읽을 수 있도록 제어 루프를 연산 루프와 분리한다.
+큐 기본 대기 한도는 2, 가득 차면 명시적 busy 결과를 반환하며 검사 프레임을 몰래 버리지 않는다.
+단일 worker가 모델과 scratch buffer를 소유하고 CPU 학습/저지연 추론의 자원 경쟁을 기본적으로 제한한다.
 
-호스트는 생성한 container ID와 앱·사용자·세션 label을 기록한다. attached docker.exe를 종료하거나
-pipe를 닫는 것만으로 컨테이너가 종료되었다고 판단하지 않는다. close/cancel 유예시간 이후에는
-해당 ID에 `docker stop --timeout`을 적용하고 필요하면 kill한 뒤 종료를 inspect하고 제거한다.
-앱 재시작 시 자신의 이전 세션 label과 소유 기록이 일치하는 고아 컨테이너만 정리한다.
-다른 앱이나 사용자의 컨테이너를 일괄 중지하지 않는다.
-[Docker 실행 옵션](https://docs.docker.com/reference/cli/docker/container/run/),
-[종료 동작](https://docs.docker.com/reference/cli/docker/container/stop/)
+## 7. 데이터·결과 계약
 
-이 IPC는 격리된 로컬 실행을 위한 설계다. WSL 경계의 zero-copy 또는 컨테이너의 8 ms 달성을 주장하지 않는다.
-`--network none`은 네트워크 격리에 쓰며, localhost 포트 공개만으로 인터넷 송신이 차단된다고 설명하지 않는다.
-[Docker 네트워크 없음](https://docs.docker.com/engine/network/drivers/none/)
+| 태스크 | 입력/결과 |
+|---|---|
+| 분류 | 이미지 → logits/probabilities 구분, class_id·confidence·클래스 순서 |
+| 탐지 | 이미지 → 원본 xyxy·class_id·confidence, decode/NMS 수행 위치 명시 |
+| 이상 | 이미지 → raw/calibrated score·threshold·판정·원본 대응 heatmap |
+| semantic 분할 | 이미지 → 클래스 인덱스 mask 또는 binary mask, background/ignore index |
+| prompted 분할 | 이미지와 point/box/이전 logits → mask(s)·quality·좌표 복원 정보 |
 
-## 8. ONNX와 C++17 경로
+이미지 계약에 색순서, 1/3채널 변환, resize/crop/letterbox, 보간·반올림, padding, NCHW/NHWC,
+mean/std, 원본 크기와 좌표 변환을 고정한다. segmentation label 보간은 nearest 규약이다.
+프레임워크별 전처리를 하나의 stretch 코드로 강제로 통일하지 않고 계약별로 구현한다.
+Python/C++/C#은 같은 golden fixture를 사용한다. softmax/sigmoid/NMS의 이중 적용을 막는다.
 
-Docker 학습 → export → CPU FP32 기준 수치 검증 → 팩 등록 → Windows ONNX 직접 실행으로 연결한다.
-ONNX 파일을 읽을 수 있다는 것과 모델의 전후처리·결과를 지원한다는 것을 구분한다.
-표준 계약과 opset/연산 검사에 통과한 모델만 직접 실행 대상으로 표시한다.
+## 8. ONNX 내보내기와 배포 번들
 
-검증은 고정 seed fixture와 실제 로컬 검증 데이터의 출력 차이·태스크 정확도를 비교한다.
-INT8 등의 최적화 결과는 별도 아티팩트와 허용 기준으로 등록한다. 실패했다고 허용 오차를 자동으로 키우거나
-softmax 이후만 비교해서 큰 logits 차이를 숨기지 않는다. 기존 자동 ONNX 준비 실패 시 PyTorch fallback은 유지한다.
-새 팩은 대체 엔진이 manifest에 있고 같은 계약으로 검증되었을 때만 fallback을 제공한다.
-
-C++ 사용자는 팩에서 검증된 `model.onnx`, `model.json`, 필요한 external data와 런타임 DLL을 배포한다.
-기존 `VisionInference::InitializeFromJson`, `Classify`, `ClassificationWorker` 사용 흐름을 유지한다.
-학습용 Docker가 C++ 제품의 실행 전제조건이 되지 않게 한다. 분류 이외의 C++ 백그라운드 태스크 확장은
-각 결과 계약별 worker를 추가하는 후속 작업이다.
-
-ONNX 최적화 캐시는 model hash·ORT 버전·provider·CPU 특성·옵션을 포함한 키로 저장한다.
-다른 PC에서 만든 하드웨어 의존 최적화 파일을 모든 i7에 적용하지 않고 원본 ONNX를 함께 보관한다.
-[ONNX Runtime 오프라인 최적화 제약](https://onnxruntime.ai/docs/performance/model-optimizations/graph-optimizations.html)
-
-## 9. 설치 디렉터리와 데이터 보호
+사용자가 학습하고 선택한 checkpoint의 hash를 기록한 뒤 exporter가 그 파일을 읽는다.
+초기 pretrained를 잘못 export하지 않도록 학습 변경과 선택된 checkpoint를 검사한다.
+모델별 exporter가 FP32 기준 그래프를 만들고 checker·ORT load·수치·task metric 검증 후에만 활성화한다.
+INT8/FP16은 별도 검증 프로필이다. 실패했다고 tolerance를 자동 확대하거나 출력 일부만 검사하지 않는다.
 
 ```text
-%LOCALAPPDATA%/Programs/DeepVisionStudio/<app-version>/
-  DeepVisionStudio.exe
-  _internal/                         # Python, Qt, torch CPU, ORT, OpenCV 등
-  model-packs/                       # 기본 제공 팩, 앱에서는 수정하지 않음
-  licenses/
-  release-manifest.json
-  Uninstall.exe
-
-%LOCALAPPDATA%/DeepVisionStudio/
-  registry/                          # 활성 버전과 신뢰 키
-  model-packs/<id>/<version>/         # 사용자가 추가한 팩
-  staging/                           # 검증 중인 팩
-  jobs/
-  logs/
-  cache/
-  settings/
-
-사용자 지정 프로젝트 폴더/           # .dvproj, 이미지, 학습 결과
+<model>.dvdeploy/             # 디렉터리 또는 같은 내용의 zip
+  manifest.json
+  model.json                 # 전처리·후처리·클래스·threshold·shape 계약
+  graphs/*.onnx
+  graphs/*.data              # external tensor data가 있으면 필수
+  validation/report.json
+  checksums.json
+  licenses/...
+  README.ko.md
 ```
 
-기본 설치는 사용자 단위로 한다. 회사 전체 설치가 필요하면 관리자가 Program Files 설치 프로필을 선택한다.
-실행·설정 저장은 비관리자 권한으로 가능해야 한다. 설치 폴더를 읽기 전용으로 두어도 정상 동작하도록 테스트한다.
-필수 VC++ 런타임이 없으면 공식 재배포 패키지의 사전조건 설치가 필요하며 관리자 권한·재시작 여부를 표시한다.
+ONNX 지원은 반드시 하나의 `.onnx` 파일이라는 뜻은 아니다. SAM2의 두 그래프와 PatchCore bank/external data처럼
+필수 구성요소를 묶어 C#/C++에서 완전하게 실행해야 한다. 모델과 떨어진 external data의 경로/hash도 검증한다.
+새로운 custom op가 필요하면 Windows DLL·라이선스·C#/C++ 로딩 검증까지 팩의 필수 자산에 넣는다.
+먼저 표준 ONNX 연산만으로 완성하는 것을 우선한다.
 
-팩 설치 순서: 별도 staging에 추출 → 크기/경로/중복·대소문자 충돌 검사 → 서명·모든 hash 검증 → 호환성 검사
-→ 최소 로드 검증 → 버전 디렉터리 확정 → registry를 원자적으로 갱신한다.
-실행 중인 팩은 교체·삭제하지 않는다. 업데이트는 새 버전을 병렬 설치하고 다음 준비 시점에 전환한다.
-가중치·ONNX external data는 manifest 안에 있는 상대 경로만 참조할 수 있다.
+PatchCore는 backbone·bank·kNN·upsample·Gaussian·score를 포함하는 전체 ONNX를 기본 인수 조건으로 한다.
+현재 점수 의미를 고정하고 224/batch1/bank≤4096부터 메모리·수치 검증을 수행한다.
+대형 bank용 native kNN hybrid는 별도 프로필이며 전체 ONNX 지원 검증을 대체하지 않는다.
 
-`.dvproj`에는 `model_ref: {id, version, content_hash, runtime}`와 학습 초기 가중치/결과 checkpoint 참조를 저장한다.
-구형 프로젝트는 명시된 기존 설정으로만 builtin 팩에 매핑한다. 모호하면 모델 선택을 요청한다.
-로드할 때 원본 프로젝트를 덮어쓰지 않고 저장할 때 백업과 버전 기록을 남긴다.
-설치 프로그램 제거는 사용자 프로젝트·추가 팩·학습 결과를 기본적으로 보존한다.
+SAM2는 encoder/decoder 두 그래프와 prompt 변환을 제공한다. image hash·model hash·입력 규약이 일치할 때만
+embedding을 재사용하고 다른 이미지/모델에서는 폐기한다. decoder 출력 quality와 multiple mask 선택 규칙을
+명시한다. 영상 memory state는 별도 미확정 범위이며 이미지 exporter 성공으로 지원 완료를 선언하지 않는다.
+SAM2 결과는 `low_res_mask_logits`와 선택 mask index를 제공한다. 기본 1024 프로필은 이미지당
+FP32 `[M,256,256]`을 SDK 규약으로 정규화하고 원시 그래프의 batch 축/shape는 manifest에 기록한다.
+이진 mask나 원본 크기로 확대한 mask를 이전 logits 대신 사용하지 않는다. `image_context`에는
+image_embeddings뿐 아니라 decoder가 요구하는 image_features_0/1도 함께 보관한다.
+[ORT decoder 계약](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/transformers/models/sam2/image_decoder.py)
 
-## 10. 초기 가중치와 third-party 묶음
+기존 자동 ONNX 준비 실패 시 검증된 PyTorch 경로로 복구하는 동작은 유지한다.
+독립 C#/C++ 제품에는 Python fallback을 가정하지 않는다. load/export 검증 실패를 명확한 오류로 반환한다.
+새 팩의 다른 엔진 fallback은 같은 계약·checkpoint로 사전에 검증된 경우만 허용한다.
 
-`ModelAssetResolver`는 ① 프로젝트가 고정한 로컬 가중치 ② 선택 팩의 assets ③ 동일 hash의 로컬 캐시 순서로
-찾는다. 오프라인 배포 모드에서 네트워크 다운로드로 자동 전환하지 않는다. 누락 시 필요한 팩/파일과 hash를
-표시한다. 학습 초기 가중치와 사용자가 학습한 최종 가중치를 같은 파일로 덮어쓰지 않는다.
+## 9. C++17과 C# SDK
 
-기본 팩 후보는 EfficientNet B0/B1 초기 가중치와 현재 PatchCore 백본 초기 가중치다.
-이 목록은 번들 후보이며 재배포 권리 확인 완료를 뜻하지 않는다. 모델/가중치별 상업적 이용·재배포 조건을
-확인한 항목만 공개 Setup에 포함한다. 사용자 비공개 가중치는 사내 배포 범위를 유지한다.
-TorchVision도 사전학습 모델에 학습 데이터에서 유래한 별도 조건이 있을 수 있음을 명시한다.
-[TorchVision 가중치 조건](https://github.com/pytorch/vision#pre-trained-model-license)
+공통 C++17 core가 ORT 세션·전후처리·다중 그래프·좌표 변환을 소유한다.
+C++ wrapper와 C ABI를 제공하고 C#은 C ABI의 SafeHandle 래퍼를 기본 경로로 사용한다.
+두 언어에서 별도 전처리를 다시 구현하여 결과가 달라지는 것을 피한다.
+원하는 사용자를 위해 ORT C# 직접 실행 예제도 제공하되 동일 fixture로 검증한다.
+[ORT C#](https://onnxruntime.ai/docs/get-started/with-csharp.html),
+[ORT API](https://onnxruntime.ai/docs/api/)
 
-포함 항목은 빌드 프로필의 명시적 allowlist로 수집한다.
+C ABI 개념:
 
-| 항목 | 처리 |
+```text
+dv_create_session(bundle_path_utf8, options, out session)
+dv_infer(session, image_view, request, out result)
+dv_sam_encode(session, image_view, out image_context)
+dv_sam_segment(session, image_context, prompts, out result)
+dv_release_result(result)
+dv_release_image_context(image_context)
+dv_close_session(session)
+```
+
+모든 함수는 오류 코드와 구조화된 상세 오류를 반환하고 C++ 예외를 ABI 밖으로 넘기지 않는다.
+문자열은 UTF-8, 타입은 고정 폭 정수/명시적 struct_size·abi_version·stride를 쓴다.
+결과 메모리는 생성한 라이브러리에서 해제한다. image_view는 동기 호출 동안 유효해야 하며
+비동기 Submit은 이미지 복사 또는 명시적 소유권 이전을 계약으로 둔다.
+C# wrapper는 Dispose/SafeHandle과 pin 수명, 취소, thread 안전성을 보장한다.
+
+세션은 재사용하고 같은 세션의 동시 실행은 직렬화한다. 작업별 frame ID·queue time·total time을 제공한다.
+C++의 기존 background 기능은 OS 서비스가 아닌 프로그램 안의 worker다.
+
+SDK 기본 인수 대상은 Windows x64, C++17/MSVC Release와 C# .NET 10 LTS다.
+.NET Framework 4.8은 C ABI 호환 shim의 후속 검증 대상으로 남기며 미검증 지원을 표시하지 않는다.
+C# 데모는 self-contained로 빌드해 데모 실행 PC에 .NET 추가 설치를 요구하지 않는다.
+SDK를 개발 프로젝트에 통합할 개발자는 해당 C#/C++ 빌드 도구가 필요하지만 학습툴 사용자는 필요 없다.
+[.NET 지원 정책](https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core)
+
+## 10. Docker 추가 모델과 관리형 WSL
+
+추가 모델 팩은 `.dvmodel` 안에 manifest·이미지 archive·로컬 가중치·검증 보고서·고지를 담는다.
+기본 worker와 같은 task/protocol/schema를 구현하면 UI 재빌드 없이 목록에 나타난다.
+새 출력 종류/특수 UI가 필요한 모델까지 manifest만으로 자동 지원한다고 약속하지 않는다.
+
+단일 installer는 배포 가능한 오프라인 WSL MSI, 앱 전용 `.wsl` distro, 고정된 Docker Engine/Moby,
+containerd/runc와 필요한 NVIDIA Container Toolkit 구성을 제공한다. Docker Desktop을 무단 내장하지 않는다.
+Linux 이미지 안의 `.so`를 Windows DLL처럼 불러오지 않는다.
+[WSL 오프라인 설치](https://learn.microsoft.com/en-us/windows/wsl/install#offline-install),
+[자체 distro](https://learn.microsoft.com/en-us/windows/wsl/build-custom-distro),
+[Docker Engine 설치](https://docs.docker.com/engine/install/ubuntu/)
+
+WSL 시스템 구성요소·가상화 활성화는 관리자 권한과 재부팅이 필요할 수 있다. 재부팅 뒤 같은 설치 상태를 이어간다.
+BIOS 가상화·기업 정책·Windows edition/build·호환 드라이버는 설치 전 검사한다. 기존 사용자 distro/Engine을
+덮어쓰거나 임의로 업그레이드하지 않는다. 앱 전용 distro는 고정 이름 대신 제품·사용자 고유 ID로 관리한다.
+WSL distro는 Windows 사용자별로 등록된다. OS 구성요소/Program Files만 elevated로 설치하고,
+distro 등록·VHDX·Engine 초기화는 실제 앱 사용자의 SID와 비상승 세션에 연결한다.
+재부팅 후에도 해당 SID로 이어가며 두 번째 사용자는 첫 실행 때 이미 설치된 오프라인 자산으로 자동 초기화한다.
+다른 관리자 자격증명으로 UAC한 설치와 두 번째 사용자 첫 실행을 인수 테스트에 포함한다.
+[WSL 사용자별 환경](https://learn.microsoft.com/en-us/windows/wsl/setup/environment)
+Engine은 전용 Unix socket에서만 듣고 외부 TCP Docker API를 열지 않는다.
+호스트 broker는 `wsl.exe -d <owned-distro> -- docker ...`의 인수 배열로 호출한다.
+
+Windows GPU driver를 WSL에서 사용하며 Linux display driver를 distro에 넣지 않는다.
+Windows GPU 지원과 WSL GPU 지원은 별도로 검사한다.
+[NVIDIA WSL](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)
+
+오프라인 팩의 image archive hash·서명·플랫폼 `linux/amd64`를 검증한 뒤 load한다.
+archive hash, registry digest, local image ID는 서로 다른 필드다. 실행은 고정한 image ID를 사용하며 pull하지 않는다.
+다른 모델의 이미지는 공유 layer와 content hash 기준으로 중복을 줄인다. 사용자 가중치·데이터는 이미지에 bake하지 않는다.
+
+worker 실행 정책은 `--network none`, `--pull=never`, `--read-only`, `--cap-drop=ALL`,
+`--security-opt=no-new-privileges`, `--log-driver=none`, `--init`, `-i`이며 TTY를 쓰지 않는다.
+모델/데이터는 필요한 폴더만 RO, 해당 작업 결과는 RW, `/tmp`는 제한된 tmpfs로 제공한다.
+Docker socket이나 전체 드라이브를 mount하지 않는다. 이미지 payload가 daemon 로그로 복제되지 않게 한다.
+[네트워크 격리](https://docs.docker.com/engine/network/drivers/none/),
+[로그 설정](https://docs.docker.com/engine/logging/configure/)
+
+worker stdin/stdout으로 통신하며 네트워크 포트가 필요 없다. 학습 데이터의 Windows/WSL 파일 I/O가 병목이면
+사용자가 볼 수 있는 로컬 staging 복사본을 만들고 보존·삭제 정책을 제공한다. 원본은 변경하지 않는다.
+container ID·소유 label을 기록하고 취소/종료는 정상 stop→timeout→kill→inspect→remove 순서로 처리한다.
+attached docker.exe 종료나 pipe EOF만으로 컨테이너 종료를 가정하지 않는다. 앱 재시작 시 자기 소유 고아만 정리한다.
+WSL/Engine의 업데이트·보안 수정·디스크 정리도 제품 유지보수 범위다.
+
+## 11. 팩 설치·프로젝트·신뢰
+
+팩에는 schema/sdk 버전, 호환 앱 버전, model/task/runtime/contract ID, assets와 hash·크기,
+license/SBOM, signer 정보가 들어간다. 지원하지 않는 major 계약은 거부한다.
+manifest가 임의 shell/Python import/URL을 호스트에서 실행하게 하지 않는다.
+
+설치는 staging→경로/대소문자 중복/압축폭탄/용량 검사→서명/모든 hash→호환성→준비 smoke→버전 확정→활성 registry
+원자 갱신 순서다. 공식 팩은 내장 신뢰 키, 사내 팩은 관리자가 등록한 키로 검증한다.
+미서명 개발 팩은 명시적 개발 모드로 분리한다. 체크섬만 맞는 것을 신뢰된 제작자라고 하지 않는다.
+
+프로젝트는 `{model_id, pack_version, content_hash, runtime_id, training_profile, checkpoint_ref}`를 고정한다.
+업데이트는 새 버전을 병렬 설치하고 실행 중인 버전을 바꾸지 않는다. 기존 프로젝트 로드 때 원본을 자동 덮어쓰지 않는다.
+저장 시 schema migration 기록과 백업을 남긴다. 불명확한 구형 설정은 다른 모델로 조용히 치환하지 않는다.
+
+## 12. 설치 구성·한 파일 제약
+
+```text
+DeepVisionStudio-Setup-<version>-win-x64.exe  # 유일한 필수 설치 파일
+  [내장 payload]
+  app / native workers / CPU·CUDA dependencies
+  모든 기본 model manifests / 승인된 pretrained assets
+  VC runtime / WSL offline components / owned distro + Docker Engine
+  C++ SDK / C# SDK·self-contained demos / README / licenses / SBOM
+```
+
+WiX v4 이상 중 검증한 버전을 고정한 Burn의 여러 attached container를 후보로 사용하고 OS 설치 사전조건과 native/WSL 설치 단계를 묶는다.
+MSI/CAB의 개별 한도와 최종 PE 서명 한도를 실제 payload로 검사한다. NSIS 약 2 GB 한계를 전제로 했던 설계는 폐기한다.
+[WiX container](https://docs.firegiant.com/wix/schema/wxs/container/),
+[WiX 대형 번들 이슈](https://github.com/wixtoolset/issues/issues/6144),
+[Windows 서명 제약](https://learn.microsoft.com/en-us/windows/msix/package/signing-known-issues)
+
+P0의 단일 EXE 실증에는 runtime·기본 가중치·WSL payload를 모두 넣는다. 내부 목표는 3.5 GiB 이하이며 실제
+서명 가능 여부·해시·손상 감지·백신 검사·복구까지 확인한다. 범위를 줄인 dummy installer로 완료 처리하지 않는다.
+한도를 넘으면 미사용 패키지 제거·공유 runtime/encoder 가중치 중복 제거·압축을 적용한다.
+그래도 초과하면 단일 EXE 조건은 미해결이다. 외부 payload/인터넷 다운로드/ISO로 묵시적으로 바꾸지 않는다.
+
+설치 흐름: 사전 진단→사용 범위/고지 확인→disk budget 계산→내장 파일 검증·해제→VC/앱/worker/가중치 설치
+→WSL/가상화 준비→필요 시 재부팅 이어가기→실제 사용자 세션에서 owned distro/Engine 초기화
+→오프라인 smoke→바로가기·완료 보고.
+가상화 불가 PC는 native 기능만 실행할 수 있지만 Docker까지 포함한 전체 요구 충족으로 표시하지 않는다.
+지원사양 충족 PC에서는 사용자에게 별도 다운로드나 패키지 설치를 요구하지 않는 것이 인수 조건이다.
+
+대상은 시스템 전체 설치를 위한 관리자 Setup과 비관리자 앱 실행이다.
+
+```text
+%ProgramFiles%/DeepVisionStudio/<version>/  # 앱·worker·기본 팩·SDK·고지, 실행 중 수정 금지
+%LOCALAPPDATA%/DeepVisionStudio/            # registry·추가 팩·jobs·logs·cache·settings·owned WSL VHDX
+사용자 프로젝트 폴더/                     # 원본 데이터·.dvproj·학습 결과
+```
+
+설치 시 디스크 예산은 installer+해제 임시공간+설치물+rollback cache+VHDX+이미지+작업공간을 합산한다.
+업데이트/제거는 사용자 프로젝트·추가 팩·학습 결과를 보존한다. owned distro 삭제는 내용과 결과를 안내한 별도 선택이며
+Windows 전역 WSL 기능이나 다른 배포판을 함께 제거하지 않는다.
+
+## 13. pretrained·third-party·빌드 재현성
+
+빌드 manifest가 실제 포함할 코드·wheel·DLL·checkpoint·WSL/OS package의 버전·hash·출처·고지·소스 의무를 나열한다.
+`pip install ...[all]`로 불필요하거나 제한된 모델/코드를 일괄 묶지 않는다.
+model asset resolver는 프로젝트 지정 로컬 가중치→선택 팩 자산→동일 hash 로컬 캐시 순서로 조회한다.
+오프라인 모드에서 누락되었다고 hub/download API를 호출하지 않는다.
+
+기본 분할 모델의 encoder 초기화와 완성된 task 가중치, PatchCore pretrained backbone과 학습 후 bank를 구별한다.
+라이선스가 불명확한 기본 후보는 조용히 제외하고 제품을 완성했다고 하지 않는다. 권리 확인 또는 대체 자산 결정을
+출시 전 해결해야 한다. 사용자 비공개 가중치/이미지는 공개 CI·공개 릴리스로 보내지 않는다.
+
+Qt의 고지·해당 소스 제공/교체 권리, CUDA EULA의 재배포 파일 범위, VC redistributable 약관,
+WSL/Moby/distro/kernel의 각 조건, 모든 모델 가중치 조건을 실제 배포 파일 기준으로 검토한다.
+Docker로 격리하거나 ONNX로 변환했다고 기존 조건이 없어지는 것은 아니다.
+[Qt LGPL](https://www.qt.io/development/open-source-lgpl-obligations),
+[CUDA EULA](https://docs.nvidia.com/cuda/eula/),
+[VC 재배포](https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files?view=msvc-170),
+[TorchVision 가중치](https://github.com/pytorch/vision#pre-trained-model-license)
+
+릴리스 빌드는 Windows runner에서 고정 도구/패키지로 만들고 Git commit, dependency locks, asset hashes,
+빌드 옵션, 결과 hashes, SBOM을 남긴다. 서명 인증서는 저장소/worker/이미지에 넣지 않는다.
+기본 worker·bootstrapper·SDK DLL/EXE를 서명하고 실제 설치파일 Authenticode를 검증한다.
+
+## 14. 최소사양과 검증 프로필
+
+README의 숫자는 초기 실증 기준이며 측정 없이 보장 최소값이라고 표시하지 않는다.
+최종 README는 installer의 실제 disk budget과 모델별 성공한 학습 프로필에서 생성한다.
+
+| 수준 | 설계 검증 기준 |
 |---|---|
-| Python·PySide6/Qt·NumPy·torch/torchvision·OpenCV·ORT 등 | Windows wheel/DLL 버전·hash·라이선스·고지 수집 |
-| C++ ONNX Runtime/OpenCV/MSVC 의존성 | Windows 실제 exe의 DLL 의존 검사 및 배포 규약 확인 |
-| 컨테이너 OS·pip 패키지·모델 코드 | 이미지 SBOM과 코드/소스 제공 조건을 팩에 포함 |
-| 초기 가중치 | 원본 URL·hash·수정 내역·배포 허용 근거를 코드 라이선스와 분리 |
-| Docker Desktop/WSL2/GPU 드라이버 | 시스템 설치 조건으로 안내, 앱의 DLL처럼 임의 재배포하지 않음 |
+| UI/라벨링/경량 CPU 추론 | 지원 중인 Windows 11 x64, AVX2 4코어 CPU, RAM16GB, SSD 여유50GB+데이터 |
+| 기본 모델 GPU 학습 | AVX2 8코어 CPU, RAM32GB, CUDA 지원 NVIDIA GPU VRAM12GB, SSD 여유100GB+데이터 |
+| SAM2 전체 fine-tune/고해상도 권장 검증 | RAM64GB, VRAM24GB, NVMe 여유200GB+데이터 |
+| Docker 확장 조건 | WSL2/SLAT 지원·가상화 활성화·관리자 설치·기업 정책 허용·추가 image 공간 |
 
-Qt LGPL 경로는 고지 파일만 복사하는 것으로 끝내지 않는다. 사용 라이브러리의 대응 소스 제공 방식,
-교체·재링크와 필요한 사용 권리 등 적용 의무를 배포 정책에 반영한다. 상용 Qt를 선택하면 계약에 맞게 바꾼다.
-[Qt LGPL 의무](https://www.qt.io/development/open-source-lgpl-obligations)
-VC++ Redistributable은 관련 약관에 따라 공식 오프라인 패키지를 동봉하고 호환 버전 설치 여부를 감지한다.
-[Microsoft C++ 재배포](https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files?view=msvc-170)
-Docker Desktop은 조직 규모·용도에 따라 유료일 수 있어 설치 안내에 해당 조건을 연결한다.
-[Docker Desktop 라이선스](https://docs.docker.com/subscription-billing/desktop-license/)
+12GB가 모든 변형·해상도·batch의 학습을 보장하지 않는다. 최소 인수 프로필은 카탈로그의 작은 변형,
+batch1, 분류224(B1 240), 탐지640 후보, semantic512, PatchCore224/bank≤4096,
+SAM2 Tiny1024/encoder freeze + decoder fine-tune으로 시작한다.
+GPU별 지원 compute capability/driver 최소 버전은 선택한 torch/CUDA wheel의 실제 지원 목록과 테스트 후
+release-manifest/README에 구체적인 버전으로 고정한다. 그 값이 미정이면 정식 README/릴리스는 미완료다.
 
-## 11. Windows EXE 빌드·배포 흐름
+## 15. 테스트와 지원 완료 판정
 
-기본은 `CPU full` 프로필이다. PyTorch를 포함해 현재 학습·Grad-CAM·fallback을 보존한다.
-첫 GPU 기능은 검증된 Docker container 팩으로 제공한다. CPU PyTorch가 frozen된 EXE에 CUDA DLL이나
-wheel을 추가해서 builtin 학습을 GPU로 전환하지 않는다. Windows 네이티브 CUDA 실행기·CUDA full EXE는
-후속 범위이며 첫 Windows 빌드 프로필은 CPU다. 초기 CPU 앱에 CUDA DLL을 필수로 요구하지 않는다.
+- 인터넷 차단된 Windows VM/실기, 개발 도구·Python·CUDA Toolkit·Docker 없는 상태에서 Setup 실행.
+- 기본 모델마다 로컬 pretrained 로드→작은 데이터 학습/fit→변경된 checkpoint→재로드/재개→추론→ONNX.
+- C++17 Release와 C# self-contained에서 Python/Docker 없이 모든 태스크를 실행하고 기준 출력 비교.
+- SAM2 point/box/negative prompt/embedding cache/빈 mask, semantic binary/multiclass/ignore index,
+  탐지 decode/NMS/비정사각 좌표, PatchCore bank 1/최대/k 초과/threshold/zero distance 검증.
+- 모델별 absolute/relative tolerance와 task metric 기준을 수치 검증 전에 고정. 미달을 자동 완화하지 않음.
+- 설치 경로 한국어/공백, 비관리자 실행, 읽기 전용 Program Files, Windows spawn/재부팅/설치 rollback 검사.
+- 서로 다른 dependency의 Docker 팩 두 개 오프라인 추가, CPU/GPU, 취소/crash/고아·로그·네트워크 격리 검사.
+- updater가 프로젝트 model ref를 바꾸지 않음, 팩 손상/허용 밖 경로/미지원 ABI 거부, 제거 시 사용자 데이터 보존.
 
-1. Windows x64 빌드 runner에서 Python·패키지·MSVC·도구 버전/hash를 고정한다.
-2. Python/Qt/모델 계약 테스트와 MSVC C++17 Release/CTest를 실행한다.
-3. 승인된 가중치·고지·필요 소스·DLL을 수집하고 PyInstaller onedir를 빌드한다.
-4. frozen EXE에서 동적 import, 학습 worker, 기본 모델 선택과 실제 번들 가중치 로드를 검증한다.
-5. 서명된 앱/유틸리티와 버전 manifest를 NSIS Setup에 포함한다. 인증서가 없으면 서명 미완료 후보로 표시한다.
-6. 설치·업그레이드·제거·오프라인 실행을 별도 깨끗한 Windows VM에서 검사한다.
-7. 통과한 동일 바이트의 Setup·Portable·model packs·C++ SDK·checksums·SBOM을 릴리스 후보로 보관한다.
+타이밍은 setup/queue/decode/transport/preprocess/model/postprocess/request-total/display를 구분한다.
+서로 다른 프로세스의 clock 원점을 빼지 않고 host 전체시간과 worker duration을 별도 측정한다.
+배포 SDK의 core 시간과 추론 버튼 전체시간을 모두 기록하며 B0 8ms 목표를 다른 모델의 보장으로 확장하지 않는다.
 
-PyInstaller 결과는 빌드 OS/아키텍처에 종속된다. Windows EXE는 Windows 환경에서 만든다.
-onedir를 설치기로 감싸면 사용자는 Setup EXE 한 개를 실행하고, 설치 후에는 매 실행마다 큰 런타임을
-임시 폴더에 푸는 비용을 피할 수 있다. 실행 중에는 EXE 옆 의존 폴더도 제품 구성의 일부다.
-[PyInstaller 배포 방식](https://pyinstaller.org/en/stable/operating-mode.html)
-
-NSIS는 설치·제거·구성 선택을 구현할 수 있어 첫 설치기에 사용한다. 선택한 NSIS/압축 모듈의 조건도 수집한다.
-일반 NSIS 설치기 크기 제약과 현재 배포 채널 제한을 확인해 큰 GPU/컨테이너 팩은 외부 오프라인 payload로
-분리한다. 첫 버전부터 모든 모델을 무제한 크기의 단일 EXE에 넣겠다고 약속하지 않는다.
-[NSIS 기능](https://nsis.sourceforge.io/Features), [NSIS 라이선스](https://nsis.sourceforge.io/License)
-
-새 CI `windows-desktop`는 CPU 빌드·실제 설치·동작을 담당하고 GPU 실측은 전용 Windows runner가 맡는다.
-기존 웹 CI는 유지한다. 배포 서명 key와 인증서는 소스 저장소·Docker 이미지에 넣지 않는다.
-
-## 12. 성능·실패 표시 계약
-
-결과는 최소한 다음 시간을 ms로 구분한다.
-
-- `setup_ms`: 프로세스/컨테이너 시작·모델 로드·warmup, 이미지별 처리에서 분리.
-- `queue_ms`, `decode_ms`, `transport_ms`: 큐·파일 읽기·복사/IPC 비용.
-- `preprocess_ms`, `model_ms`, `postprocess_ms`: 8 ms 목표의 원래 구간.
-- `request_total_ms`: 호출부터 결과 준비까지 host에서 잰 전체 시간.
-- `display_ms`: 선택적 화면/Grad-CAM 비용; 버튼 표시 시간과 측정 경계 명시.
-
-worker와 host의 시계 원점을 빼서 IPC 시간을 계산하지 않는다. 각 구간 duration을 자체 monotonic clock으로
-측정하고 host에서 요청 전체 duration을 별도로 잰다. 중첩 구간을 합쳐 총 시간으로 오표기하지 않는다.
-준비 중·Docker 필요·가중치 누락·수치 검증 실패·큐 포화·작업 취소를 사용자에게 구별해 표시한다.
-등록된 새 팩 하나가 실패해도 앱과 기존 모델 선택은 계속 사용할 수 있어야 한다.
-
-기본적으로 학습과 저지연 CPU 추론의 동시 실행을 제한한다. worker 수와 내부 연산 thread 수를 함께 관리한다.
-CPU 사용률만 보고 thread 수를 늘리지 않는다. 검사 중 프레임 누락 없는 큐 정책을 유지한다.
-
-## 13. 검증 매트릭스와 인수
-
-| 검증 환경/사건 | 통과 기준 |
-|---|---|
-| Windows VM, Python/Node/Git/Docker 없음, 네트워크 차단 | 설치 EXE로 기본 UI·번들 가중치·작은 학습·추론·저장 성공 |
-| CPU PC, CUDA 미설치 | CUDA 필수 검사 없이 전체 기본 CPU 기능 사용 |
-| Docker/WSL2 준비된 Windows PC | 오프라인 이미지 로드·컨테이너 학습·취소·resume·export 성공 |
-| 서로 다른 의존성의 팩 두 개 | 기존 EXE/팩 환경을 변경하지 않고 각각 실행 |
-| 같은 규약의 새 ONNX 팩 | EXE 재빌드 없이 목록 표시·추론·C++ 결과 일치 |
-| 한글/공백 경로·비관리자·읽기 전용 설치 폴더 | 모델 로드·학습 저장·재실행 성공 |
-| 손상된 팩·다른 버전·미지원 계약·잘못된 image platform | 활성 팩 변경 없이 명확한 오류 |
-| 중단·worker crash·앱 종료·불완전 export | 기존 결과 보존, 실패/취소 상태 확정, 임시 아티팩트 정리 |
-| 앱/팩 업데이트·롤백·제거 | 프로젝트·클래스 순서·모델 버전·사용자 결과 보존 |
-| ONNX 수치 검증 실패 | 허용 오차 자동 확대 없음, 기존 auto fallback 유지 |
-| 실제 Windows/i7, 1×1×224×224 및 RGB | 직접/컨테이너·버튼/C++ 전체 시간과 p50/p95/p99/max·8 ms 초과율 보고 |
-| GPU 팩 | 실제 지원 NVIDIA 드라이버/WSL2에서 별도 검증, CPU 결과로 대체하지 않음 |
-
-fixture는 공개 가능한 합성 데이터와 배포 승인된 초기 가중치로 자동 검증한다.
-사용자 실제 모델의 정확도·성능은 해당 PC에서 로컬 보고서로 확인하며 업로드를 요구하지 않는다.
-Windows 설치 테스트 통과와 사용자 모델의 정확도/8 ms 달성은 각각 별도 인수 항목이다.
-
-## 14. 다음 구현 작업
-
-첫 작업은 CPU EXE 빌드·스모크를 현재 코드에서 고정하는 P0다. 그 다음 EfficientNet B0를
-builtin adapter로 등록하고 동일 UI에서 두 번째 ONNX 팩을 추가하는 P1/P2를 수행한다.
-Docker 팩은 그 계약 위에 추가하여 새 의존성의 학습·내보내기를 검증한다.
-
-배포 확정 시 필요한 정보는 사용 Windows 버전, 배포 PC의 학습 필요 여부, Docker 설치 허용 여부,
-GPU 유무, 포함할 초기 가중치 목록·배포 범위다. 현재 설계는 학습·추론을 포함한 CPU 기본판과 선택형 Docker를
-기본값으로 삼았으며, 이 정보가 달라도 팩과 실행기 계약을 유지하며 배포 프로필을 바꿀 수 있다.
-
-추가 근거: [Docker Windows 설치](https://docs.docker.com/desktop/setup/install/windows-install/),
-[GPU 지원](https://docs.docker.com/desktop/features/gpu/),
-[이미지 save](https://docs.docker.com/reference/cli/docker/image/save/),
-[이미지 load](https://docs.docker.com/reference/cli/docker/image/load/),
-[WSL 파일시스템 권장사항](https://docs.docker.com/desktop/features/wsl/best-practices/).
+P0 미통과 항목과 Re-detr/SAM2 사용범위 확인은 설계의 남은 결정으로 표시한다.
+설계 문서가 완성되었다는 이유로 실행코드·EXE·모델별 Windows 검증이 완료되었다고 표시하지 않는다.
