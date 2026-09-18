@@ -14,7 +14,9 @@ from dataclasses import asdict, dataclass, field
 import json
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 import re
+import stat
 from typing import Any, Iterable, Mapping
 import zipfile
 
@@ -299,18 +301,37 @@ class ModelRegistry:
     def load_pack(self, path: str | Path) -> ModelSpec:
         """팩을 staging 없이 실행하지 않고, manifest만 먼저 엄격히 읽는다."""
         pack = Path(path)
-        if pack.suffix.lower() != PACK_SUFFIX or not pack.is_file():
+        if (pack.suffix.lower() != PACK_SUFFIX or pack.is_symlink() or
+                not pack.is_file()):
             raise ModelRegistryError(f"model pack must be a .dvmodel file: {pack}")
         try:
             with zipfile.ZipFile(pack) as archive:
-                names = archive.namelist()
-                for name in names:
-                    candidate = Path(name)
-                    if candidate.is_absolute() or ".." in candidate.parts:
-                        raise ModelRegistryError(f"unsafe model pack path: {name}")
+                names: list[str] = []
+                folded: set[str] = set()
+                for info in archive.infolist():
+                    raw_name = info.filename
+                    if not isinstance(raw_name, str) or not raw_name or "\\" in raw_name:
+                        raise ModelRegistryError(f"unsafe model pack path: {raw_name}")
+                    candidate = PurePosixPath(raw_name)
+                    if (candidate.is_absolute() or ":" in raw_name or ".." in candidate.parts or
+                            any(part == "" for part in candidate.parts)):
+                        raise ModelRegistryError(f"unsafe model pack path: {raw_name}")
+                    name = "/".join(candidate.parts)
+                    if name != raw_name:
+                        raise ModelRegistryError(f"model pack path is not normalized: {raw_name}")
+                    key = name.casefold()
+                    if key in folded:
+                        raise ModelRegistryError(f"duplicate model pack path: {name}")
+                    folded.add(key)
+                    mode = (info.external_attr >> 16) & 0xFFFF
+                    if stat.S_ISLNK(mode):
+                        raise ModelRegistryError(f"symlink is not allowed in model pack: {name}")
+                    names.append(name)
                 if "manifest.json" not in names:
                     raise ModelRegistryError("model pack manifest.json missing")
                 manifest = json.loads(archive.read("manifest.json"))
+                if not isinstance(manifest, Mapping):
+                    raise ModelRegistryError("model pack manifest must be an object")
                 try:
                     validate_special_assets(manifest, set(names))
                     from model_runtime.special_contracts import validate_container_image_asset

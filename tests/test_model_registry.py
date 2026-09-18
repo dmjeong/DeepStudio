@@ -3,6 +3,7 @@
 from io import BytesIO
 import json
 from pathlib import Path
+import stat
 import zipfile
 
 import pytest
@@ -42,6 +43,42 @@ def test_registry_rejects_duplicate_or_unsafe_pack(tmp_path):
         archive.writestr("../manifest.json", json.dumps({}))
     with pytest.raises(ModelRegistryError, match="unsafe"):
         registry.load_pack(pack)
+
+
+def test_registry_rejects_archive_symlinks_duplicate_paths_and_pack_symlink(tmp_path):
+    registry = ModelRegistry.builtin()
+    manifest = json.dumps({
+        "schema_version": 1, "model_id": "vendor.archive-safe", "family": "Example",
+        "variant": "Small", "task": "classify", "runtimes": ["onnx"],
+        "capabilities": ["infer"], "input_size": [32, 32], "input_channels": [3],
+        "release_status": "scoped",
+    })
+
+    symlink_pack = tmp_path / "symlink.dvmodel"
+    with zipfile.ZipFile(symlink_pack, "w") as archive:
+        archive.writestr("manifest.json", manifest)
+        info = zipfile.ZipInfo("weights.onnx")
+        info.create_system = 3
+        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+        archive.writestr(info, "outside")
+    with pytest.raises(ModelRegistryError, match="symlink"):
+        registry.load_pack(symlink_pack)
+
+    duplicate_pack = tmp_path / "duplicate.dvmodel"
+    with zipfile.ZipFile(duplicate_pack, "w") as archive:
+        archive.writestr("manifest.json", manifest)
+        archive.writestr("README.md", "one")
+        archive.writestr("README.md", "two")
+    with pytest.raises(ModelRegistryError, match="duplicate"):
+        registry.load_pack(duplicate_pack)
+
+    pack_link = tmp_path / "pack-link.dvmodel"
+    try:
+        pack_link.symlink_to(duplicate_pack)
+    except OSError as exc:
+        pytest.skip(f"file symlinks unavailable: {exc}")
+    with pytest.raises(ModelRegistryError, match=".dvmodel"):
+        registry.load_pack(pack_link)
 
 
 def test_registry_rejects_windows_reserved_model_ids():

@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-19T00:50:00+09:00",
+  "lastUpdated": "2026-09-19T01:15:00+09:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -129,7 +129,7 @@
       ],
       "timestamps": {
         "started": "2026-09-18T03:37:37.984Z",
-        "lastUpdated": "2026-09-19T00:50:00+09:00"
+        "lastUpdated": "2026-09-19T01:15:00+09:00"
       },
       "designStatus": "revised_with_open_decisions",
       "implementationStatus": "in_progress",
@@ -204,6 +204,7 @@
         ,"Pack installer rejects symlinked model/version directories and cleans failed staging activation without leaving orphaned payloads"
         ,"Deployment bundle builder/verifier rejects symlinked source/output paths and non-normalized checksum keys"
         ,"Pack builder rejects explicitly supplied symlinked manifests before resolving external release metadata"
+        ,"Model registry archive loading rejects pack symlinks, archive symlinks, duplicate paths and non-normalized entries"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",
@@ -496,6 +497,14 @@
       "runs": "35344763814,35344668353,35344667974",
       "result": "CI and Windows SDK/payload jobs failed before runner allocation; every job had steps=[]",
       "local_validation": "32 pack/bundle integrity tests passed"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "model_registry_archive_hardening_refresh",
+      "timestamp": "2026-09-19T01:15:00+09:00",
+      "python": "59 model registry/pack worker/builder/installer tests passed",
+      "model_registry": "direct archive inspection now rejects symlink, duplicate and non-normalized entries before manifest registration",
+      "windows_i7": "not measured"
     }
   ]
 }
