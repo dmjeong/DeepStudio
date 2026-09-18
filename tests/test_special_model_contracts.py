@@ -64,6 +64,7 @@ def test_redetr_contract_rejects_incomplete_manifest(mutator):
     lambda item: item["contracts"]["graphs"].pop("decoder"),
     lambda item: item["contracts"]["graphs"]["decoder"]["inputs"].pop("point_labels"),
     lambda item: item["contracts"].update(video_state="yes"),
+    lambda item: item["contracts"].update(prompt_coordinate_space="normalized"),
     lambda item: item["contracts"]["automatic_mask"].update(max_grid=33),
 ])
 def test_sam2_contract_rejects_incomplete_manifest(mutator):

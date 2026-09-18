@@ -91,6 +91,9 @@ private:
     std::vector<float> m_normalize_std{0.229f, 0.224f, 0.225f};
     int m_mask_height = 256;
     int m_mask_width = 256;
+    // SAM2 prompt coordinates are expressed in the encoder's resized input
+    // space unless a pack explicitly declares original_pixels.
+    std::string m_prompt_coordinate_space = "resized_input";
     bool m_ready = false;
     std::string m_error;
 };

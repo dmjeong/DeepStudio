@@ -111,6 +111,10 @@ ORT의 SAM2 예제는 모델 버전·decoder batch 제약이 있으므로 SAM2.1
 이미지 content hash·모델 hash·전처리 설정으로 embedding 캐시를 구분한다.
 image_context는 image_embeddings와 decoder 입력인 image_features_0/1을 함께 보유한다.
 같은 이미지의 반복 프롬프트에는 encoder를 다시 실행하지 않고, 이미지나 모델 변경 시 캐시를 무효화한다.
+프롬프트 좌표계는 manifest의 `contracts.prompt_coordinate_space`에 기록한다.
+기본값 `resized_input`은 원본 이미지 픽셀 좌표를 encoder 입력 해상도로 축척하고,
+`original_pixels`는 모델이 원본 픽셀 좌표를 직접 받는 경우에만 사용한다. C++/C# SDK는
+이 값을 확인한 뒤 동일한 좌표 계약으로 prompt를 전달한다.
 [ORT SAM2 내보내기 예제](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/transformers/models/sam2/README.md)
 
 ## 6. DeepLab V3+와 U-Net

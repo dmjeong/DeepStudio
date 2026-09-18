@@ -76,6 +76,9 @@ def validate_sam2_manifest(manifest: Mapping) -> None:
         raise SpecialContractError("SAM2 prompt_types must contain point, box or mask")
     if not isinstance(contract.get("video_state"), bool):
         raise SpecialContractError("SAM2 video_state must be boolean")
+    coordinate_space = contract.get("prompt_coordinate_space", "resized_input")
+    if coordinate_space not in {"resized_input", "original_pixels"}:
+        raise SpecialContractError("SAM2 prompt_coordinate_space is unsupported")
     automatic = contract.get("automatic_mask")
     if automatic is not None:
         automatic = _require_mapping(automatic, "contracts.automatic_mask")

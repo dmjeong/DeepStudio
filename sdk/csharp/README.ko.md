@@ -10,6 +10,8 @@ anomaly map을 anomaly 결과로 제공한다. SAM2는 `EncodeSam`으로 encoder
 실제 Hiera 변형의 Windows 검증 전에는 release-ready가 아니다.
 `AutomaticSam`은 지정한 격자(축마다 1~32)의 positive point를 반복해 선택 mask를 합치는
 이미지 자동 마스크 primitive다. upstream 영상 memory propagation API와는 별도다.
+SAM2 prompt 좌표는 manifest의 `contracts.prompt_coordinate_space` 계약을 따른다. 기본
+`resized_input` graph에서는 native SDK가 원본 이미지 좌표를 encoder 입력 크기에 맞춰 변환한다.
 
 ResNet, ConvNeXt V1, DeepLab V3+, U-Net의 `builtin` manifest도 동일한
 classification/segmentation API로 읽는다. 모델 가중치는 SDK에 포함하지 않는다.

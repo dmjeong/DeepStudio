@@ -135,6 +135,10 @@ bool Sam2Inference::InitializeFromJson(const std::string& config_path,
         }
         if (m_mask_height <= 0 || m_mask_width <= 0 || m_mask_height > 4096 || m_mask_width > 4096)
             throw std::invalid_argument("SAM2 mask size is invalid.");
+        m_prompt_coordinate_space = contracts.value("prompt_coordinate_space", std::string("resized_input"));
+        if (m_prompt_coordinate_space != "resized_input" &&
+            m_prompt_coordinate_space != "original_pixels")
+            throw std::invalid_argument("SAM2 prompt_coordinate_space must be resized_input or original_pixels.");
 
         Ort::SessionOptions options;
         options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
@@ -269,11 +273,18 @@ Sam2Result Sam2Inference::Segment(const Sam2ImageContext& context, const Sam2Pro
     }
     std::vector<float> point_values;
     point_values.reserve(points.size() * 2);
+    const float coordinate_scale_x = m_prompt_coordinate_space == "resized_input"
+        ? static_cast<float>(m_input_width) / static_cast<float>(context.image_width) : 1.0f;
+    const float coordinate_scale_y = m_prompt_coordinate_space == "resized_input"
+        ? static_cast<float>(m_input_height) / static_cast<float>(context.image_height) : 1.0f;
+    if (!(coordinate_scale_x > 0.0f) || !(coordinate_scale_y > 0.0f) ||
+        !std::isfinite(coordinate_scale_x) || !std::isfinite(coordinate_scale_y))
+        throw std::invalid_argument("SAM2 image context dimensions are invalid.");
     for (const auto& point : points) {
         if (!std::isfinite(point.x) || !std::isfinite(point.y))
             throw std::invalid_argument("SAM2 point prompt must be finite.");
-        point_values.push_back(point.x);
-        point_values.push_back(point.y);
+        point_values.push_back(point.x * coordinate_scale_x);
+        point_values.push_back(point.y * coordinate_scale_y);
     }
     bool has_mask = !prompt.mask_input.empty();
     if (has_mask && (prompt.mask_input.type() != CV_32FC1 || prompt.mask_input.rows != m_mask_height ||

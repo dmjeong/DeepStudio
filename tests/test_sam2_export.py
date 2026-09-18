@@ -47,6 +47,7 @@ class Sam2ExportTests(unittest.TestCase):
             self.assertEqual(manifest["backend"], "sam2")
             self.assertEqual(manifest["output_names"], ["low_res_mask_logits", "iou_predictions"])
             self.assertEqual(manifest["contracts"]["prompt_types"], ["point", "box", "mask"])
+            self.assertEqual(manifest["contracts"]["prompt_coordinate_space"], "resized_input")
             self.assertEqual(manifest["contracts"]["automatic_mask"]["max_grid"], 32)
             self.assertEqual(manifest["contracts"]["graphs"]["decoder"]["inputs"]["point_labels"],
                              "point_labels")

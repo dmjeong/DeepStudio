@@ -135,7 +135,8 @@ sam_config = {
             "point_labels": "point_labels", "mask_input": "mask_input",
             "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"},
             "outputs": ["low_res_mask_logits", "iou_predictions"]}},
-        "prompt_types": ["point", "box", "mask"], "video_state": False, "mask_size": [2, 2]},
+        "prompt_types": ["point", "box", "mask"], "video_state": False,
+        "prompt_coordinate_space": "resized_input", "mask_size": [2, 2]},
 }
 (root / "sam2.json").write_text(json.dumps(sam_config, ensure_ascii=False), encoding="utf-8")
 
