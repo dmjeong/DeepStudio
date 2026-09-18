@@ -35,7 +35,9 @@ python gui/main.py
 - `gui/`: Qt 데스크톱 화면과 공통 학습·추론 엔진
 - `python/`: `CustomCSP`, EfficientNet, PatchCore, 데이터 처리, ONNX 내보내기
 - `web/`, `webapp/`: React UI와 로컬 FastAPI 작업 관리자
-- `cpp/`: C++17 `VisionInference`, `ClassificationWorker`, CPU 벤치마크
+- `cpp/`: C++17 `VisionInference`, `ClassificationWorker`, 고정 C ABI `vision_runtime`, CPU 벤치마크
+- `sdk/csharp/`, `sdk/cpp/`: C ABI SafeHandle 래퍼와 C++17 사용 예
+- `model_runtime/`, `tools/build_model_pack.py`, `tools/install_model_pack.py`: 오프라인 `.dvmodel` 팩 생성·검증·원자 설치
 - `tools/`, `tests/`: 검증·배포 도구 및 회귀 검사
 
 ## EfficientNet CPU와 C++17
@@ -76,7 +78,9 @@ npm run build
 
 ## 다음 배포판 설계
 
-기본 모델의 학습·추론·ONNX C#/C++ 배포, Docker 모델 확장과 단일 Windows 설치 EXE를 설계 중입니다.
+기본 모델 카탈로그, Docker 모델 팩, C++17/C# ONNX SDK와 단일 Windows 설치 EXE의 설계 및 기반 계약을 구현 중입니다.
+현재 실제로 SDK 검증을 통과한 기본 모델은 EfficientNet B0/B1 분류와 Custom/semantic 배포 경로이며,
+Re-DETR·SAM2·PatchCore의 특수 ONNX/C ABI 출력은 카탈로그에 등록한 뒤 별도 검증 대상으로 남겨 두었습니다.
 아래 문서는 구현 목표이며 위의 현재 지원 기능과 구분합니다.
 
 - [기본 모델 목록과 지원 판정](docs/01-plan/features/model-catalog.md)

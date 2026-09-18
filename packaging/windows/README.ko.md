@@ -105,7 +105,9 @@ BIOS 설정이나 조직 정책 때문에 가상화를 사용할 수 없다면 �
 PatchCore는 memory bank와 점수 계산을 포함한 배포 결과를 사용한다.
 
 C++17 또는 C# SDK는 이 배포 폴더를 열어 추론한다. 추론 프로그램에 Python·학습툴·Docker 설치를 요구하지 않는다.
-C# 기본 예제는 .NET 10 self-contained, C++ 예제는 Windows x64 Release로 제공하는 것이 목표다.
+현재 저장소에는 `sdk/cpp/README.ko.md`와 C# `VisionSession` SafeHandle 래퍼가 포함되어 있다.
+C# 프로젝트는 `net8.0`을 대상으로 하며, 최종 설치 EXE의 self-contained 데모는 Windows runner에서
+별도로 빌드·검증한다. C++ 예제는 Windows x64 Release로 제공한다.
 .NET Framework 4.8 지원은 별도 검증 전까지 표시하지 않는다.
 개발 프로젝트를 빌드하는 도구는 개발자에게 필요하지만 완성된 프로그램의 일반 사용자에게 요구하지 않는다.
 
@@ -133,3 +135,11 @@ Docker 추가가 자동으로 더 빠른 추론을 뜻하지 않는다.
 
 정식 배포 전 필수 확인: 실제 단일 EXE 생성·서명, 정확한 OS/runtime/driver 최소 버전,
 모델별 Windows 학습·ONNX·C#/C++ 결과 일치, 오프라인 Docker 추가, 위 사양에서의 메모리 실측.
+
+## 개발용 모델 팩
+
+추가 모델을 앱에 넣을 때는 코드를 호스트에서 import하지 않고 팩으로 묶는다.
+`tools/build_model_pack.py SOURCE OUTPUT.dvmodel --allow-unsigned`는 로컬 개발용
+팩을 만들고 `tools/install_model_pack.py`는 경로 탈출·symlink·압축 폭탄·모든 SHA-256을
+검사한 뒤 staging 디렉터리에서 원자 활성화한다. `--allow-unsigned`는 개발용에서만 사용하며,
+출시 팩은 외부 서명/신뢰 키 검증을 통과한 manifest를 사용한다.

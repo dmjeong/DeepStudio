@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from core.container_worker import Frame, ContainerWorkerError, build_container_command
+from core.container_worker import ContainerCommand, ContainerWorker, Frame, ContainerWorkerError, build_container_command
 from core.model_registry import ModelRegistry, ModelRegistryError, builtin_model_specs
 
 
@@ -90,3 +90,31 @@ def test_container_command_is_networkless_and_uses_read_only_mounts(tmp_path):
     assert "readonly" in command.argv[command.argv.index("--mount") + 1]
     with pytest.raises(ContainerWorkerError, match="absolute"):
         build_container_command("sha256:" + "a" * 64, model_dir="relative", data_dir=data, work_dir=work)
+
+
+def test_container_cleanup_requires_matching_owner_label(monkeypatch):
+    command = ContainerCommand("sha256:" + "a" * 64, "worker-1", (), "deepvision.owner=worker-1")
+    worker = ContainerWorker(command)
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(tuple(argv))
+        if argv[1] == "inspect":
+            return type("Completed", (), {"returncode": 0, "stdout": "worker-1\n"})()
+        return type("Completed", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr("core.container_worker.subprocess.run", fake_run)
+    assert worker._remove_owned_container() is True
+    assert calls == [
+        ("docker", "inspect", "--format", '{{index .Config.Labels "deepvision.owner"}}', "worker-1"),
+        ("docker", "rm", "--force", "worker-1"),
+    ]
+
+    calls.clear()
+    def foreign_run(argv, **kwargs):
+        calls.append(tuple(argv))
+        return type("Completed", (), {"returncode": 0, "stdout": "someone-else\n"})()
+
+    monkeypatch.setattr("core.container_worker.subprocess.run", foreign_run)
+    assert worker._remove_owned_container() is False
+    assert calls == [("docker", "inspect", "--format", '{{index .Config.Labels "deepvision.owner"}}', "worker-1")]

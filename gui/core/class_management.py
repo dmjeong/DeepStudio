@@ -32,10 +32,16 @@ def _inside(path, parent):
 
 
 def _plain_path(path):
-    """링크가 가리키는 다른 데이터까지 수정하지 않도록 경로 구성요소 검사."""
+    """Reject a dataset entry that is itself a link.
+
+    Temporary directories on macOS commonly live below the `/var` symlink to
+    `/private/var`.  Rejecting every parent component therefore blocks normal
+    projects before their own data tree is inspected.  The root and each
+    walked child are checked directly, which still prevents edits through a
+    dataset-owned symlink while allowing an OS-managed parent alias.
+    """
     path = Path(os.path.abspath(path))
-    if any(p.is_symlink() or getattr(p, "is_junction", lambda: False)()
-           for p in (path, *path.parents)):
+    if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
         raise ValueError(f"심볼릭 링크 경로는 클래스 변경을 지원하지 않습니다: {path}")
     return path
 

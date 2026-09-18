@@ -17,6 +17,7 @@
   "properties": {
     "schema_version": {"const": 1},
     "model_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,79}$"},
+    "pack_version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"},
     "family": {"type": "string", "minLength": 1},
     "variant": {"type": "string", "minLength": 1},
     "task": {"enum": ["classify", "anomaly", "detect", "segment"]},
@@ -26,6 +27,8 @@
     "input_channels": {"type": "array", "items": {"enum": [1, 3]}, "minItems": 1},
     "release_status": {"enum": ["requested", "scoped", "runtime_verified", "trained_verified", "export_verified", "sdk_verified", "release_ready"]},
     "assets": {"type": "object"},
+    "signature": {"type": "object", "additionalProperties": true},
+    "license": {"type": "object", "additionalProperties": true},
     "contracts": {"type": "object"},
     "runtime_requirements": {"type": "object"}
   }

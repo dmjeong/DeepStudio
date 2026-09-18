@@ -156,6 +156,33 @@ class ContainerWorker:
             shell=False,
         )
 
+    def _remove_owned_container(self) -> bool:
+        """Remove the named container only after checking our ownership label.
+
+        Docker names are user-visible and can be reused after an application
+        restart.  Never issue ``docker rm`` for a name until inspect proves
+        that the label belongs to this worker instance.
+        """
+        key, separator, value = self.command.label.partition("=")
+        if not separator or not key or not value:
+            return False
+        format_arg = "{{{{index .Config.Labels \"{}\"}}}}".format(key)
+        inspected = subprocess.run(
+            ("docker", "inspect", "--format", format_arg, self.command.name),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if inspected.returncode != 0 or inspected.stdout.strip() != value:
+            return False
+        subprocess.run(
+            ("docker", "rm", "--force", self.command.name),
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+
     def stop(self, timeout: float = 10.0) -> None:
         if self.process is None:
             return
@@ -171,4 +198,8 @@ class ContainerWorker:
             self.process.kill()
             self.process.wait(timeout=5)
         finally:
+            # ``--rm`` normally handles this, but an interrupted docker.exe or
+            # a daemon restart can leave an exited container behind.  Inspect
+            # and remove it explicitly while preserving the ownership check.
+            self._remove_owned_container()
             self.process = None

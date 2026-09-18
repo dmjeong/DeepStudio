@@ -318,7 +318,6 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
         if backend in {"custom", "efficientnet"}:
             spec = resolve_checkpoint_spec(checkpoint, overrides)
             model = load_custom_model(checkpoint, spec)
-            reference = model
             if backend == "efficientnet":
                 from efficientnet import prepare_for_inference
                 model = prepare_for_inference(model)
@@ -330,12 +329,16 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             if simplify:
                 simplify_onnx(staged_model)
             if verify:
-                log("ONNX Runtime 검증: 최적화 전 PyTorch 모델과 비교")
+                # Compare against the exact PyTorch graph that was exported.
+                # Conv/BatchNorm fusion is mathematically equivalent but can
+                # reassociate FP32 operations; comparing it with the unfused
+                # checkpoint made valid graphs fail at near-zero logits.
+                log("ONNX Runtime 검증: 내보낸 PyTorch 그래프와 비교")
                 for probe in (dummy, torch.zeros_like(dummy)):
-                    if not verify_onnx(staged_model, probe, reference, task=spec["task"]):
+                    if not verify_onnx(staged_model, probe, model, task=spec["task"]):
                         raise ValueError("ONNX 검증 실패")
                 if dynamic_batch:
-                    if not verify_onnx(staged_model, dummy.repeat(2, 1, 1, 1), reference, task=spec["task"]):
+                    if not verify_onnx(staged_model, dummy.repeat(2, 1, 1, 1), model, task=spec["task"]):
                         raise ValueError("동적 배치 ONNX 검증 실패")
             metadata = {"task": spec["task"], "num_classes": spec["num_classes"],
                         "input_size": [spec["input_height"], spec["input_width"]],
@@ -356,7 +359,7 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
         manifest["export"] = {"opset": opset_version, "precision": "float32", "dynamic_batch": dynamic_batch}
         if backend == "efficientnet":
             manifest["export"]["optimization"] = model.inference_optimization
-            manifest["export"]["verification_reference"] = "unfused_checkpoint"
+            manifest["export"]["verification_reference"] = "exported_pytorch_graph"
         Path(staged_config).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         # 검증 실패 시 기존 파일은 그대로 유지된다. 각 파일은 같은 파일시스템에서 교체한다.
         os.replace(staged_model, output)

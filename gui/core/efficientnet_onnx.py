@@ -12,7 +12,7 @@ class EfficientNetOnnx:
         started = time.perf_counter()
         # Decoder module loading belongs to model setup, not the first image's decode timing.
         import cv2  # noqa: F401
-        from efficientnet import EfficientNet
+        from efficientnet import EfficientNet, prepare_for_inference
         from export_onnx import export_to_onnx, validate_classification_outputs
         import onnxruntime as ort
         if not isinstance(model, EfficientNet) or next(model.parameters()).device.type != "cpu":
@@ -23,18 +23,24 @@ class EfficientNetOnnx:
         self.input_shape = (1, model.in_channels, *input_size)
         self.threads = threads
         self.version = ort.__version__
+        # Export and validate the same FP32 graph that is deployed.  Conv/BN
+        # fusion is numerically equivalent, but comparing its reassociated
+        # logits with the unfused training graph rejects valid ONNX models at
+        # near-zero values (for example the reported 0.00052 delta).
+        export_model = prepare_for_inference(model)
+        self.export_optimization = dict(export_model.inference_optimization)
         generator = torch.Generator().manual_seed(42)
         dummy = torch.randn(self.input_shape, generator=generator)
         self.num_classes = model.num_classes
         # Export the loaded model, never a checkpoint that may have changed on disk.
         with tempfile.TemporaryDirectory(prefix="studio-efficientnet-") as folder:
             path = Path(folder) / "model.onnx"
-            export_to_onnx(model, dummy, path, dynamic_batch=False, task="classify")
+            export_to_onnx(export_model, dummy, path, dynamic_batch=False, task="classify")
             model_bytes = path.read_bytes()
         probes = []
         with torch.inference_mode():
             for name, tensor in (("seeded", dummy), ("zero", torch.zeros_like(dummy))):
-                expected = model(tensor).detach().numpy().copy()
+                expected = export_model(tensor).detach().numpy().copy()
                 # A non-finite reference cannot be repaired by a runtime option.
                 if not np.isfinite(expected).all():
                     raise ValueError(f"ONNX 검증 실패: 기준 PyTorch 출력에 NaN 또는 무한대 "

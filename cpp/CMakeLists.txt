@@ -129,6 +129,7 @@ add_library(vision_inference STATIC
     include/classification_worker.h
     include/vision_inference.h
 )
+set_target_properties(vision_inference PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(vision_inference PUBLIC cxx_std_17)
 if(MSVC)
     target_compile_options(vision_inference PUBLIC /utf-8 /Zc:__cplusplus)
@@ -146,6 +147,18 @@ target_link_libraries(vision_inference PUBLIC
     ${OpenCV_LIBS}
     ${ONNXRUNTIME_LIB}
 )
+
+# Stable C ABI for C# and other languages. The C++17 implementation remains
+# the owner of ONNX Runtime/OpenCV objects; callers only see opaque handles.
+add_library(vision_runtime SHARED src/vision_runtime_c.cpp)
+target_compile_features(vision_runtime PUBLIC cxx_std_17)
+target_compile_definitions(vision_runtime PRIVATE VISION_RUNTIME_BUILD=1)
+target_include_directories(vision_runtime PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS}
+    ${ONNXRUNTIME_INCLUDE_DIR}
+)
+target_link_libraries(vision_runtime PRIVATE vision_inference)
 
 if(VISION_WITH_OPENVINO)
     target_compile_definitions(vision_inference PUBLIC VISION_WITH_OPENVINO=1)
@@ -165,7 +178,8 @@ install(TARGETS efficientnet_cpu_benchmark efficientnet_background_demo DESTINAT
 
 # ── 설치 설정 ────────────────────────────────────────
 install(TARGETS vision_inference DESTINATION lib)
-install(FILES include/classification_worker.h include/vision_inference.h include/opencv_preprocess.h DESTINATION include)
+install(TARGETS vision_runtime DESTINATION bin)
+install(FILES include/classification_worker.h include/vision_inference.h include/vision_runtime_c.h include/opencv_preprocess.h DESTINATION include)
 
 # ── 빌드 정보 출력 ───────────────────────────────────
 message(STATUS "")
@@ -196,4 +210,8 @@ if(BUILD_TESTING)
     target_link_libraries(deployment_smoke PRIVATE vision_inference)
     add_test(NAME deployment_contracts COMMAND deployment_smoke "${CMAKE_BINARY_DIR}/test-models")
     set_tests_properties(deployment_contracts PROPERTIES FIXTURES_REQUIRED deployment_models)
+    add_executable(c_api_contracts tests/c_api_contracts.cpp)
+    target_link_libraries(c_api_contracts PRIVATE vision_runtime ${OpenCV_LIBS})
+    add_test(NAME c_api_contracts COMMAND c_api_contracts "${CMAKE_BINARY_DIR}/test-models")
+    set_tests_properties(c_api_contracts PROPERTIES FIXTURES_REQUIRED deployment_models)
 endif()
