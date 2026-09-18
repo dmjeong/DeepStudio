@@ -69,8 +69,8 @@
         "gui_validation": "14 ONNX/fallback/button tests plus 90 existing regressions passed, 2 legacy retired_engine skips; both test processes exit 0",
         "gui_224_m4_latency": "p50 6.037 ms / p95 6.261 ms / max 8.596 ms; not Windows/i7",
         "first_gui_image_deadline": "not guaranteed; actual first button sample 11.527 ms including decode",
-        "user_onnx_validation_failure": "Maximum absolute error 2.8339844 reported on Windows; user checkpoint unavailable and cause not reproduced locally",
-        "onnx_validation_recovery": "ALL/BASIC/DISABLED validation retained; failed auto preparation restores PyTorch; target numerical mismatch unresolved",
+        "user_onnx_validation_failure": "Maximum absolute error 2.8339844 was reported on a private Windows checkpoint; that checkpoint remains unavailable for reproduction",
+        "onnx_validation_recovery": "Classification verification compares the exported PyTorch graph with a 1e-3 FP32 floor and top-1 parity; private checkpoint parity remains pending",
         "gui_auto_fallback": "Local synthetic B0 predictions/Grad-CAM/cache preserved with injected ONNX failures; actual process button 2/2 completed, errors 0, exit 0",
         "user_model_privacy": "Recovery verified with locally generated fixture weights/images; user private data not transferred"
       },
@@ -86,7 +86,7 @@
         "report": "docs/04-report/studio-cleanup.report.md"
       },
       "completedAt": "2026-09-18T03:34:16.637944+00:00",
-      "validation": "Python 589 passed/11 skipped; web 11 passed/build; C++17 two configurations each CTest 3/3; Windows/i7 not measured"
+      "validation": "Python 627 passed/11 skipped; C++17 CTest 4/4; Windows/i7 not measured"
     },
     "model-packs-windows-distribution": {
       "phase": "do",
@@ -137,7 +137,12 @@
       "implementationProgress": [
         "ModelRegistry catalog with Re-DETR v4 Small/Medium/Large and all SAM2 Hiera variants",
         "Versioned .dvmodel manifest validation and safe pack loading",
+        "Weight-free ResNet/ConvNeXt/DeepLab V3+/U-Net adapters with shared ONNX export",
+        "PatchCore fixed-bank ONNX score/map export and native C ABI result",
+        "Re-DETR v4 pred_boxes/pred_logits native C++17/C ABI decode with sigmoid and softmax fixtures",
+        "Special model graph asset presence checks in builder, installer and registry",
         "Networkless Docker worker command and binary frame contract",
+        "WiX v4 MSI/Burn offline installer scaffold with payload hash and third-party notice gates",
         "Web model catalog endpoint and project model_id defaults"
       ],
       "openDecisions": [
