@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-18T23:42:00+09:00",
+  "lastUpdated": "2026-09-18T23:56:00+09:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -129,7 +129,7 @@
       ],
       "timestamps": {
         "started": "2026-09-18T03:37:37.984Z",
-        "lastUpdated": "2026-09-18T23:42:00+09:00"
+        "lastUpdated": "2026-09-18T23:56:00+09:00"
       },
       "designStatus": "revised_with_open_decisions",
       "implementationStatus": "in_progress",
@@ -451,6 +451,15 @@
       "python": "42 packaging, payload and worker tests passed",
       "managed_wsl": "symlinked ownership marker rejected",
       "windows_i7": "not measured"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "github_runner_gate_refresh",
+      "timestamp": "2026-09-18T23:56:00+09:00",
+      "head": "17a9f8e",
+      "runs": "35343956184,35343956381",
+      "result": "all jobs completed failure before runner allocation; steps empty",
+      "local_validation": "42 packaging, payload and worker tests passed"
     }
   ]
 }
