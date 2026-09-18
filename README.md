@@ -92,6 +92,7 @@ npm run build
 - [개정 계획](docs/01-plan/features/model-packs-windows-distribution.plan.md)
 - [상세 설계](docs/02-design/features/model-packs-windows-distribution.design.md)
 - [설치파일에 동봉할 README·최소사양 초안](packaging/windows/README.ko.md)
+- [Third-party 고지와 가중치 배포 원칙](THIRD_PARTY_NOTICES.md)
 
 최소사양은 UI/CPU 추론, GPU 학습, Docker 확장으로 구분하며 모델별 실측 후 확정합니다.
 현재 초안은 RAM16GB/CPU 실행, RAM32GB·VRAM12GB/GPU 학습을 검증 기준으로 제시하며,

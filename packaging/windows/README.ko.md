@@ -135,7 +135,7 @@ Docker 추가가 자동으로 더 빠른 추론을 뜻하지 않는다.
 프로젝트는 모델 팩 버전과 가중치를 고정한다. 업데이트만으로 모델을 바꾸지 않는다.
 제거 시 사용자 프로젝트·학습 결과는 보존한다. 앱 전용 WSL/모델 이미지 삭제는 별도 선택 사항이다.
 
-`licenses/`, `THIRD_PARTY_NOTICES`, `sbom.cdx.json`, `release-manifest.json`을 함께 제공한다.
+`licenses/`, `THIRD_PARTY_NOTICES.md`, `sbom.cdx.json`, `release-manifest.json`을 함께 제공한다.
 코드, pretrained 가중치, OS 패키지, GPU 라이브러리의 배포 조건을 각각 확인한다.
 상업적 이용/재배포 근거가 없는 가중치를 기본 설치파일에 넣지 않는다.
 

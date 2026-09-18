@@ -12,6 +12,10 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "Version must be majo
 $root = (Resolve-Path $PayloadRoot).Path
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$notice = Join-Path $root "THIRD_PARTY_NOTICES.md"
+if (-not (Test-Path -LiteralPath $notice -PathType Leaf)) {
+    throw "Payload must include THIRD_PARTY_NOTICES.md before signing."
+}
 $manifest = Join-Path $output "release-manifest.json"
 $msi = Join-Path $output "DeepVisionStudio-$Version.msi"
 $setup = Join-Path $output "DeepVisionStudio-Setup-$Version-win-x64.exe"
@@ -33,4 +37,3 @@ $bundleArgs = @("build", "-arch", "x64", "-ext", "WixToolset.Bal.wixext", "-dVer
 & $wix.Source @bundleArgs
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $setup)) { throw "WiX Burn bundle build failed." }
 Write-Output $setup
-
