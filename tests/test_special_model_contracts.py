@@ -85,3 +85,7 @@ def test_container_entrypoint_is_validated_without_importing_plugin():
     validate_container_entrypoint({"worker_entrypoint": "plugin.worker:factory"})
     with pytest.raises(SpecialContractError, match="worker_entrypoint"):
         validate_container_entrypoint({"worker_entrypoint": "../plugin:factory"})
+    with pytest.raises(SpecialContractError, match="worker_entrypoint"):
+        validate_container_entrypoint({"worker_entrypoint": "plugin-worker:factory"})
+    with pytest.raises(SpecialContractError, match="worker_entrypoint"):
+        validate_container_entrypoint({"worker_entrypoint": "plugin:factory-name"})
