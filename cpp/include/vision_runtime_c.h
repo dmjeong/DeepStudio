@@ -109,7 +109,7 @@ DV_API const char* dv_status_name(dv_status status);
 DV_API dv_status dv_create_session(const char* config_path_utf8,
                                    const dv_session_options* options,
                                    dv_session** out_session);
-/* Open a verified .dvdeploy directory by resolving its manifest config. */
+/* Open a .dvdeploy directory by resolving its manifest config. */
 DV_API dv_status dv_create_session_from_bundle(const char* bundle_path_utf8,
                                                const dv_session_options* options,
                                                dv_session** out_session);
