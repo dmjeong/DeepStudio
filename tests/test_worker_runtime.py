@@ -15,7 +15,8 @@ from model_runtime.managed_wsl import (ManagedWsl, ManagedWslError,
 from model_runtime.worker_manager import WorkerManager, WorkerManagerError
 from model_runtime.worker_server import WorkerServer
 from model_runtime.container_entrypoint import ContainerEntrypointError, _load_handlers
-from model_runtime.windows_worker import WindowsWorker, WindowsWorkerError, build_worker_command
+from model_runtime.windows_worker import (WindowsWorker, WindowsWorkerError,
+                                          _WindowsJobObject, build_worker_command)
 from model_runtime.worker_protocol import Frame, WorkerProtocolError, request_frame
 from gui.core.container_worker import ContainerCommand, ContainerWorker
 
@@ -61,6 +62,63 @@ def test_windows_worker_uses_absolute_shell_free_process_and_frames(tmp_path: Pa
     finally:
         worker.stop()
     assert worker.process is None
+
+
+def test_windows_worker_owns_job_object_lifecycle(tmp_path: Path, monkeypatch):
+    """The Windows path attaches and closes a process-tree owner."""
+    class FakeJob:
+        def __init__(self):
+            self.assigned = []
+            self.terminated = 0
+            self.closed = 0
+
+        def assign(self, handle):
+            self.assigned.append(handle)
+
+        def terminate(self):
+            self.terminated += 1
+
+        def close(self):
+            self.closed += 1
+
+    job = FakeJob()
+    monkeypatch.setattr(_WindowsJobObject, "create", classmethod(lambda cls: job))
+    code = "import sys; sys.stdin.buffer.read()"
+    command = build_worker_command(sys.executable, runtime_id="builtin-cpu-v1", cwd=tmp_path,
+                                   args=("-u", "-c", code))
+    worker = WindowsWorker(command)
+    worker.start()
+    assert len(job.assigned) == 1
+    worker.stop()
+    assert job.closed == 1
+    assert job.terminated == 0
+
+
+def test_windows_worker_terminates_owned_job_after_timeout(tmp_path: Path, monkeypatch):
+    class FakeJob:
+        def __init__(self):
+            self.terminated = 0
+            self.closed = 0
+
+        def assign(self, handle):
+            pass
+
+        def terminate(self):
+            self.terminated += 1
+
+        def close(self):
+            self.closed += 1
+
+    job = FakeJob()
+    monkeypatch.setattr(_WindowsJobObject, "create", classmethod(lambda cls: job))
+    code = "import time; time.sleep(10)"
+    command = build_worker_command(sys.executable, runtime_id="builtin-cpu-v1", cwd=tmp_path,
+                                   args=("-u", "-c", code))
+    worker = WindowsWorker(command)
+    worker.start()
+    worker.stop(timeout=0.05)
+    assert job.terminated == 1
+    assert job.closed == 1
 
 
 def test_windows_worker_rejects_external_python_overrides(tmp_path: Path):

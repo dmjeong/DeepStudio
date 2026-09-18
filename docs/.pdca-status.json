@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-18T21:06:00+09:00",
+  "lastUpdated": "2026-09-18T21:20:00+09:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -134,7 +134,7 @@
       "designStatus": "revised_with_open_decisions",
       "implementationStatus": "in_progress",
       "requirementsRevision": 3,
-      "validation": "Python 722 passed/11 skipped; built-in ONNX export parity verified at catalog sizes (classification 224, segmentation 512); web node tests 11/11 and production build passed; C++17 CTest 4/4 including relative bundle paths and SAM2 automatic-mask C ABI; model-pack template, digest validation, deployment and Windows packaging targeted tests passed; C# net8 Release build passed locally; Windows/i7 not measured",
+      "validation": "Python 724 passed/11 skipped; built-in ONNX export parity verified at catalog sizes (classification 224, segmentation 512); Windows worker Job Object lifecycle and timeout termination contracts verified; web node tests 11/11 and production build passed; C++17 CTest 4/4 including relative bundle paths and SAM2 automatic-mask C ABI; model-pack template, digest validation, deployment and Windows packaging targeted tests passed; C# net8 Release build passed locally; Windows/i7 not measured",
       "implementationProgress": [
         "ModelRegistry catalog with Re-DETR v4 Small/Medium/Large and all SAM2 Hiera variants",
         "Versioned .dvmodel manifest validation and safe pack loading",
@@ -192,6 +192,7 @@
         ,"Model registry revalidates declared container image archives for both uploaded and installed packs"
         ,"Built-in segmentation worker publishes the canonical mIoU metric to the training UI and run history"
         ,"Built-in ResNet18/50, ConvNeXt Tiny, DeepLab V3+ and U-Net adapters each export and verify an ONNX graph at catalog input sizes with the native C++ contract"
+        ,"Windows native worker attaches each process to a kill-on-close Job Object and terminates the owned process tree after cancellation timeout"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",
@@ -369,6 +370,14 @@
       "timestamp": "2026-09-18T21:06:00+09:00",
       "python": "722 passed/11 skipped",
       "builtin_onnx": "all five weight-free built-in adapters export and verify at catalog sizes with cpp_supported manifest",
+      "windows_i7": "not measured"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "windows_worker_job_contract_refresh",
+      "timestamp": "2026-09-18T21:20:00+09:00",
+      "python": "worker runtime targeted tests passed",
+      "windows_worker": "Job Object attach, close and timeout termination verified with portable fake",
       "windows_i7": "not measured"
     }
   ]
