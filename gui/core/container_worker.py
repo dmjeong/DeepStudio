@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import json
 import subprocess
 import threading
 import uuid
@@ -66,6 +67,7 @@ class ContainerCommand:
     name: str
     argv: tuple[str, ...]
     label: str
+    image_archive: str | None = None
 
 
 def build_container_command(
@@ -77,6 +79,7 @@ def build_container_command(
     name: str | None = None,
     cpus: int = 4,
     memory: str = "8g",
+    image_archive: str | Path | None = None,
 ) -> ContainerCommand:
     """검증된 이미지의 장기 실행 worker 명령을 만든다.
 
@@ -92,6 +95,12 @@ def build_container_command(
     model = _mount_path(model_dir, "model_dir")
     data = _mount_path(data_dir, "data_dir")
     work = _mount_path(work_dir, "work_dir", writable=True)
+    archive: Path | None = None
+    if image_archive is not None:
+        archive = Path(image_archive).expanduser()
+        if not archive.is_absolute() or archive.is_symlink() or not archive.is_file():
+            raise ContainerWorkerError("image_archive must be an existing absolute file")
+        archive = archive.resolve()
     container_name = name or f"deepvision-worker-{uuid.uuid4().hex[:12]}"
     if any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for char in container_name):
         raise ContainerWorkerError("invalid container name")
@@ -107,7 +116,8 @@ def build_container_command(
         image,
         "--worker-stdin-stdout", "--manifest", "/models/manifest.json",
     )
-    return ContainerCommand(image, container_name, argv, label)
+    return ContainerCommand(image, container_name, argv, label,
+                            None if archive is None else str(archive))
 
 
 class ContainerWorker:
@@ -124,6 +134,7 @@ class ContainerWorker:
     def start(self) -> None:
         if self.process is not None:
             raise ContainerWorkerError("worker already started")
+        self._load_image_archive()
         self.process = subprocess.Popen(
             self.command.argv,
             stdin=subprocess.PIPE,
@@ -133,6 +144,40 @@ class ContainerWorker:
         )
         self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
         self._stderr_thread.start()
+
+    def _load_image_archive(self) -> None:
+        archive = self.command.image_archive
+        if not archive:
+            return
+        loaded = subprocess.run(
+            ("docker", "load", "--input", archive), check=False,
+            capture_output=True, text=True,
+        )
+        if loaded.returncode != 0:
+            detail = (loaded.stderr or loaded.stdout or "docker load failed").strip()
+            raise ContainerWorkerError(f"offline container image load failed: {detail}")
+        inspected = subprocess.run(
+            ("docker", "image", "inspect", "--format", "{{json .RepoDigests}}",
+             self.command.image), check=False, capture_output=True, text=True,
+        )
+        if inspected.returncode != 0:
+            raise ContainerWorkerError("loaded container image cannot be inspected")
+        references = []
+        try:
+            value = json.loads((inspected.stdout or "").strip())
+            if isinstance(value, list):
+                references = [item for item in value if isinstance(item, str)]
+        except json.JSONDecodeError:
+            references = []
+        if self.command.image.startswith("sha256:"):
+            id_result = subprocess.run(
+                ("docker", "image", "inspect", "--format", "{{.Id}}", self.command.image),
+                check=False, capture_output=True, text=True,
+            )
+            if id_result.returncode != 0 or id_result.stdout.strip() != self.command.image:
+                raise ContainerWorkerError("loaded container image digest does not match the pack")
+        elif self.command.image not in references:
+            raise ContainerWorkerError("loaded container image digest does not match the pack")
 
     def _drain_stderr(self) -> None:
         process = self.process

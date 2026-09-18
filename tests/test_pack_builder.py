@@ -67,6 +67,22 @@ def test_special_model_pack_requires_its_graph_contract(tmp_path):
         build_pack(source, tmp_path / "redetr.dvmodel", allow_unsigned=True)
 
 
+def test_container_pack_requires_declared_offline_image_archive_asset(tmp_path):
+    source = _source(tmp_path)
+    manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    manifest.update({
+        "runtimes": ["container"],
+        "container_image": "registry.invalid/example@sha256:" + "a" * 64,
+        "container_image_archive": "docker/image.tar",
+    })
+    (source / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(PackBuildError, match="archive"):
+        build_pack(source, tmp_path / "container.dvmodel", allow_unsigned=True)
+    (source / "docker").mkdir()
+    (source / "docker/image.tar").write_bytes(b"image")
+    assert build_pack(source, tmp_path / "container.dvmodel", allow_unsigned=True).is_file()
+
+
 def test_release_ready_pack_requires_redistribution_notices(tmp_path):
     source = _source(tmp_path)
     manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))

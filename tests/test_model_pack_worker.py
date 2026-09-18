@@ -58,6 +58,28 @@ def test_pack_requires_pinned_container_image(tmp_path):
         ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
 
 
+def test_pack_passes_offline_image_archive_to_container_command(tmp_path):
+    _manifest(tmp_path)
+    archive = tmp_path / "docker-image.tar"
+    archive.write_bytes(b"oci archive")
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    manifest["container_image_archive"] = archive.name
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with (patch("core.model_pack_worker.build_container_command", return_value=object()) as build,
+          patch("core.model_pack_worker.ContainerWorker", FakeWorker)):
+        ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
+    assert build.call_args.kwargs["image_archive"] == archive.resolve()
+
+
+def test_pack_rejects_missing_offline_image_archive(tmp_path):
+    _manifest(tmp_path)
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    manifest["container_image_archive"] = "docker-image.tar"
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ModelPackWorkerError, match="archive"):
+        ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
+
+
 def test_pack_rejects_symlinked_manifest(tmp_path):
     external = tmp_path.parent / "external-manifest.json"
     external.write_text("{}", encoding="utf-8")

@@ -108,6 +108,25 @@ def validate_container_entrypoint(manifest: Mapping) -> None:
         raise SpecialContractError("worker_entrypoint contains an unsafe module or factory")
 
 
+def validate_container_image_asset(manifest: Mapping, asset_names) -> None:
+    """Validate an optional offline Docker image archive declared by a pack.
+
+    A digest-pinned image may be preloaded from a pack-local ``docker save``
+    archive.  The archive is optional for development packs that use an image
+    already loaded into the application-owned engine, but when declared it
+    must be covered by the pack's checksum set.
+    """
+    archive = manifest.get("container_image_archive")
+    if archive is None:
+        return
+    if (not isinstance(archive, str) or not archive.strip() or archive.startswith("/") or
+            ":" in archive or "\\" in archive or "//" in archive or ".." in archive.split("/")):
+        raise SpecialContractError("container_image_archive must be a safe relative path")
+    names = set(asset_names)
+    if archive not in names:
+        raise SpecialContractError(f"container image archive is missing from pack: {archive}")
+
+
 def special_asset_paths(manifest: Mapping) -> tuple[str, ...]:
     """Return graph files declared by a special model contract."""
     family = manifest.get("family")

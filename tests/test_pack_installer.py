@@ -48,6 +48,14 @@ def test_installer_rejects_checksum_tampering(tmp_path):
         PackInstaller(tmp_path / "installed").install(pack, allow_unsigned=True)
 
 
+def test_installer_rejects_windows_drive_paths_inside_archive(tmp_path):
+    pack = tmp_path / "drive-path.dvmodel"
+    with zipfile.ZipFile(pack, "w") as archive:
+        archive.writestr("C:/escape.txt", b"private")
+    with pytest.raises(PackInstallError, match="unsafe|invalid"):
+        PackInstaller(tmp_path / "installed").install(pack, allow_unsigned=True)
+
+
 def test_signed_pack_is_idempotent(tmp_path):
     pack = tmp_path / "model.dvmodel"
     _write_pack(pack, signed=True)

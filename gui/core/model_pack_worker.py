@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any, Mapping
 import uuid
 
@@ -75,6 +76,24 @@ def _container_image(manifest: Mapping[str, Any]) -> str:
     return image
 
 
+def _container_image_archive(root: Path, manifest: Mapping[str, Any]) -> Path | None:
+    value = manifest.get("container_image_archive")
+    if value is None:
+        return None
+    if (not isinstance(value, str) or not value.strip() or value.startswith("/") or
+            ":" in value or "\\" in value or "//" in value or ".." in value.split("/")):
+        raise ModelPackWorkerError("container_image_archive must be a safe relative path")
+    relative = PurePosixPath(value)
+    if any(part in {"", ".", ".."} for part in relative.parts):
+        raise ModelPackWorkerError("container_image_archive must be a safe relative path")
+    archive = (root / Path(*relative.parts)).resolve()
+    if archive.parent != root and root not in archive.parents:
+        raise ModelPackWorkerError("container_image_archive escapes the installed pack")
+    if archive.is_symlink() or not archive.is_file():
+        raise ModelPackWorkerError("container_image_archive is missing from the installed pack")
+    return archive
+
+
 class ModelPackWorker:
     """Long-lived worker for one installed `.dvmodel` directory."""
 
@@ -94,9 +113,11 @@ class ModelPackWorker:
                             memory: str = "8g", name: str | None = None) -> "ModelPackWorker":
         root, manifest = _read_manifest(pack_dir)
         image = _container_image(manifest)
+        image_archive = _container_image_archive(root, manifest)
         command = build_container_command(image, model_dir=root, data_dir=data_dir,
                                           work_dir=work_dir, cpus=cpus,
-                                          memory=memory, name=name)
+                                          memory=memory, name=name,
+                                          image_archive=image_archive)
         return cls(ContainerWorker(command), str(manifest["model_id"]), manifest)
 
     def start(self) -> None:

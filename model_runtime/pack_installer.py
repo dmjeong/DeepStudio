@@ -17,7 +17,8 @@ from typing import Any, Mapping
 import uuid
 import zipfile
 
-from .special_contracts import SpecialContractError, validate_special_assets, validate_special_manifest
+from .special_contracts import (SpecialContractError, validate_container_image_asset,
+                                validate_special_assets, validate_special_manifest)
 
 
 class PackInstallError(ValueError):
@@ -44,6 +45,8 @@ def _safe_name(name: str) -> str:
     if not isinstance(name, str) or not name or "\x00" in name:
         raise PackInstallError("model pack contains an invalid path")
     normalized = name.replace("\\", "/")
+    if ":" in normalized:
+        raise PackInstallError(f"unsafe model pack path: {name}")
     path = PurePosixPath(normalized)
     if path.is_absolute() or ".." in path.parts or any(part == "" for part in path.parts):
         raise PackInstallError(f"unsafe model pack path: {name}")
@@ -180,6 +183,7 @@ class PackInstaller:
             _validate_release_notices(manifest, expected_files)
             try:
                 validate_special_assets(manifest, expected_files)
+                validate_container_image_asset(manifest, expected_files)
             except SpecialContractError as exc:
                 raise PackInstallError(str(exc)) from exc
             listed_files = {_safe_name(name) for name in checksums["files"]}

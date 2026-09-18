@@ -73,7 +73,10 @@ worker는 `hello`, `describe`, `prepare`, `train`, `infer`, `export`, `cancel`, 
 stdout에는 프레임 외의 로그를 쓰지 않는다. 모델 팩을 다시 만들지 않고도 이 계약을 구현한 새 모델을 추가할 수 있다.
 호스트는 설치된 팩의 `runtime_requirements.container_image`를 확인한 뒤 `pack_train`, `pack_infer`,
 `pack_export` 작업으로 같은 worker를 호출한다. 이미지 참조는 `@sha256:<digest>`로 고정해야 하며,
-태그만 있는 이미지는 실행하지 않는다. 작업 요청의 JSON은 `/data`와 `/work`에 있는 파일을 가리키고,
+태그만 있는 이미지는 실행하지 않는다. 오프라인 설치가 필요한 팩은 `manifest.json`의
+`container_image_archive`에 `docker save` tar 경로를 선언하고 checksum에 포함해야 한다. worker가
+시작되기 전에 `docker load --input`으로 이미지를 가져오고, 로컬 이미지 digest가 manifest와 일치하지
+않으면 실행을 거부한다. 작업 요청의 JSON은 `/data`와 `/work`에 있는 파일을 가리키고,
 큰 이미지·체크포인트는 DVW1 프레임에 직접 넣지 않는다.
 설치가 끝나면 학습 화면의 모델 카탈로그에서 해당 팩을 선택하고 `팩 학습`, `팩 추론`,
 `팩 ONNX export` 버튼으로 실행한다. 버튼은 절대 경로의 설치 팩과 데이터 루트가 확인되고

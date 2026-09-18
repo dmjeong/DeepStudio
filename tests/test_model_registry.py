@@ -213,6 +213,43 @@ def test_container_command_is_networkless_and_uses_read_only_mounts(tmp_path):
         build_container_command("sha256:" + "a" * 64, model_dir="relative", data_dir=data, work_dir=work)
 
 
+def test_container_command_validates_offline_image_archive(tmp_path):
+    model, data, work = (tmp_path / name for name in ("model", "data", "work"))
+    for path in (model, data, work):
+        path.mkdir()
+    archive = tmp_path / "image.tar"
+    archive.write_bytes(b"image")
+    command = build_container_command("sha256:" + "a" * 64, model_dir=model, data_dir=data,
+                                     work_dir=work, image_archive=archive)
+    assert command.image_archive == str(archive.resolve())
+    with pytest.raises(ContainerWorkerError, match="file"):
+        build_container_command("sha256:" + "a" * 64, model_dir=model, data_dir=data,
+                               work_dir=work, image_archive=tmp_path / "missing.tar")
+
+
+def test_container_worker_loads_and_verifies_offline_image_digest(tmp_path, monkeypatch):
+    archive = tmp_path / "image.tar"
+    archive.write_bytes(b"image")
+    digest = "sha256:" + "a" * 64
+    command = ContainerCommand(digest, "worker-archive", (), "deepvision.owner=worker-archive",
+                               str(archive))
+    worker = ContainerWorker(command)
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(tuple(argv))
+        if argv[1:3] == ("load", "--input"):
+            return type("Completed", (), {"returncode": 0, "stdout": "Loaded", "stderr": ""})()
+        if argv[-1] == digest and "{{json .RepoDigests}}" in argv:
+            return type("Completed", (), {"returncode": 0, "stdout": "[]", "stderr": ""})()
+        return type("Completed", (), {"returncode": 0, "stdout": digest + "\n", "stderr": ""})()
+
+    monkeypatch.setattr("core.container_worker.subprocess.run", fake_run)
+    worker._load_image_archive()
+    assert calls[0] == ("docker", "load", "--input", str(archive.resolve()))
+    assert calls[-1][-1] == digest
+
+
 def test_container_cleanup_requires_matching_owner_label(monkeypatch):
     command = ContainerCommand("sha256:" + "a" * 64, "worker-1", (), "deepvision.owner=worker-1")
     worker = ContainerWorker(command)
