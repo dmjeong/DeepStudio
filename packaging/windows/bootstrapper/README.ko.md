@@ -25,6 +25,9 @@ pwsh packaging/windows/build_release.ps1 `
 `-RequireOfflineWsl`을 생략할 수 있지만, 그 결과는 Docker 확장 포함 배포본으로 표시하지 않는다.
 GitHub Actions의 production 단계는 `DEEPVISION_WSL_PAYLOAD_ROOT`가 가리키는 사전 검증된
 로컬 payload를 `runtime/wsl`로 복사한다. 이 경로를 제공하지 않으면 workflow가 Setup을 만들지 않는다.
+production Burn은 WSL MSI를 먼저 설치하고 제거 때 보존한 뒤 앱 MSI를 설치한다. 앱 MSI는
+실제 사용자 세션에서 `bootstrap_wsl.ps1`을 실행해 owned distro를 import하고 Docker `info`
+smoke가 성공한 뒤에만 설치를 완료한다.
 
 서명 릴리스는 인증서와 `signtool.exe`가 준비된 Windows 빌드에서 다음처럼 실행한다.
 `-RequireSignature`를 사용하면 인증서가 없거나 MSI/Burn EXE의 Authenticode 검증이 실패할 때

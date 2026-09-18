@@ -24,6 +24,12 @@ def test_wix_sources_are_well_formed_and_use_payload_contract():
     assert 'Files Include="$(var.PayloadRoot)\\**"' in msi
     assert "MsiPackage SourceFile=\"$(var.MsiPath)\"" in bundle
     assert "Condition=\"VersionNT64\"" in bundle
+    assert "WixQuietExec" in msi
+    assert "Wix4UtilCA_$(sys.BUILDARCHSHORT)" in msi
+    assert "bootstrap_wsl.ps1" in msi
+    assert "NOT REMOVE" in msi
+    assert "WslMsiPath" in bundle
+    assert 'Permanent="yes"' in bundle
 
 
 def test_release_script_verifies_payload_before_wix_build():
@@ -33,6 +39,8 @@ def test_release_script_verifies_payload_before_wix_build():
     assert "WixToolset.Bal.wixext" in script
     assert "THIRD_PARTY_NOTICES.md" in script
     assert "external_downloads" not in script
+    assert "WixToolset.Util.wixext" in script
+    assert "dRequireOfflineWsl" in script
 
 
 def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk():

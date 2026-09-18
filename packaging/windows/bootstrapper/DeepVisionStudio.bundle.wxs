@@ -9,6 +9,9 @@
           LicenseUrl="" SuppressOptionsUI="yes" />
     </BootstrapperApplication>
     <Chain>
+<?if $(var.RequireOfflineWsl) = 1 ?>
+      <MsiPackage SourceFile="$(var.WslMsiPath)" Vital="yes" Permanent="yes" />
+<?endif?>
       <MsiPackage SourceFile="$(var.MsiPath)" Vital="yes" />
     </Chain>
   </Bundle>
