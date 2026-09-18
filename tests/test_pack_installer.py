@@ -119,3 +119,45 @@ def test_installer_rejects_release_ready_pack_without_redistribution_notices(tmp
         archive.writestr("checksums.json", json.dumps({"files": checksums}))
     with pytest.raises(PackInstallError, match="THIRD_PARTY_NOTICES"):
         PackInstaller(tmp_path / "installed").install(pack, allow_unsigned=True)
+
+
+def test_installer_rejects_symlinked_model_directory(tmp_path):
+    pack = tmp_path / "model.dvmodel"
+    _write_pack(pack)
+    root = tmp_path / "installed"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (root / "vendor.example").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks unavailable: {exc}")
+    with pytest.raises(PackInstallError, match="symlink"):
+        PackInstaller(root).install(pack, allow_unsigned=True)
+    assert not (outside / "1.0.0").exists()
+
+
+def test_installer_rejects_symlinked_version_directory(tmp_path):
+    pack = tmp_path / "model.dvmodel"
+    _write_pack(pack)
+    root = tmp_path / "installed"
+    model_root = root / "vendor.example"
+    model_root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (model_root / "1.0.0").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks unavailable: {exc}")
+    with pytest.raises(PackInstallError, match="symlink"):
+        PackInstaller(root).install(pack, allow_unsigned=True)
+    assert not (outside / "pack.sha256").exists()
+
+
+def test_installer_rejects_file_as_install_root(tmp_path):
+    pack = tmp_path / "model.dvmodel"
+    _write_pack(pack)
+    root = tmp_path / "installed"
+    root.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(PackInstallError, match="root must be a directory"):
+        PackInstaller(root).install(pack, allow_unsigned=True)

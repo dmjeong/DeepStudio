@@ -105,24 +105,45 @@ class PackInstaller:
         if self.root.exists() and self.root.is_symlink():
             raise PackInstallError("installed model root cannot be a symlink")
         self.root = self.root.resolve()
+        if self.root.exists() and not self.root.is_dir():
+            raise PackInstallError("installed model root must be a directory")
         source = Path(pack_path).expanduser()
         if source.suffix.lower() != ".dvmodel" or not source.is_file():
             raise PackInstallError("model pack must be an existing .dvmodel file")
         staging_parent = self.root.parent if self.root.parent.exists() else Path(tempfile.gettempdir())
         staging_parent.mkdir(parents=True, exist_ok=True)
         staging: Path | None = Path(tempfile.mkdtemp(prefix=".dvmodel-", dir=staging_parent))
+        staged_target: Path | None = None
+        temporary_pointer: Path | None = None
+        target_committed = False
+        pointer_committed = False
         try:
             manifest, checksums, signed = self._extract_verified(source, staging, allow_unsigned=allow_unsigned)
             model_id = self._required_text(manifest, "model_id")
             version = self._required_text(manifest, "pack_version")
             content_hash = _sha256(source)
-            target = self.root / model_id / version
+            model_root = self.root / model_id
+            if model_root.is_symlink():
+                raise PackInstallError("model install directory cannot be a symlink")
+            if model_root.exists() and not model_root.is_dir():
+                raise PackInstallError("model install directory must be a directory")
+            model_root.mkdir(parents=True, exist_ok=True)
+            # Re-check after mkdir so a pre-existing or raced path cannot make
+            # the subsequent move escape the application-owned root.
+            if model_root.is_symlink() or not model_root.is_dir():
+                raise PackInstallError("model install directory is unsafe")
+            if model_root.resolve().parent != self.root:
+                raise PackInstallError("model install directory escapes installed root")
+            target = model_root / version
+            if target.is_symlink():
+                raise PackInstallError("model version directory cannot be a symlink")
             if target.exists():
+                if not target.is_dir():
+                    raise PackInstallError("model version path must be a directory")
                 existing = target / "pack.sha256"
                 if existing.is_file() and existing.read_text(encoding="ascii").strip() == content_hash:
                     return InstalledPack(model_id, version, content_hash, target, signed)
                 raise PackInstallError(f"pack version already installed with different content: {model_id}/{version}")
-            target.parent.mkdir(parents=True, exist_ok=True)
             staged_target = target.parent / f".{version}.{uuid.uuid4().hex}.staging"
             shutil.move(str(staging), str(staged_target))
             staging = None
@@ -132,6 +153,8 @@ class PackInstaller:
                 "content_hash": content_hash, "signed": signed,
             }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             staged_target.replace(target)
+            target_committed = True
+            staged_target = None
             pointer = target.parent / "current.json"
             temporary_pointer = target.parent / f".{pointer.name}.{uuid.uuid4().hex}.tmp"
             temporary_pointer.write_text(json.dumps({
@@ -139,10 +162,18 @@ class PackInstaller:
                 "content_hash": content_hash, "path": str(target),
             }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             temporary_pointer.replace(pointer)
+            pointer_committed = True
+            temporary_pointer = None
             return InstalledPack(model_id, version, content_hash, target, signed)
         except Exception:
             if staging is not None and staging.exists():
                 shutil.rmtree(staging, ignore_errors=True)
+            if staged_target is not None and staged_target.exists() and not staged_target.is_symlink():
+                shutil.rmtree(staged_target, ignore_errors=True)
+            if temporary_pointer is not None and temporary_pointer.exists() and not temporary_pointer.is_symlink():
+                temporary_pointer.unlink(missing_ok=True)
+            if target_committed and not pointer_committed and target.exists() and not target.is_symlink():
+                shutil.rmtree(target, ignore_errors=True)
             raise
 
     def _extract_verified(self, source: Path, staging: Path, *, allow_unsigned: bool):

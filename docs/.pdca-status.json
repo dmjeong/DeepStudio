@@ -201,6 +201,7 @@
         "Windows and Linux native SDK CI pins ONNX Runtime 1.30.0, matching the measured C++/CPU deployment runtime",
         "ManagedWsl import uses an atomic ownership marker and rolls back attempted new distro registrations after import or marker failures",
         "Managed WSL ownership checks reject symlinked marker files before discovering or unregistering a distro"
+        ,"Pack installer rejects symlinked model/version directories and cleans failed staging activation without leaving orphaned payloads"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",
@@ -460,6 +461,14 @@
       "runs": "35343956184,35343956381",
       "result": "all jobs completed failure before runner allocation; steps empty",
       "local_validation": "42 packaging, payload and worker tests passed"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "pack_installer_path_hardening_refresh",
+      "timestamp": "2026-09-19T00:12:00+09:00",
+      "python": "24 pack builder/installer tests passed",
+      "pack_installer": "symlinked model/version directories, non-directory roots and failed activation cleanup are covered",
+      "windows_i7": "not measured"
     }
   ]
 }
