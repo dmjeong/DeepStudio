@@ -51,6 +51,13 @@ def test_release_script_verifies_payload_before_wix_build():
     assert 'WiX version mismatch' in script
 
 
+def test_third_party_notice_names_optional_model_sources():
+    notice = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    for component in ("LibreYOLO", "RT-DETRv4", "SAM2 upstream", "ONNX Runtime"):
+        assert component in notice
+    assert "weights are separate" in notice.lower()
+
+
 def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk():
     script = (ROOT / "gui" / "build_exe.py").read_text(encoding="utf-8")
     assert "model_sdk', 'schemas" in script

@@ -12,10 +12,15 @@ not a substitute for a release-specific SBOM.
 | ONNX Runtime | Python and C++ CPU inference | MIT; https://github.com/microsoft/onnxruntime/blob/main/LICENSE |
 | nlohmann/json | C++ manifest parsing | MIT; https://github.com/nlohmann/json/blob/develop/LICENSE.MIT |
 | WiX Toolset | Windows MSI/Burn build tool | MIT; https://github.com/wixtoolset/wix/blob/main/LICENSE |
+| LibreYOLO | Optional LibreMobileNetV4 / LibreYOLO9 Docker model-pack source | MIT for the library; https://github.com/LibreYOLO/libreyolo/blob/release/LICENSE and the bundled third-party list at https://github.com/LibreYOLO/libreyolo/blob/release/NOTICE |
 | RT-DETRv4 upstream (제품 표기 Re-DETR v4) | Optional Re-DETR v4 Docker model pack source | Apache-2.0; https://github.com/RT-DETRs/RT-DETRv4/blob/main/LICENSE |
 | SAM2 upstream | Optional SAM2 Docker model pack source | Apache-2.0; https://github.com/facebookresearch/sam2/blob/main/LICENSE |
 
-The Re-DETRv4 and SAM2 rows describe optional upstream source references only.
-They are not copied into this repository and their checkpoints are not part of
-the default installer. A `.dvmodel` pack must carry its own `license` object,
-source revision, asset hashes, and required notices before release signing.
+The LibreYOLO, Re-DETRv4 and SAM2 rows describe optional upstream source
+references only. They are not copied into this repository and their
+checkpoints are not part of the default installer. LibreYOLO's NOTICE lists
+additional vendored components and their individual terms; a pack that vendors
+those components must copy the applicable notices and licenses. A `.dvmodel`
+pack must carry its own `license` object, source revision, asset hashes, and
+required notices before release signing. Pretrained weights are separate
+assets and must be reviewed from the exact model card before redistribution.
