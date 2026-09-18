@@ -36,6 +36,7 @@ class Sam2ExportTests(unittest.TestCase):
     def test_encoder_decoder_graphs_and_schema_manifest(self):
         checkpoint = {
             "type": "sam2", "backend": "sam2", "task": "segment",
+            "variant": "Hiera Tiny",
             "input_size": [2, 3], "mask_size": [2, 2],
             "encoder": TinySamEncoder().eval(), "decoder": TinySamDecoder().eval(),
         }
@@ -45,6 +46,7 @@ class Sam2ExportTests(unittest.TestCase):
             manifest = json.loads(Path(result["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(manifest["schema_version"], 5)
             self.assertEqual(manifest["backend"], "sam2")
+            self.assertEqual(manifest["variant"], "Hiera Tiny")
             self.assertEqual(manifest["export"]["opset"], 17)
             self.assertEqual(manifest["export"]["verification_tolerance"],
                              {"atol": 1e-3, "rtol": 1e-3})
@@ -57,6 +59,16 @@ class Sam2ExportTests(unittest.TestCase):
             self.assertTrue(Path(result["encoder_path"]).is_file())
             self.assertTrue(Path(result["decoder_path"]).is_file())
             self.assertEqual(result["verification"], "passed")
+
+    def test_export_rejects_unregistered_variant(self):
+        checkpoint = {
+            "type": "sam2", "backend": "sam2", "task": "segment", "variant": "Hiera XL",
+            "input_size": [2, 3], "mask_size": [2, 2],
+            "encoder": TinySamEncoder().eval(), "decoder": TinySamDecoder().eval(),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "variant"):
+                export_sam2_model(checkpoint, directory, verify=False, log=lambda _: None)
 
 
 if __name__ == "__main__":

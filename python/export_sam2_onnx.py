@@ -20,6 +20,7 @@ import torch
 from export_onnx import validate_outputs, verification_tolerances
 
 VERIFICATION_TOLERANCE = verification_tolerances("segment")
+SAM2_VARIANTS = frozenset({"Hiera Tiny", "Hiera Small", "Hiera Base+", "Hiera Large"})
 
 
 class Sam2ExportError(ValueError):
@@ -63,6 +64,9 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
         raise Sam2ExportError("SAM2 checkpoint required")
     if checkpoint.get("task", "segment") != "segment":
         raise Sam2ExportError("SAM2 checkpoint task must be segment")
+    variant = checkpoint.get("variant")
+    if variant not in SAM2_VARIANTS:
+        raise Sam2ExportError("SAM2 variant must be Hiera Tiny, Hiera Small, Hiera Base+ or Hiera Large")
     if not 11 <= opset <= 17:
         raise Sam2ExportError("SAM2 exporter supports ONNX opset 11..17")
     size = checkpoint.get("input_size", [1024, 1024])
@@ -148,7 +152,7 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
         os.replace(staged_encoder, encoder_file)
         os.replace(staged_decoder, decoder_file)
     config = {
-        "schema_version": 5, "backend": "sam2", "task": "segment",
+        "schema_version": 5, "backend": "sam2", "task": "segment", "variant": variant,
         "model_path": encoder_file.name, "output_name": "low_res_mask_logits",
         "output_names": ["low_res_mask_logits", "iou_predictions"], "num_classes": 1,
         "input_channels": channels, "input_height": int(size[0]), "input_width": int(size[1]),

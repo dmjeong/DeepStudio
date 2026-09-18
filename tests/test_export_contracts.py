@@ -134,9 +134,19 @@ class ExportContractTests(unittest.TestCase):
                 directory, "detect", 2, 640, 3, "redetr.onnx", backend="redetr_v4",
                 output_names=["pred_boxes"])
 
+    def test_redetr_checkpoint_requires_registered_variant(self):
+        checkpoint = {
+            "type": "redetr_v4", "backend": "redetr_v4", "task": "detect",
+            "num_classes": 1, "in_channels": 3, "input_size": [8, 8],
+            "class_names": ["box"], "model_config": {},
+        }
+        with self.assertRaisesRegex(ValueError, "variant"):
+            export_onnx.resolve_checkpoint_spec(checkpoint)
+
     def test_redetr_module_checkpoint_exports_and_verifies_both_outputs(self):
         checkpoint = {
             "type": "redetr_v4", "backend": "redetr_v4", "task": "detect",
+            "variant": "Small",
             "num_classes": 3, "in_channels": 3, "input_size": [8, 8],
             "class_names": ["a", "b", "c"],
             "model_config": {"boxes_format": "normalized_cxcywh", "score_activation": "softmax"},
@@ -151,6 +161,8 @@ class ExportContractTests(unittest.TestCase):
         self.assertEqual(result["backend"], "redetr_v4")
         self.assertEqual(manifest["output_names"], ["pred_boxes", "pred_logits"])
         self.assertEqual(manifest["postprocessing"]["class_scores"], "softmax")
+        self.assertEqual(manifest["variant"], "Small")
+        self.assertEqual(manifest["model_config"]["variant"], "Small")
         self.assertEqual(manifest["export"]["verification_tolerance"], {"atol": 1e-3, "rtol": 1e-3})
         self.assertTrue(manifest["cpp_supported"])
 
@@ -158,7 +170,8 @@ class ExportContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             checkpoint_path = Path(directory) / "sam2.pt"
             output = Path(directory) / "sam2.onnx"
-            torch.save({"type": "sam2", "backend": "sam2", "task": "segment"}, checkpoint_path)
+            torch.save({"type": "sam2", "backend": "sam2", "task": "segment",
+                        "variant": "Hiera Tiny"}, checkpoint_path)
             with patch("export_sam2_onnx.export_sam2_checkpoint",
                        return_value={"backend": "sam2", "verification": "passed"}) as exporter:
                 result = export_onnx.export_checkpoint(checkpoint_path, output, log=lambda _: None)

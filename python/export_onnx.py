@@ -15,6 +15,8 @@ OUTPUT_NAMES = {
     "detect": "detections", "anomaly": "reconstruction",
 }
 
+RE_DETR_VARIANTS = frozenset({"Small", "Medium", "Large"})
+
 # CPU FP32 ONNX kernels may reassociate fused convolution/normalization
 # operations. A 1e-3 absolute floor is the usual FP32 deployment parity
 # boundary; top-1 is checked separately so this does not hide a class change.
@@ -103,6 +105,10 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
     if backend == "redetr_v4":
         if checkpoint.get("task", "detect") != "detect":
             raise ValueError("Re-DETR v4 checkpoint는 detect 태스크여야 합니다.")
+        variant = checkpoint.get("variant", model_config.get("variant"))
+        if variant not in RE_DETR_VARIANTS:
+            raise ValueError("Re-DETR v4 variant는 Small, Medium 또는 Large여야 합니다.")
+        model_config["variant"] = variant
         model_config.setdefault("boxes_format", checkpoint.get("boxes_format", "normalized_cxcywh"))
         if model_config["boxes_format"] not in {"normalized_cxcywh", "normalized_xyxy"}:
             raise ValueError("Re-DETR boxes_format은 normalized_cxcywh 또는 normalized_xyxy여야 합니다.")
@@ -369,6 +375,10 @@ def create_inference_config(output_dir, task, num_classes, input_size,
             "confidence": "class_score", "class_aware_nms": True,
             "confidence_threshold": .25, "iou_threshold": .5, "max_detections": 300,
         }
+        if model_config is not None:
+            config["model_config"] = dict(model_config)
+            if "variant" in model_config:
+                config["variant"] = model_config["variant"]
     if preprocessing.get("center_crop"):
         # Older C++ readers must reject this contract instead of ignoring the ROI.
         config["schema_version"] = 2
