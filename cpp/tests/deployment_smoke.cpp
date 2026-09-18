@@ -29,6 +29,9 @@ int main(int argc, char** argv)
             require(result.class_name == "OK \"quoted\"", "JSON escaped class name lost.");
         };
         check_classification(gray);
+        require(engine.InitializeFromJson((root / "builtin.json").u8string()), "Built-in backend load failed.");
+        check_classification(gray);
+        require(engine.InitializeFromJson((root / "classify.json").u8string()), "Classification reload failed.");
         cv::Mat bgr, bgra;
         cv::cvtColor(gray, bgr, cv::COLOR_GRAY2BGR);
         cv::cvtColor(gray, bgra, cv::COLOR_GRAY2BGRA);

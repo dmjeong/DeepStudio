@@ -16,6 +16,8 @@
 - C++17 `vision_runtime` C ABI와 C# `VisionSession` SafeHandle. generic classify/segment/detect/reconstruction anomaly와 고정 memory-bank PatchCore score/map 결과를 검증한다.
 - 오프라인 Windows payload 파일 해시·크기·3.5 GiB 예산 검사.
 - EfficientNet GUI/CLI ONNX 검증은 실제 export 그래프와 같은 Conv/BatchNorm 최적화 PyTorch 그래프를 비교한다.
+- ResNet 18/50, ConvNeXt V1 Tiny, DeepLab V3+ ResNet34, U-Net ResNet18은 가중치를 포함하지 않는
+  native adapter와 공통 ONNX exporter를 사용하며 `builtin` backend manifest를 만든다.
 
 Re-DETR·SAM2의 실제 학습/특수 출력 ONNX 그래프, PatchCore 실제 backbone/bank 학습 계약,
 모든 태스크의 C#/C++ 결과 계약,

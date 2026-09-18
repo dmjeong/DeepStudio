@@ -34,6 +34,10 @@ for task in ("classify", "segment"):
                                 "interpolation": "INTER_LINEAR_EXACT", "antialias": False,
                                 "layout": "NCHW", "value_scale": 255., "color_order": "GRAY"}}
     (root / f"{task}.json").write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+    if task == "classify":
+        builtin_config = dict(config)
+        builtin_config["backend"] = "builtin"
+        (root / "builtin.json").write_text(json.dumps(builtin_config, ensure_ascii=False), encoding="utf-8")
 
 # Generic detection contract: one normalized cx/xy box, objectness and two
 # class logits.  It exercises C++ sigmoid decoding and class-aware NMS without

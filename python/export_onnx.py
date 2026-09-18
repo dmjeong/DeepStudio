@@ -52,6 +52,8 @@ def checkpoint_backend(checkpoint):
         raise ValueError("체크포인트는 메타데이터를 포함하는 사전이어야 합니다.")
     if checkpoint.get("type") == "patchcore" or checkpoint.get("backend") == "patchcore":
         return "patchcore"
+    if checkpoint.get("type") == "builtin_model" or checkpoint.get("backend") == "builtin":
+        return "builtin"
     if "model_state_dict" in checkpoint:
         if checkpoint.get("engine") == "efficientnet":
             return "efficientnet"
@@ -71,8 +73,9 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
     CLI 값은 메타데이터가 없는 구형 체크포인트에만 보충할 수 있다.
     기존 메타데이터와 충돌하는 값은 암묵적으로 덮어쓰지 않는다.
     """
-    if checkpoint_backend(checkpoint) not in {"custom", "efficientnet"}:
-        raise ValueError("커스텀 모델 체크포인트 필요")
+    backend = checkpoint_backend(checkpoint)
+    if backend not in {"custom", "efficientnet", "builtin"}:
+        raise ValueError("커스텀 또는 기본 모델 체크포인트 필요")
     overrides = {k: v for k, v in (overrides or {}).items() if v is not None}
     preprocessing = dict(checkpoint.get("preprocessing") or {})
     from center_crop import checkpoint_center_crop
@@ -80,6 +83,16 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
     if crop:
         preprocessing["center_crop"] = crop
     model_config = dict(checkpoint.get("model_config") or {})
+    if backend == "builtin":
+        from builtin_models import get_builtin_spec
+        model_id = checkpoint.get("model_id") or model_config.get("model_id")
+        if not isinstance(model_id, str):
+            raise ValueError("기본 모델 체크포인트의 model_id 메타데이터 누락")
+        builtin = get_builtin_spec(model_id)
+        stored_task = checkpoint.get("task")
+        if stored_task is not None and stored_task != builtin.task:
+            raise ValueError("기본 모델 task와 model_id가 일치하지 않습니다.")
+        model_config["model_id"] = model_id
     names = checkpoint.get("class_names") or []
     if not isinstance(names, (list, tuple)) or any(not isinstance(n, str) for n in names):
         raise ValueError("class_names: 문자열 목록 필요")
@@ -103,7 +116,7 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
     channels = _positive_int(select("in_channels"), "in_channels")
     if channels not in (1, 3):
         raise ValueError("입력 채널은 1 또는 3만 지원합니다.")
-    if checkpoint_backend(checkpoint) == "efficientnet":
+    if backend == "efficientnet":
         from efficientnet_contract import checkpoint_input_contract
         contract = checkpoint_input_contract(checkpoint, channels)
         model_config.update(contract)
@@ -138,7 +151,11 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
 def load_custom_model(checkpoint, spec=None):
     spec = spec or resolve_checkpoint_spec(checkpoint)
     config = spec["model_config"]
-    if checkpoint_backend(checkpoint) == "efficientnet":
+    backend = checkpoint_backend(checkpoint)
+    if backend == "builtin":
+        from builtin_models import load_builtin_checkpoint
+        return load_builtin_checkpoint(checkpoint)
+    if backend == "efficientnet":
         from efficientnet import EfficientNet, VARIANTS
         from efficientnet_contract import checkpoint_input_contract, LEGACY_GRAY_INPUT, channel_description
         contract = checkpoint_input_contract(checkpoint, spec["in_channels"])
@@ -249,8 +266,8 @@ def create_inference_config(output_dir, task, num_classes, input_size,
                             model_config=None):
     size = [input_size, input_size] if isinstance(input_size, int) else list(input_size)
     preprocessing = dict(preprocessing or {})
-    if backend not in {"custom", "efficientnet", "patchcore"}:
-        raise ValueError("지원하지 않는 모델 형식입니다. EfficientNet 체크포인트를 선택하세요.")
+    if backend not in {"custom", "efficientnet", "builtin", "patchcore"}:
+        raise ValueError("지원하지 않는 모델 형식입니다. 등록된 모델 체크포인트를 선택하세요.")
     detection_cpp_supported = task != "detect" or detection_box_encoding in {
         "grid_sigmoid_xywh", "normalized_cxcywh"
     }
@@ -264,7 +281,7 @@ def create_inference_config(output_dir, task, num_classes, input_size,
         "normalize_std": preprocessing.get("normalize_std", [0.226] if in_channels == 1 else [0.229, 0.224, 0.225]),
         "class_names": list(class_names or []), "preprocessing": preprocessing,
         "verification": verification,
-        "cpp_supported": ((backend == "custom" and task in ("classify", "segment", "detect", "anomaly") and
+        "cpp_supported": ((backend in {"custom", "builtin"} and task in ("classify", "segment", "detect", "anomaly") and
                             detection_cpp_supported) or
                           (backend == "patchcore" and task == "anomaly")) or
                          (backend == "efficientnet" and task == "classify"),
@@ -276,6 +293,8 @@ def create_inference_config(output_dir, task, num_classes, input_size,
         if model_config is not None:
             from efficientnet_contract import model_input_contract
             config["model_config"] = {**model_config, **model_input_contract(model_config, in_channels)}
+    elif backend == "builtin" and model_config is not None:
+        config["model_config"] = dict(model_config)
     if preprocessing.get("center_crop"):
         # Older C++ readers must reject this contract instead of ignoring the ROI.
         config["schema_version"] = 2
@@ -312,8 +331,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
     # 사용자 선택 체크포인트를 로드한다.
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     backend = checkpoint_backend(checkpoint)
-    if backend not in {"custom", "efficientnet", "patchcore"}:
-        raise ValueError("지원하지 않는 모델 형식입니다. EfficientNet 체크포인트를 선택하세요.")
+    if backend not in {"custom", "efficientnet", "builtin", "patchcore"}:
+        raise ValueError("지원하지 않는 모델 형식입니다. 등록된 모델 체크포인트를 선택하세요.")
     if output.resolve() == Path(checkpoint_path).resolve():
         raise ValueError("체크포인트와 ONNX 출력 경로가 같을 수 없습니다.")
     if backend == "patchcore":
@@ -325,7 +344,7 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
         stage = Path(temp)
         staged_model = stage / output.name
         log(f"내보내기 시작: {backend}")
-        if backend in {"custom", "efficientnet"}:
+        if backend in {"custom", "efficientnet", "builtin"}:
             spec = resolve_checkpoint_spec(checkpoint, overrides)
             model = load_custom_model(checkpoint, spec)
             if backend == "efficientnet":
@@ -357,6 +376,9 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             if backend == "efficientnet":
                 metadata["architecture"] = spec["model_config"]["architecture"]
                 metadata["model_config"] = model.checkpoint_config()
+            if backend == "builtin":
+                metadata["architecture"] = spec["model_config"]["model_id"]
+                metadata["model_config"] = {"model_id": spec["model_config"]["model_id"]}
             if spec["task"] == "detect":
                 metadata["detection_box_encoding"] = spec["model_config"].get("detection_box_encoding", "legacy_raw")
         else:

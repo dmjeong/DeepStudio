@@ -8,6 +8,9 @@ export한 PatchCore는 score와 anomaly map을 anomaly 결과로 제공한다. R
 탐지 특수 출력과 SAM2 encoder/decoder prompt/video 계약은 별도 그래프로 관리하며
 Windows 검증 전에는 release-ready가 아니다.
 
+ResNet, ConvNeXt V1, DeepLab V3+, U-Net의 `builtin` manifest도 동일한
+classification/segmentation API로 읽는다. 모델 가중치는 SDK에 포함하지 않는다.
+
 ```csharp
 using DeepVisionStudio;
 

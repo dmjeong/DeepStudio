@@ -25,6 +25,10 @@
 | Segmentation | DeepLab V3+ | ResNet34 encoder |
 | Segmentation | U-Net | ResNet18 encoder |
 
+ResNet/ConvNeXt/DeepLab V3+/U-Net의 native adapter는 weight-free 구조로 제공되며,
+사용자가 별도로 검증한 가중치를 학습 결과에 저장한다. 외부 pretrained 파일은 기본 설치파일에
+자동으로 포함하지 않는다.
+
 모든 기본 모델군에 학습/fit·추론·ONNX 배포·C#/C++ 실행을 제공하는 것이 출시 조건이다.
 LibreYOLO 라이브러리의 모든 모델/변형을 기본 제공한다는 뜻은 아니다.
 세부 모델·가중치·라이선스 확인과 Windows 검증을 끝낸 버전을 정식 지원표에 적는다.

@@ -5,6 +5,9 @@ C#, 다른 언어에서 같은 ONNX 세션을 호출하는 고정 ABI다. 세션
 이미지를 반복 처리한다. `dv_infer`는 동기 호출이므로 입력 버퍼는 호출이 끝날 때까지
 유효해야 하며, 결과는 반드시 `dv_release_result`로 해제한다.
 
+`builtin` backend manifest도 generic classify/segment 계약으로 읽는다. ResNet,
+ConvNeXt, DeepLab V3+, U-Net의 export 파일은 Python 없이 같은 C ABI를 사용한다.
+
 현재 C ABI에서 검증된 결과 종류는 `classify`, semantic `segment`, generic
 `detect`, reconstruction `anomaly`다. `detect`는 `[1,N,5+C]` ONNX 출력에
 sigmoid score와 class-aware NMS를 적용하고, `anomaly`는 reconstruction과 입력의

@@ -92,9 +92,9 @@ void ValidateConfig(const InferenceConfig& config)
         config.crop_width > 65536 || config.crop_height > 65536 ||
         ((config.crop_width == 0) != (config.crop_height == 0)))
         throw std::invalid_argument("Invalid center crop dimensions.");
-    if (config.backend != "custom" && config.backend != "patchcore" &&
+    if (config.backend != "custom" && config.backend != "builtin" && config.backend != "patchcore" &&
         !(config.backend == "efficientnet" && config.task == "classify"))
-        throw std::invalid_argument("Supported backends: custom, patchcore and efficientnet classification.");
+        throw std::invalid_argument("Supported backends: custom, builtin, patchcore and efficientnet classification.");
     if (config.backend == "patchcore" && config.task != "anomaly")
         throw std::invalid_argument("PatchCore backend requires anomaly task.");
     if (config.resize_mode != "stretch" || config.classification_output != "logits")

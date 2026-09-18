@@ -7,8 +7,8 @@
 
 | 태스크 | 학습·추론 엔진 | 데이터 |
 |---|---|---|
-| 분류 | EfficientNet B0/B1, Custom CSP | 클래스별 이미지 폴더 |
-| 시맨틱 분할 | Custom CSP | 이미지와 클래스 인덱스 마스크 |
+| 분류 | EfficientNet B0/B1, ResNet 18/50, ConvNeXt V1 Tiny, Custom CSP | 클래스별 이미지 폴더 |
+| 시맨틱 분할 | DeepLab V3+ ResNet34, U-Net ResNet18, Custom CSP | 이미지와 클래스 인덱스 마스크 |
 | 박스 탐지 | Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
 | 이상 탐지 | PatchCore 또는 Custom CSP 재구성 | 정상 이미지, 선택적 평가용 불량 이미지 |
 | 회전 박스 | 데이터 편집·크롭만 지원 | 클래스와 네 꼭짓점의 정규화 좌표 |
@@ -33,7 +33,7 @@ python gui/main.py
 ## 코드 구성
 
 - `gui/`: Qt 데스크톱 화면과 공통 학습·추론 엔진
-- `python/`: `CustomCSP`, EfficientNet, PatchCore, 데이터 처리, ONNX 내보내기
+- `python/`: `CustomCSP`, EfficientNet, ResNet/ConvNeXt/DeepLab/U-Net adapter, PatchCore, 데이터 처리, ONNX 내보내기
 - `web/`, `webapp/`: React UI와 로컬 FastAPI 작업 관리자
 - `cpp/`: C++17 `VisionInference`, `ClassificationWorker`, 고정 C ABI `vision_runtime`, CPU 벤치마크
 - `sdk/csharp/`, `sdk/cpp/`: C ABI SafeHandle 래퍼와 C++17 사용 예
@@ -49,6 +49,10 @@ CPU 자동 모드는 수치 검증을 통과한 ONNX 세션을 사용합니다. 
 ```sh
 python tools/cpu_benchmark.py --weights model.pt --images images --runtime auto --threads 4 --output cpu-results
 ```
+
+기본 ResNet/ConvNeXt/DeepLab/U-Net adapter 학습은 `python/train_builtin.py`를 사용한다.
+이 스크립트는 기존 이미지·마스크 loader를 사용하고 `builtin` backend checkpoint를 저장한다.
+가중치 다운로드는 수행하지 않는다.
 
 C++ 공개 헤더는 `vision_inference.h`, 클래스는 `VisionInference`, 정적 라이브러리는
 `vision_inference`입니다. 모델과 작업자는 초기화 후 재사용합니다.
