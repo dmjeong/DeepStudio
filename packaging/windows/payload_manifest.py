@@ -108,7 +108,10 @@ def verify_offline_wsl_payload(root: str | Path, payload_manifest: dict[str, Any
     anything; it binds the WSL installer, owned distro archive, and notice
     files to the exact bytes already covered by the release payload manifest.
     """
-    base = Path(root).expanduser().resolve()
+    root_path = Path(root).expanduser()
+    if root_path.is_symlink():
+        raise ValueError("payload root symlink is not allowed")
+    base = root_path.resolve()
     if not base.is_dir():
         raise ValueError(f"payload root is not a directory: {base}")
     files = payload_manifest.get("files")

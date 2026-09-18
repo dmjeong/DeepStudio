@@ -366,3 +366,10 @@ def test_container_entrypoint_loads_plugin_inside_pack_root_only(tmp_path: Path)
     manifest.write_text('{"worker_entrypoint":"../escape:factory"}', encoding="utf-8")
     with pytest.raises(ContainerEntrypointError, match="unsafe"):
         _load_handlers(manifest)
+    manifest.write_text('{"worker_entrypoint":"plugin..factory:factory"}', encoding="utf-8")
+    with pytest.raises(ContainerEntrypointError, match="unsafe"):
+        _load_handlers(manifest)
+    manifest_link = tmp_path / "manifest-link.json"
+    manifest_link.symlink_to(manifest)
+    with pytest.raises(ContainerEntrypointError, match="regular file"):
+        _load_handlers(manifest_link)

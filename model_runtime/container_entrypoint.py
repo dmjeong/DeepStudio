@@ -24,6 +24,13 @@ class ContainerEntrypointError(RuntimeError):
 
 
 def _load_handlers(manifest_path: Path):
+    manifest_path = Path(manifest_path).expanduser()
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ContainerEntrypointError("model manifest must be an existing regular file")
+    try:
+        manifest_path = manifest_path.resolve(strict=True)
+    except OSError as exc:
+        raise ContainerEntrypointError(f"cannot resolve model manifest: {manifest_path}") from exc
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -36,7 +43,11 @@ def _load_handlers(manifest_path: Path):
     if not isinstance(entrypoint, str) or entrypoint.count(":") != 1:
         raise ContainerEntrypointError("worker_entrypoint must use module:factory")
     module_name, factory_name = entrypoint.split(":", 1)
-    if not module_name or not factory_name or any(part in module_name for part in ("/", "\\", "..")):
+    module_parts = module_name.split(".")
+    if (not module_name or not factory_name or
+            any(not part.isidentifier() for part in module_parts) or
+            not factory_name.isidentifier() or
+            any(char.isspace() or char == "\x00" for char in entrypoint)):
         raise ContainerEntrypointError("worker_entrypoint module is unsafe")
     models_root = manifest_path.parent.resolve()
     if str(models_root) not in sys.path:

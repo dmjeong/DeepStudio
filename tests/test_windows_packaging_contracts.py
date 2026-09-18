@@ -45,6 +45,9 @@ def test_release_script_verifies_payload_before_wix_build():
     assert '"-d", "Version=$Version"' in script
     assert '"-d", "PayloadRoot=$root"' in script
     assert '"-d", "RequireOfflineWsl=$requireWslValue"' in script
+    assert '$wix.Source --version' in script
+    assert '$WixVersion -notmatch' in script
+    assert 'WiX version mismatch' in script
 
 
 def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk():
@@ -142,6 +145,10 @@ def test_offline_wsl_inventory_binds_artifacts_and_notices(tmp_path):
     (wsl / "owned-distro.tar").write_bytes(b"tampered")
     with pytest.raises(ValueError, match="hash mismatch"):
         verifier["verify_offline_wsl_payload"](root, manifest)
+    root_link = tmp_path / "payload-link"
+    root_link.symlink_to(root, target_is_directory=True)
+    with pytest.raises(ValueError, match="root symlink"):
+        verifier["verify_offline_wsl_payload"](root_link, manifest)
 
 
 def test_payload_stager_copies_artifacts_and_rejects_symlinks(tmp_path):

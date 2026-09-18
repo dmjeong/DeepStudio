@@ -15,6 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 if ($env:OS -ne "Windows_NT") { throw "Windows is required for the WiX build." }
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "Version must be major.minor.patch." }
+if ($WixVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "WixVersion must be major.minor.patch." }
 if ($RequireSignature -and [string]::IsNullOrWhiteSpace($CertificatePath)) {
     throw "-RequireSignature requires -CertificatePath."
 }
@@ -52,6 +53,13 @@ trap {
 }
 $wix = Get-Command wix -ErrorAction SilentlyContinue
 if (-not $wix) { throw "WiX v4 'wix' command is required on the locked Windows build image." }
+$wixVersionOutput = & $wix.Source --version 2>&1
+$wixExitCode = $LASTEXITCODE
+$wixVersionText = ($wixVersionOutput -join "`n").Trim()
+$expectedWixVersion = [regex]::Escape($WixVersion)
+if ($wixExitCode -ne 0 -or $wixVersionText -notmatch "(?<!\d)$expectedWixVersion(?!\d)") {
+    throw "WiX version mismatch. Expected $WixVersion, detected: $wixVersionText"
+}
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 $collector = Join-Path $scriptRoot "collect_payloads.py"
