@@ -178,7 +178,7 @@
         "Offline Docker image archive loading with digest verification before DVW1 worker start",
         "Managed WSL Docker argv prefix is shared by container run, image load, stop, kill, inspect and cleanup; unowned distro cannot fall back to host Docker",
         "Production Windows release gate requires offline WSL MSI, owned distro tar, license inventory, artifact SHA-256 and notice files before WiX; workflow requires a licensed DEEPVISION_WSL_PAYLOAD_ROOT source and ships bootstrap_wsl.ps1, which installs the bundled WSL MSI before probing wsl.exe",
-        "WiX production bundle installs the permanent offline WSL MSI first and the app MSI runs owned-distro bootstrap in the user session after InstallFiles; uninstall skips the bootstrap"
+        "WiX production bundle installs the permanent offline WSL MSI first and the app MSI runs owned-distro bootstrap in the user session after InstallFiles; uninstall skips the bootstrap; release script uses WiX 4 -d name=value defines"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",
