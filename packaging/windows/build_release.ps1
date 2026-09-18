@@ -29,7 +29,8 @@ python $collector $root --manifest $manifest --version $Version --commit $env:GI
 python $validator $root --manifest $manifest `
     --require "app\DeepVisionStudio.exe" `
     --require "models\default-model-catalog.json" `
-    --require "sdk\VisionRuntime.dll"
+    --require "sdk\VisionRuntime.dll" `
+    --require "sdk\native\vision_runtime.dll"
 
 $common = @("-arch", "x64", "-dVersion=$Version", "-dPayloadRoot=$root")
 $msiArgs = @("build") + $common + @("-o", $msi, (Join-Path $scriptRoot "bootstrapper\DeepVisionStudio.msi.wxs"))

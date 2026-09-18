@@ -118,3 +118,15 @@ def test_release_script_requires_app_catalog_and_csharp_sdk_payload_files():
     assert 'app\\DeepVisionStudio.exe' in script
     assert 'models\\default-model-catalog.json' in script
     assert 'sdk\\VisionRuntime.dll' in script
+    assert 'sdk\\native\\vision_runtime.dll' in script
+
+
+def test_windows_workflow_builds_real_gui_and_native_runtime():
+    workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
+    assert "vcpkg.exe" in workflow
+    assert 'version = "1.20.1"' in workflow
+    assert "onnxruntime-win-x64-$version.zip" in workflow
+    assert "python gui/build_exe.py" in workflow
+    assert 'source "app=$app"' in workflow
+    assert 'source "sdk/native=$native"' in workflow
+    assert "release-contract" not in workflow

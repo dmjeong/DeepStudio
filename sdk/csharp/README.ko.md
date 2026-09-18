@@ -41,5 +41,7 @@ var mask = session.SegmentSam(context, new SamPrompt(
     new[] { 120f, 80f }, new[] { 1 }));
 ```
 
-`vision_runtime.dll`과 ONNX Runtime/OpenCV DLL은 같은 Windows x64 배포 폴더에 둔다.
+설치 payload에서는 관리형 `VisionRuntime.dll`과 native `vision_runtime.dll` 및 ONNX Runtime/OpenCV DLL을
+`sdk/`와 `sdk/native/`에 둔다. `VisionSession`은 `DEEP_VISION_NATIVE_RUNTIME_DIR`, 자신의 `native/`,
+설치기의 `app/`, 실행 폴더 순서로 native DLL을 찾으므로 호출 프로그램의 현재 작업 폴더에 의존하지 않는다.
 `VisionSession`이 닫힌 뒤 결과 객체는 독립 managed 배열이므로 native 메모리를 참조하지 않는다.

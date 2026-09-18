@@ -67,6 +67,42 @@ public sealed class VisionSession : SafeHandle
     private const string NativeLibrary = "vision_runtime";
     private const uint AbiVersion = 1;
 
+    static VisionSession()
+    {
+        // The installer keeps the managed SDK in sdk/ and the native runtime
+        // (plus ONNX Runtime/OpenCV DLLs) in sdk/native/. Resolve the native
+        // library without depending on the caller's current directory.
+        System.Runtime.InteropServices.NativeLibrary.SetDllImportResolver(
+            typeof(VisionSession).Assembly,
+            static (libraryName, assembly, _) =>
+            {
+                if (!string.Equals(libraryName, NativeLibrary, StringComparison.OrdinalIgnoreCase))
+                    return IntPtr.Zero;
+                var assemblyDirectory = Path.GetDirectoryName(assembly.Location);
+                var candidates = new List<string>();
+                var configured = Environment.GetEnvironmentVariable("DEEP_VISION_NATIVE_RUNTIME_DIR");
+                if (!string.IsNullOrWhiteSpace(configured))
+                    candidates.Add(Path.Combine(configured, NativeLibrary + ".dll"));
+                if (!string.IsNullOrWhiteSpace(assemblyDirectory))
+                {
+                    candidates.Add(Path.Combine(assemblyDirectory, NativeLibrary + ".dll"));
+                    candidates.Add(Path.Combine(assemblyDirectory, "native", NativeLibrary + ".dll"));
+                    candidates.Add(Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "app",
+                        NativeLibrary + ".dll")));
+                }
+                candidates.Add(Path.Combine(AppContext.BaseDirectory, NativeLibrary + ".dll"));
+                candidates.Add(Path.Combine(AppContext.BaseDirectory, "native", NativeLibrary + ".dll"));
+                foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (!File.Exists(candidate)) continue;
+                    try { return System.Runtime.InteropServices.NativeLibrary.Load(candidate); }
+                    catch (DllNotFoundException) { }
+                    catch (BadImageFormatException) { }
+                }
+                return IntPtr.Zero;
+            });
+    }
+
     private VisionSession(IntPtr handle) : base(IntPtr.Zero, true) => SetHandle(handle);
 
     public static VisionSession Open(string configPath, string runtime = "onnxruntime", int numThreads = -1)
