@@ -197,6 +197,18 @@ Windows 빌드 이미지는 먼저 `stage_payload.py`로 UI·worker·SDK·팩·�
 3.5 GiB 예산을 검사한 뒤에만 WiX MSI/Burn EXE를 생성한다. 이 단계는 인터넷 다운로드나 외부
 모델 허브 호출을 수행하지 않는다.
 
+일반 push 계약은 개발 중인 카탈로그(`requested`, `export_verified` 등)를 포함할 수 있다.
+정식 설치물을 만들 때는 `build_release.ps1 -RequireReleaseReadyModels`와
+workflow_dispatch의 `require_release_ready_models=true`를 함께 사용한다. 이 게이트는
+`release_ready_only=true` 카탈로그, 모든 모델의 `release_ready` 상태, 그리고 각 모델의
+`metadata.payload`(또는 `payload`)에 선언된 staged 파일을 확인한다. `kind=pack` 항목은
+실제 `.dvmodel` 파일을 포함해야 한다. 따라서 카탈로그 JSON만 복사하거나 아직 검증되지 않은
+Re-DETR/SAM2/LibreYOLO 팩을 넣은 상태로는 production Setup을 만들 수 없다.
+외부 모델 payload 루트는 `DEEPVISION_MODEL_PAYLOAD_ROOT`로 지정하고
+`default-model-catalog.json`을 루트에 둔다. 현재 저장소의 기본 카탈로그는 개발 검증 상태를
+그대로 기록하므로 이 strict 게이트를 통과하지 않으며, 실제 Windows·모델팩·라이선스 검증이
+끝난 뒤 release-ready 카탈로그와 팩을 별도로 공급해야 한다.
+
 PyInstaller GUI를 만들 때는 네이티브 C++ SDK와 ONNX Runtime/OpenCV DLL이 들어 있는 디렉터리를
 `VISION_NATIVE_RUNTIME_DIR` 환경변수로 지정한다. `gui/build_exe.py`가 해당 디렉터리의 DLL을
 번들에 넣고, 모델 팩 schema와 worker runtime 모듈도 함께 포함한다. 이 디렉터리를 비워 둔 개발

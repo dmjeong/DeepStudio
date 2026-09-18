@@ -9,7 +9,8 @@ param(
     [string] $SignToolPath = "signtool.exe",
     [string] $TimestampUrl = "http://timestamp.digicert.com",
     [switch] $RequireSignature,
-    [switch] $RequireOfflineWsl
+    [switch] $RequireOfflineWsl,
+    [switch] $RequireReleaseReadyModels
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,6 +73,12 @@ python $validator $root --manifest $manifest `
     --require "sdk\VisionRuntime.dll" `
     --require "sdk\native\vision_runtime.dll"
 if ($LASTEXITCODE -ne 0) { throw "Payload contract validation failed." }
+if ($RequireReleaseReadyModels) {
+    python $validator $root --manifest $manifest `
+        --require "models\default-model-catalog.json" `
+        --require-release-ready-models
+    if ($LASTEXITCODE -ne 0) { throw "Release-ready model payload contract failed." }
+}
 if ($RequireOfflineWsl) {
     # The distro tar contains the pinned Docker Engine/Moby userspace.  Keep
     # the host WSL installer and distro as separate payload files so their

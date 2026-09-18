@@ -83,6 +83,55 @@ def test_offline_default_model_catalog_is_deterministically_generated():
     assert packaged == exporter["build_catalog"]()
 
 
+def test_model_catalog_payload_gate_is_optional_for_development_and_strict_for_release(tmp_path):
+    api = runpy.run_path(str(WINDOWS / "model_catalog_payload.py"))
+    root = tmp_path / "payload"
+    (root / "models").mkdir(parents=True)
+    (root / "app").mkdir()
+    (root / "app" / "DeepVisionStudio.exe").write_bytes(b"gui")
+    catalog = {
+        "schema_version": 1,
+        "catalog_id": "test",
+        "offline": True,
+        "release_ready_only": False,
+        "redistribution_policy": {
+            "weights_included": False,
+            "require_third_party_notices": True,
+            "require_license_files_for_release_packs": True,
+        },
+        "models": [{"model_id": "demo", "release_status": "requested"}],
+    }
+    catalog_path = root / "models" / "default-model-catalog.json"
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    api["validate_model_catalog_payload"](root)
+    with pytest.raises(api["ModelCatalogPayloadError"], match="not release_ready"):
+        api["validate_model_catalog_payload"](root, require_release_ready=True)
+
+    catalog["release_ready_only"] = True
+    catalog["models"] = [{
+        "model_id": "demo",
+        "release_status": "release_ready",
+        "metadata": {"payload": {"kind": "builtin", "paths": ["app/DeepVisionStudio.exe"]}},
+    }]
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    api["validate_model_catalog_payload"](root, require_release_ready=True)
+
+    catalog["models"][0]["metadata"]["payload"] = {
+        "kind": "pack", "paths": ["models/demo.bin"]
+    }
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    (root / "models" / "demo.bin").write_bytes(b"pack")
+    with pytest.raises(api["ModelCatalogPayloadError"], match=".dvmodel"):
+        api["validate_model_catalog_payload"](root, require_release_ready=True)
+
+    catalog["models"][0]["metadata"]["payload"] = {
+        "kind": "pack", "paths": ["models/demo.dvmodel"]
+    }
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    (root / "models" / "demo.dvmodel").write_bytes(b"pack")
+    api["validate_model_catalog_payload"](root, require_release_ready=True)
+
+
 def test_pyinstaller_native_runtime_argument_is_opt_in_and_filters_library_files(tmp_path, monkeypatch):
     runtime = tmp_path / "runtime"
     runtime.mkdir()
@@ -205,6 +254,8 @@ def test_release_script_requires_app_catalog_and_csharp_sdk_payload_files():
     assert 'models\\default-model-catalog.json' in script
     assert 'sdk\\VisionRuntime.dll' in script
     assert 'sdk\\native\\vision_runtime.dll' in script
+    assert '[switch] $RequireReleaseReadyModels' in script
+    assert '--require-release-ready-models' in script
 
 
 def test_release_script_has_optional_authenticode_sign_and_verify_gate():
@@ -246,6 +297,15 @@ def test_release_script_has_production_offline_wsl_payload_gate():
     assert '-RequireOfflineWsl' in workflow
     assert 'DEEPVISION_WSL_PAYLOAD_ROOT' in workflow
     assert 'bootstrap_wsl.ps1' in workflow
+
+
+def test_windows_workflow_keeps_release_ready_models_as_an_explicit_gate():
+    workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
+    assert "require_release_ready_models" in workflow
+    assert 'type: boolean' in workflow
+    assert 'DEEPVISION_MODEL_PAYLOAD_ROOT' in workflow
+    assert '$requireModels = $env:REQUIRE_RELEASE_READY_MODELS -eq "true"' in workflow
+    assert 'if ($env:REQUIRE_RELEASE_READY_MODELS -eq "true") { $releaseArgs += "-RequireReleaseReadyModels" }' in workflow
 
 
 def test_offline_wsl_bootstrap_is_shell_free_and_never_downloads():
