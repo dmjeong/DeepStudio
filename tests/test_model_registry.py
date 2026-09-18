@@ -27,6 +27,8 @@ def test_catalog_keeps_unverified_models_out_of_release_ready_view():
     assert registry.available("detect") == ()
     assert registry.get("re_detr_v4_medium").release_status == "requested"
     assert registry.get("sam2_hiera_large").capabilities >= {"prompt", "video"}
+    assert registry.get("resnet18").release_status == "export_verified"
+    assert registry.get("deeplabv3plus_resnet34").release_status == "export_verified"
 
 
 def test_registry_rejects_duplicate_or_unsafe_pack(tmp_path):

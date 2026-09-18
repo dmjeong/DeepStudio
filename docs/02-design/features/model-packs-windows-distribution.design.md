@@ -18,6 +18,8 @@
 - EfficientNet GUI/CLI ONNX 검증은 실제 export 그래프와 같은 Conv/BatchNorm 최적화 PyTorch 그래프를 비교한다.
 - ResNet 18/50, ConvNeXt V1 Tiny, DeepLab V3+ ResNet34, U-Net ResNet18은 가중치를 포함하지 않는
   native adapter와 공통 ONNX exporter를 사용하며 `builtin` backend manifest를 만든다.
+- Re-DETR v4와 SAM2 팩은 `contracts` 필드에서 특수 다중 그래프·프롬프트 계약을 명시해야 하며,
+  등록부는 Small/Medium/Large와 Hiera Tiny/Small/Base+/Large 이외의 변형을 거부한다.
 
 Re-DETR·SAM2의 실제 학습/특수 출력 ONNX 그래프, PatchCore 실제 backbone/bank 학습 계약,
 모든 태스크의 C#/C++ 결과 계약,

@@ -17,6 +17,8 @@ import re
 from typing import Any, Iterable, Mapping
 import zipfile
 
+from model_runtime.special_contracts import validate_special_manifest
+
 
 MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,79}$")
 PACK_SUFFIX = ".dvmodel"
@@ -87,6 +89,13 @@ def validate_model_spec(spec: ModelSpec) -> None:
         raise ModelRegistryError(f"input_channels must contain 1 or 3: {spec.model_id}")
     if spec.release_status not in SUPPORTED_STATUSES:
         raise ModelRegistryError(f"unsupported release status: {spec.release_status}")
+    if spec.family in {"Re-DETR v4", "SAM2"}:
+        try:
+            manifest = spec.to_dict()
+            manifest.update(spec.metadata)
+            validate_special_manifest(manifest)
+        except ValueError as exc:
+            raise ModelRegistryError(str(exc)) from exc
 
 
 def builtin_model_specs() -> tuple[ModelSpec, ...]:
@@ -101,23 +110,28 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
     specs: list[ModelSpec] = [
         ModelSpec("efficientnet_b0", "EfficientNet", "B0", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "sdk_verified"),
         ModelSpec("efficientnet_b1", "EfficientNet", "B1", "classify", ("windows_native", "onnx"), common, (240, 240), (1, 3), "sdk_verified", notes="224x224는 별도 학습 프로필"),
-        ModelSpec("resnet18", "ResNet", "18", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3)),
-        ModelSpec("resnet50", "ResNet", "50", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3)),
-        ModelSpec("convnext_v1_tiny", "ConvNeXt V1", "Tiny", "classify", ("windows_native", "onnx"), common, (224, 224), (3,)),
+        ModelSpec("resnet18", "ResNet", "18", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", notes="weight-free native adapter"),
+        ModelSpec("resnet50", "ResNet", "50", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", notes="weight-free native adapter"),
+        ModelSpec("convnext_v1_tiny", "ConvNeXt V1", "Tiny", "classify", ("windows_native", "onnx"), common, (224, 224), (3,), "export_verified", notes="weight-free native adapter"),
         ModelSpec("libreyolo_classify_mobilenetv4_small", "LibreYOLO", "MobileNetV4 Small", "classify", ("container", "onnx"), common, (224, 224), (3,)),
         ModelSpec("patchcore_wide_resnet50_2", "PatchCore", "Wide-ResNet50-2", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), notes="memory bank와 kNN 포함"),
         ModelSpec("patchcore_resnet18", "PatchCore", "ResNet18", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), notes="memory bank와 kNN 포함"),
     ]
     for variant, size in (("small", 640), ("medium", 800), ("large", 1024)):
-        specs.append(ModelSpec(f"re_detr_v4_{variant}", "Re-DETR v4", variant.title(), "detect", ("container", "onnx"), common, (size, size), (3,), notes="requested family fixed by product requirement"))
+        specs.append(ModelSpec(
+            f"re_detr_v4_{variant}", "Re-DETR v4", variant.title(), "detect", ("container", "onnx"), common,
+            (size, size), (3,), notes="requested family fixed by product requirement",
+            metadata={"contracts": {"onnx": {"input_name": "input_image", "boxes_name": "pred_boxes",
+                                                "logits_name": "pred_logits", "boxes_format": "normalized_cxcywh",
+                                                "score_activation": "sigmoid"}}}))
     specs.extend([
         ModelSpec("libreyolo_detect_9t", "LibreYOLO", "9 Tiny", "detect", ("container", "onnx"), common, (640, 640), (3,)),
-        ModelSpec("sam2_hiera_tiny", "SAM2", "Hiera Tiny", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "video"}), (1024, 1024), (3,), notes="image/prompt/video 계약은 별도 검증"),
-        ModelSpec("sam2_hiera_small", "SAM2", "Hiera Small", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "video"}), (1024, 1024), (3,), notes="image/prompt/video 계약은 별도 검증"),
-        ModelSpec("sam2_hiera_base_plus", "SAM2", "Hiera Base+", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "video"}), (1024, 1024), (3,), notes="image/prompt/video 계약은 별도 검증"),
-        ModelSpec("sam2_hiera_large", "SAM2", "Hiera Large", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "video"}), (1024, 1024), (3,), notes="image/prompt/video 계약은 별도 검증"),
-        ModelSpec("deeplabv3plus_resnet34", "DeepLab V3+", "ResNet34", "segment", ("windows_native", "onnx"), common, (512, 512), (3,)),
-        ModelSpec("unet_resnet18", "U-Net", "ResNet18", "segment", ("windows_native", "onnx"), common, (512, 512), (3,)),
+        ModelSpec("sam2_hiera_tiny", "SAM2", "Hiera Tiny", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "video"}), (1024, 1024), (3,), notes="image/prompt/video 계약은 별도 검증", metadata={"contracts": {"graphs": {"encoder": {"file": "sam2_encoder.onnx", "outputs": ["image_embeddings"]}, "decoder": {"file": "sam2_decoder.onnx", "outputs": ["low_res_mask_logits", "iou_predictions"]}}, "prompt_types": ["point", "box", "mask"], "video_state": True}}),
+        ModelSpec("sam2_hiera_small", "SAM2", "Hiera Small", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "video"}), (1024, 1024), (3,), notes="image/prompt/video 계약은 별도 검증", metadata={"contracts": {"graphs": {"encoder": {"file": "sam2_encoder.onnx", "outputs": ["image_embeddings"]}, "decoder": {"file": "sam2_decoder.onnx", "outputs": ["low_res_mask_logits", "iou_predictions"]}}, "prompt_types": ["point", "box", "mask"], "video_state": True}}),
+        ModelSpec("sam2_hiera_base_plus", "SAM2", "Hiera Base+", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "video"}), (1024, 1024), (3,), notes="image/prompt/video 계약은 별도 검증", metadata={"contracts": {"graphs": {"encoder": {"file": "sam2_encoder.onnx", "outputs": ["image_embeddings"]}, "decoder": {"file": "sam2_decoder.onnx", "outputs": ["low_res_mask_logits", "iou_predictions"]}}, "prompt_types": ["point", "box", "mask"], "video_state": True}}),
+        ModelSpec("sam2_hiera_large", "SAM2", "Hiera Large", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "video"}), (1024, 1024), (3,), notes="image/prompt/video 계약은 별도 검증", metadata={"contracts": {"graphs": {"encoder": {"file": "sam2_encoder.onnx", "outputs": ["image_embeddings"]}, "decoder": {"file": "sam2_decoder.onnx", "outputs": ["low_res_mask_logits", "iou_predictions"]}}, "prompt_types": ["point", "box", "mask"], "video_state": True}}),
+        ModelSpec("deeplabv3plus_resnet34", "DeepLab V3+", "ResNet34", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", notes="weight-free native adapter"),
+        ModelSpec("unet_resnet18", "U-Net", "ResNet18", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", notes="weight-free native adapter"),
     ])
     return tuple(specs)
 
@@ -131,6 +145,10 @@ def _spec_from_mapping(data: Mapping[str, Any]) -> ModelSpec:
     missing = required - set(data)
     if missing:
         raise ModelRegistryError("manifest missing fields: " + ", ".join(sorted(missing)))
+    metadata = dict(data.get("metadata", {}))
+    for key in ("contracts", "runtime_requirements"):
+        if key in data:
+            metadata[key] = data[key]
     return ModelSpec(
         model_id=data["model_id"], family=data["family"], variant=data["variant"], task=data["task"],
         runtimes=tuple(data["runtimes"]), capabilities=frozenset(data["capabilities"]),
@@ -138,7 +156,7 @@ def _spec_from_mapping(data: Mapping[str, Any]) -> ModelSpec:
         input_channels=tuple(data.get("input_channels", (3,))),
         release_status=data.get("release_status", "requested"),
         pretrained_asset=data.get("pretrained_asset", ""), notes=data.get("notes", ""),
-        metadata=data.get("metadata", {}),
+        metadata=metadata,
     )
 
 
