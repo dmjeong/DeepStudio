@@ -24,7 +24,7 @@ from model_runtime.special_contracts import (SpecialContractError,
 from core.model_registry import MODEL_ID_RE, WINDOWS_RESERVED_MODEL_IDS
 from model_runtime.managed_wsl import (ManagedWslError,
                                        configured_docker_command)
-from model_runtime.worker_protocol import Frame, request_frame
+from model_runtime.worker_protocol import request_frame
 
 
 class ModelPackWorkerError(RuntimeError):

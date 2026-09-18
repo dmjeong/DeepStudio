@@ -7,7 +7,6 @@ from dataclasses import asdict
 from pathlib import Path
 import numpy as np
 from PySide6.QtWidgets import QWidget, QFileDialog, QMessageBox
-from PySide6.QtCore import QTimer
 from PySide6.QtGui import QTextCursor
 
 from core.project import ProjectData, ProjectManager

@@ -320,6 +320,7 @@ def test_actual_button_uses_onnx_and_restores_timing(checkpoint_factory, tmp_pat
         assert result.details["runtime"] == "onnxruntime"
         assert result.details["runtime_threads"] == 4
         assert result.details["runtime_optimization"] == "all"
+        assert result.details["runtime_verification_tolerance"] == {"atol": 1e-3, "rtol": 5e-4}
         assert "ONNX Runtime cpu" in widget.result_card.time_label.text()
         assert "파일 읽기" in widget.result_card.time_label.text()
         assert "모델" in widget.result_card.time_label.text()

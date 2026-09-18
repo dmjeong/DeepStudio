@@ -1,17 +1,15 @@
 """Qt 객체를 참조하지 않는 모델 추론과 Grad-CAM 계산."""
-import os
 import time
 from dataclasses import replace
 import numpy as np
 import torch
 import torch.nn.functional as F
 from core.paths import ensure_python_path
-from core.gradcam import GradCAM
-from core.heatmap import normalize_activation_map, reproject_classification_cam
+from core.heatmap import normalize_activation_map
 from core.inference_timing import StageTimer
 from core.inference_types import InferenceResult, make_anomaly_result
 ensure_python_path()
-from center_crop import center_crop_box, load_crop_image, restore_detections, paste_crop_preview
+from center_crop import center_crop_box, restore_detections, paste_crop_preview
 
 
 class InferenceOperations:
@@ -124,6 +122,7 @@ class InferenceOperations:
                     prediction.details.update(runtime_version=onnx.version, runtime_threads=onnx.threads,
                                               runtime_setup_sec=onnx.setup_sec,
                                               runtime_optimization=onnx.optimization_level,
+                                              runtime_verification_tolerance=onnx.verification_tolerance,
                                               runtime_validation_attempts=onnx.validation_attempts)
 
         # 화면과 컬러 히트맵용 변환은 모델 추론 후에만 수행한다.

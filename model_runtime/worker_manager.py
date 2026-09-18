@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .windows_worker import WindowsWorker, WindowsWorkerCommand, WindowsWorkerError
+from .windows_worker import WindowsWorker, WindowsWorkerCommand
 
 
 class WorkerManagerError(RuntimeError):

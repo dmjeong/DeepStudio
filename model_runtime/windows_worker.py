@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 import subprocess
 import threading
-from typing import BinaryIO, Mapping, Sequence
+from typing import Mapping, Sequence
 
 from .worker_protocol import Frame, WorkerProtocolError
 

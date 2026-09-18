@@ -7,7 +7,6 @@ external step; unsigned output is deliberately opt-in for local development.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 import os

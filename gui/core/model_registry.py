@@ -419,7 +419,6 @@ def registry_with_installed_packs(root: str | Path | None = None) -> tuple[Model
         selected = _active_installed_version(model_dir)
         if selected is None or not (selected / "manifest.json").is_file():
             continue
-        manifest = selected / "manifest.json"
         try:
             registry.load_installed_pack(selected)
         except ModelRegistryError as exc:

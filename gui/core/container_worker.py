@@ -17,10 +17,6 @@ from typing import Sequence
 
 from model_runtime.worker_protocol import (  # noqa: E402
     Frame as _ProtocolFrame,
-    HEADER,
-    MAGIC,
-    MAX_HEADER_BYTES,
-    MAX_PAYLOAD_BYTES,
     WorkerProtocolError,
     response_request_id,
 )

@@ -151,6 +151,7 @@ class ExportContractTests(unittest.TestCase):
         self.assertEqual(result["backend"], "redetr_v4")
         self.assertEqual(manifest["output_names"], ["pred_boxes", "pred_logits"])
         self.assertEqual(manifest["postprocessing"]["class_scores"], "softmax")
+        self.assertEqual(manifest["export"]["verification_tolerance"], {"atol": 1e-3, "rtol": 1e-3})
         self.assertTrue(manifest["cpp_supported"])
 
     def test_sam2_checkpoint_routes_to_multi_graph_exporter(self):

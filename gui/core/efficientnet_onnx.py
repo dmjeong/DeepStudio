@@ -13,7 +13,8 @@ class EfficientNetOnnx:
         # Decoder module loading belongs to model setup, not the first image's decode timing.
         import cv2  # noqa: F401
         from efficientnet import EfficientNet, prepare_for_inference
-        from export_onnx import export_to_onnx, validate_classification_outputs
+        from export_onnx import (export_to_onnx, validate_classification_outputs,
+                                 verification_tolerances)
         import onnxruntime as ort
         if not isinstance(model, EfficientNet) or next(model.parameters()).device.type != "cpu":
             raise ValueError("CPU EfficientNet 모델이 필요합니다")
@@ -23,6 +24,7 @@ class EfficientNetOnnx:
         self.input_shape = (1, model.in_channels, *input_size)
         self.threads = threads
         self.version = ort.__version__
+        self.verification_tolerance = verification_tolerances("classify")
         # Export and validate the same FP32 graph that is deployed.  Conv/BN
         # fusion is numerically equivalent, but comparing its reassociated
         # logits with the unfused training graph rejects valid ONNX models at
@@ -63,7 +65,7 @@ class EfficientNetOnnx:
             try:
                 for probe_name, tensor, expected in probes:
                     actual = self.session.run([self.output_name], {self.input_name: tensor})[0]
-                    validate_classification_outputs(expected, actual)
+                    validate_classification_outputs(expected, actual, **self.verification_tolerance)
             except ValueError as exc:
                 self.validation_attempts.append({"optimization": name, "passed": False,
                                                  "probe": probe_name, "error": str(exc)})
