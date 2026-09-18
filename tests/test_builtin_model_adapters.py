@@ -39,11 +39,11 @@ def test_builtin_models_are_constructible_without_pretrained_download(model_id, 
 @pytest.mark.parametrize(
     ("model_id", "size"),
     [
-        ("resnet18", 32),
-        ("resnet50", 32),
-        ("convnext_v1_tiny", 32),
-        ("deeplabv3plus_resnet34", 64),
-        ("unet_resnet18", 64),
+        ("resnet18", 224),
+        ("resnet50", 224),
+        ("convnext_v1_tiny", 224),
+        ("deeplabv3plus_resnet34", 512),
+        ("unet_resnet18", 512),
     ],
 )
 def test_builtin_checkpoint_exports_and_has_cpp_contract(tmp_path, model_id, size):
