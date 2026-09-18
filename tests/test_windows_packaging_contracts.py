@@ -3,7 +3,9 @@
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import json
+import os
 import runpy
+import sys
 import pytest
 
 
@@ -28,6 +30,30 @@ def test_release_script_verifies_payload_before_wix_build():
     assert "WixToolset.Bal.wixext" in script
     assert "THIRD_PARTY_NOTICES.md" in script
     assert "external_downloads" not in script
+
+
+def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk():
+    script = (ROOT / "gui" / "build_exe.py").read_text(encoding="utf-8")
+    assert "model_sdk', 'schemas" in script
+    for module in ("model_runtime.container_entrypoint", "model_runtime.pack_installer",
+                   "model_runtime.worker_protocol", "model_runtime.windows_worker"):
+        assert f'"--hidden-import", "{module}"' in script
+    assert "VISION_NATIVE_RUNTIME_DIR" in script
+    assert "--add-binary" in script
+
+
+def test_pyinstaller_native_runtime_argument_is_opt_in_and_filters_library_files(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    suffix = ".dll" if sys.platform == "win32" else ".dylib"
+    (runtime / f"vision_runtime{suffix}").write_bytes(b"dll")
+    (runtime / f"onnxruntime{suffix}").write_bytes(b"ort")
+    (runtime / "README.txt").write_text("ignored", encoding="utf-8")
+    build = runpy.run_path(str(ROOT / "gui" / "build_exe.py"))
+    monkeypatch.setenv("VISION_NATIVE_RUNTIME_DIR", str(runtime))
+    args = build["_native_runtime_arguments"]()
+    assert args == ["--add-binary", f"{runtime / f'onnxruntime{suffix}'}{os.pathsep}.",
+                    "--add-binary", f"{runtime / f'vision_runtime{suffix}'}{os.pathsep}."]
 
 
 def test_payload_wrapper_scripts_collect_and_verify_exact_bytes(tmp_path):

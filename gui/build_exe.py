@@ -7,6 +7,10 @@ PyInstaller를 사용하여 독립 실행 파일(.exe) 생성
     cd DeepVisionStudio/gui
     python build_exe.py
 
+선택적 네이티브 SDK 포함:
+    set VISION_NATIVE_RUNTIME_DIR=C:\\build\\vision-runtime
+    python build_exe.py
+
 빌드 결과:
     dist/DeepVisionStudio/DeepVisionStudio.exe
 
@@ -26,6 +30,8 @@ PyInstaller를 사용하여 독립 실행 파일(.exe) 생성
 │        ├── DeepVisionStudio.exe  ← 더블클릭 실행       │
 │        ├── PySide6 런타임 DLL                              │
 │        ├── PyTorch CUDA 런타임                              │
+│        ├── model_sdk/schemas/ 모델 팩 계약                 │
+│        ├── vision_runtime.dll 등 (환경변수 지정 시)         │
 │        └── 기타 의존성                                     │
 └──────────────────────────────────────────────────────────┘
 
@@ -34,6 +40,7 @@ PyInstaller를 사용하여 독립 실행 파일(.exe) 생성
 """
 
 import os
+from pathlib import Path
 import sys
 import subprocess
 import shutil
@@ -47,6 +54,30 @@ DIST_DIR = os.path.join(GUI_DIR, "dist")
 BUILD_DIR = os.path.join(GUI_DIR, "build")
 
 APP_NAME = "DeepVisionStudio"
+
+
+def _native_runtime_arguments() -> list[str]:
+    """Return optional native SDK DLLs staged into the frozen application.
+
+    The release job builds ``vision_runtime.dll`` and its ONNX Runtime/OpenCV
+    dependencies before invoking this script.  Development builds may omit
+    ``VISION_NATIVE_RUNTIME_DIR``; the GUI still builds, while the installer
+    payload validator later requires the native runtime for SDK deployment.
+    """
+    value = os.environ.get("VISION_NATIVE_RUNTIME_DIR", "").strip()
+    if not value:
+        return []
+    root = Path(value).expanduser().resolve()
+    if not root.is_dir():
+        raise RuntimeError(f"VISION_NATIVE_RUNTIME_DIR is not a directory: {root}")
+    suffixes = {".dll"} if sys.platform == "win32" else {".dylib", ".so"}
+    files = sorted(path for path in root.iterdir() if path.is_file() and path.suffix.lower() in suffixes)
+    if not files:
+        raise RuntimeError(f"VISION_NATIVE_RUNTIME_DIR contains no native runtime libraries: {root}")
+    arguments: list[str] = []
+    for path in files:
+        arguments.extend(["--add-binary", f"{path}{os.pathsep}."])
+    return arguments
 
 
 def check_pyinstaller():
@@ -90,6 +121,7 @@ def build():
         # 데이터 파일 포함
         "--add-data", f"{RESOURCES_DIR}{os.pathsep}resources",
         "--add-data", f"{PYTHON_DIR}{os.pathsep}python",
+        "--add-data", f"{os.path.join(PROJECT_ROOT, 'model_sdk', 'schemas')}{os.pathsep}model_sdk/schemas",
 
         # 숨겨진 임포트 (PyInstaller가 자동 감지 못하는 것)
         "--hidden-import", "PySide6.QtWidgets",
@@ -118,6 +150,19 @@ def build():
         "--hidden-import", "core.device_manager",
         "--hidden-import", "core.model_registry",
         "--hidden-import", "core.container_worker",
+        # Model-pack workers are loaded by a manifest entrypoint at runtime;
+        # keep every protocol/lifecycle module in the frozen release.
+        "--hidden-import", "model_runtime.assets",
+        "--hidden-import", "model_runtime.container_entrypoint",
+        "--hidden-import", "model_runtime.managed_wsl",
+        "--hidden-import", "model_runtime.manager",
+        "--hidden-import", "model_runtime.pack_builder",
+        "--hidden-import", "model_runtime.pack_installer",
+        "--hidden-import", "model_runtime.special_contracts",
+        "--hidden-import", "model_runtime.worker_manager",
+        "--hidden-import", "model_runtime.worker_protocol",
+        "--hidden-import", "model_runtime.worker_server",
+        "--hidden-import", "model_runtime.windows_worker",
 
         # Grad-CAM 시각화 모듈
         "--hidden-import", "core.gradcam",
@@ -150,6 +195,7 @@ def build():
         # 엔트리포인트
         os.path.join(GUI_DIR, "main.py"),
     ]
+    cmd[cmd.index(os.path.join(GUI_DIR, "main.py")):cmd.index(os.path.join(GUI_DIR, "main.py"))] = _native_runtime_arguments()
 
     print(f"\n 빌드 명령어:")
     print(f"  {' '.join(cmd[:6])} ...")

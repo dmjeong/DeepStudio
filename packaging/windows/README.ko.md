@@ -160,3 +160,9 @@ Windows 빌드 이미지는 먼저 `stage_payload.py`로 UI·worker·SDK·팩·�
 루트에 모은다. `collect_payloads.py`와 `validate_payloads.py`가 모든 파일의 크기·SHA-256과
 3.5 GiB 예산을 검사한 뒤에만 WiX MSI/Burn EXE를 생성한다. 이 단계는 인터넷 다운로드나 외부
 모델 허브 호출을 수행하지 않는다.
+
+PyInstaller GUI를 만들 때는 네이티브 C++ SDK와 ONNX Runtime/OpenCV DLL이 들어 있는 디렉터리를
+`VISION_NATIVE_RUNTIME_DIR` 환경변수로 지정한다. `gui/build_exe.py`가 해당 디렉터리의 DLL을
+번들에 넣고, 모델 팩 schema와 worker runtime 모듈도 함께 포함한다. 이 디렉터리를 비워 둔 개발
+빌드는 UI만 만들며, 정식 payload 검증은 `vision_runtime.dll`과 의존 DLL을 포함한 staged payload에서
+수행한다.

@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-18T05:02:00+00:00",
+  "lastUpdated": "2026-09-18T05:20:00+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -148,6 +148,8 @@
         "Re-DETR module checkpoint exporter with pred_boxes/pred_logits ONNX Runtime parity and score/box manifest metadata",
         "SAM2 checkpoint exporter with encoder/decoder graphs, point/box/mask prompt manifest and ONNX Runtime parity",
         "Shared DVW1 protocol, Windows native worker launcher, owned offline WSL lifecycle, local asset resolver and worker manager",
+        "PyInstaller frozen GUI includes model-pack schemas, dynamic worker modules and optional native SDK DLL staging",
+        "Windows CI contract job for C# SDK compilation, worker/payload tests and frozen builder syntax",
         "WiX v4 MSI/Burn offline installer scaffold with payload hash and third-party notice gates",
         "Web model catalog endpoint and project model_id defaults"
       ],
