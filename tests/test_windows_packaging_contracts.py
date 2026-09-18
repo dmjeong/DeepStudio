@@ -77,6 +77,12 @@ def test_offline_default_model_catalog_matches_registry():
     assert actual == expected
 
 
+def test_offline_default_model_catalog_is_deterministically_generated():
+    exporter = runpy.run_path(str(ROOT / "tools" / "export_model_catalog.py"))
+    packaged = json.loads((WINDOWS / "models" / "default-model-catalog.json").read_text(encoding="utf-8"))
+    assert packaged == exporter["build_catalog"]()
+
+
 def test_pyinstaller_native_runtime_argument_is_opt_in_and_filters_library_files(tmp_path, monkeypatch):
     runtime = tmp_path / "runtime"
     runtime.mkdir()
