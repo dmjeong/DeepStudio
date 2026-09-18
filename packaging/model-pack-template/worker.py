@@ -65,9 +65,11 @@ def _dispatch(header: Mapping[str, Any], payload: bytes) -> bytes:
     if command == "prepare":
         return _response(request_id, "prepare", ready=True)
     if command in {"train", "infer", "export"}:
-        # This is intentionally a safe placeholder.  A real pack should copy
-        # artifacts under /work and return paths relative to that mount.
-        return _response(request_id, command, accepted=True, payload_bytes=len(payload))
+        # A template must fail closed until a model implementation replaces
+        # this branch. Reporting accepted work would make a pack look usable
+        # while producing no checkpoint, prediction, or ONNX artifact.
+        return _error(request_id, "not_implemented",
+                      f"template worker does not implement {command}; replace worker.py")
     if command == "cancel":
         return _response(request_id, "cancel", cancelled=True)
     return _response(request_id, command)

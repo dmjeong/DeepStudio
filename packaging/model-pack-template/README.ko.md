@@ -36,4 +36,5 @@ Dockerfile의 entrypoint를 `container_entrypoint.py --worker-stdin-stdout`로 �
 
 출시 팩은 외부 서명과 `THIRD_PARTY_NOTICES.md`, `licenses/`를 포함해야 한다. 템플릿의
 `release_status`는 `requested`로 남겨 두며, 실제 Windows·ONNX·SDK 검증이 끝난 뒤에만
-`release_ready`로 올린다. 템플릿의 placeholder worker는 제품 모델 구현이 아니다.
+`release_ready`로 올린다. 템플릿의 placeholder worker는 제품 모델 구현이 아니며,
+`train`·`infer`·`export` 요청을 명시적인 `not_implemented` 오류로 거부한다.

@@ -49,7 +49,11 @@ def test_template_worker_round_trips_shared_dvw1_protocol():
             process.stdin.flush()
             response = _read_frame(process)
             assert response.header["request_id"] == frame.header["request_id"]
-            assert response.header["status"] == "ok"
+            if frame.header["type"] == "infer":
+                assert response.header["status"] == "error"
+                assert response.header["code"] == "not_implemented"
+            else:
+                assert response.header["status"] == "ok"
         assert process.wait(timeout=3) == 0
     finally:
         if process.poll() is None:
