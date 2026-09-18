@@ -33,6 +33,10 @@ ORT는 CPUExecutionProvider, ORT_ENABLE_ALL, sequential, 4 intra-op threads를 �
 ALL에서 출력 검증이 실패할 때만 BASIC, DISABLED를 차례로 다시 검증한다.
 동일한 허용 오차를 통과한 ONNX 세션만 사용하고 선택한 수준을 결과에 기록한다.
 화면의 `[기본 최적화]` 또는 `[최적화 꺼짐]`은 이러한 재검증 경로를 뜻한다.
+현재 분류 FP32 parity 프로필은 `atol=0.001`, `rtol=0.0005`이며 적용 값은 결과 JSON의
+`runtime_verification_tolerance`와 export manifest의 `export.verification_tolerance`에 남는다.
+오차가 `0.00052`이고 이전 실행파일에서 계속 실패하면, 소스만 내려받는 것으로는 실행파일이
+바뀌지 않으므로 이 커밋 이후의 Windows EXE를 다시 빌드해야 한다.
 자동 모드에서 모든 수준의 검증, 변환 또는 라이브러리 준비가 실패하면 해당 ONNX를
 사용하지 않고 기존 PyTorch로 배치를 계속한다. 화면에는 `PyTorch cpu`와
 `[ONNX 준비 실패 → PyTorch]`를 표시하고 선택 이미지/시간 셀의 툴팁과 로컬 작업 로그에
