@@ -36,6 +36,20 @@ if (-not (Test-Path -LiteralPath $notice -PathType Leaf)) {
 $manifest = Join-Path $output "release-manifest.json"
 $msi = Join-Path $output "DeepVisionStudio-$Version.msi"
 $setup = Join-Path $output "DeepVisionStudio-Setup-$Version-win-x64.exe"
+$releaseSucceeded = $false
+trap {
+    $failure = $_
+    if (-not $releaseSucceeded) {
+        # WiX and signtool can leave a partial MSI/EXE behind.  Never let a
+        # failed build be mistaken for a usable installer artifact.
+        foreach ($artifact in @($msi, $setup)) {
+            if (Test-Path -LiteralPath $artifact -PathType Leaf) {
+                Remove-Item -LiteralPath $artifact -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    throw $failure
+}
 $wix = Get-Command wix -ErrorAction SilentlyContinue
 if (-not $wix) { throw "WiX v4 'wix' command is required on the locked Windows build image." }
 New-Item -ItemType Directory -Force -Path $output | Out-Null
@@ -96,4 +110,5 @@ $bundleArgs += @("-o", $setup, (Join-Path $scriptRoot "bootstrapper\DeepVisionSt
 & $wix.Source @bundleArgs
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $setup)) { throw "WiX Burn bundle build failed." }
 Sign-AndVerify $setup
+$releaseSucceeded = $true
 Write-Output $setup

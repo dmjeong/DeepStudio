@@ -40,3 +40,17 @@ def test_payload_manifest_rejects_budget_and_symlink(tmp_path):
     root_link.symlink_to(root, target_is_directory=True)
     with pytest.raises(ValueError, match="root symlink"):
         collect_payload(root_link, version="dev", budget_bytes=1024)
+
+
+def test_payload_manifest_requires_offline_windows_x64_contract(tmp_path):
+    root = tmp_path / "payload"
+    root.mkdir()
+    (root / "app.exe").write_bytes(b"app")
+    manifest = collect_payload(root, version="dev", budget_bytes=1024)
+    manifest["requirements"]["external_downloads"] = True
+    with pytest.raises(ValueError, match="offline Windows x64"):
+        verify_payload(root, manifest)
+    manifest = collect_payload(root, version="dev", budget_bytes=1024)
+    manifest["requirements"]["windows_arch"] = "arm64"
+    with pytest.raises(ValueError, match="offline Windows x64"):
+        verify_payload(root, manifest)

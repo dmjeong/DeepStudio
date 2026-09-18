@@ -37,56 +37,79 @@ if ([string]::IsNullOrWhiteSpace($StateRoot)) {
 $state = [IO.Path]::GetFullPath($StateRoot)
 New-Item -ItemType Directory -Force -Path $state | Out-Null
 $marker = Join-Path $state "owned-distro.json"
+$pendingMarker = "$marker.pending"
 $installDir = Join-Path $state "distro"
+$wslCommand = $null
+$importAttempted = $false
+$bootstrapCommitted = $false
 
-if ($InstallWslPackage) {
-    $result = Start-Process -FilePath "msiexec.exe" -ArgumentList @(
-        "/i", $wsl, "/qn", "/norestart"
-    ) -Wait -PassThru
-    if ($result.ExitCode -notin @(0, 3010)) {
-        throw "Offline WSL package installation failed: $($result.ExitCode)"
+try {
+    if ($InstallWslPackage) {
+        $result = Start-Process -FilePath "msiexec.exe" -ArgumentList @(
+            "/i", $wsl, "/qn", "/norestart"
+        ) -Wait -PassThru
+        if ($result.ExitCode -notin @(0, 3010)) {
+            throw "Offline WSL package installation failed: $($result.ExitCode)"
+        }
     }
-}
 
-$wslCommand = Get-Command "wsl.exe" -ErrorAction SilentlyContinue
-if ($null -eq $wslCommand) { throw "wsl.exe is not available after offline WSL installation." }
+    $wslCommand = Get-Command "wsl.exe" -ErrorAction SilentlyContinue
+    if ($null -eq $wslCommand) { throw "wsl.exe is not available after offline WSL installation." }
 
-& $wslCommand.Source "--status" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "WSL status probe failed; enable WSL through the bundled installer first." }
-$distros = @(& $wslCommand.Source "--list" "--quiet") | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-$existing = $distros -contains $DistroName
-if ($existing) {
-    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
-        throw "An existing WSL distro has no Deep Vision Studio ownership marker: $DistroName"
-    }
-    $owned = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
-    if ($owned.schema_version -ne 1 -or $owned.owned -ne $true -or $owned.distro -ne $DistroName) {
-        throw "The existing WSL distro is not owned by this application: $DistroName"
-    }
-} else {
-    if (Test-Path -LiteralPath $installDir) {
-        $entries = @(Get-ChildItem -LiteralPath $installDir -Force)
-        if ($entries.Count -gt 0) { throw "WSL install directory is not empty: $installDir" }
+    & $wslCommand.Source "--status" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "WSL status probe failed; enable WSL through the bundled installer first." }
+    $distros = @(& $wslCommand.Source "--list" "--quiet") | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    $existing = $distros -contains $DistroName
+    if ($existing) {
+        if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+            throw "An existing WSL distro has no Deep Vision Studio ownership marker: $DistroName"
+        }
+        $owned = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+        if ($owned.schema_version -ne 1 -or $owned.owned -ne $true -or $owned.distro -ne $DistroName) {
+            throw "The existing WSL distro is not owned by this application: $DistroName"
+        }
     } else {
-        New-Item -ItemType Directory -Path $installDir | Out-Null
+        if (Test-Path -LiteralPath $installDir) {
+            $entries = @(Get-ChildItem -LiteralPath $installDir -Force)
+            if ($entries.Count -gt 0) { throw "WSL install directory is not empty: $installDir" }
+        } else {
+            New-Item -ItemType Directory -Path $installDir | Out-Null
+        }
+        # The name was absent from --list, so an unregister in the failure
+        # handler can only target this bootstrap attempt's app-owned distro.
+        $importAttempted = $true
+        & $wslCommand.Source "--import" $DistroName $installDir $distro "--version" "2"
+        if ($LASTEXITCODE -ne 0) { throw "Owned WSL distro import failed: $DistroName" }
     }
-    & $wslCommand.Source "--import" $DistroName $installDir $distro "--version" "2"
-    if ($LASTEXITCODE -ne 0) { throw "Owned WSL distro import failed: $DistroName" }
-}
 
-# Verify the Engine server through the owned distro.  No host Docker socket,
-# TCP API, shell command, pull, or web download is used here.
-& $wslCommand.Source "-d" $DistroName "--" "docker" "info" "--format" "{{.ServerVersion}}" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Docker Engine is not ready inside owned WSL distro: $DistroName" }
+    # Verify the Engine server through the owned distro.  No host Docker socket,
+    # TCP API, shell command, pull, or web download is used here.
+    & $wslCommand.Source "-d" $DistroName "--" "docker" "info" "--format" "{{.ServerVersion}}" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Docker Engine is not ready inside owned WSL distro: $DistroName" }
 
-$record = [ordered]@{
-    schema_version = 1
-    owned = $true
-    distro = $DistroName
-    version = $Version
-    engine = "docker"
+    $record = [ordered]@{
+        schema_version = 1
+        owned = $true
+        distro = $DistroName
+        version = $Version
+        engine = "docker"
+    }
+    $record | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $pendingMarker -Encoding UTF8
+    Move-Item -LiteralPath $pendingMarker -Destination $marker -Force
+    $bootstrapCommitted = $true
+    Write-Output $marker
+} catch {
+    $failure = $_
+    if (-not $bootstrapCommitted -and $importAttempted -and $null -ne $wslCommand) {
+        # A failed first import must not leave an unmarked distro that blocks
+        # every later retry.  Never unregister an existing user-owned distro.
+        & $wslCommand.Source "--unregister" $DistroName | Out-Null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $installDir)) {
+            Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    if (Test-Path -LiteralPath $pendingMarker) {
+        Remove-Item -LiteralPath $pendingMarker -Force -ErrorAction SilentlyContinue
+    }
+    throw $failure
 }
-$temporary = "$marker.pending"
-$record | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $temporary -Encoding UTF8
-Move-Item -LiteralPath $temporary -Destination $marker -Force
-Write-Output $marker

@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-18T21:34:00+09:00",
+  "lastUpdated": "2026-09-18T22:29:00+09:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -129,7 +129,7 @@
       ],
       "timestamps": {
         "started": "2026-09-18T03:37:37.984Z",
-        "lastUpdated": "2026-09-18T19:50:00+09:00"
+        "lastUpdated": "2026-09-18T22:29:00+09:00"
       },
       "designStatus": "revised_with_open_decisions",
       "implementationStatus": "in_progress",
@@ -182,18 +182,21 @@
         "Checked-in Docker model-pack template provides an independent DVW1 worker, digest-pinned manifest, Dockerfile and build/install instructions; host protocol round-trip and unsigned development pack build are regression-tested",
         "C++17/C# bundle opening resolves relative bundle paths before validating referenced graphs",
         "SAM2 prompt coordinate contract scales original pixels into resized encoder input space in C++17/C# SDK",
-        "Container model-pack image references require a syntactically valid 64-character SHA-256 digest"
-        ,"Model-pack identifiers follow the manifest schema with Windows reserved names, drive characters and unsafe versions rejected"
-        ,"Model-pack checksum keys must be normalized, unique case-insensitively and cover exactly the archived files"
-        ,"Deployment bundle verifier rejects drive paths and duplicate normalized checksum keys"
-        ,"WiX WSL bootstrap uses the standard WixQuietExecCmdLine property and is covered by installer contract tests"
-        ,"Windows payload staging and manifest verification reject drive-letter and duplicate-separator paths"
-        ,"Container worker rejects unsafe model identifiers before starting a third-party process"
-        ,"Model registry revalidates declared container image archives for both uploaded and installed packs"
-        ,"Built-in segmentation worker publishes the canonical mIoU metric to the training UI and run history"
-        ,"Built-in ResNet18/50, ConvNeXt Tiny, DeepLab V3+ and U-Net adapters each export and verify an ONNX graph at catalog input sizes with the native C++ contract"
-        ,"Windows native worker attaches each process to a kill-on-close Job Object and terminates the owned process tree after cancellation timeout"
-        ,"Windows native worker strips inherited Python/Conda/venv search variables before launching bundled runtimes"
+        "Container model-pack image references require a syntactically valid 64-character SHA-256 digest",
+        "Model-pack identifiers follow the manifest schema with Windows reserved names, drive characters and unsafe versions rejected",
+        "Model-pack checksum keys must be normalized, unique case-insensitively and cover exactly the archived files",
+        "Deployment bundle verifier rejects drive paths and duplicate normalized checksum keys",
+        "WiX WSL bootstrap uses the standard WixQuietExecCmdLine property and is covered by installer contract tests",
+        "Windows payload staging and manifest verification reject drive-letter and duplicate-separator paths",
+        "Container worker rejects unsafe model identifiers before starting a third-party process",
+        "Model registry revalidates declared container image archives for both uploaded and installed packs",
+        "Built-in segmentation worker publishes the canonical mIoU metric to the training UI and run history",
+        "Built-in ResNet18/50, ConvNeXt Tiny, DeepLab V3+ and U-Net adapters each export and verify an ONNX graph at catalog input sizes with the native C++ contract",
+        "Windows native worker attaches each process to a kill-on-close Job Object and terminates the owned process tree after cancellation timeout",
+        "Windows native worker strips inherited Python/Conda/venv search variables before launching bundled runtimes",
+        "Windows release script removes partial MSI/Burn Setup artifacts when WiX or Authenticode validation fails",
+        "Owned WSL bootstrap unregisters and removes only a newly imported distro after Docker smoke or marker commit failure, enabling safe retries",
+        "Payload manifest verification enforces offline Windows x64 artifacts and rejects external-download or architecture policy tampering"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",
@@ -387,6 +390,30 @@
       "timestamp": "2026-09-18T21:34:00+09:00",
       "python": "725 passed/11 skipped",
       "windows_worker": "inherited Python/Conda/venv search variables are stripped; explicit bundle overrides preserved",
+      "windows_i7": "not measured"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "windows_release_cleanup_refresh",
+      "timestamp": "2026-09-18T22:02:00+09:00",
+      "python": "targeted Windows packaging contracts passed",
+      "windows_release": "partial MSI and Burn EXE cleanup trap added",
+      "windows_i7": "not measured"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "offline_wsl_retry_cleanup_refresh",
+      "timestamp": "2026-09-18T22:18:00+09:00",
+      "python": "19 Windows packaging contracts; 17 payload/worker tests passed",
+      "offline_wsl": "new import rollback and pending marker cleanup contract added",
+      "windows_i7": "not measured"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "offline_payload_policy_refresh",
+      "timestamp": "2026-09-18T22:29:00+09:00",
+      "python": "37 packaging, payload and worker tests passed",
+      "payload_manifest": "offline/windows-x64/external-download policy verified",
       "windows_i7": "not measured"
     }
   ]

@@ -205,6 +205,15 @@ def test_release_script_has_optional_authenticode_sign_and_verify_gate():
     assert 'SHA256' in script
 
 
+def test_release_script_removes_partial_installer_artifacts_on_failure():
+    script = (WINDOWS / "build_release.ps1").read_text(encoding="utf-8")
+    assert "$releaseSucceeded = $false" in script
+    assert "trap" in script
+    assert "Never let a" in script
+    assert "Remove-Item -LiteralPath $artifact -Force" in script
+    assert "$releaseSucceeded = $true" in script
+
+
 def test_release_script_has_production_offline_wsl_payload_gate():
     script = (WINDOWS / "build_release.ps1").read_text(encoding="utf-8")
     assert '[switch] $RequireOfflineWsl' in script
@@ -226,6 +235,17 @@ def test_offline_wsl_bootstrap_is_shell_free_and_never_downloads():
     assert 'owned-distro.json' in script
     assert 'Start-Process -FilePath "msiexec.exe"' in script
     assert script.index('Start-Process -FilePath "msiexec.exe"') < script.index('Get-Command "wsl.exe"')
+
+
+def test_offline_wsl_bootstrap_rolls_back_only_a_failed_new_import():
+    script = (WINDOWS / "wsl" / "bootstrap_wsl.ps1").read_text(encoding="utf-8")
+    assert "$importAttempted = $false" in script
+    assert "$bootstrapCommitted = $false" in script
+    assert '"--unregister"' in script
+    assert 'Remove-Item -LiteralPath $installDir -Recurse -Force' in script
+    assert 'if (-not $bootstrapCommitted -and $importAttempted' in script
+    assert script.index('"--unregister"') > script.index('} catch {')
+    assert script.index('$bootstrapCommitted = $true') > script.index('"--" "docker" "info"')
 
 
 def test_windows_workflow_builds_real_gui_and_native_runtime():

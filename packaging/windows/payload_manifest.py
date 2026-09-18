@@ -65,6 +65,11 @@ def verify_payload(root: str | Path, manifest: dict[str, Any], *, required_paths
     base = root_path.resolve()
     if manifest.get("schema_version") != 1 or not isinstance(manifest.get("files"), list):
         raise ValueError("unsupported payload manifest")
+    requirements = manifest.get("requirements")
+    if (not isinstance(requirements, dict) or requirements.get("offline") is not True or
+            requirements.get("windows_arch") != "x64" or
+            requirements.get("external_downloads") is not False):
+        raise ValueError("payload manifest must require offline Windows x64 artifacts")
     if manifest.get("payload_bytes", -1) > manifest.get("budget_bytes", 0):
         raise ValueError("manifest exceeds payload budget")
     seen: set[str] = set()
