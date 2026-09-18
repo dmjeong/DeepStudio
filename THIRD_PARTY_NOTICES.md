@@ -12,7 +12,7 @@ not a substitute for a release-specific SBOM.
 | ONNX Runtime | Python and C++ CPU inference | MIT; https://github.com/microsoft/onnxruntime/blob/main/LICENSE |
 | nlohmann/json | C++ manifest parsing | MIT; https://github.com/nlohmann/json/blob/develop/LICENSE.MIT |
 | WiX Toolset | Windows MSI/Burn build tool | MIT; https://github.com/wixtoolset/wix/blob/main/LICENSE |
-| RT-DETRv4 upstream | Optional Re-DETR v4 Docker model pack source | Apache-2.0; https://github.com/RT-DETRs/RT-DETRv4/blob/main/LICENSE |
+| RT-DETRv4 upstream (제품 표기 Re-DETR v4) | Optional Re-DETR v4 Docker model pack source | Apache-2.0; https://github.com/RT-DETRs/RT-DETRv4/blob/main/LICENSE |
 | SAM2 upstream | Optional SAM2 Docker model pack source | Apache-2.0; https://github.com/facebookresearch/sam2/blob/main/LICENSE |
 
 The Re-DETRv4 and SAM2 rows describe optional upstream source references only.

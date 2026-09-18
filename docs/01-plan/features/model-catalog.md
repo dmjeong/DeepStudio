@@ -47,12 +47,16 @@ freeze/unfreeze, 클래스별 weight, augmentation, resume도 실제 지원하�
 세 변형은 등록부에서 각각 독립적인 입력 크기·runtime·checkpoint·후처리 계약을 갖는다.
 네이티브 SDK는 `pred_boxes=[1,N,4]`와 `pred_logits=[1,N,C]`를 검증하고 공통 detection 결과로 변환한다.
 실제 upstream 구현·checkpoint를 변형별로 연결하기 전에는 카탈로그 항목을 release-ready로 표시하지 않는다.
+여기서 제품 표기 `Re-DETR v4`는 공식 upstream 저장소의 표기 `RT-DETRv4`를 가리킨다.
+upstream 코드·설정·checkpoint는 기본 저장소나 기본 설치파일에 복사하지 않고, 별도 모델 팩의
+source revision·SHA-256·라이선스 고지로 추적한다.
 
 - class offset, query 선택, sigmoid/softmax, decode, resize 방식은 변형별 manifest에 기록한다.
 - NMS가 없는 모델에는 임의 NMS를 넣지 않는다. Libre 탐지의 NMS 규칙은 별도 계약이다.
 - 두 구현체의 class offset, query 선택, sigmoid/softmax, decode, resize 방식이 같다고 가정하지 않는다.
 - NMS가 없는 모델에는 임의 NMS를 넣지 않는다. Libre 탐지의 NMS 규칙은 별도 계약이다.
 
+[RT-DETRv4 공식](https://github.com/RT-DETRs/RT-DETRv4),
 [RT-DETR 공식](https://github.com/lyuwenyu/RT-DETR),
 [RF-DETR 공식](https://github.com/roboflow/rf-detr),
 [RF-DETR 학습](https://rfdetr.roboflow.com/learn/train/)
