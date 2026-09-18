@@ -121,6 +121,17 @@ def test_release_script_requires_app_catalog_and_csharp_sdk_payload_files():
     assert 'sdk\\native\\vision_runtime.dll' in script
 
 
+def test_release_script_has_optional_authenticode_sign_and_verify_gate():
+    script = (WINDOWS / "build_release.ps1").read_text(encoding="utf-8")
+    assert '[switch] $RequireSignature' in script
+    assert '[string] $CertificatePath' in script
+    assert 'signtool.exe' in script
+    assert 'Sign-AndVerify $msi' in script
+    assert 'Sign-AndVerify $setup' in script
+    assert 'verify /pa /all' in script
+    assert 'SHA256' in script
+
+
 def test_windows_workflow_builds_real_gui_and_native_runtime():
     workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
     assert '"DeepVisionStudio/cpp/**"' in workflow

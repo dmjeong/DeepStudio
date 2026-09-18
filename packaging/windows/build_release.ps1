@@ -3,12 +3,28 @@ param(
     [Parameter(Mandatory = $true)] [string] $PayloadRoot,
     [Parameter(Mandatory = $true)] [string] $Version,
     [Parameter(Mandatory = $true)] [string] $OutputDirectory,
-    [string] $WixVersion = "4.0.5"
+    [string] $WixVersion = "4.0.5",
+    [string] $CertificatePath = "",
+    [string] $CertificatePassword = "",
+    [string] $SignToolPath = "signtool.exe",
+    [string] $TimestampUrl = "http://timestamp.digicert.com",
+    [switch] $RequireSignature
 )
 
 $ErrorActionPreference = "Stop"
 if ($env:OS -ne "Windows_NT") { throw "Windows is required for the WiX build." }
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "Version must be major.minor.patch." }
+if ($RequireSignature -and [string]::IsNullOrWhiteSpace($CertificatePath)) {
+    throw "-RequireSignature requires -CertificatePath."
+}
+if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
+    $certificate = (Resolve-Path $CertificatePath -ErrorAction Stop).Path
+    if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) {
+        throw "Signing certificate does not exist: $CertificatePath"
+    }
+    $signTool = Get-Command $SignToolPath -ErrorAction SilentlyContinue
+    if (-not $signTool) { throw "signtool is required when signing the release." }
+}
 $root = (Resolve-Path $PayloadRoot).Path
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -37,8 +53,27 @@ $msiArgs = @("build") + $common + @("-o", $msi, (Join-Path $scriptRoot "bootstra
 & $wix.Source @msiArgs
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $msi)) { throw "WiX MSI build failed." }
 
+function Sign-AndVerify([string] $Path) {
+    if ([string]::IsNullOrWhiteSpace($CertificatePath)) { return }
+    $arguments = @("sign", "/fd", "SHA256", "/f", $certificate)
+    if (-not [string]::IsNullOrWhiteSpace($CertificatePassword)) {
+        $arguments += @("/p", $CertificatePassword)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TimestampUrl)) {
+        $arguments += @("/tr", $TimestampUrl, "/td", "SHA256")
+    }
+    $arguments += $Path
+    & $signTool.Source @arguments
+    if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed: $Path" }
+    & $signTool.Source verify /pa /all $Path
+    if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed: $Path" }
+}
+
+Sign-AndVerify $msi
+
 $bundleArgs = @("build", "-arch", "x64", "-ext", "WixToolset.Bal.wixext", "-dVersion=$Version",
     "-dMsiPath=$msi", "-o", $setup, (Join-Path $scriptRoot "bootstrapper\DeepVisionStudio.bundle.wxs"))
 & $wix.Source @bundleArgs
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $setup)) { throw "WiX Burn bundle build failed." }
+Sign-AndVerify $setup
 Write-Output $setup
