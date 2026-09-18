@@ -46,6 +46,12 @@ class WorkerServer:
                           "commands": sorted(COMMANDS)})
         handler = self.handlers.get(command)
         if handler is None:
+            if command in {"describe", "prepare", "train", "infer", "export"}:
+                return _error_frame(
+                    request_id,
+                    "not_implemented",
+                    f"worker does not implement {command}; install a model-pack handler",
+                )
             return Frame({"type": "response", "request_id": request_id, "status": "ok",
                           "command": command})
         try:

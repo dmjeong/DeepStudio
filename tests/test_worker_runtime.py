@@ -328,6 +328,19 @@ def test_worker_server_keeps_stdout_framed_and_returns_handler_errors():
     assert responses[3].header["status"] == "ok"
 
 
+def test_empty_worker_fails_closed_for_model_commands():
+    server = WorkerServer()
+    for command in ("describe", "prepare", "train", "infer", "export"):
+        response = server.dispatch(request_frame(f"empty-{command}", command))
+        assert response.header == {
+            "type": "error",
+            "request_id": f"empty-{command}",
+            "status": "error",
+            "code": "not_implemented",
+            "message": f"worker does not implement {command}; install a model-pack handler",
+        }
+
+
 def test_container_worker_sends_and_receives_shared_dvw1_frames():
     code = (
         "import sys\nfrom model_runtime.worker_protocol import Frame\n"
