@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import struct
 import sys
 from io import BytesIO
 from unittest.mock import patch
