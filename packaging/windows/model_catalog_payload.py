@@ -101,22 +101,40 @@ def _validate_model_pack(path: Path, model_id: str) -> None:
         raise ModelCatalogPayloadError(f"release-ready model {model_id} pack is not a ZIP archive") from exc
     with archive:
         infos = archive.infolist()
-        names = {info.filename for info in infos if not info.is_dir()}
+        names: dict[str, zipfile.ZipInfo] = {}
+        for info in infos:
+            if info.is_dir():
+                continue
+            try:
+                normalized = _safe_relative(info.filename, "model pack path")
+            except ModelCatalogPayloadError:
+                raise
+            mode = (info.external_attr >> 16) & 0xFFFF
+            if mode and (mode & 0o170000) == 0o120000:
+                raise ModelCatalogPayloadError(f"release-ready model {model_id} pack contains a symlink")
+            if info.filename != normalized:
+                raise ModelCatalogPayloadError(f"release-ready model {model_id} pack path is not normalized")
+            folded = normalized.casefold()
+            if any(name.casefold() == folded for name in names):
+                raise ModelCatalogPayloadError(f"release-ready model {model_id} pack contains duplicate paths")
+            names[normalized] = info
+        name_set = set(names)
         required = {"manifest.json", "checksums.json", "THIRD_PARTY_NOTICES.md"}
-        if not required.issubset(names) or not any(name.startswith("licenses/") for name in names):
+        if not required.issubset(name_set) or not any(name.startswith("licenses/") for name in name_set):
             raise ModelCatalogPayloadError(
                 f"release-ready model {model_id} pack must include manifest, checksums, notices and licenses"
             )
-        manifest_info = archive.getinfo("manifest.json")
+        manifest_info = names["manifest.json"]
         if manifest_info.file_size > 1024 * 1024:
             raise ModelCatalogPayloadError(f"release-ready model {model_id} pack manifest is too large")
         try:
             manifest = json.loads(archive.read("manifest.json"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError) as exc:
             raise ModelCatalogPayloadError(f"release-ready model {model_id} pack manifest is invalid") from exc
-        if not isinstance(manifest, Mapping) or manifest.get("release_status") != "release_ready":
+        if (not isinstance(manifest, Mapping) or manifest.get("release_status") != "release_ready" or
+                manifest.get("model_id") != model_id):
             raise ModelCatalogPayloadError(
-                f"release-ready model {model_id} pack manifest must declare release_ready"
+                f"release-ready model {model_id} pack manifest must match model_id and declare release_ready"
             )
         signature = manifest.get("signature")
         if (not isinstance(signature, Mapping) or not isinstance(signature.get("key_id"), str) or

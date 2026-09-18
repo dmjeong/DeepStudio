@@ -131,6 +131,7 @@ def test_model_catalog_payload_gate_is_optional_for_development_and_strict_for_r
     catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
     with zipfile.ZipFile(root / "models" / "demo.dvmodel", "w") as archive:
         archive.writestr("manifest.json", json.dumps({
+            "model_id": "demo",
             "release_status": "release_ready",
             "signature": {"key_id": "release-key", "value": "signed"},
         }))
