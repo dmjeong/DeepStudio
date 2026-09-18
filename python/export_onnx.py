@@ -266,11 +266,17 @@ def create_inference_config(output_dir, task, num_classes, input_size,
                             model_config=None):
     size = [input_size, input_size] if isinstance(input_size, int) else list(input_size)
     preprocessing = dict(preprocessing or {})
-    if backend not in {"custom", "efficientnet", "builtin", "patchcore"}:
+    if backend not in {"custom", "builtin", "efficientnet", "patchcore", "redetr_v4"}:
         raise ValueError("지원하지 않는 모델 형식입니다. 등록된 모델 체크포인트를 선택하세요.")
+    if backend == "redetr_v4" and task != "detect":
+        raise ValueError("Re-DETR v4 backend는 detect 태스크만 지원합니다.")
+    if backend == "redetr_v4" and (output_names is None or len(output_names) != 2):
+        raise ValueError("Re-DETR v4는 pred_boxes와 pred_logits 두 출력 이름이 필요합니다.")
     detection_cpp_supported = task != "detect" or detection_box_encoding in {
         "grid_sigmoid_xywh", "normalized_cxcywh"
     }
+    if backend == "redetr_v4":
+        detection_cpp_supported = detection_box_encoding in {None, "normalized_cxcywh", "normalized_xyxy"}
     config = {
         "schema_version": 1, "backend": backend, "model_path": onnx_filename,
         "task": task, "num_classes": num_classes, "input_channels": in_channels,
@@ -284,7 +290,8 @@ def create_inference_config(output_dir, task, num_classes, input_size,
         "cpp_supported": ((backend in {"custom", "builtin"} and task in ("classify", "segment", "detect", "anomaly") and
                             detection_cpp_supported) or
                           (backend == "patchcore" and task == "anomaly")) or
-                         (backend == "efficientnet" and task == "classify"),
+                         (backend == "efficientnet" and task == "classify") or
+                         (backend == "redetr_v4" and task == "detect" and detection_cpp_supported),
     }
     if architecture is not None:
         config["architecture"] = architecture
@@ -295,6 +302,13 @@ def create_inference_config(output_dir, task, num_classes, input_size,
             config["model_config"] = {**model_config, **model_input_contract(model_config, in_channels)}
     elif backend == "builtin" and model_config is not None:
         config["model_config"] = dict(model_config)
+    elif backend == "redetr_v4":
+        config["postprocessing"] = {
+            "box_format": detection_box_encoding or "normalized_cxcywh",
+            "objectness": "none", "class_scores": "sigmoid",
+            "confidence": "class_score", "class_aware_nms": True,
+            "confidence_threshold": .25, "iou_threshold": .5, "max_detections": 300,
+        }
     if preprocessing.get("center_crop"):
         # Older C++ readers must reject this contract instead of ignoring the ROI.
         config["schema_version"] = 2

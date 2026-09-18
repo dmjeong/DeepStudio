@@ -101,6 +101,26 @@ class ExportContractTests(unittest.TestCase):
         from core.inference_region import crop_from_json
         self.assertIsNone(crop_from_json(manifest))
 
+    def test_redetr_manifest_uses_two_outputs_and_native_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            filename = export_onnx.create_inference_config(
+                directory, "detect", 2, [640, 640], 3, "redetr.onnx", ["box", "other"],
+                preprocessing={"normalize_mean": [0.485, 0.456, 0.406],
+                               "normalize_std": [0.229, 0.224, 0.225]},
+                backend="redetr_v4", output_names=["pred_boxes", "pred_logits"],
+                detection_box_encoding="normalized_cxcywh", config_filename="redetr.json")
+            manifest = json.loads(Path(filename).read_text(encoding="utf-8"))
+        self.assertTrue(manifest["cpp_supported"])
+        self.assertEqual(manifest["schema_version"], 5)
+        self.assertEqual(manifest["output_names"], ["pred_boxes", "pred_logits"])
+        self.assertEqual(manifest["postprocessing"]["objectness"], "none")
+
+    def test_redetr_manifest_rejects_single_output(self):
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(ValueError, "두 출력"):
+            export_onnx.create_inference_config(
+                directory, "detect", 2, 640, 3, "redetr.onnx", backend="redetr_v4",
+                output_names=["pred_boxes"])
+
     def test_incompatible_resize_metadata_is_rejected(self):
         for key, value in (("resize", "bicubic"), ("resize_implementation", "opencv"),
                            ("antialias", True), ("antialias", 1), ("layout", "NHWC"), ("value_scale", 1)):
