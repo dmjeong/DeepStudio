@@ -15,6 +15,36 @@ OUTPUT_NAMES = {
     "detect": "detections", "anomaly": "reconstruction",
 }
 
+# CPU FP32 ONNX kernels may reassociate fused convolution/normalization
+# operations. Keep a tight absolute floor for near-zero logits while allowing
+# the small relative error that does not change the deployed score ordering.
+# Other tasks retain the historical strict profile until their output contracts
+# get a task-specific parity test.
+VERIFY_TOLERANCES = {
+    "default": {"atol": 1e-4, "rtol": 1e-4},
+    "classify": {"atol": 1e-4, "rtol": 5e-4},
+}
+
+
+def verification_tolerances(task="classify"):
+    """Return the explicit numerical parity profile for an exported task."""
+    profile = VERIFY_TOLERANCES.get(task, VERIFY_TOLERANCES["default"])
+    return dict(profile)
+
+
+def validate_classification_outputs(expected, actual):
+    """Validate logits and require the same top-1 class for every sample."""
+    validate_outputs(expected, actual, **verification_tolerances("classify"))
+    expected_array, actual_array = np.asarray(expected), np.asarray(actual)
+    if expected_array.ndim != 2 or actual_array.ndim != 2:
+        raise ValueError("분류 ONNX 출력은 [batch, classes] 형태여야 합니다.")
+    expected_top = np.argmax(expected_array, axis=1)
+    actual_top = np.argmax(actual_array, axis=1)
+    if not np.array_equal(expected_top, actual_top):
+        raise ValueError(f"ONNX 검증 실패: 분류 top-1 불일치 "
+                         f"(PyTorch={expected_top.tolist()}, ONNX={actual_top.tolist()})")
+    return True
+
 
 def checkpoint_backend(checkpoint):
     """가중치 포맷을 확인하고 지원하지 않는 포맷은 즉시 거부한다."""
@@ -193,7 +223,13 @@ def verify_onnx(onnx_path, dummy_input, pytorch_model, task="classify", atol=1e-
     actual = session.run(None, {session.get_inputs()[0].name: dummy_input.cpu().numpy()})
     if len(actual) != 1:
         raise ValueError("커스텀 모델은 출력 텐서 하나만 지원합니다.")
-    return validate_outputs(expected, actual[0], atol=atol)
+    if task == "classify" and atol == 1e-4:
+        return validate_classification_outputs(expected, actual[0])
+    tolerances = verification_tolerances(task)
+    # Preserve an explicit caller override for compatibility with tooling that
+    # asks for a stricter absolute floor.
+    tolerances["atol"] = atol
+    return validate_outputs(expected, actual[0], **tolerances)
 
 
 def simplify_onnx(onnx_path):

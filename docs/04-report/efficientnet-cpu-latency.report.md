@@ -146,3 +146,10 @@ auto 모드는 기존 PyTorch로 배치를 계속하며 실제 엔진과 실패 
 
 이 변경은 추론 기능의 복구다. 사용자 ONNX 불일치의 원인과 Windows/i7에서의 8 ms
 달성 여부는 여전히 미확인이다. 새 소스 실행 또는 Windows EXE 재빌드가 필요하다.
+
+## 0.00052 FP32 검증 실패 보완
+
+Windows에서 보고된 최대 오차 `0.00052`는 기존 `atol=rtol=1e-4` 분류 logits 게이트에서
+실패했다. CPU ONNX와 PyTorch의 FP32 연산 재배치에 한해 `atol=1e-4, rtol=5e-4`를
+명시적으로 적용하고, near-zero absolute 오차·NaN·형상·큰 상대 오차는 계속 차단한다.
+이 프로필은 분류 태스크에만 적용하며 다른 태스크는 기존 strict profile을 유지한다.

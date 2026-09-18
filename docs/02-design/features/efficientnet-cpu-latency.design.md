@@ -75,7 +75,9 @@ regressions. Measure B0 at 224 locally and document that M4 is not i7.
 
 ## ONNX 검증 실패 대응 (2026-09-18)
 
-- 같은 로드 모델/정적 ONNX/seeded 및 zero 입력/atol=rtol=1e-4를 유지한다.
+- 같은 로드 모델/정적 ONNX/seeded 및 zero 입력을 유지한다. 분류 logits는
+  `atol=1e-4, rtol=5e-4`의 FP32 parity profile을 사용하고, near-zero 출력의 절대 오차와
+  NaN/형상 검사는 엄격하게 유지한다.
 - ALL의 출력 검증에 실패할 때만 BASIC, DISABLED를 순서대로 검증한다.
   세션은 한 번에 하나만 보유하며 검증 통과한 설정만 워밍업/추론에 사용한다.
 - 출력 형상/유한성/수치 비교를 생략하지 않는다. 검증에 실패한 ONNX는 사용하지 않는다.

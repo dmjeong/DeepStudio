@@ -52,8 +52,9 @@ GUI backend migration, camera IO or Grad-CAM latency is included in this change.
 ## ONNX 검증 실패 후속 조사 (2026-09-18)
 
 사용자 Windows 실행에서 최대 출력 오차 2.8339844로 준비 검증이 중단됐다.
-같은 가중치가 없으므로 원인은 아직 확정하지 않는다. 허용 오차/FP32/입력 크기를
-유지하고, 최적화에 의한 차이인지 구분하도록 검증을 통과하는 ONNX 설정만 선택한다.
+같은 가중치가 없으므로 원인은 아직 확정하지 않는다. near-zero 출력의 absolute floor와
+NaN/형상 검사는 유지하고, CPU FP32 분류 logits에는 `atol=1e-4, rtol=5e-4` parity
+profile을 적용한다. 최적화에 의한 차이인지 구분하도록 검증을 통과하는 ONNX 설정만 선택한다.
 모든 설정이 실패하면 출력 크기와 실패 원소 값을 포함한 오류를 남긴다.
 
 ## ONNX 실패 시 기존 추론 복구 (2026-09-18)

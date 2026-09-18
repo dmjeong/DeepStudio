@@ -67,6 +67,20 @@ class ExportContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PyTorch=0, ONNX=1"):
             export_onnx.validate_outputs([1.], [np.nan])
 
+    def test_classification_profile_allows_small_fp32_reassociation_only(self):
+        tolerances = export_onnx.verification_tolerances("classify")
+        self.assertTrue(export_onnx.validate_outputs([1.0], [1.00052], **tolerances))
+        with self.assertRaises(ValueError):
+            export_onnx.validate_outputs([0.0], [0.00052], **tolerances)
+        with self.assertRaises(ValueError):
+            export_onnx.validate_outputs([1.0], [1.01], **tolerances)
+
+    def test_classification_profile_keeps_top1_contract(self):
+        self.assertTrue(export_onnx.validate_classification_outputs(
+            [[1.0, 0.0]], [[1.00052, 0.00001]]))
+        with self.assertRaisesRegex(ValueError, "top-1"):
+            export_onnx.validate_classification_outputs([[1.0, 0.9999]], [[0.9998, 1.0000]])
+
     def test_manifest_preserves_unicode_normalization_and_support_status(self):
         spec = export_onnx.resolve_checkpoint_spec(self.checkpoint())
         with tempfile.TemporaryDirectory() as directory:

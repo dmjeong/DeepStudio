@@ -13,7 +13,7 @@ class EfficientNetOnnx:
         # Decoder module loading belongs to model setup, not the first image's decode timing.
         import cv2  # noqa: F401
         from efficientnet import EfficientNet
-        from export_onnx import export_to_onnx, validate_outputs
+        from export_onnx import export_to_onnx, validate_classification_outputs
         import onnxruntime as ort
         if not isinstance(model, EfficientNet) or next(model.parameters()).device.type != "cpu":
             raise ValueError("CPU EfficientNet 모델이 필요합니다")
@@ -57,7 +57,7 @@ class EfficientNetOnnx:
             try:
                 for probe_name, tensor, expected in probes:
                     actual = self.session.run([self.output_name], {self.input_name: tensor})[0]
-                    validate_outputs(expected, actual)
+                    validate_classification_outputs(expected, actual)
             except ValueError as exc:
                 self.validation_attempts.append({"optimization": name, "passed": False,
                                                  "probe": probe_name, "error": str(exc)})

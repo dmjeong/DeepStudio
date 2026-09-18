@@ -85,10 +85,15 @@ python -m pytest tests/test_gui_efficientnet_onnx.py tests/test_inference_contra
 공식 학습 B0의 RGB/gray 적응 모델은 로컬 M4에서 seeded/zero 검증을 통과했으며
 최대 오차 약 1.50e-5, top1 일치였다. 사용자 가중치의 오류는 재현하지 못했다.
 
-검증 기준을 그대로 유지한 ALL → BASIC → DISABLED 재시도와 선택 설정 기록을 추가했다.
+기존 오류를 큰 오차로 차단하는 기준은 유지하되, CPU FP32 분류 logits의 연산 재배치에서
+생기는 작은 상대 오차에는 `atol=1e-4, rtol=5e-4` parity profile을 적용한다. ALL → BASIC →
+DISABLED 재시도와 선택 설정 기록은 계속 유지한다.
 실패 세션을 해제한 후 다음 세션을 만들고, 전부 실패하면 실행을 중단한다.
 기준 PyTorch 출력부터 NaN/무한대인 경우는 ONNX를 실행하기 전에 명시적으로 구분한다.
 오류 메시지는 최대 절대 오차 외에 실패 원소 값/허용 오차 배수/출력 범위/버전을 담는다.
+
+0.00052 최대 오차 회귀: `1.0 → 1.00052` 분류 logits는 새 profile을 통과하고,
+`0.0 → 0.00052` near-zero 오차와 `1.0 → 1.01` 상대 오차는 계속 실패하도록 단위 검사를 추가했다.
 
 검증 명령:
 ```bash
