@@ -40,7 +40,9 @@ def test_release_script_verifies_payload_before_wix_build():
     assert "THIRD_PARTY_NOTICES.md" in script
     assert "external_downloads" not in script
     assert "WixToolset.Util.wixext" in script
-    assert "dRequireOfflineWsl" in script
+    assert '"-d", "Version=$Version"' in script
+    assert '"-d", "PayloadRoot=$root"' in script
+    assert '"-d", "RequireOfflineWsl=$requireWslValue"' in script
 
 
 def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk():

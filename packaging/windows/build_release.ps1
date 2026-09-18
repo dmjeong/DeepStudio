@@ -62,7 +62,8 @@ if ($RequireOfflineWsl) {
 
 $requireWslValue = if ($RequireOfflineWsl) { "1" } else { "0" }
 $common = @("-arch", "x64", "-ext", "WixToolset.Util.wixext",
-    "-dVersion=$Version", "-dPayloadRoot=$root", "-dRequireOfflineWsl=$requireWslValue")
+    "-d", "Version=$Version", "-d", "PayloadRoot=$root",
+    "-d", "RequireOfflineWsl=$requireWslValue")
 $msiArgs = @("build") + $common + @("-o", $msi, (Join-Path $scriptRoot "bootstrapper\DeepVisionStudio.msi.wxs"))
 & $wix.Source @msiArgs
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $msi)) { throw "WiX MSI build failed." }
@@ -85,10 +86,11 @@ function Sign-AndVerify([string] $Path) {
 
 Sign-AndVerify $msi
 
-$bundleArgs = @("build", "-arch", "x64", "-ext", "WixToolset.Bal.wixext", "-dVersion=$Version",
-    "-dRequireOfflineWsl=$requireWslValue", "-dMsiPath=$msi")
+$bundleArgs = @("build", "-arch", "x64", "-ext", "WixToolset.Bal.wixext",
+    "-d", "Version=$Version", "-d", "RequireOfflineWsl=$requireWslValue",
+    "-d", "MsiPath=$msi")
 if ($RequireOfflineWsl) {
-    $bundleArgs += "-dWslMsiPath=$(Join-Path $root 'runtime\wsl\wsl-offline.msi')"
+    $bundleArgs += @("-d", "WslMsiPath=$(Join-Path $root 'runtime\wsl\wsl-offline.msi')")
 }
 $bundleArgs += @("-o", $setup, (Join-Path $scriptRoot "bootstrapper\DeepVisionStudio.bundle.wxs"))
 & $wix.Source @bundleArgs
