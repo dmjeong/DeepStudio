@@ -154,6 +154,12 @@ class ModelPackWorker:
             raise ModelPackWorkerError(str(exc)) from exc
         if response.header.get("type") == "error" or response.header.get("status") == "error":
             raise ModelPackWorkerError(str(response.header.get("message", "model pack worker error")))
+        if response.header.get("type") != "response":
+            raise ModelPackWorkerError("model pack worker returned a non-response frame")
+        response_command = response.header.get("command")
+        if command != "hello" and response_command not in {None, command}:
+            raise ModelPackWorkerError(
+                f"model pack worker response command mismatch: {response_command!r} != {command!r}")
         return response.header, response.payload
 
     def json_request(self, command: str, value: Mapping[str, Any] | None = None) -> dict[str, Any]:

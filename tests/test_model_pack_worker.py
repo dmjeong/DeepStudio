@@ -142,6 +142,24 @@ def test_pack_rejects_unknown_command(tmp_path):
         worker.request("unknown")
 
 
+def test_pack_rejects_response_command_mismatch(tmp_path):
+    _manifest(tmp_path)
+
+    class MismatchWorker(FakeWorker):
+        def request(self, frame):
+            assert self.started
+            return Frame({"type": "response", "request_id": response_request_id(frame),
+                          "status": "ok", "command": "infer"}, b"")
+
+    with (patch("core.model_pack_worker.build_container_command", return_value=object()),
+          patch("core.model_pack_worker.ContainerWorker", MismatchWorker)):
+        worker = ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
+    worker.start()
+    with pytest.raises(ModelPackWorkerError, match="command mismatch"):
+        worker.request("train")
+    worker.close()
+
+
 def test_pack_job_runs_prepare_before_operation(tmp_path):
     from webapp.worker import model_pack_operation
 
