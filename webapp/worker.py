@@ -107,9 +107,9 @@ def _train_builtin_project(context, project, device):
             epoch = int(message["epoch"])
             total = int(message["total_epochs"])
             metric = float(message["metric"])
+            metric_name = "accuracy" if project.task == "classify" else "mIoU"
             context.emit("epoch_finished", [epoch, float(message["train_loss"]),
-                                              float(message["val_loss"]), {"accuracy": metric,
-                                                                            "miou": metric}])
+                                              float(message["val_loss"]), {metric_name: metric}])
             context.emit("progress_updated", [epoch, total])
         else:
             context.emit("log_message", [str(message)])
@@ -135,10 +135,10 @@ def _train_builtin_project(context, project, device):
                        finished_at=datetime.now().isoformat(), status=(
                            "cancelled" if context.cancelled() else "completed"),
                        epochs_done=epoch, best_metric=metric, best_epoch=epoch,
-                       best_metric_name="accuracy" if project.task == "classify" else "miou",
+                       best_metric_name="accuracy" if project.task == "classify" else "mIoU",
                        checkpoint_path=str(best), metrics_history={
-                           "val_metric": [metric]}, config_snapshot={
-                               "engine": "builtin", "model_id": model_id})
+                           ("accuracy" if project.task == "classify" else "mIoU"): [metric]}, config_snapshot={
+                           "engine": "builtin", "model_id": model_id})
     project.runs.append(record)
     context.emit("training_finished", [metric, epoch, str(best)])
     return record

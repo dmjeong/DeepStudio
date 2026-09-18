@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 import zipfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -119,6 +120,46 @@ class WebAppTests(unittest.TestCase):
         models = {item["model_id"]: item for item in response.json()["models"]}
         self.assertEqual({"re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large", "libreyolo_detect_9t"}, set(models))
         self.assertTrue(all(item["release_status"] != "release_ready" for item in models.values()))
+
+    def test_builtin_segmentation_worker_publishes_miou_metric(self):
+        from webapp.storage import restore_project
+        from webapp.worker import _train_builtin_project
+
+        project_row = self.project(name="기본 분할 모델")
+        project_data = read_json(project_row["filepath"])
+        project_data["filepath"] = project_row["filepath"]
+        project = restore_project(project_data)
+        project.task = "segment"
+        project.model.model_id = "deeplabv3plus_resnet34"
+        project.data.num_classes = 2
+        project.data.class_names = ["background", "defect"]
+        project.training.input_size = 64
+        project.training.epochs = 1
+        project.training.batch_size = 1
+        best = Path(project.project_dir) / "fake-best.pt"
+        best.write_bytes(b"checkpoint")
+        events = []
+
+        class Context:
+            def emit(self, event, args):
+                events.append((event, args))
+
+            def cancelled(self):
+                return False
+
+        def fake_train(*args, log, **kwargs):
+            log({"event": "epoch_finished", "epoch": 1, "total_epochs": 1,
+                 "train_loss": 0.4, "val_loss": 0.3, "metric": 0.75})
+            return best
+
+        with patch("train_builtin.train_builtin", side_effect=fake_train), \
+                patch("torch.load", return_value={"metric": 0.75, "epoch": 0}):
+            record = _train_builtin_project(Context(), project, "cpu")
+
+        self.assertEqual(record.best_metric_name, "mIoU")
+        self.assertEqual(record.metrics_history, {"mIoU": [0.75]})
+        epoch = next(args for event, args in events if event == "epoch_finished")
+        self.assertEqual(epoch[3], {"mIoU": 0.75})
 
     def test_model_pack_job_endpoint_keeps_operation_allowlist(self):
         body = {"pack_dir": str(self.root), "data_dir": str(self.root),
