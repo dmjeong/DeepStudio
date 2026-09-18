@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-19T01:15:00+09:00",
+  "lastUpdated": "2026-09-19T01:35:00+09:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -205,6 +205,8 @@
         ,"Deployment bundle builder/verifier rejects symlinked source/output paths and non-normalized checksum keys"
         ,"Pack builder rejects explicitly supplied symlinked manifests before resolving external release metadata"
         ,"Model registry archive loading rejects pack symlinks, archive symlinks, duplicate paths and non-normalized entries"
+        ,"WiX release gate verifies the requested WiX 4 patch version before building MSI or Burn artifacts"
+        ,"Container model-pack entrypoints load only pack-local Python modules and reject ambient-module fallback"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",
@@ -504,6 +506,15 @@
       "timestamp": "2026-09-19T01:15:00+09:00",
       "python": "59 model registry/pack worker/builder/installer tests passed",
       "model_registry": "direct archive inspection now rejects symlink, duplicate and non-normalized entries before manifest registration",
+      "windows_i7": "not measured"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "windows_worker_entrypoint_release_gate_refresh",
+      "timestamp": "2026-09-19T01:35:00+09:00",
+      "python": "44 worker, Windows packaging and payload tests passed",
+      "windows_release": "WiX patch version is checked against wix --version; WSL payload root symlinks are rejected",
+      "container_entrypoint": "worker_entrypoint modules are resolved from pack-local source files only",
       "windows_i7": "not measured"
     }
   ]
