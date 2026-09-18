@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from model_runtime.managed_wsl import ManagedWsl, ManagedWslError, WslCommandResult
+from model_runtime.managed_wsl import (ManagedWsl, ManagedWslError,
+                                        WslCommandResult, configured_docker_command)
 from model_runtime.worker_manager import WorkerManager, WorkerManagerError
 from model_runtime.worker_server import WorkerServer
 from model_runtime.container_entrypoint import ContainerEntrypointError, _load_handlers
@@ -103,6 +104,46 @@ def test_managed_wsl_refuses_foreign_existing_distro(tmp_path: Path):
     manager = ManagedWsl("DeepVisionStudio", tmp_path, runner=fake_run)
     with pytest.raises(ManagedWslError, match="not owned"):
         manager.import_offline(tarball, install, version="1.0.0")
+
+
+def test_managed_wsl_docker_argv_is_owned_and_shell_free(tmp_path: Path):
+    manager = ManagedWsl("DeepVisionStudio", tmp_path)
+    with pytest.raises(ManagedWslError, match="not initialized"):
+        manager.docker_argv()
+    manager.marker.write_text(
+        '{"schema_version":1,"owned":true,"distro":"DeepVisionStudio"}',
+        encoding="utf-8",
+    )
+    assert manager.docker_argv() == (
+        "wsl.exe", "-d", "DeepVisionStudio", "--", "docker"
+    )
+
+
+def test_configured_docker_command_requires_owned_marker_when_wsl_selected(tmp_path: Path):
+    env = {
+        "DEEPVISION_WSL_DISTRO": "DeepVisionStudio",
+        "DEEPVISION_WSL_STATE_DIR": str(tmp_path),
+    }
+    with pytest.raises(ManagedWslError, match="not initialized"):
+        configured_docker_command(environ=env)
+    (tmp_path / "owned-distro.json").write_text(
+        '{"schema_version":1,"owned":true,"distro":"DeepVisionStudio"}',
+        encoding="utf-8",
+    )
+    assert configured_docker_command(environ=env) == (
+        "wsl.exe", "-d", "DeepVisionStudio", "--", "docker"
+    )
+    assert configured_docker_command(environ={}) == ("docker",)
+
+
+def test_configured_docker_command_discovers_owned_marker_without_env(tmp_path: Path):
+    (tmp_path / "owned-distro.json").write_text(
+        '{"schema_version":1,"owned":true,"distro":"DeepVisionStudio"}',
+        encoding="utf-8",
+    )
+    assert configured_docker_command(environ={}, state_dir=tmp_path) == (
+        "wsl.exe", "-d", "DeepVisionStudio", "--", "docker"
+    )
 
 
 def test_worker_manager_owns_and_stops_container_lifecycle():

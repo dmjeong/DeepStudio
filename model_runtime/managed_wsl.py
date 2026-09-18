@@ -121,6 +121,18 @@ class ManagedWsl:
         """Run Docker inside the owned distro; no host TCP socket is used."""
         return self.run(("docker", *tuple(argv)), timeout=timeout, check=check)
 
+    def docker_argv(self) -> tuple[str, ...]:
+        """Return the shell-free argv prefix used for Docker subprocesses.
+
+        The prefix is intentionally usable by callers that need to attach a
+        stdin/stdout stream (for example ``docker run -i``).  It performs the
+        same ownership check as :meth:`run`, so a configured but uninitialized
+        distro never silently falls back to a host Docker daemon.
+        """
+        if not self.is_owned():
+            raise ManagedWslError("owned WSL distro is not initialized")
+        return (self.wsl_executable, "-d", self.distro, "--", "docker")
+
     def shutdown(self) -> None:
         self._run((self.wsl_executable, "--terminate", self.distro), check=False)
 
@@ -133,3 +145,38 @@ class ManagedWsl:
             # The distro's VHDX is removed by WSL unregister.  Keep the app
             # state directory itself so logs and user packs remain intact.
             return
+
+
+def configured_docker_command(*, environ: Mapping[str, str] | None = None,
+                             state_dir: str | Path | None = None) -> tuple[str, ...]:
+    """Resolve the app's Docker argv prefix without opening a shell.
+
+    The Windows installer/launcher may set ``DEEPVISION_WSL_DISTRO`` after the
+    owned distro has been initialized.  If it is absent, the helper also reads
+    the installer-owned marker from the WSL state directory.  With no marker,
+    the normal local ``docker`` executable remains the development/runtime
+    default.  Once a distro is selected, ownership is mandatory and a missing
+    marker raises instead of silently using a user's Docker Desktop daemon.
+    """
+    env = os.environ if environ is None else environ
+    configured_state = state_dir or env.get("DEEPVISION_WSL_STATE_DIR")
+    if configured_state is None:
+        configured_state = Path(env.get("DEEP_STUDIO_STATE_DIR") or
+                                (Path.home() / ".deep-vision-studio-react")) / "wsl"
+    configured_state = Path(configured_state).expanduser()
+    distro = str(env.get("DEEPVISION_WSL_DISTRO", "")).strip()
+    marker = configured_state / "owned-distro.json"
+    if not distro and marker.is_file():
+        try:
+            marker_value = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise ManagedWslError("owned WSL distro marker is invalid") from exc
+        if (not isinstance(marker_value, dict) or marker_value.get("schema_version") != 1 or
+                marker_value.get("owned") is not True or
+                not isinstance(marker_value.get("distro"), str)):
+            raise ManagedWslError("owned WSL distro marker is invalid")
+        distro = marker_value["distro"].strip()
+    if not distro:
+        return ("docker",)
+    manager = ManagedWsl(distro, configured_state)
+    return manager.docker_argv()

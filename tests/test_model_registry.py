@@ -227,6 +227,18 @@ def test_container_command_validates_offline_image_archive(tmp_path):
                                work_dir=work, image_archive=tmp_path / "missing.tar")
 
 
+def test_container_command_supports_owned_wsl_docker_prefix(tmp_path):
+    model, data, work = (tmp_path / name for name in ("model", "data", "work"))
+    for path in (model, data, work):
+        path.mkdir()
+    prefix = ("wsl.exe", "-d", "DeepVisionStudio", "--", "docker")
+    command = build_container_command("sha256:" + "a" * 64, model_dir=model,
+                                     data_dir=data, work_dir=work,
+                                     docker_command=prefix)
+    assert command.docker_command == prefix
+    assert command.argv[: len(prefix) + 1] == (*prefix, "run")
+
+
 def test_container_worker_loads_and_verifies_offline_image_digest(tmp_path, monkeypatch):
     archive = tmp_path / "image.tar"
     archive.write_bytes(b"image")

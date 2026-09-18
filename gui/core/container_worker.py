@@ -13,6 +13,7 @@ import json
 import subprocess
 import threading
 import uuid
+from typing import Sequence
 
 from model_runtime.worker_protocol import (  # noqa: E402
     Frame as _ProtocolFrame,
@@ -68,6 +69,7 @@ class ContainerCommand:
     argv: tuple[str, ...]
     label: str
     image_archive: str | None = None
+    docker_command: tuple[str, ...] = ("docker",)
 
 
 def build_container_command(
@@ -80,6 +82,7 @@ def build_container_command(
     cpus: int = 4,
     memory: str = "8g",
     image_archive: str | Path | None = None,
+    docker_command: Sequence[str] = ("docker",),
 ) -> ContainerCommand:
     """검증된 이미지의 장기 실행 worker 명령을 만든다.
 
@@ -92,6 +95,9 @@ def build_container_command(
         raise ContainerWorkerError("cpus must be between 1 and 128")
     if not isinstance(memory, str) or not memory or any(char.isspace() for char in memory):
         raise ContainerWorkerError("memory must be a Docker memory limit")
+    prefix = tuple(str(value) for value in docker_command)
+    if (not prefix or any(not value or "\x00" in value for value in prefix)):
+        raise ContainerWorkerError("docker_command must be a non-empty argv")
     model = _mount_path(model_dir, "model_dir")
     data = _mount_path(data_dir, "data_dir")
     work = _mount_path(work_dir, "work_dir", writable=True)
@@ -106,7 +112,7 @@ def build_container_command(
         raise ContainerWorkerError("invalid container name")
     label = f"deepvision.owner={container_name}"
     argv = (
-        "docker", "run", "--rm", "--name", container_name,
+        *prefix, "run", "--rm", "--name", container_name,
         "--label", label, "--network", "none", "--pull=never", "--read-only",
         "--cap-drop=ALL", "--security-opt=no-new-privileges", "--log-driver=none", "--init", "-i",
         "--cpus", str(cpus), "--memory", memory,
@@ -117,7 +123,7 @@ def build_container_command(
         "--worker-stdin-stdout", "--manifest", "/models/manifest.json",
     )
     return ContainerCommand(image, container_name, argv, label,
-                            None if archive is None else str(archive))
+                            None if archive is None else str(archive), prefix)
 
 
 class ContainerWorker:
@@ -150,14 +156,14 @@ class ContainerWorker:
         if not archive:
             return
         loaded = subprocess.run(
-            ("docker", "load", "--input", archive), check=False,
+            (*self.command.docker_command, "load", "--input", archive), check=False,
             capture_output=True, text=True,
         )
         if loaded.returncode != 0:
             detail = (loaded.stderr or loaded.stdout or "docker load failed").strip()
             raise ContainerWorkerError(f"offline container image load failed: {detail}")
         inspected = subprocess.run(
-            ("docker", "image", "inspect", "--format", "{{json .RepoDigests}}",
+            (*self.command.docker_command, "image", "inspect", "--format", "{{json .RepoDigests}}",
              self.command.image), check=False, capture_output=True, text=True,
         )
         if inspected.returncode != 0:
@@ -171,7 +177,7 @@ class ContainerWorker:
             references = []
         if self.command.image.startswith("sha256:"):
             id_result = subprocess.run(
-                ("docker", "image", "inspect", "--format", "{{.Id}}", self.command.image),
+                (*self.command.docker_command, "image", "inspect", "--format", "{{.Id}}", self.command.image),
                 check=False, capture_output=True, text=True,
             )
             if id_result.returncode != 0 or id_result.stdout.strip() != self.command.image:
@@ -242,7 +248,7 @@ class ContainerWorker:
             return False
         format_arg = "{{{{index .Config.Labels \"{}\"}}}}".format(key)
         inspected = subprocess.run(
-            ("docker", "inspect", "--format", format_arg, self.command.name),
+            (*self.command.docker_command, "inspect", "--format", format_arg, self.command.name),
             check=False,
             capture_output=True,
             text=True,
@@ -250,7 +256,7 @@ class ContainerWorker:
         if inspected.returncode != 0 or inspected.stdout.strip() != value:
             return False
         subprocess.run(
-            ("docker", "rm", "--force", self.command.name),
+            (*self.command.docker_command, "rm", "--force", self.command.name),
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -262,12 +268,12 @@ class ContainerWorker:
             return
         # Closing the pipe is not a container lifecycle guarantee. Ask Docker to stop
         # the owned name and then wait for the attached client process.
-        subprocess.run(("docker", "stop", "--time", str(max(1, int(timeout))), self.command.name),
+        subprocess.run((*self.command.docker_command, "stop", "--time", str(max(1, int(timeout))), self.command.name),
                        check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             self.process.wait(timeout=max(1.0, timeout))
         except subprocess.TimeoutExpired:
-            subprocess.run(("docker", "kill", self.command.name), check=False,
+            subprocess.run((*self.command.docker_command, "kill", self.command.name), check=False,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.process.kill()
             self.process.wait(timeout=5)

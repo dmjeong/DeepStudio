@@ -12,14 +12,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from pathlib import PurePosixPath
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 import uuid
 
 from core.container_worker import (ContainerWorker, ContainerWorkerError,
                                    build_container_command)
 from model_runtime.special_contracts import (SpecialContractError,
-                                              validate_container_entrypoint,
-                                              validate_special_manifest)
+                                             validate_container_entrypoint,
+                                             validate_special_manifest)
+from model_runtime.managed_wsl import (ManagedWslError,
+                                       configured_docker_command)
 from model_runtime.worker_protocol import Frame, request_frame
 
 
@@ -110,14 +112,21 @@ class ModelPackWorker:
     @classmethod
     def from_installed_pack(cls, pack_dir: str | Path, *, data_dir: str | Path,
                             work_dir: str | Path, cpus: int = 4,
-                            memory: str = "8g", name: str | None = None) -> "ModelPackWorker":
+                            memory: str = "8g", name: str | None = None,
+                            docker_command: Sequence[str] | None = None) -> "ModelPackWorker":
         root, manifest = _read_manifest(pack_dir)
         image = _container_image(manifest)
         image_archive = _container_image_archive(root, manifest)
+        if docker_command is None:
+            try:
+                docker_command = configured_docker_command()
+            except ManagedWslError as exc:
+                raise ModelPackWorkerError(str(exc)) from exc
         command = build_container_command(image, model_dir=root, data_dir=data_dir,
                                           work_dir=work_dir, cpus=cpus,
                                           memory=memory, name=name,
-                                          image_archive=image_archive)
+                                          image_archive=image_archive,
+                                          docker_command=docker_command)
         return cls(ContainerWorker(command), str(manifest["model_id"]), manifest)
 
     def start(self) -> None:

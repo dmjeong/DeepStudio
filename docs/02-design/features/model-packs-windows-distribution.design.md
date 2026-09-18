@@ -308,7 +308,11 @@ distro 등록·VHDX·Engine 초기화는 실제 앱 사용자의 SID와 비상�
 다른 관리자 자격증명으로 UAC한 설치와 두 번째 사용자 첫 실행을 인수 테스트에 포함한다.
 [WSL 사용자별 환경](https://learn.microsoft.com/en-us/windows/wsl/setup/environment)
 Engine은 전용 Unix socket에서만 듣고 외부 TCP Docker API를 열지 않는다.
-호스트 broker는 `wsl.exe -d <owned-distro> -- docker ...`의 인수 배열로 호출한다.
+호스트 broker는 `wsl.exe -d <owned-distro> -- docker ...`의 인수 배열로 호출한다. 컨테이너
+worker의 실행·오프라인 image load·stop·kill·inspect·remove가 동일한 prefix를 공유한다.
+설치기가 `DEEPVISION_WSL_DISTRO`와 `DEEPVISION_WSL_STATE_DIR`를 설정하면 host Docker로
+fallback하지 않고 `owned-distro.json` 표식을 확인한다. 표식이 없거나 다른 사용자의 distro면
+작업을 시작하지 않는다. 환경변수가 없는 개발 환경에서는 일반 `docker` 실행 파일을 사용한다.
 
 Windows GPU driver를 WSL에서 사용하며 Linux display driver를 distro에 넣지 않는다.
 Windows GPU 지원과 WSL GPU 지원은 별도로 검사한다.

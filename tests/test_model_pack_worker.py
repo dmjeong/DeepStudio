@@ -71,6 +71,16 @@ def test_pack_passes_offline_image_archive_to_container_command(tmp_path):
     assert build.call_args.kwargs["image_archive"] == archive.resolve()
 
 
+def test_pack_uses_configured_owned_wsl_docker_command(tmp_path):
+    _manifest(tmp_path)
+    prefix = ("wsl.exe", "-d", "DeepVisionStudio", "--", "docker")
+    with (patch("core.model_pack_worker.configured_docker_command", return_value=prefix),
+          patch("core.model_pack_worker.build_container_command", return_value=object()) as build,
+          patch("core.model_pack_worker.ContainerWorker", FakeWorker)):
+        ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
+    assert build.call_args.kwargs["docker_command"] == prefix
+
+
 def test_pack_rejects_missing_offline_image_archive(tmp_path):
     _manifest(tmp_path)
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))

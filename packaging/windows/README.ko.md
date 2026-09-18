@@ -78,6 +78,11 @@ stdout에는 프레임 외의 로그를 쓰지 않는다. 모델 팩을 다시 �
 시작되기 전에 `docker load --input`으로 이미지를 가져오고, 로컬 이미지 digest가 manifest와 일치하지
 않으면 실행을 거부한다. 작업 요청의 JSON은 `/data`와 `/work`에 있는 파일을 가리키고,
 큰 이미지·체크포인트는 DVW1 프레임에 직접 넣지 않는다.
+설치기가 앱 전용 distro를 초기화하면 실행 환경에 `DEEPVISION_WSL_DISTRO`와
+`DEEPVISION_WSL_STATE_DIR`를 설정한다. 이 두 값이 있으면 worker는 모든 Docker 명령을
+`wsl.exe -d <distro> -- docker ...` 인수 배열로 실행하고, `owned-distro.json` 소유 표식이 없을 때
+호스트 Docker로 조용히 전환하지 않는다. 두 환경변수가 없을 때의 `docker` 기본값은 개발용이며,
+Docker Desktop이나 사용자의 기존 WSL 배포판을 자동으로 변경하지 않는다.
 설치가 끝나면 학습 화면의 모델 카탈로그에서 해당 팩을 선택하고 `팩 학습`, `팩 추론`,
 `팩 ONNX export` 버튼으로 실행한다. 버튼은 절대 경로의 설치 팩과 데이터 루트가 확인되고
 다른 데스크톱 작업이 idle일 때만 활성화되며, 작업 종료·취소·실패 후에는 화면 잠금이 해제된다.
