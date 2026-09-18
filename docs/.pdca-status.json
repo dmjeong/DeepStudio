@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-18T22:41:00+09:00",
+  "lastUpdated": "2026-09-18T23:05:00+09:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -129,7 +129,7 @@
       ],
       "timestamps": {
         "started": "2026-09-18T03:37:37.984Z",
-        "lastUpdated": "2026-09-18T22:41:00+09:00"
+        "lastUpdated": "2026-09-18T23:05:00+09:00"
       },
       "designStatus": "revised_with_open_decisions",
       "implementationStatus": "in_progress",
@@ -197,7 +197,8 @@
         "Windows release script removes partial MSI/Burn Setup artifacts when WiX or Authenticode validation fails",
         "Owned WSL bootstrap unregisters and removes only a newly imported distro after Docker smoke or marker commit failure, enabling safe retries",
         "Payload manifest verification enforces offline Windows x64 artifacts and rejects external-download or architecture policy tampering",
-        "Windows release script fails closed on native Python manifest collector and validator exit codes"
+        "Windows release script fails closed on native Python manifest collector and validator exit codes",
+        "Windows and Linux native SDK CI pins ONNX Runtime 1.30.0, matching the measured C++/CPU deployment runtime"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",
@@ -423,6 +424,14 @@
       "timestamp": "2026-09-18T22:41:00+09:00",
       "python": "23 packaging and payload contract tests passed",
       "windows_release": "collector and validator native exit codes now gate WiX",
+      "windows_i7": "not measured"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "onnxruntime_release_pin_refresh",
+      "timestamp": "2026-09-18T23:05:00+09:00",
+      "python": "39 packaging, payload and worker tests passed",
+      "onnxruntime": "Windows/Linux native SDK CI pinned to 1.30.0; archive names verified against upstream release assets",
       "windows_i7": "not measured"
     }
   ]
