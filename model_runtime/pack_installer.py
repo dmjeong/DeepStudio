@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import tempfile
 from typing import Any, Mapping
@@ -28,6 +29,13 @@ class PackInstallError(ValueError):
 MAX_ENTRIES = 4096
 MAX_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024
 SHA256_HEX = 64
+MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,79}$")
+PACK_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
+WINDOWS_RESERVED_NAMES = frozenset({
+    "con", "prn", "aux", "nul",
+    *(f"com{index}" for index in range(1, 10)),
+    *(f"lpt{index}" for index in range(1, 10)),
+})
 
 
 def _validate_release_notices(manifest: Mapping[str, Any], files) -> None:
@@ -186,10 +194,21 @@ class PackInstaller:
                 validate_container_image_asset(manifest, expected_files)
             except SpecialContractError as exc:
                 raise PackInstallError(str(exc)) from exc
-            listed_files = {_safe_name(name) for name in checksums["files"]}
+            checksum_values: dict[str, Any] = {}
+            checksum_folds: set[str] = set()
+            for raw_name, expected in checksums["files"].items():
+                name = _safe_name(raw_name)
+                if name != raw_name:
+                    raise PackInstallError(f"checksums.json path is not normalized: {raw_name}")
+                folded = name.casefold()
+                if folded in checksum_folds:
+                    raise PackInstallError(f"duplicate checksum path: {raw_name}")
+                checksum_folds.add(folded)
+                checksum_values[name] = expected
+            listed_files = set(checksum_values)
             if listed_files != expected_files:
                 raise PackInstallError("checksums.json does not cover exactly the pack files")
-            for name, expected in checksums["files"].items():
+            for name, expected in checksum_values.items():
                 if not isinstance(expected, str) or len(expected) != SHA256_HEX or any(c not in "0123456789abcdefABCDEF" for c in expected):
                     raise PackInstallError(f"invalid checksum for {name}")
             for info in infos:
@@ -202,13 +221,21 @@ class PackInstaller:
                     shutil.copyfileobj(input_stream, output_stream, 1024 * 1024)
                 if name == "checksums.json":
                     continue
-                if _sha256(target).lower() != checksums["files"][name].lower():
+                if _sha256(target).lower() != checksum_values[name].lower():
                     raise PackInstallError(f"checksum mismatch: {name}")
             return manifest, checksums, signed
 
     @staticmethod
     def _required_text(manifest: Mapping[str, Any], key: str) -> str:
         value = manifest.get(key)
-        if not isinstance(value, str) or not value.strip() or "/" in value or "\\" in value or ".." in value:
+        if not isinstance(value, str) or not value.strip() or "\x00" in value:
             raise PackInstallError(f"manifest {key} must be a safe non-empty string")
-        return value.strip()
+        value = value.strip()
+        pattern = MODEL_ID_RE if key == "model_id" else PACK_VERSION_RE if key == "pack_version" else None
+        if pattern is None:
+            if "/" in value or "\\" in value or ".." in value or ":" in value:
+                raise PackInstallError(f"manifest {key} must be a safe non-empty string")
+        elif (not pattern.fullmatch(value) or
+              value.casefold() in WINDOWS_RESERVED_NAMES):
+            raise PackInstallError(f"manifest {key} must be a safe non-empty string")
+        return value

@@ -56,6 +56,44 @@ def test_installer_rejects_windows_drive_paths_inside_archive(tmp_path):
         PackInstaller(tmp_path / "installed").install(pack, allow_unsigned=True)
 
 
+@pytest.mark.parametrize("field,value", [
+    ("model_id", "vendor:escape"),
+    ("model_id", "con"),
+    ("pack_version", "../1.0.0"),
+    ("pack_version", "1:0:0"),
+])
+def test_installer_rejects_windows_unsafe_manifest_identifiers(tmp_path, field, value):
+    pack = tmp_path / "unsafe.dvmodel"
+    manifest = {"schema_version": 1, "model_id": "vendor.example", "pack_version": "1.0.0"}
+    manifest[field] = value
+    files = {"manifest.json": json.dumps(manifest).encode(), "model.onnx": b"fixture"}
+    checksums = {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}
+    with zipfile.ZipFile(pack, "w") as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+        archive.writestr("checksums.json", json.dumps({"files": checksums}))
+    with pytest.raises(PackInstallError, match="manifest"):
+        PackInstaller(tmp_path / "installed").install(pack, allow_unsigned=True)
+
+
+def test_installer_rejects_non_normalized_checksum_keys(tmp_path):
+    pack = tmp_path / "checksum-path.dvmodel"
+    files = {
+        "manifest.json": json.dumps({
+            "schema_version": 1, "model_id": "vendor.example", "pack_version": "1.0.0",
+        }).encode(),
+        "assets/model.onnx": b"fixture",
+    }
+    checksums = {"manifest.json": hashlib.sha256(files["manifest.json"]).hexdigest(),
+                 "assets\\model.onnx": hashlib.sha256(files["assets/model.onnx"]).hexdigest()}
+    with zipfile.ZipFile(pack, "w") as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+        archive.writestr("checksums.json", json.dumps({"files": checksums}))
+    with pytest.raises(PackInstallError, match="normalized"):
+        PackInstaller(tmp_path / "installed").install(pack, allow_unsigned=True)
+
+
 def test_signed_pack_is_idempotent(tmp_path):
     pack = tmp_path / "model.dvmodel"
     _write_pack(pack, signed=True)

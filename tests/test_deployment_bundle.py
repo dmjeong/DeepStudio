@@ -120,3 +120,24 @@ def test_verify_rejects_zip_symlink_and_duplicate_entries(tmp_path):
         output.writestr("manifest.json", "{}")
     with pytest.raises(DeploymentBundleError, match="duplicate"):
         verify_deployment_bundle(duplicate_archive)
+
+
+def test_verify_rejects_drive_paths_and_duplicate_normalized_manifest_keys(tmp_path):
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"onnx-fixture")
+    model.with_suffix(".json").write_text(json.dumps(_config()), encoding="utf-8")
+    bundle = build_deployment_bundle(model, tmp_path / "release.dvdeploy")
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"]["C:/escape.onnx"] = manifest["files"]["model.onnx"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(DeploymentBundleError, match="unsafe"):
+        verify_deployment_bundle(bundle)
+    del manifest["files"]["C:/escape.onnx"]
+    (bundle / "nested").mkdir()
+    (bundle / "nested" / "model.onnx").write_bytes(b"onnx-fixture")
+    manifest["files"]["nested/model.onnx"] = manifest["files"]["model.onnx"]
+    manifest["files"]["nested\\model.onnx"] = manifest["files"]["model.onnx"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(DeploymentBundleError, match="duplicate"):
+        verify_deployment_bundle(bundle)

@@ -94,3 +94,18 @@ def test_release_ready_pack_requires_redistribution_notices(tmp_path):
     (source / "licenses").mkdir()
     (source / "licenses" / "model.txt").write_text("license", encoding="utf-8")
     assert build_pack(source, tmp_path / "release.dvmodel", allow_unsigned=True).is_file()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("model_id", "vendor:escape"),
+    ("model_id", "con"),
+    ("pack_version", "../1.0.0"),
+    ("pack_version", "1:0:0"),
+])
+def test_builder_rejects_windows_unsafe_manifest_identifiers(tmp_path, field, value):
+    source = _source(tmp_path)
+    manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    manifest[field] = value
+    (source / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(PackBuildError, match="manifest"):
+        build_pack(source, tmp_path / "unsafe.dvmodel", allow_unsigned=True)

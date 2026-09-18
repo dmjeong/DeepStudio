@@ -23,9 +23,10 @@ class DeploymentBundleError(ValueError):
 
 
 def _safe_name(value: str | Path) -> str:
-    text = str(value).replace("\\", "/")
+    text = value.as_posix() if isinstance(value, Path) else str(value).replace("\\", "/")
     path = PurePosixPath(text)
-    if not text or path.is_absolute() or ".." in path.parts or any(part == "" for part in path.parts):
+    if (not text or ":" in text or path.is_absolute() or ".." in path.parts or
+            any(part == "" for part in path.parts)):
         raise DeploymentBundleError(f"unsafe deployment path: {value}")
     return "/".join(path.parts)
 
@@ -218,8 +219,12 @@ def verify_deployment_bundle(bundle: str | Path) -> dict[str, Any]:
             raise DeploymentBundleError("deployment bundle manifest is incomplete")
         config_name = _safe_name(config_name)
         actual: set[str] = set()
+        manifest_names: set[str] = set()
         for relative, expected in files.items():
             name = _safe_name(relative)
+            if name in manifest_names:
+                raise DeploymentBundleError(f"duplicate deployment checksum: {name}")
+            manifest_names.add(name)
             if not isinstance(expected, Mapping):
                 raise DeploymentBundleError(f"invalid deployment checksum: {name}")
             file_path = path / Path(*PurePosixPath(name).parts)

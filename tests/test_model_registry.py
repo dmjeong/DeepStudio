@@ -9,7 +9,7 @@ import pytest
 
 from core.container_worker import ContainerCommand, ContainerWorker, Frame, ContainerWorkerError, build_container_command
 from core.model_registry import (ModelRegistry, ModelRegistryError,
-                                 builtin_model_specs, installed_model_path,
+                                 ModelSpec, builtin_model_specs, installed_model_path,
                                  registry_with_installed_packs)
 
 
@@ -42,6 +42,12 @@ def test_registry_rejects_duplicate_or_unsafe_pack(tmp_path):
         archive.writestr("../manifest.json", json.dumps({}))
     with pytest.raises(ModelRegistryError, match="unsafe"):
         registry.load_pack(pack)
+
+
+def test_registry_rejects_windows_reserved_model_ids():
+    with pytest.raises(ModelRegistryError, match="invalid model id"):
+        ModelSpec("con", "Example", "Small", "classify", ("onnx",),
+                  frozenset({"infer"}), (224, 224))
 
 
 def test_registry_loads_a_valid_new_model_pack_without_importing_code(tmp_path):

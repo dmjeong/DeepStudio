@@ -23,6 +23,11 @@ from model_runtime.special_contracts import (validate_container_entrypoint,
 
 
 MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,79}$")
+WINDOWS_RESERVED_MODEL_IDS = frozenset({
+    "con", "prn", "aux", "nul",
+    *(f"com{index}" for index in range(1, 10)),
+    *(f"lpt{index}" for index in range(1, 10)),
+})
 PACK_SUFFIX = ".dvmodel"
 SUPPORTED_TASKS = frozenset({"classify", "anomaly", "detect", "segment"})
 SUPPORTED_RUNTIMES = frozenset({"windows_native", "onnx", "container"})
@@ -145,7 +150,8 @@ def _positive_pair(value: Any, name: str) -> tuple[int, int]:
 
 
 def validate_model_spec(spec: ModelSpec) -> None:
-    if not isinstance(spec.model_id, str) or not MODEL_ID_RE.fullmatch(spec.model_id):
+    if (not isinstance(spec.model_id, str) or not MODEL_ID_RE.fullmatch(spec.model_id) or
+            spec.model_id.casefold() in WINDOWS_RESERVED_MODEL_IDS):
         raise ModelRegistryError(f"invalid model id: {spec.model_id!r}")
     if spec.task not in SUPPORTED_TASKS:
         raise ModelRegistryError(f"unsupported task: {spec.task}")

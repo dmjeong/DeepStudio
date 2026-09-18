@@ -10,6 +10,9 @@ stdin/stdout으로 주고받는다. 실제 모델 의존성·체크포인트·ON
 1. 디렉터리를 새 모델 이름으로 복사한다.
 2. `manifest.json`의 `model_id`, `family`, `variant`, `task`, 입력 계약과 capability를 바꾼다.
    이미지 참조는 태그가 아니라 `@sha256:<64자리 digest>`여야 한다.
+   `model_id`는 소문자 영숫자로 시작하는 2~80자 `[a-z0-9._-]` 식별자이고,
+   `pack_version`은 1~64자의 `[A-Za-z0-9._+-]` 값이어야 한다. Windows 경로 구분자,
+   드라이브 문자와 예약 이름은 사용할 수 없다.
 3. `worker.py`의 `prepare`, `train`, `infer`, `export`를 구현한다. 큰 이미지·체크포인트는
    프레임 payload에 넣지 말고 `/data` 입력과 `/work` 출력 경로를 사용한다.
 4. Dockerfile을 수정하고 이미지를 빌드한 뒤 digest를 manifest와 맞춘다.

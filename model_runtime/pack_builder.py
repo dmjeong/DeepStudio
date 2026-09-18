@@ -15,7 +15,8 @@ import tempfile
 from typing import Any, Mapping
 import zipfile
 
-from .pack_installer import _safe_name, _sha256, _validate_release_notices
+from .pack_installer import (MODEL_ID_RE, PACK_VERSION_RE, WINDOWS_RESERVED_NAMES,
+                              _safe_name, _sha256, _validate_release_notices)
 from .special_contracts import (SpecialContractError, validate_container_image_asset,
                                 validate_special_assets, validate_special_manifest)
 
@@ -26,9 +27,17 @@ class PackBuildError(ValueError):
 
 def _required_text(manifest: Mapping[str, Any], key: str) -> str:
     value = manifest.get(key)
-    if not isinstance(value, str) or not value.strip() or "/" in value or "\\" in value or ".." in value:
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
         raise PackBuildError(f"manifest {key} must be a safe non-empty string")
-    return value.strip()
+    value = value.strip()
+    pattern = MODEL_ID_RE if key == "model_id" else PACK_VERSION_RE if key == "pack_version" else None
+    if pattern is None:
+        if "/" in value or "\\" in value or ".." in value or ":" in value:
+            raise PackBuildError(f"manifest {key} must be a safe non-empty string")
+    elif (not pattern.fullmatch(value) or
+          value.casefold() in WINDOWS_RESERVED_NAMES):
+        raise PackBuildError(f"manifest {key} must be a safe non-empty string")
+    return value
 
 
 def build_pack(source: str | Path, output: str | Path, *, manifest: str | Path | None = None,
