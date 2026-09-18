@@ -502,8 +502,14 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
 
 
 def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_batch=False,
-                      simplify=False, verify=True, overrides=None, log=print):
-    """실패 단계와 환경을 자동 기록한다. 검증 실패한 모델은 배포하지 않는다."""
+                      simplify=False, verify=True, overrides=None, log=print,
+                      bundle_output=None):
+    """실패 단계와 환경을 자동 기록한다. 검증 실패한 모델은 배포하지 않는다.
+
+    ``bundle_output`` is optional so existing callers can keep the historical
+    ``.onnx + .json`` output while release tooling can atomically produce a
+    self-contained ``.dvdeploy`` directory for the native SDK.
+    """
     import importlib.metadata
     import platform
     import traceback
@@ -515,6 +521,14 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
     try:
         result = _export_checkpoint(checkpoint_path, output_path, opset_version, dynamic_batch,
                                     simplify, verify, overrides, report)
+        if bundle_output is not None:
+            from model_runtime.deployment_bundle import build_deployment_bundle
+            source = result.get("output_dir") or result.get("output_path")
+            if not source:
+                raise ValueError("export result has no deployment source")
+            bundle = build_deployment_bundle(source, bundle_output)
+            result["bundle_path"] = str(bundle)
+            report(f"배포 번들 생성: {bundle}")
     except Exception as error:
         versions = {"python": platform.python_version()}
         for name in ("torch", "torchvision", "onnx", "onnxruntime", "onnxsim"):
@@ -552,6 +566,7 @@ def parse_args(argv=None):
     parser.add_argument("--dynamic_batch", action="store_true")
     parser.add_argument("--simplify", action="store_true")
     parser.add_argument("--verify", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--bundle", help="optional .dvdeploy output directory for C++/C# SDK")
     return parser.parse_args(argv)
 
 
@@ -559,7 +574,8 @@ def main():
     args = parse_args()
     export_checkpoint(args.checkpoint, args.output, args.opset, args.dynamic_batch,
                       args.simplify, args.verify,
-                      {key: getattr(args, key) for key in ("task", "num_classes", "in_channels", "input_size")})
+                      {key: getattr(args, key) for key in ("task", "num_classes", "in_channels", "input_size")},
+                      bundle_output=args.bundle)
 
 
 if __name__ == "__main__":

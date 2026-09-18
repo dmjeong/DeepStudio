@@ -52,7 +52,7 @@ def _export(model, args, kwargs, output: Path, *, input_names, output_names, ops
 
 
 def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool = True,
-                      opset: int = 17, log=print) -> dict:
+                      opset: int = 17, log=print, bundle_output: str | Path | None = None) -> dict:
     if not isinstance(checkpoint, dict) or checkpoint.get("backend", checkpoint.get("type")) != "sam2":
         raise Sam2ExportError("SAM2 checkpoint required")
     if checkpoint.get("task", "segment") != "segment":
@@ -160,12 +160,20 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
             "mask_size": [int(mask_size[0]), int(mask_size[1])]},
     }
     config_file.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"output_dir": str(output), "encoder_path": str(encoder_file),
+    result = {"output_dir": str(output), "encoder_path": str(encoder_file),
             "decoder_path": str(decoder_file), "config_path": str(config_file),
             "backend": "sam2", "task": "segment", "verification": config["verification"],
             "cpp_supported": True}
+    if bundle_output is not None:
+        from model_runtime.deployment_bundle import build_deployment_bundle
+        bundle = build_deployment_bundle(output, bundle_output)
+        result["bundle_path"] = str(bundle)
+        log(f"배포 번들 생성: {bundle}")
+    return result
 
 
-def export_sam2_checkpoint(checkpoint_path, output_dir, *, verify=True, opset=17, log=print):
+def export_sam2_checkpoint(checkpoint_path, output_dir, *, verify=True, opset=17, log=print,
+                           bundle_output=None):
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    return export_sam2_model(checkpoint, output_dir, verify=verify, opset=opset, log=log)
+    return export_sam2_model(checkpoint, output_dir, verify=verify, opset=opset, log=log,
+                             bundle_output=bundle_output)

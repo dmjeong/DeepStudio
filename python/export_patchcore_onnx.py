@@ -71,7 +71,7 @@ def _export_graph(model, dummy, output: Path, opset: int):
 
 
 def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool = True,
-                           opset: int = 17, log=print) -> dict:
+                           opset: int = 17, log=print, bundle_output: str | Path | None = None) -> dict:
     output = Path(output_path).expanduser().resolve()
     if output.suffix.lower() != ".onnx":
         raise ValueError("PatchCore output must use .onnx suffix")
@@ -120,13 +120,19 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
     }
     config_path = output.with_suffix(".json")
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"output_path": str(output), "config_path": str(config_path),
+    result = {"output_path": str(output), "config_path": str(config_path),
             "file_size_mb": output.stat().st_size / (1024 * 1024), "backend": "patchcore",
             "task": "anomaly", "verification": config["verification"], "cpp_supported": True}
+    if bundle_output is not None:
+        from model_runtime.deployment_bundle import build_deployment_bundle
+        bundle = build_deployment_bundle(output, bundle_output)
+        result["bundle_path"] = str(bundle)
+        log(f"배포 번들 생성: {bundle}")
+    return result
 
 
 def export_patchcore_checkpoint(checkpoint_path, output_path, *, verify=True, opset=17,
-                                simplify=False, log=print):
+                                simplify=False, log=print, bundle_output=None):
     from patchcore import PatchCore
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     if not isinstance(checkpoint, dict) or checkpoint.get("type") != "patchcore":
@@ -134,4 +140,4 @@ def export_patchcore_checkpoint(checkpoint_path, output_path, *, verify=True, op
     if simplify:
         log("PatchCore 단순화는 그래프 검증 후 별도 도구에서 수행해야 합니다.")
     return export_patchcore_model(PatchCore.load(str(checkpoint_path), device="cpu"), output_path,
-                                  verify=verify, opset=opset, log=log)
+                                  verify=verify, opset=opset, log=log, bundle_output=bundle_output)

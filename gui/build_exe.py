@@ -155,6 +155,7 @@ def build():
         # keep every protocol/lifecycle module in the frozen release.
         "--hidden-import", "model_runtime.assets",
         "--hidden-import", "model_runtime.container_entrypoint",
+        "--hidden-import", "model_runtime.deployment_bundle",
         "--hidden-import", "model_runtime.managed_wsl",
         "--hidden-import", "model_runtime.manager",
         "--hidden-import", "model_runtime.pack_builder",

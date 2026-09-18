@@ -35,7 +35,7 @@ def test_release_script_verifies_payload_before_wix_build():
 def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk():
     script = (ROOT / "gui" / "build_exe.py").read_text(encoding="utf-8")
     assert "model_sdk', 'schemas" in script
-    for module in ("core.model_pack_worker", "model_runtime.container_entrypoint", "model_runtime.pack_installer",
+    for module in ("core.model_pack_worker", "model_runtime.container_entrypoint", "model_runtime.deployment_bundle", "model_runtime.pack_installer",
                    "model_runtime.worker_protocol", "model_runtime.windows_worker"):
         assert f'"--hidden-import", "{module}"' in script
     assert "VISION_NATIVE_RUNTIME_DIR" in script

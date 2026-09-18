@@ -8,6 +8,12 @@ C#, 다른 언어에서 같은 ONNX 세션을 호출하는 고정 ABI다. 세션
 `builtin` backend manifest도 generic classify/segment 계약으로 읽는다. ResNet,
 ConvNeXt, DeepLab V3+, U-Net의 export 파일은 Python 없이 같은 C ABI를 사용한다.
 
+출시 파일은 ONNX와 옆 JSON만 따로 복사하지 말고 `.dvdeploy` 번들을 사용한다.
+`tools/build_deployment_bundle.py model.onnx model.dvdeploy`가 그래프·설정·SAM2 보조 그래프·PatchCore
+자산·external data를 함께 복사하고 SHA-256 manifest를 만든다. 배포 전에 이 번들의 검증 명령을
+실행한 뒤 번들 안의 설정 JSON 경로를 `dv_create_session`에 넘긴다. 런타임은 설정 JSON과
+그래프 계약을 검사하므로 ONNX 파일만 따로 복사해 실행하지 않는다.
+
 현재 C ABI에서 검증된 결과 종류는 `classify`, semantic `segment`, generic
 `detect`, Re-DETR v4 `detect`, reconstruction `anomaly`다. generic `detect`는
 `[1,N,5+C]` ONNX 출력에 sigmoid score와 class-aware NMS를 적용한다. Re-DETR v4는
