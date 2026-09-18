@@ -36,6 +36,33 @@ class TrainingForm:
         left_layout = QVBoxLayout(left_widget)
         left_layout.setSpacing(12)
 
+        # ── 모델 카탈로그 선택 ──
+        # Model IDs are persisted in the project so the same adapter is used
+        # by the desktop job, ONNX exporter, and native SDK.  Requested
+        # container models remain visible with their status; the start guard
+        # explains when their installed pack is required.
+        model_group = QGroupBox("모델 카탈로그")
+        self.model_group = model_group
+        model_layout = QVBoxLayout(model_group)
+        model_desc = QLabel("모델 ID는 학습·내보내기·C++/C# 배포 계약을 함께 선택합니다.")
+        model_desc.setObjectName("text_tertiary")
+        model_desc.setWordWrap(True)
+        model_layout.addWidget(model_desc)
+        self.model_id_combo = NoWheelComboBox()
+        try:
+            from core.model_registry import ModelRegistry
+            for spec in ModelRegistry.builtin().list():
+                self.model_id_combo.addItem(
+                    f"{spec.display_name} · {spec.task} · {spec.release_status}",
+                    spec.model_id)
+        except Exception:
+            # A frozen UI can still open a legacy project when the optional
+            # catalog module is unavailable; set_project adds its saved ID.
+            pass
+        self.model_id_combo.currentIndexChanged.connect(self._on_model_id_changed)
+        model_layout.addWidget(self.model_id_combo)
+        left_layout.addWidget(model_group)
+
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         #  학습 모드 선택
         #  ┌────────────────────────────────────────┐

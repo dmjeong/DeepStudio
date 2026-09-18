@@ -229,3 +229,38 @@ class ModelRegistry:
         spec = _spec_from_mapping(manifest)
         self.register(spec)
         return spec
+
+    def load_installed_pack(self, path: str | Path) -> ModelSpec:
+        """Register a manifest from an already verified staging directory.
+
+        ``PackInstaller`` performs archive/hash checks before activation.  This
+        method only reads the activated manifest and repeats the schema/special
+        contract checks so a process restart never trusts an arbitrary import.
+        """
+        root = Path(path).expanduser()
+        if not root.is_absolute() or not root.is_dir() or root.is_symlink():
+            raise ModelRegistryError("installed model pack must be an absolute directory")
+        manifest_path = (root / "manifest.json").resolve()
+        if manifest_path.parent != root.resolve() or not manifest_path.is_file() or manifest_path.is_symlink():
+            raise ModelRegistryError("installed model pack manifest.json missing")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(manifest, Mapping):
+                raise ValueError("manifest must be an object")
+            validate_special_assets(manifest, {path.relative_to(root).as_posix()
+                                               for path in root.rglob("*") if path.is_file()})
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ModelRegistryError("invalid installed model pack") from exc
+        spec = _spec_from_mapping(manifest)
+        self.register(spec)
+        return spec
+
+    def load_installed_root(self, root: str | Path) -> tuple[ModelSpec, ...]:
+        """Load every activated ``<model>/<version>/manifest.json`` safely."""
+        base = Path(root).expanduser()
+        if not base.is_absolute() or not base.is_dir() or base.is_symlink():
+            raise ModelRegistryError("installed model root must be an absolute directory")
+        loaded = []
+        for manifest in sorted(base.glob("*/*/manifest.json")):
+            loaded.append(self.load_installed_pack(manifest.parent))
+        return tuple(loaded)

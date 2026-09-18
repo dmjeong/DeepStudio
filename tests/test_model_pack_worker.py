@@ -1,0 +1,82 @@
+"""Installed Docker model-pack host adapter contracts."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+from unittest.mock import patch
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(ROOT / "gui"), str(ROOT)]
+
+from core.model_pack_worker import ModelPackWorker, ModelPackWorkerError
+from model_runtime.worker_protocol import Frame, response_request_id
+
+
+def _manifest(root: Path, image: str = "registry.invalid/model@sha256:" + "a" * 64) -> None:
+    (root / "manifest.json").write_text(json.dumps({
+        "schema_version": 1, "model_id": "extra_model", "pack_version": "1.0.0",
+        "runtimes": ["container"], "container_image": image,
+    }), encoding="utf-8")
+
+
+class FakeProcess:
+    def poll(self):
+        return None
+
+
+class FakeWorker:
+    def __init__(self, command):
+        self.command = command
+        self.process = FakeProcess()
+        self.started = False
+        self.closed = False
+
+    def start(self):
+        self.started = True
+
+    def request(self, frame):
+        assert self.started
+        if frame.header["type"] == "hello":
+            return Frame({"type": "response", "request_id": response_request_id(frame),
+                          "status": "ok", "commands": ["train", "infer", "export"]},
+                         b'{"ready":true}')
+        return Frame({"type": "response", "request_id": response_request_id(frame),
+                      "status": "ok", "command": frame.header["type"]},
+                     b'{"accepted":true}')
+
+    def stop(self):
+        self.closed = True
+
+
+def test_pack_requires_pinned_container_image(tmp_path):
+    _manifest(tmp_path, "registry.invalid/model:latest")
+    with pytest.raises(ModelPackWorkerError, match="pinned"):
+        ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
+
+
+def test_pack_train_infer_export_share_dvw1_adapter(tmp_path):
+    _manifest(tmp_path)
+    with (patch("core.model_pack_worker.build_container_command", return_value=object()) as build,
+          patch("core.model_pack_worker.ContainerWorker", FakeWorker)):
+        worker = ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
+    worker.start()
+    hello = worker.json_request("hello")
+    result = worker.json_request("train", {"dataset": "manifest.json"})
+    assert hello["payload"] == {"ready": True}
+    assert result["payload"] == {"accepted": True}
+    assert build.call_args.kwargs["model_dir"] == tmp_path.resolve()
+    worker.close()
+    assert worker._worker.closed
+
+
+def test_pack_rejects_unknown_command(tmp_path):
+    _manifest(tmp_path)
+    with patch("core.model_pack_worker.build_container_command", return_value=object()), \
+         patch("core.model_pack_worker.ContainerWorker", FakeWorker):
+        worker = ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
+    with pytest.raises(ModelPackWorkerError, match="unsupported"):
+        worker.request("unknown")

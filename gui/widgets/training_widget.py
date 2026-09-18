@@ -73,6 +73,49 @@ class TrainingWidget(TrainingForm, QWidget):
         # Refresh the metric list before settings callbacks validate its value.
         self._on_patchcore_settings_changed()
 
+    def _set_model_options(self, project):
+        """Filter the shared catalog to the current task and restore model_id."""
+        if not hasattr(self, "model_id_combo"):
+            return
+        from core.model_registry import ModelRegistry
+        registry = ModelRegistry.builtin()
+        model_id = getattr(project.model, "model_id", "")
+        self.model_id_combo.blockSignals(True)
+        try:
+            self.model_id_combo.clear()
+            for spec in registry.list(project.task):
+                self.model_id_combo.addItem(
+                    f"{spec.display_name} · {spec.release_status}", spec.model_id)
+            if model_id and self.model_id_combo.findData(model_id) < 0:
+                self.model_id_combo.addItem(f"저장된 모델 팩 · {model_id}", model_id)
+            index = self.model_id_combo.findData(model_id)
+            self.model_id_combo.setCurrentIndex(max(0, index))
+        finally:
+            self.model_id_combo.blockSignals(False)
+
+    def _on_model_id_changed(self, *_):
+        """Keep the legacy mode selector consistent with a catalog adapter."""
+        if self.project is None or not hasattr(self, "model_id_combo"):
+            return
+        model_id = self.model_id_combo.currentData() or ""
+        try:
+            from core.model_registry import ModelRegistry
+            spec = ModelRegistry.builtin().get(model_id)
+            if len(spec.input_channels) == 1:
+                self.project.training.in_channels = spec.input_channels[0]
+            if hasattr(self, "input_size_spin") and model_id not in {"efficientnet_b0", "efficientnet_b1"}:
+                self.input_size_spin.setValue(spec.input_size[0])
+        except ValueError:
+            spec = None
+        if model_id not in {"efficientnet_b0", "efficientnet_b1"}:
+            current = self.mode_combo.currentData()
+            if current in {"efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume"}:
+                custom = self.mode_combo.findData("custom")
+                if custom >= 0:
+                    self.mode_combo.setCurrentIndex(custom)
+        if model_id in {"efficientnet_b0", "efficientnet_b1"}:
+            self._on_efficientnet_model_changed()
+
     def _training_capabilities(self):
         if self.mode_combo.currentData() not in MODE_LABELS or (self.project and self.project.task == "obb"):
             return {"layer_debug": False, "layer_debug_reason": "지원하지 않는 모델 형식입니다.",
@@ -203,6 +246,8 @@ class TrainingWidget(TrainingForm, QWidget):
         if self._run_project is not None:
             raise RuntimeError("학습 결과 반영 전 프로젝트 변경 불가")
         self.project = project
+        if hasattr(self, "_set_model_options"):
+            self._set_model_options(project)
         self.debug_table.setRowCount(0)
         cfg = project.training
         self.debug_check.setChecked(cfg.layer_debug_enabled)
@@ -223,6 +268,8 @@ class TrainingWidget(TrainingForm, QWidget):
         self.mode_combo.setCurrentIndex(self.mode_combo.findData(mode))
         self.mode_combo.setEnabled(project.task != "anomaly")
         self._on_mode_changed(self.mode_combo.currentIndex())
+        if hasattr(self, "_on_model_id_changed"):
+            self._on_model_id_changed()
 
         self.efficientnet_model_combo.setCurrentIndex(max(0, self.efficientnet_model_combo.findData(cfg.efficientnet_model)))
 
@@ -392,6 +439,11 @@ class TrainingWidget(TrainingForm, QWidget):
 
         # 트랜스퍼 러닝 설정 (모드에 따라 다른 소스)
         mcfg = self.project.model
+        selected_model = self.model_id_combo.currentData() if hasattr(self, "model_id_combo") else None
+        if selected_model:
+            mcfg.model_id = selected_model
+        if mcfg.model_id not in {"efficientnet_b0", "efficientnet_b1"} and cfg.training_mode.startswith("efficientnet"):
+            cfg.training_mode = "custom"
         if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer"}:
             # 이어학습: resume_edit → pretrained_weights
             mcfg.pretrained_weights = self.resume_edit.text().strip()
@@ -487,6 +539,20 @@ class TrainingWidget(TrainingForm, QWidget):
         mode = self.project.training.training_mode
         is_anomaly = self.project.task == "anomaly"
         is_patchcore = is_anomaly and self.project.training.anomaly_method == "patchcore"
+        model_id = getattr(self.project.model, "model_id", "")
+        if model_id:
+            from core.model_registry import ModelRegistry
+            try:
+                spec = ModelRegistry.builtin().get(model_id)
+            except ValueError:
+                spec = None
+            if spec is not None and "container" in spec.runtimes and "windows_native" not in spec.runtimes:
+                QMessageBox.warning(
+                    self, "모델 팩 필요",
+                    f"{spec.display_name}은 설치된 Docker 모델 팩 worker에서 학습해야 합니다.\n"
+                    "모델 관리에서 .dvmodel 팩을 설치한 뒤 팩 작업으로 실행하세요."
+                )
+                return
         if is_patchcore and self.project.training.patchcore_weight_source != "imagenet":
             path = self.project.training.patchcore_weights
             if not path or not os.path.isfile(path):

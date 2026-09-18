@@ -346,6 +346,11 @@ class ProjectManager:
             training=TrainingConfig(
                 input_size=info["default_input_size"],
                 batch_size=info["default_batch_size"],
+                # The EfficientNet classification profile intentionally keeps
+                # its grayscale default.  Detection, segmentation, and
+                # PatchCore adapters use RGB unless a model explicitly opts
+                # into a one-channel contract.
+                in_channels=1 if task == "classify" else 3,
                 training_mode="efficientnet_finetune" if task == "classify" else "custom",
             ),
         )

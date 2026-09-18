@@ -102,7 +102,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   input_size: int | tuple[int, int] | None = None, in_channels: int = 3,
                   epochs: int = 1, batch_size: int = 4, learning_rate: float = 1e-3,
                   output_dir: str | Path = "runs/builtin", device: str = "cpu",
-                  resume: str | Path | None = None) -> Path:
+                  resume: str | Path | None = None, log=print,
+                  should_stop=lambda: False) -> Path:
     spec = get_builtin_spec(model_id)
     if epochs < 1 or batch_size < 1 or learning_rate <= 0:
         raise ValueError("epochs, batch_size and learning_rate must be positive")
@@ -143,7 +144,10 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         start_epoch = int(checkpoint.get("epoch", -1)) + 1
     destination = Path(output_dir)
     best_metric = float("-inf")
+    completed_epochs = start_epoch
     for epoch in range(start_epoch, epochs):
+        if should_stop():
+            break
         if spec.task == "classify":
             train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target)
             val_loss, val_metric = _classification_epoch(model, val_loader, criterion, None, target)
@@ -152,7 +156,11 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             val_loss, val_metric = _segmentation_epoch(model, val_loader, criterion, None, target)
         if not all(torch.isfinite(torch.tensor(value)) for value in (train_loss, train_metric, val_loss, val_metric)):
             raise ValueError("training produced a non-finite metric")
-        print(f"epoch {epoch + 1}/{epochs}: train_loss={train_loss:.6f} val_loss={val_loss:.6f} metric={val_metric:.6f}")
+        log(f"epoch {epoch + 1}/{epochs}: train_loss={train_loss:.6f} val_loss={val_loss:.6f} metric={val_metric:.6f}")
+        completed_epochs = epoch + 1
+        log({"event": "epoch_finished", "epoch": completed_epochs,
+             "train_loss": train_loss, "val_loss": val_loss,
+             "metric": val_metric, "total_epochs": epochs})
         save_builtin_checkpoint(destination / "last.pt", model, model_id=model_id,
                                 num_classes=num_classes, input_size=input_size,
                                 in_channels=in_channels, class_names=class_names,
@@ -163,11 +171,12 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                     num_classes=num_classes, input_size=input_size,
                                     in_channels=in_channels, class_names=class_names,
                                     epoch=epoch, optimizer=optimizer, metric=val_metric)
-    if start_epoch >= epochs:
+    if completed_epochs == start_epoch and start_epoch >= epochs:
         raise ValueError("resume checkpoint already reached the requested epochs")
     (destination / "training.json").write_text(json.dumps({"model_id": model_id,
         "task": spec.task, "epochs": epochs, "input_size": list(input_size),
-        "in_channels": in_channels, "best_metric": best_metric}, ensure_ascii=False, indent=2), encoding="utf-8")
+        "in_channels": in_channels, "best_metric": best_metric,
+        "completed_epochs": completed_epochs}, ensure_ascii=False, indent=2), encoding="utf-8")
     return destination / "best.pt"
 
 

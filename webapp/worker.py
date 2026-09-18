@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import traceback
+from datetime import datetime
 
 from webapp.storage import digest, json_value, read_json, restore_project, write_json
 from webapp.locking import exclusive_file
@@ -48,6 +49,66 @@ class JobContext:
             stream.write(message + "\n")
 
 
+def _train_builtin_project(context, project, device):
+    """Train a registered weight-free adapter through the normal job path."""
+    from core.project import ProjectManager, RunRecord
+    from train_builtin import train_builtin
+
+    model_id = project.model.model_id
+    from builtin_models import BUILTIN_MODEL_SPECS
+    spec = BUILTIN_MODEL_SPECS.get(model_id)
+    if spec is None or spec.task != project.task:
+        return None
+    cfg, data = project.training, project.data
+    run_id = ProjectManager.new_run_id(task=project.task, model_name=model_id,
+                                       input_size=cfg.input_size,
+                                       project_dir=project.project_dir)
+    run_dir = Path(project.project_dir) / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    context.emit("log_message", [f"기본 모델 학습: {model_id}"])
+
+    def log(message):
+        if isinstance(message, dict) and message.get("event") == "epoch_finished":
+            epoch = int(message["epoch"])
+            total = int(message["total_epochs"])
+            metric = float(message["metric"])
+            context.emit("epoch_finished", [epoch, float(message["train_loss"]),
+                                              float(message["val_loss"]), {"accuracy": metric,
+                                                                            "miou": metric}])
+            context.emit("progress_updated", [epoch, total])
+        else:
+            context.emit("log_message", [str(message)])
+
+    best = train_builtin(model_id, data.root, num_classes=data.num_classes,
+                         input_size=cfg.input_size, in_channels=cfg.in_channels,
+                         epochs=cfg.epochs, batch_size=cfg.batch_size,
+                         learning_rate=cfg.learning_rate, output_dir=run_dir,
+                         device=str(device),
+                         resume=project.model.pretrained_weights or None,
+                         log=log, should_stop=context.cancelled)
+    if not best.is_file():
+        record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
+                           finished_at=datetime.now().isoformat(), status="cancelled",
+                           config_snapshot={"engine": "builtin", "model_id": model_id})
+        project.runs.append(record)
+        return record
+    import torch
+    checkpoint = torch.load(best, map_location="cpu", weights_only=False)
+    metric = float(checkpoint.get("metric") or 0.0)
+    epoch = int(checkpoint.get("epoch", 0)) + 1
+    record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
+                       finished_at=datetime.now().isoformat(), status=(
+                           "cancelled" if context.cancelled() else "completed"),
+                       epochs_done=epoch, best_metric=metric, best_epoch=epoch,
+                       best_metric_name="accuracy" if project.task == "classify" else "miou",
+                       checkpoint_path=str(best), metrics_history={
+                           "val_metric": [metric]}, config_snapshot={
+                               "engine": "builtin", "model_id": model_id})
+    project.runs.append(record)
+    context.emit("training_finished", [metric, epoch, str(best)])
+    return record
+
+
 def train(context, payload):
     from core.project import ProjectManager
     from core.training_engine import TrainingEvents
@@ -68,16 +129,20 @@ def train(context, payload):
         context.emit("log_message", ["GPU 합성곱과 역전파 검사 통과"])
     before = len(project.runs)
     config = {key: payload["project"][key] for key in ("task", "data", "model", "training")}
-    if project.task == "anomaly" and project.training.anomaly_method == "patchcore":
+    builtin_record = _train_builtin_project(context, project, device)
+    if builtin_record is not None:
+        engine = None
+    elif project.task == "anomaly" and project.training.anomaly_method == "patchcore":
         engine_class = PatchCoreWorker
     elif project.training.training_mode.startswith("efficientnet"):
         from core.efficientnet_trainer import EfficientNetTrainWorker
         engine_class = EfficientNetTrainWorker
     else:
         engine_class = TrainWorker
-    engine = engine_class(project, signals=TrainingEvents(context.emit), should_stop=context.cancelled)
-    engine.run()
-    if getattr(engine, "engine_name", None) == "efficientnet":
+    if builtin_record is None:
+        engine = engine_class(project, signals=TrainingEvents(context.emit), should_stop=context.cancelled)
+        engine.run()
+    if builtin_record is not None or getattr(engine, "engine_name", None) == "efficientnet":
         config.update(training=asdict(project.training), model=asdict(project.model), data=asdict(project.data))
     for record in project.runs[before:]:
         record.config_snapshot = {**config, **record.config_snapshot, "runtime": runtime,
@@ -193,6 +258,53 @@ def export(context, payload):
     return {"status": "completed", "output": result}
 
 
+def model_pack_operation(context, payload):
+    """Run one train/infer/export command in an installed Docker model pack.
+
+    The request is JSON metadata; large images, checkpoints, and results stay
+    in the mounted data/work directories.  The pack process is long-lived for
+    this operation and is always closed on the way out.
+    """
+    from core.model_pack_worker import ModelPackWorker
+
+    operation = payload.get("operation")
+    if operation not in {"train", "infer", "export"}:
+        raise ValueError("model pack operation must be train, infer, or export")
+    if context.cancelled():
+        return {"status": "cancelled"}
+    worker = ModelPackWorker.from_installed_pack(
+        payload["pack_dir"], data_dir=payload["data_dir"], work_dir=payload["work_dir"],
+        cpus=payload.get("cpus", 4), memory=payload.get("memory", "8g"),
+        name=payload.get("container_name"))
+    try:
+        worker.start()
+        hello = worker.json_request("hello")
+        context.emit("log_message", [f"모델 팩 worker 준비: {worker.model_id}"])
+        if context.cancelled():
+            try:
+                worker.json_request("cancel")
+            except Exception:
+                pass
+            return {"status": "cancelled"}
+        result = worker.json_request(operation, payload.get("request", {}))
+        context.emit("model_pack_result", [result])
+        return {"status": "completed", "output": {"hello": hello, "result": result}}
+    finally:
+        worker.close()
+
+
+def pack_train(context, payload):
+    return model_pack_operation(context, {**payload, "operation": "train"})
+
+
+def pack_infer(context, payload):
+    return model_pack_operation(context, {**payload, "operation": "infer"})
+
+
+def pack_export(context, payload):
+    return model_pack_operation(context, {**payload, "operation": "export"})
+
+
 def defects(context, payload):
     from core.defect_workflow import generate_candidates
     return generate_candidates(context, payload, restore_project(payload["project"]))
@@ -259,7 +371,11 @@ def datagen_generate(context, payload):
 
 
 
-OPERATIONS = {"datagen_train": datagen_train, "datagen_generate": datagen_generate, "train": train, "infer": infer, "export": export, "defects": defects, "defect_publish": defect_publish, "delete_class": delete_class, "dataset_edit": dataset_edit, "inspect_model": inspect_model}
+OPERATIONS = {"datagen_train": datagen_train, "datagen_generate": datagen_generate,
+              "train": train, "infer": infer, "export": export,
+              "pack_train": pack_train, "pack_infer": pack_infer, "pack_export": pack_export,
+              "defects": defects, "defect_publish": defect_publish, "delete_class": delete_class,
+              "dataset_edit": dataset_edit, "inspect_model": inspect_model}
 
 
 def run_job(request_path, monitor_parent=True):

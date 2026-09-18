@@ -43,6 +43,22 @@ def training_capabilities(task, mode, anomaly_method="patchcore"):
 def validate_training_options(project):
     cfg = project.training
     capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method)
+    model_id = getattr(project.model, "model_id", "")
+    if model_id:
+        # Built-in adapters are weight-free and keep their input/task contract
+        # in one registry.  Container packs validate their own contract after
+        # installation, so an unknown legacy/pack id remains loadable here.
+        try:
+            from core.model_registry import ModelRegistry
+            spec = ModelRegistry.builtin().get(model_id)
+        except (ImportError, KeyError, ValueError):
+            spec = None
+        if spec is not None and not (project.task == "anomaly" and
+                                     cfg.anomaly_method == "patchcore"):
+            if spec.task != project.task:
+                raise ValueError(f"선택한 모델 {model_id}은 {project.task} 태스크와 맞지 않습니다.")
+            if cfg.in_channels not in spec.input_channels:
+                raise ValueError(f"선택한 모델 {model_id}은 입력 채널 {cfg.in_channels}을 지원하지 않습니다.")
     if type(cfg.efficientnet_no_decay) is not bool:
         raise ValueError("EfficientNet weight decay 제외 옵션은 boolean 필요")
     if capabilities["engine"] == "efficientnet" and cfg.efficientnet_model not in capabilities["models"]:

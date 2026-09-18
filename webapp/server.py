@@ -77,6 +77,16 @@ class ExportRequest(Body):
     dynamic_batch: bool = False
 
 
+class ModelPackRequest(Body):
+    pack_dir: str
+    data_dir: str
+    work_dir: str
+    request: dict = Field(default_factory=dict)
+    cpus: int = Field(default=4, ge=1, le=128)
+    memory: str = "8g"
+    container_name: str = ""
+
+
 class DefectRequest(Body):
     folder: str
     output: str
@@ -529,6 +539,14 @@ def create_app(state_dir=None):
             if not Path(body.output).is_absolute():
                 raise ValueError("출력의 절대 경로 필요")
             return jobs.start("export", body.model_dump())
+
+    @app.post("/api/jobs/model-pack/{operation}")
+    def model_pack(operation: str, body: ModelPackRequest):
+        if operation not in {"train", "infer", "export"}:
+            raise ValueError("model pack operation must be train, infer, or export")
+        with jobs.lock:
+            jobs.require_idle()
+            return jobs.start("pack_" + operation, {**body.model_dump(), "operation": operation})
 
     def defect_project(path=""):
         project = project_required()

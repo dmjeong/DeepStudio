@@ -150,6 +150,7 @@ def build():
         "--hidden-import", "core.device_manager",
         "--hidden-import", "core.model_registry",
         "--hidden-import", "core.container_worker",
+        "--hidden-import", "core.model_pack_worker",
         # Model-pack workers are loaded by a manifest entrypoint at runtime;
         # keep every protocol/lifecycle module in the frozen release.
         "--hidden-import", "model_runtime.assets",

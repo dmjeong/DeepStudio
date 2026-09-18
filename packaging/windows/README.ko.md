@@ -68,6 +68,10 @@ SAM2의 최소 프로필은 encoder를 고정한 decoder fine-tune이다. 전체
 호스트에서 import하지 않고, 격리된 컨테이너 안의 `DVW1` stdin/stdout worker가 로드한다.
 worker는 `hello`, `describe`, `prepare`, `train`, `infer`, `export`, `cancel`, `close` 프레임을 사용하며
 stdout에는 프레임 외의 로그를 쓰지 않는다. 모델 팩을 다시 만들지 않고도 이 계약을 구현한 새 모델을 추가할 수 있다.
+호스트는 설치된 팩의 `runtime_requirements.container_image`를 확인한 뒤 `pack_train`, `pack_infer`,
+`pack_export` 작업으로 같은 worker를 호출한다. 이미지 참조는 `@sha256:<digest>`로 고정해야 하며,
+태그만 있는 이미지는 실행하지 않는다. 작업 요청의 JSON은 `/data`와 `/work`에 있는 파일을 가리키고,
+큰 이미지·체크포인트는 DVW1 프레임에 직접 넣지 않는다.
 
 설치 프로그램이 앱 전용 WSL2와 Docker Engine 환경을 구성한다. 다음 조건은 필요하다.
 

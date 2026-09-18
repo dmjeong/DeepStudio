@@ -65,6 +65,20 @@ def test_registry_loads_a_valid_new_model_pack_without_importing_code(tmp_path):
     assert loaded.release_status == "scoped"
 
 
+def test_registry_loads_activated_pack_manifests_after_restart(tmp_path):
+    root = tmp_path / "installed" / "vendor.example" / "1.0.0"
+    root.mkdir(parents=True)
+    (root / "manifest.json").write_text(json.dumps({
+        "schema_version": 1, "model_id": "vendor.example-classifier", "family": "Example",
+        "variant": "Small", "task": "classify", "runtimes": ["container"],
+        "capabilities": ["train", "infer"], "input_size": [224, 224],
+        "input_channels": [3], "release_status": "scoped",
+    }), encoding="utf-8")
+    registry = ModelRegistry.builtin()
+    loaded = registry.load_installed_root(tmp_path / "installed")
+    assert loaded[0].model_id == "vendor.example-classifier"
+
+
 def test_registry_rejects_unknown_manifest_schema(tmp_path):
     pack = tmp_path / "unknown-schema.dvmodel"
     with zipfile.ZipFile(pack, "w") as archive:

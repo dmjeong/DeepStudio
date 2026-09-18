@@ -23,8 +23,12 @@
   고정된 이름으로 내보내고 shape·수치·동적 batch를 ONNX Runtime에서 확인한다.
 - `export_sam2_onnx.py`는 checkpoint가 제공한 encoder/decoder를 다운로드 없이 두 ONNX 그래프와
   schema 5 prompt manifest로 내보내며 point/box/mask 입력과 mask·quality 두 출력을 검증한다.
+- 설치된 `.dvmodel`을 `pack_train`·`pack_infer`·`pack_export` 작업으로 호출하는 호스트 어댑터가
+  추가됐다. 팩의 고정 digest 이미지와 `/data`·`/work` artifact 경계를 검사한 뒤 DVW1로 통신한다.
 - ResNet 18/50, ConvNeXt V1 Tiny, DeepLab V3+ ResNet34, U-Net ResNet18은 가중치를 포함하지 않는
   native adapter와 공통 ONNX exporter를 사용하며 `builtin` backend manifest를 만든다.
+- 위 weight-free adapter는 프로젝트의 `model_id`가 해당 모델일 때 독립 학습 worker와 같은
+  프로젝트 결과/체크포인트 경로로 학습하고, 이후 공통 ONNX exporter를 사용한다.
 - Re-DETR v4와 SAM2 팩은 `contracts` 필드에서 특수 다중 그래프·프롬프트 계약을 명시해야 하며,
   등록부는 Small/Medium/Large와 Hiera Tiny/Small/Base+/Large 이외의 변형을 거부한다.
 

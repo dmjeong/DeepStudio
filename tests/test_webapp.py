@@ -118,6 +118,12 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual({"re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large", "libreyolo_detect_9t"}, set(models))
         self.assertTrue(all(item["release_status"] != "release_ready" for item in models.values()))
 
+    def test_model_pack_job_endpoint_keeps_operation_allowlist(self):
+        body = {"pack_dir": str(self.root), "data_dir": str(self.root),
+                "work_dir": str(self.root), "request": {}}
+        response = self.client.post("/api/jobs/model-pack/unknown", json=body)
+        self.assertEqual(response.status_code, 400)
+
     def test_real_class_delete_process_and_backup(self):
         project = self.project()
         original = Path(project["data"]["train_dir"]) / "NG" / "source.png"
