@@ -30,9 +30,15 @@ def _read_manifest(pack_dir: str | Path) -> tuple[Path, Mapping[str, Any]]:
     root = Path(pack_dir).expanduser()
     if not root.is_absolute() or not root.is_dir() or root.is_symlink():
         raise ModelPackWorkerError("pack_dir must be an existing absolute directory")
-    manifest_path = (root / "manifest.json").resolve()
-    if manifest_path.parent != root.resolve() or not manifest_path.is_file() or manifest_path.is_symlink():
+    manifest_path = root / "manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
         raise ModelPackWorkerError("installed model pack manifest.json is missing")
+    manifest_path = manifest_path.resolve()
+    if manifest_path.parent != root.resolve():
+        raise ModelPackWorkerError("installed model pack manifest.json escapes its root")
+    for entry in root.rglob("*"):
+        if entry.is_symlink():
+            raise ModelPackWorkerError("installed model pack cannot contain symlinks")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:

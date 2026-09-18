@@ -33,8 +33,14 @@ def _required_text(manifest: Mapping[str, Any], key: str) -> str:
 def build_pack(source: str | Path, output: str | Path, *, manifest: str | Path | None = None,
                allow_unsigned: bool = False) -> Path:
     """Create a reproducible pack from a directory and return its output path."""
-    root = Path(source).expanduser().resolve()
-    target = Path(output).expanduser().resolve()
+    source_path = Path(source).expanduser()
+    if source_path.is_symlink():
+        raise PackBuildError("pack source symlink is not allowed")
+    root = source_path.resolve()
+    output_path = Path(output).expanduser()
+    if output_path.exists() and output_path.is_symlink():
+        raise PackBuildError("pack output symlink is not allowed")
+    target = output_path.resolve()
     if not root.is_dir():
         raise PackBuildError(f"pack source is not a directory: {root}")
     if target.suffix.lower() != ".dvmodel":

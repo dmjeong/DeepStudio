@@ -58,6 +58,14 @@ def test_pack_requires_pinned_container_image(tmp_path):
         ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
 
 
+def test_pack_rejects_symlinked_manifest(tmp_path):
+    external = tmp_path.parent / "external-manifest.json"
+    external.write_text("{}", encoding="utf-8")
+    (tmp_path / "manifest.json").symlink_to(external)
+    with pytest.raises(ModelPackWorkerError, match="manifest"):
+        ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
+
+
 def test_pack_train_infer_export_share_dvw1_adapter(tmp_path):
     _manifest(tmp_path)
     with (patch("core.model_pack_worker.build_container_command", return_value=object()) as build,

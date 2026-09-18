@@ -134,7 +134,7 @@
       "designStatus": "revised_with_open_decisions",
       "implementationStatus": "in_progress",
       "requirementsRevision": 3,
-      "validation": "Python 675 passed/11 skipped; C++17 CTest 4/4 including native bundle checksum/tamper checks; deployment bundle targeted tests 12 passed; Windows/i7 not measured",
+      "validation": "Python 678 passed/11 skipped; C++17 CTest 4/4 including native bundle checksum/tamper checks; deployment bundle targeted tests 12 passed; Windows/i7 not measured",
       "implementationProgress": [
         "ModelRegistry catalog with Re-DETR v4 Small/Medium/Large and all SAM2 Hiera variants",
         "Versioned .dvmodel manifest validation and safe pack loading",
@@ -168,7 +168,8 @@
         "Model-pack jobs perform a prepare lifecycle handshake before train/infer/export and close the worker cleanly",
         "Windows payload staging and manifest verification reject symlink roots and unsafe or duplicate manifest paths",
         "Installed model-pack registry rejects manifest and asset symlinks before loading third-party metadata",
-        "EfficientNet CPU benchmark uses the export classification FP32 tolerance profile and top-1 parity, avoiding false failures at 0.00052 reassociation error"
+        "EfficientNet CPU benchmark uses the export classification FP32 tolerance profile and top-1 parity, avoiding false failures at 0.00052 reassociation error",
+        "Installed-pack pointers, Docker pack manifests and pack-builder roots reject symlink escapes before activation or execution"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",

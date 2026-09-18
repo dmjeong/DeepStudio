@@ -37,6 +37,14 @@ def test_builder_does_not_follow_symlinks(tmp_path):
         build_pack(source, tmp_path / "model.dvmodel", allow_unsigned=True)
 
 
+def test_builder_rejects_symlinked_source_root(tmp_path):
+    source = _source(tmp_path)
+    link = tmp_path / "source-link"
+    link.symlink_to(source, target_is_directory=True)
+    with pytest.raises(PackBuildError, match="source symlink"):
+        build_pack(link, tmp_path / "model.dvmodel", allow_unsigned=True)
+
+
 def test_builder_accepts_manifest_outside_source(tmp_path):
     source = tmp_path / "source"
     source.mkdir()

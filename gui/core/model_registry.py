@@ -74,23 +74,30 @@ def installed_model_path(model_id: str, root: str | Path | None = None) -> Path 
         return None
     base = base.resolve()
     model_dir = base / model_id
+    return _active_installed_version(model_dir)
+
+
+def _active_installed_version(model_dir: Path) -> Path | None:
+    """Return a pointer-selected version without following pack symlinks."""
     if not model_dir.is_dir() or model_dir.is_symlink():
         return None
+    model_root = model_dir.resolve()
     selected: Path | None = None
     pointer = model_dir / "current.json"
     if pointer.is_file() and not pointer.is_symlink():
         try:
             value = json.loads(pointer.read_text(encoding="utf-8"))
             candidate = Path(value.get("path", "")).expanduser()
-            if candidate.is_absolute() and candidate.resolve().parent == model_dir.resolve():
-                selected = candidate.resolve()
+            if (candidate.is_absolute() and not candidate.is_symlink() and
+                    candidate.parent == model_root and candidate.is_dir()):
+                selected = candidate
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
             selected = None
     if selected is None:
         versions = sorted(path for path in model_dir.iterdir()
                           if path.is_dir() and not path.is_symlink())
         selected = versions[-1] if versions else None
-    if selected is None or selected.parent != model_dir.resolve() or selected.is_symlink():
+    if selected is None or selected.parent != model_root or selected.is_symlink():
         return None
     manifest = selected / "manifest.json"
     return selected if manifest.is_file() and not manifest.is_symlink() else None
@@ -349,20 +356,7 @@ class ModelRegistry:
         loaded = []
         for model_dir in sorted(path for path in base.iterdir()
                                 if path.is_dir() and not path.is_symlink()):
-            pointer = model_dir / "current.json"
-            selected: Path | None = None
-            if pointer.is_file() and not pointer.is_symlink():
-                try:
-                    value = json.loads(pointer.read_text(encoding="utf-8"))
-                    candidate = Path(value.get("path", "")).expanduser()
-                    if candidate.is_absolute() and candidate.resolve().parent == model_dir.resolve():
-                        selected = candidate.resolve()
-                except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
-                    selected = None
-            if selected is None:
-                versions = sorted(path for path in model_dir.iterdir()
-                                  if path.is_dir() and not path.is_symlink())
-                selected = versions[-1] if versions else None
+            selected = _active_installed_version(model_dir)
             if selected is not None and (selected / "manifest.json").is_file():
                 loaded.append(self.load_installed_pack(selected))
         return tuple(loaded)
@@ -391,20 +385,7 @@ def registry_with_installed_packs(root: str | Path | None = None) -> tuple[Model
         return registry, ()
     for model_dir in sorted(path for path in base.iterdir()
                             if path.is_dir() and not path.is_symlink()):
-        pointer = model_dir / "current.json"
-        selected: Path | None = None
-        if pointer.is_file() and not pointer.is_symlink():
-            try:
-                value = json.loads(pointer.read_text(encoding="utf-8"))
-                candidate = Path(value.get("path", "")).expanduser()
-                if candidate.is_absolute() and candidate.resolve().parent == model_dir.resolve():
-                    selected = candidate.resolve()
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
-                selected = None
-        if selected is None:
-            versions = sorted(path for path in model_dir.iterdir()
-                              if path.is_dir() and not path.is_symlink())
-            selected = versions[-1] if versions else None
+        selected = _active_installed_version(model_dir)
         if selected is None or not (selected / "manifest.json").is_file():
             continue
         manifest = selected / "manifest.json"

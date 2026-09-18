@@ -136,6 +136,18 @@ def test_installed_model_path_follows_current_pointer_safely(tmp_path):
     assert installed_model_path("../escape", tmp_path / "installed") is None
 
 
+def test_installed_model_path_ignores_symlinked_current_version(tmp_path):
+    model_root = tmp_path / "installed" / "vendor.extra"
+    model_root.mkdir(parents=True)
+    external = tmp_path / "outside-version"
+    external.mkdir()
+    (external / "manifest.json").write_text("{}", encoding="utf-8")
+    link = model_root / "1.0.0"
+    link.symlink_to(external, target_is_directory=True)
+    (model_root / "current.json").write_text(json.dumps({"path": str(link)}), encoding="utf-8")
+    assert installed_model_path("vendor.extra", tmp_path / "installed") is None
+
+
 def test_registry_rejects_installed_pack_that_downgrades_catalog_status(tmp_path):
     root = tmp_path / "installed" / "resnet18" / "1.0.0"
     root.mkdir(parents=True)
