@@ -36,13 +36,21 @@ def test_builtin_models_are_constructible_without_pretrained_download(model_id, 
     assert checkpoint["model_id"] == get_builtin_spec(model_id).model_id
 
 
-@pytest.mark.parametrize("model_id", ["resnet18", "deeplabv3plus_resnet34"])
-def test_builtin_checkpoint_exports_and_has_cpp_contract(tmp_path, model_id):
+@pytest.mark.parametrize(
+    ("model_id", "size"),
+    [
+        ("resnet18", 32),
+        ("resnet50", 32),
+        ("convnext_v1_tiny", 32),
+        ("deeplabv3plus_resnet34", 64),
+        ("unet_resnet18", 64),
+    ],
+)
+def test_builtin_checkpoint_exports_and_has_cpp_contract(tmp_path, model_id, size):
     import torch
     from builtin_models import build_builtin_model, make_builtin_checkpoint
     from export_onnx import export_checkpoint
 
-    size = 32 if model_id == "resnet18" else 64
     model = build_builtin_model(model_id, 2, 3).eval()
     checkpoint = make_builtin_checkpoint(model_id, model, num_classes=2,
                                          input_size=size, class_names=["ok", "ng"])
