@@ -161,6 +161,56 @@ def test_managed_wsl_imports_only_local_owned_distro(tmp_path: Path):
     assert result.argv[:4] == ("wsl.exe", "-d", "DeepVisionStudio", "--")
 
 
+def test_managed_wsl_rolls_back_new_import_when_marker_commit_fails(tmp_path: Path, monkeypatch):
+    tarball = tmp_path / "distro.tar"
+    tarball.write_bytes(b"tar")
+    install = tmp_path / "distro"
+    install.mkdir()
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(tuple(argv))
+        if argv[1:3] == ("--list", "--quiet"):
+            return WslCommandResult(tuple(argv), 0, "", "")
+        return WslCommandResult(tuple(argv), 0, "", "")
+
+    original_replace = Path.replace
+
+    def fail_marker_replace(path, target):
+        if path.name.startswith(".owned-distro.json."):
+            raise OSError("simulated marker storage failure")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", fail_marker_replace)
+    manager = ManagedWsl("DeepVisionStudio", tmp_path, runner=fake_run)
+    with pytest.raises(ManagedWslError, match="marker commit"):
+        manager.import_offline(tarball, install, version="1.0.0")
+    assert any(command[1:3] == ("--unregister", "DeepVisionStudio") for command in calls)
+    assert not manager.marker.exists()
+    assert not list(tmp_path.glob("*.pending"))
+
+
+def test_managed_wsl_attempted_import_failure_also_cleans_registration(tmp_path: Path):
+    tarball = tmp_path / "distro.tar"
+    tarball.write_bytes(b"tar")
+    install = tmp_path / "distro"
+    install.mkdir()
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(tuple(argv))
+        if argv[1:3] == ("--list", "--quiet"):
+            return WslCommandResult(tuple(argv), 0, "", "")
+        if argv[1:2] == ("--import",):
+            return WslCommandResult(tuple(argv), 17, "", "import failed")
+        return WslCommandResult(tuple(argv), 0, "", "")
+
+    manager = ManagedWsl("DeepVisionStudio", tmp_path, runner=fake_run)
+    with pytest.raises(ManagedWslError, match="WSL command failed"):
+        manager.import_offline(tarball, install, version="1.0.0")
+    assert any(command[1:3] == ("--unregister", "DeepVisionStudio") for command in calls)
+
+
 def test_managed_wsl_refuses_foreign_existing_distro(tmp_path: Path):
     tarball = tmp_path / "distro.tar"
     tarball.write_bytes(b"tar")

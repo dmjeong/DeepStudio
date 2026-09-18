@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import subprocess
 from typing import Mapping, Sequence
+import uuid
 
 
 class ManagedWslError(RuntimeError):
@@ -101,10 +102,39 @@ class ManagedWsl:
             if not self.is_owned():
                 raise ManagedWslError("existing WSL distro is not owned by this application")
             return
-        self._run((self.wsl_executable, "--import", self.distro, str(target), str(archive), "--version", "2"))
-        self.marker.write_text(json.dumps({"schema_version": 1, "owned": True,
-                                           "distro": self.distro, "version": version},
-                                          ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        try:
+            if any(target.iterdir()):
+                raise ManagedWslError("WSL install_dir must be empty before import")
+        except OSError as exc:
+            raise ManagedWslError(f"cannot inspect WSL install_dir: {target}") from exc
+        import_attempted = False
+        imported = False
+        temporary = self.marker.with_name(f".{self.marker.name}.{uuid.uuid4().hex}.pending")
+        try:
+            import_attempted = True
+            self._run((self.wsl_executable, "--import", self.distro, str(target), str(archive), "--version", "2"))
+            imported = True
+            temporary.write_text(json.dumps({"schema_version": 1, "owned": True,
+                                             "distro": self.distro, "version": version},
+                                            ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            temporary.replace(self.marker)
+        except Exception as exc:
+            if import_attempted:
+                try:
+                    rollback = self._run((self.wsl_executable, "--unregister", self.distro), check=False)
+                    if imported and rollback.returncode != 0:
+                        raise ManagedWslError(
+                            f"failed to rollback unmarked WSL distro {self.distro}: {rollback.returncode}") from exc
+                except ManagedWslError:
+                    raise
+                except Exception as rollback_exc:
+                    raise ManagedWslError(
+                        f"failed to rollback unmarked WSL distro {self.distro}") from rollback_exc
+            if temporary.exists():
+                temporary.unlink(missing_ok=True)
+            if isinstance(exc, ManagedWslError):
+                raise
+            raise ManagedWslError("owned WSL marker commit failed") from exc
 
     def run(self, argv: Sequence[str], *, timeout: float = 60.0,
             check: bool = True) -> WslCommandResult:
