@@ -185,7 +185,11 @@ class TrainingWidget(TrainingForm, QWidget):
         if controls is None:
             return
         spec, pack_path = self._selected_container_spec()
-        visible = spec is not None and pack_path is not None and self._pack_job is None
+        data_root = Path(getattr(getattr(self.project, "data", None), "root", "")).expanduser()
+        data_ready = (data_root.is_absolute() and data_root.is_dir()
+                      and not data_root.is_symlink())
+        visible = (spec is not None and pack_path is not None and data_ready
+                   and self._pack_job is None)
         for name in ("model_pack_train_button", "model_pack_infer_button", "model_pack_export_button"):
             getattr(self, name).setVisible(visible)
         if visible:

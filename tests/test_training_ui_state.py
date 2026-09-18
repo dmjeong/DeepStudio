@@ -190,7 +190,6 @@ def test_installed_container_pack_actions_start_dvw1_job(prepared_page, monkeypa
     project.model.model_id = "re_detr_v4_small"
     data_root = tmp_path / "detect-data"
     pack_root = tmp_path / "re-detr-pack"
-    data_root.mkdir()
     pack_root.mkdir()
     project.data.root = str(data_root)
     project.model.pack_path = str(pack_root)
@@ -198,6 +197,9 @@ def test_installed_container_pack_actions_start_dvw1_job(prepared_page, monkeypa
     # The registry normally supplies this path after a real .dvmodel install;
     # the fixture supplies the already-validated directory directly.
     page.project.model.pack_path = str(pack_root)
+    page._update_pack_controls()
+    assert page.model_pack_train_button.isHidden()
+    data_root.mkdir()
     page._update_pack_controls()
 
     assert not page.model_pack_train_button.isHidden()
