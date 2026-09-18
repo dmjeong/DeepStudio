@@ -14,8 +14,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Verify an offline Windows payload manifest")
     parser.add_argument("root", type=Path)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--require", action="append", default=[],
+                        help="require an exact relative file in the staged payload")
     args = parser.parse_args(argv)
-    verify_payload(args.root, json.loads(args.manifest.read_text(encoding="utf-8")))
+    verify_payload(args.root, json.loads(args.manifest.read_text(encoding="utf-8")),
+                   required_paths=args.require)
     print("payload verified")
     return 0
 

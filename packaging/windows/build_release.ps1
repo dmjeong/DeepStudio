@@ -26,7 +26,10 @@ New-Item -ItemType Directory -Force -Path $output | Out-Null
 $collector = Join-Path $scriptRoot "collect_payloads.py"
 $validator = Join-Path $scriptRoot "validate_payloads.py"
 python $collector $root --manifest $manifest --version $Version --commit $env:GITHUB_SHA
-python $validator $root --manifest $manifest
+python $validator $root --manifest $manifest `
+    --require "app\DeepVisionStudio.exe" `
+    --require "models\default-model-catalog.json" `
+    --require "sdk\VisionRuntime.dll"
 
 $common = @("-arch", "x64", "-dVersion=$Version", "-dPayloadRoot=$root")
 $msiArgs = @("build") + $common + @("-o", $msi, (Join-Path $scriptRoot "bootstrapper\DeepVisionStudio.msi.wxs"))

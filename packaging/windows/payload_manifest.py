@@ -52,7 +52,7 @@ def collect_payload(root: str | Path, *, version: str, commit: str = "",
                               "external_downloads": False}}
 
 
-def verify_payload(root: str | Path, manifest: dict[str, Any]) -> None:
+def verify_payload(root: str | Path, manifest: dict[str, Any], *, required_paths=()) -> None:
     base = Path(root).resolve()
     if manifest.get("schema_version") != 1 or not isinstance(manifest.get("files"), list):
         raise ValueError("unsupported payload manifest")
@@ -79,6 +79,10 @@ def verify_payload(root: str | Path, manifest: dict[str, Any]) -> None:
     actual_paths = {path.relative_to(base).as_posix() for path in base.rglob("*") if path.is_file()}
     if actual_paths != seen:
         raise ValueError("payload contains files missing from manifest")
+    for required in required_paths:
+        relative = str(required).replace("\\", "/").lstrip("/")
+        if relative not in actual_paths:
+            raise ValueError(f"required payload file is missing: {relative}")
 
 
 def main(argv=None) -> int:

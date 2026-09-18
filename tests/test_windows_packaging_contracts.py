@@ -80,6 +80,9 @@ def test_payload_wrapper_scripts_collect_and_verify_exact_bytes(tmp_path):
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     verify = runpy.run_path(str(WINDOWS / "validate_payloads.py"))
     verify["verify_payload"](root, json.loads(manifest_path.read_text(encoding="utf-8")))
+    with pytest.raises(ValueError, match="required payload"):
+        verify["verify_payload"](root, json.loads(manifest_path.read_text(encoding="utf-8")),
+                                  required_paths=["models/default-model-catalog.json"])
 
 
 def test_payload_stager_copies_artifacts_and_rejects_symlinks(tmp_path):
@@ -98,3 +101,10 @@ def test_payload_stager_copies_artifacts_and_rejects_symlinks(tmp_path):
     (source / "escape").symlink_to(outside)
     with pytest.raises(stager["PayloadStageError"], match="symlink"):
         stager["stage_payload"](tmp_path / "bad", [("workers", source)], notice=notice)
+
+
+def test_release_script_requires_app_catalog_and_csharp_sdk_payload_files():
+    script = (WINDOWS / "build_release.ps1").read_text(encoding="utf-8")
+    assert 'app\\DeepVisionStudio.exe' in script
+    assert 'models\\default-model-catalog.json' in script
+    assert 'sdk\\VisionRuntime.dll' in script
