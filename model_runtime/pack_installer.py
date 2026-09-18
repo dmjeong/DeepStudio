@@ -78,6 +78,11 @@ class PackInstaller:
             raise ValueError("pack limits must be positive")
 
     def install(self, pack_path: str | Path, *, allow_unsigned: bool = False) -> InstalledPack:
+        if not self.root.is_absolute():
+            raise PackInstallError("installed model root must be an absolute directory")
+        if self.root.exists() and self.root.is_symlink():
+            raise PackInstallError("installed model root cannot be a symlink")
+        self.root = self.root.resolve()
         source = Path(pack_path).expanduser()
         if source.suffix.lower() != ".dvmodel" or not source.is_file():
             raise PackInstallError("model pack must be an existing .dvmodel file")

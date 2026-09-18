@@ -8,7 +8,8 @@ import zipfile
 import pytest
 
 from core.container_worker import ContainerCommand, ContainerWorker, Frame, ContainerWorkerError, build_container_command
-from core.model_registry import ModelRegistry, ModelRegistryError, builtin_model_specs
+from core.model_registry import (ModelRegistry, ModelRegistryError,
+                                 builtin_model_specs, registry_with_installed_packs)
 
 
 def test_requested_catalog_contains_every_product_family_and_redetr_sizes():
@@ -77,6 +78,21 @@ def test_registry_loads_activated_pack_manifests_after_restart(tmp_path):
     registry = ModelRegistry.builtin()
     loaded = registry.load_installed_root(tmp_path / "installed")
     assert loaded[0].model_id == "vendor.example-classifier"
+
+
+def test_registry_discovers_installed_packs_without_hiding_builtins(tmp_path):
+    root = tmp_path / "installed" / "vendor.extra" / "1.0.0"
+    root.mkdir(parents=True)
+    (root / "manifest.json").write_text(json.dumps({
+        "schema_version": 1, "model_id": "vendor.extra", "family": "Extra",
+        "variant": "Small", "task": "classify", "runtimes": ["container"],
+        "capabilities": ["train", "infer"], "input_size": [224, 224],
+        "input_channels": [3], "release_status": "scoped",
+    }), encoding="utf-8")
+    registry, errors = registry_with_installed_packs(tmp_path / "installed")
+    assert not errors
+    assert registry.get("efficientnet_b0").family == "EfficientNet"
+    assert registry.get("vendor.extra").release_status == "scoped"
 
 
 def test_registry_rejects_unknown_manifest_schema(tmp_path):

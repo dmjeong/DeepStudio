@@ -77,8 +77,8 @@ class TrainingWidget(TrainingForm, QWidget):
         """Filter the shared catalog to the current task and restore model_id."""
         if not hasattr(self, "model_id_combo"):
             return
-        from core.model_registry import ModelRegistry
-        registry = ModelRegistry.builtin()
+        from core.model_registry import registry_with_installed_packs
+        registry, _ = registry_with_installed_packs()
         model_id = getattr(project.model, "model_id", "")
         self.model_id_combo.blockSignals(True)
         try:
@@ -93,14 +93,40 @@ class TrainingWidget(TrainingForm, QWidget):
         finally:
             self.model_id_combo.blockSignals(False)
 
+    def _install_model_pack(self):
+        """Import and validate one offline Docker model pack from the GUI."""
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "모델 팩 가져오기", "", "Deep Vision model pack (*.dvmodel)"
+        )
+        if not filepath:
+            return
+        try:
+            from core.model_registry import (default_installed_model_root,
+                                             registry_with_installed_packs)
+            from model_runtime.pack_installer import PackInstaller
+            root = default_installed_model_root()
+            installed = PackInstaller(root).install(filepath)
+            registry, errors = registry_with_installed_packs(root)
+            if errors:
+                raise ValueError("; ".join(errors))
+            if self.project is not None and registry.get(installed.model_id).task == self.project.task:
+                self._set_model_options(self.project)
+            QMessageBox.information(
+                self, "모델 팩 설치 완료",
+                f"{installed.model_id} {installed.pack_version} 팩을 설치했습니다.\n{installed.path}"
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "모델 팩 설치 실패", str(exc))
+
     def _on_model_id_changed(self, *_):
         """Keep the legacy mode selector consistent with a catalog adapter."""
         if self.project is None or not hasattr(self, "model_id_combo"):
             return
         model_id = self.model_id_combo.currentData() or ""
         try:
-            from core.model_registry import ModelRegistry
-            spec = ModelRegistry.builtin().get(model_id)
+            from core.model_registry import registry_with_installed_packs
+            registry, _ = registry_with_installed_packs()
+            spec = registry.get(model_id)
             if len(spec.input_channels) == 1:
                 self.project.training.in_channels = spec.input_channels[0]
             if hasattr(self, "input_size_spin") and model_id not in {"efficientnet_b0", "efficientnet_b1"}:
@@ -541,9 +567,10 @@ class TrainingWidget(TrainingForm, QWidget):
         is_patchcore = is_anomaly and self.project.training.anomaly_method == "patchcore"
         model_id = getattr(self.project.model, "model_id", "")
         if model_id:
-            from core.model_registry import ModelRegistry
+            from core.model_registry import registry_with_installed_packs
             try:
-                spec = ModelRegistry.builtin().get(model_id)
+                registry, _ = registry_with_installed_packs()
+                spec = registry.get(model_id)
             except ValueError:
                 spec = None
             if spec is not None and "container" in spec.runtimes and "windows_native" not in spec.runtimes:

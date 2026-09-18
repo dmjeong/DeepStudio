@@ -134,7 +134,7 @@
       "designStatus": "revised_with_open_decisions",
       "implementationStatus": "in_progress",
       "requirementsRevision": 3,
-      "validation": "Python 655 passed/11 skipped; C++17 CTest 4/4 including SAM2 point/box/mask C ABI prompts; Re-DETR two-output and SAM2 encoder/decoder ONNX exporter fixtures passed; Windows/i7 not measured",
+      "validation": "Python 657 passed/11 skipped; C++17 CTest 4/4 including SAM2 point/box/mask C ABI prompts; Re-DETR two-output and SAM2 encoder/decoder ONNX exporter fixtures passed; Windows/i7 not measured",
       "implementationProgress": [
         "ModelRegistry catalog with Re-DETR v4 Small/Medium/Large and all SAM2 Hiera variants",
         "Versioned .dvmodel manifest validation and safe pack loading",
@@ -151,9 +151,10 @@
         "PyInstaller frozen GUI includes model-pack schemas, dynamic worker modules and optional native SDK DLL staging",
         "Model catalog selector routes weight-free adapters through the project worker and exposes installed-pack operation contracts",
         "Installed model-pack DVW1 host adapter and web jobs for train/infer/export with digest-pinned container images",
+        "Offline model-pack install/discovery in the local web API and desktop training UI with per-user roots and invalid-pack diagnostics",
         "ONNX FP32 parity profiles cover classification, segmentation, detection, anomaly and SAM2/PatchCore exports",
         "Windows CI contract job for C# SDK compilation, worker/payload tests and frozen builder syntax",
-        "WiX v4 MSI/Burn offline installer scaffold with payload hash and third-party notice gates",
+        "WiX v4 MSI/Burn offline installer scaffold with payload hash and third-party notice gates plus a Windows CI build contract",
         "Web model catalog endpoint and project model_id defaults"
       ],
       "openDecisions": [

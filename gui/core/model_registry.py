@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any, Iterable, Mapping
@@ -33,6 +34,30 @@ SUPPORTED_STATUSES = frozenset({
 
 class ModelRegistryError(ValueError):
     """모델 정의나 모델 팩이 계약을 위반할 때 발생하는 오류."""
+
+
+def default_installed_model_root(state_dir: str | Path | None = None) -> Path:
+    """Return the per-user offline model-pack directory.
+
+    The environment override is useful for portable installs and CI.  The
+    web app passes its state directory so tests and portable copies stay
+    self-contained; a normal desktop install uses the platform user-data
+    directory and never writes below Program Files.
+    """
+    override = os.environ.get("DEEP_STUDIO_MODEL_ROOT", "").strip()
+    if override:
+        root = Path(override).expanduser()
+    elif state_dir is not None:
+        root = Path(state_dir).expanduser() / "models"
+    elif os.name == "nt":
+        root = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "DeepVisionStudio" / "models"
+    else:
+        root = Path.home() / ".local" / "share" / "DeepVisionStudio" / "models"
+    if not root.is_absolute():
+        raise ModelRegistryError("installed model root must be an absolute path")
+    if root.exists() and root.is_symlink():
+        raise ModelRegistryError("installed model root cannot be a symlink")
+    return root.resolve()
 
 
 @dataclass(frozen=True)
@@ -264,3 +289,38 @@ class ModelRegistry:
         for manifest in sorted(base.glob("*/*/manifest.json")):
             loaded.append(self.load_installed_pack(manifest.parent))
         return tuple(loaded)
+
+
+def registry_with_installed_packs(root: str | Path | None = None) -> tuple[ModelRegistry, tuple[str, ...]]:
+    """Build the product catalog and discover activated packs.
+
+    A malformed third-party pack must not prevent the desktop application
+    from opening or hide the built-in models.  Each manifest is therefore
+    validated independently; the returned error strings are suitable for a
+    diagnostics panel or API response and no unvalidated model is registered.
+    """
+    registry = ModelRegistry.builtin()
+    if root is None:
+        base = default_installed_model_root()
+    else:
+        base = Path(root).expanduser()
+        if not base.is_absolute():
+            raise ModelRegistryError("installed model root must be an absolute path")
+        if base.exists() and base.is_symlink():
+            raise ModelRegistryError("installed model root cannot be a symlink")
+        base = base.resolve()
+    errors: list[str] = []
+    if not base.is_dir() or base.is_symlink():
+        return registry, ()
+    for manifest in sorted(base.glob("*/*/manifest.json")):
+        try:
+            registry.load_installed_pack(manifest.parent)
+        except ModelRegistryError as exc:
+            errors.append(f"{manifest.parent}: {exc}")
+    return registry, tuple(errors)
+
+
+__all__ = [
+    "ModelRegistry", "ModelRegistryError", "ModelSpec", "builtin_model_specs",
+    "default_installed_model_root", "registry_with_installed_packs",
+]

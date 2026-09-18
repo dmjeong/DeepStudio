@@ -49,8 +49,9 @@ def validate_training_options(project):
         # in one registry.  Container packs validate their own contract after
         # installation, so an unknown legacy/pack id remains loadable here.
         try:
-            from core.model_registry import ModelRegistry
-            spec = ModelRegistry.builtin().get(model_id)
+            from core.model_registry import registry_with_installed_packs
+            registry, _ = registry_with_installed_packs()
+            spec = registry.get(model_id)
         except (ImportError, KeyError, ValueError):
             spec = None
         if spec is not None and not (project.task == "anomaly" and

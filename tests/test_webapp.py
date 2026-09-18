@@ -1,6 +1,7 @@
 """로컬 웹 저장 계약, 프로세스 실행, 중단 및 계산 없는 캐시 렌더링 검증."""
 
 import csv
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -123,6 +125,27 @@ class WebAppTests(unittest.TestCase):
                 "work_dir": str(self.root), "request": {}}
         response = self.client.post("/api/jobs/model-pack/unknown", json=body)
         self.assertEqual(response.status_code, 400)
+
+    def test_model_pack_install_endpoint_discovers_verified_pack(self):
+        manifest = json.dumps({
+            "schema_version": 1, "model_id": "vendor.web-pack", "pack_version": "1.0.0",
+            "family": "Web Pack", "variant": "Small", "task": "classify",
+            "runtimes": ["onnx"], "capabilities": ["infer", "export_onnx"],
+            "input_size": [224, 224], "input_channels": [3], "release_status": "scoped",
+            "signature": {"key_id": "test", "value": "signed"},
+        }).encode()
+        files = {"manifest.json": manifest, "README.ko.md": b"offline"}
+        checksums = {name: hashlib.sha256(value).hexdigest() for name, value in files.items()}
+        pack = self.root / "vendor.web-pack.dvmodel"
+        with zipfile.ZipFile(pack, "w") as archive:
+            for name, value in files.items():
+                archive.writestr(name, value)
+            archive.writestr("checksums.json", json.dumps({"files": checksums}))
+        response = self.client.post("/api/models/install", json={"pack_path": str(pack)})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model"]["model_id"], "vendor.web-pack")
+        models = self.client.get("/api/models?task=classify").json()["models"]
+        self.assertIn("vendor.web-pack", {item["model_id"] for item in models})
 
     def test_real_class_delete_process_and_backup(self):
         project = self.project()

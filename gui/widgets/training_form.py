@@ -50,8 +50,9 @@ class TrainingForm:
         model_layout.addWidget(model_desc)
         self.model_id_combo = NoWheelComboBox()
         try:
-            from core.model_registry import ModelRegistry
-            for spec in ModelRegistry.builtin().list():
+            from core.model_registry import registry_with_installed_packs
+            registry, _ = registry_with_installed_packs()
+            for spec in registry.list():
                 self.model_id_combo.addItem(
                     f"{spec.display_name} · {spec.task} · {spec.release_status}",
                     spec.model_id)
@@ -61,6 +62,13 @@ class TrainingForm:
             pass
         self.model_id_combo.currentIndexChanged.connect(self._on_model_id_changed)
         model_layout.addWidget(self.model_id_combo)
+        self.model_pack_install_button = QPushButton("모델 팩 가져오기 (.dvmodel)")
+        self.model_pack_install_button.setToolTip(
+            "서명된 오프라인 Docker 모델 팩을 사용자 모델 폴더에 설치합니다."
+        )
+        if hasattr(self, "_install_model_pack"):
+            self.model_pack_install_button.clicked.connect(self._install_model_pack)
+        model_layout.addWidget(self.model_pack_install_button)
         left_layout.addWidget(model_group)
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

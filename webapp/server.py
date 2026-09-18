@@ -87,6 +87,11 @@ class ModelPackRequest(Body):
     container_name: str = ""
 
 
+class ModelPackInstallRequest(Body):
+    pack_path: str
+    allow_unsigned: bool = False
+
+
 class DefectRequest(Body):
     folder: str
     output: str
@@ -166,8 +171,11 @@ def update_dataclass(current, changes):
 
 
 def create_app(state_dir=None):
-    state_dir = Path(state_dir or os.environ.get("DEEP_STUDIO_STATE_DIR") or
-                     Path.home() / ".deep-vision-studio-react")
+    configured_state_dir = state_dir or os.environ.get("DEEP_STUDIO_STATE_DIR")
+    state_dir = Path(configured_state_dir or Path.home() / ".deep-vision-studio-react")
+    from core.model_registry import default_installed_model_root
+    model_root = ((state_dir / "models").resolve() if configured_state_dir
+                  else default_installed_model_root())
     store = ProjectStore(state_dir)
     dataset_cache = {}
     result_indexes = {}
@@ -175,6 +183,10 @@ def create_app(state_dir=None):
         dataset_cache.clear()
         store.reload()
     jobs = JobManager(state_dir, on_finish=after_job)
+
+    def model_registry():
+        from core.model_registry import registry_with_installed_packs
+        return registry_with_installed_packs(model_root)
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -224,9 +236,9 @@ def create_app(state_dir=None):
             project = store.project
             project_summary = {"filepath": ProjectManager.get_active_filepath(project),
                                "revision": store.revision} if project else None
-            from core.model_registry import ModelRegistry
+            registry, pack_errors = model_registry()
             return {"version": APP_VERSION, "project": project_view(project) if project and not summary else None,
-                    "model_catalog": ModelRegistry.builtin().as_dict(),
+                    "model_catalog": registry.as_dict(), "model_pack_errors": list(pack_errors),
                     "project_summary": project_summary, "warnings": jobs.warnings,
                     "recent": store.recent, "error": store.error, "active_job": jobs.active_id,
                     "jobs": jobs.list(project_path=ProjectManager.get_active_filepath(project) if project else None), "home": str(Path.home()),
@@ -327,12 +339,33 @@ def create_app(state_dir=None):
         ``release_ready``는 아직 런타임을 등록부에서 필터링하는 다음 단계의 호환 인자다.
         현재는 모든 항목의 검증 상태를 그대로 반환해 UI가 요청/검증 중임을 표시할 수 있다.
         """
-        from core.model_registry import ModelRegistry
         if task is not None and task not in {"classify", "anomaly", "detect", "segment"}:
             raise ValueError("모델 카탈로그 태스크 오류")
-        registry = ModelRegistry.builtin()
+        registry, pack_errors = model_registry()
         selected = registry.list(task, release_ready=release_ready)
-        return {"models": [spec.to_dict() for spec in selected], "release_ready": release_ready}
+        return {"models": [spec.to_dict() for spec in selected], "release_ready": release_ready,
+                "installed_root": str(model_root),
+                "pack_errors": list(pack_errors)}
+
+    @app.post("/api/models/install")
+    def install_model_pack(body: ModelPackInstallRequest):
+        """Verify and atomically install an offline ``.dvmodel`` pack.
+
+        Unsigned packs are accepted only when explicitly requested by the
+        caller for development.  Production installers should ship signed
+        packs and leave the flag at its secure default.
+        """
+        pack_path = existing_path(body.pack_path)
+        from model_runtime.pack_installer import PackInstaller
+        from core.model_registry import ModelRegistry
+        root = model_root
+        installed = PackInstaller(root).install(pack_path, allow_unsigned=body.allow_unsigned)
+        registry = ModelRegistry.builtin()
+        spec = registry.load_installed_pack(installed.path)
+        return {"model": spec.to_dict(), "model_id": installed.model_id,
+                "pack_version": installed.pack_version, "content_hash": installed.content_hash,
+                "path": str(installed.path), "signed": installed.signed,
+                "installed_root": str(root)}
 
     @app.get("/api/files")
     def files(path: str = "", offset: int = Query(0, ge=0)):
