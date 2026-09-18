@@ -58,6 +58,17 @@ def test_pack_requires_pinned_container_image(tmp_path):
         ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
 
 
+@pytest.mark.parametrize("image", [
+    "registry.invalid/model@sha256:short",
+    "registry.invalid/model@sha256:" + "g" * 64,
+    "sha256:" + "a" * 63,
+])
+def test_pack_rejects_malformed_container_digest(tmp_path, image):
+    _manifest(tmp_path, image)
+    with pytest.raises(ModelPackWorkerError, match="64-character"):
+        ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
+
+
 def test_pack_passes_offline_image_archive_to_container_command(tmp_path):
     _manifest(tmp_path)
     archive = tmp_path / "docker-image.tar"

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from pathlib import PurePosixPath
+import re
 from typing import Any, Mapping, Sequence
 import uuid
 
@@ -75,6 +76,9 @@ def _container_image(manifest: Mapping[str, Any]) -> str:
     # project.  Local development can still use a content ID or digest.
     if "@sha256:" not in image and not image.startswith("sha256:"):
         raise ModelPackWorkerError("container_image must be pinned by digest")
+    digest = image.split("@sha256:", 1)[1] if "@sha256:" in image else image[len("sha256:"):]
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+        raise ModelPackWorkerError("container_image must use a 64-character sha256 digest")
     return image
 
 
