@@ -164,6 +164,11 @@ int main(int argc, char** argv)
         require(redetr.detections.size() == 1, "Re-DETR v4 detection count mismatch.");
         require(redetr.detections[0].class_id == 0 && redetr.detections[0].confidence > 0.99f,
                 "Re-DETR v4 two-output decode mismatch.");
+        require(engine.InitializeFromJson((root / "redetr_softmax.json").u8string()), "Re-DETR softmax load failed.");
+        const auto redetr_softmax = engine.Detect(gray);
+        require(redetr_softmax.detections.size() == 1 && redetr_softmax.detections[0].class_id == 0 &&
+                    redetr_softmax.detections[0].confidence > 0.99f,
+                "Re-DETR softmax decode mismatch.");
         require(engine.InitializeFromJson((root / "anomaly.json").u8string()), "Anomaly load failed.");
         const auto anomaly = engine.Anomaly(gray);
         require(anomaly.anomaly_map.type() == CV_32FC1 && anomaly.anomaly_map.size() == gray.size(),

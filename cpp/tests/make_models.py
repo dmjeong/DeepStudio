@@ -80,6 +80,9 @@ redetr_config.update({"backend": "redetr_v4", "model_path": "redetr.onnx",
                                          "class_scores": "sigmoid", "confidence_threshold": 0.25,
                                          "iou_threshold": 0.5, "max_detections": 10}})
 (root / "redetr.json").write_text(json.dumps(redetr_config, ensure_ascii=False), encoding="utf-8")
+redetr_softmax_config = json.loads(json.dumps(redetr_config))
+redetr_softmax_config["postprocessing"]["class_scores"] = "softmax"
+(root / "redetr_softmax.json").write_text(json.dumps(redetr_softmax_config, ensure_ascii=False), encoding="utf-8")
 
 # Reconstruction anomaly contract: identity output yields a zero error map.
 anomaly_node = helper.make_node("Identity", ["input_image"], ["reconstruction"])
