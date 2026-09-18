@@ -7,6 +7,7 @@ import json
 import os
 import runpy
 import sys
+import zipfile
 import pytest
 
 from core.model_registry import builtin_model_specs
@@ -128,7 +129,14 @@ def test_model_catalog_payload_gate_is_optional_for_development_and_strict_for_r
         "kind": "pack", "paths": ["models/demo.dvmodel"]
     }
     catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
-    (root / "models" / "demo.dvmodel").write_bytes(b"pack")
+    with zipfile.ZipFile(root / "models" / "demo.dvmodel", "w") as archive:
+        archive.writestr("manifest.json", json.dumps({
+            "release_status": "release_ready",
+            "signature": {"key_id": "release-key", "value": "signed"},
+        }))
+        archive.writestr("checksums.json", json.dumps({"files": {}}))
+        archive.writestr("THIRD_PARTY_NOTICES.md", "notice")
+        archive.writestr("licenses/model.txt", "license")
     api["validate_model_catalog_payload"](root, require_release_ready=True)
 
 

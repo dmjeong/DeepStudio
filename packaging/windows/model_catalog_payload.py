@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path, PurePosixPath
+import re
 from typing import Any, Mapping
+import zipfile
 
 
 _STATUSES = frozenset({
@@ -19,6 +21,7 @@ _STATUSES = frozenset({
     "export_verified", "sdk_verified", "release_ready",
 })
 _PAYLOAD_KINDS = frozenset({"builtin", "pack"})
+_MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,79}$")
 
 
 class ModelCatalogPayloadError(ValueError):
@@ -81,10 +84,47 @@ def _validate_entry_payload(root: Path, model: Mapping[str, Any], model_id: str)
             raise ModelCatalogPayloadError(
                 f"release-ready model {model_id} payload file is missing: {relative}"
             )
-    if kind == "pack" and not any(path.casefold().endswith(".dvmodel") for path in normalized):
-        raise ModelCatalogPayloadError(
-            f"release-ready model {model_id} pack payload must include a .dvmodel file"
-        )
+    if kind == "pack":
+        pack_paths = [path for path in normalized if path.casefold().endswith(".dvmodel")]
+        if not pack_paths:
+            raise ModelCatalogPayloadError(
+                f"release-ready model {model_id} pack payload must include a .dvmodel file"
+            )
+        _validate_model_pack(root / Path(*PurePosixPath(pack_paths[0]).parts), model_id)
+
+
+def _validate_model_pack(path: Path, model_id: str) -> None:
+    """Check release metadata without extracting or executing a model pack."""
+    try:
+        archive = zipfile.ZipFile(path)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise ModelCatalogPayloadError(f"release-ready model {model_id} pack is not a ZIP archive") from exc
+    with archive:
+        infos = archive.infolist()
+        names = {info.filename for info in infos if not info.is_dir()}
+        required = {"manifest.json", "checksums.json", "THIRD_PARTY_NOTICES.md"}
+        if not required.issubset(names) or not any(name.startswith("licenses/") for name in names):
+            raise ModelCatalogPayloadError(
+                f"release-ready model {model_id} pack must include manifest, checksums, notices and licenses"
+            )
+        manifest_info = archive.getinfo("manifest.json")
+        if manifest_info.file_size > 1024 * 1024:
+            raise ModelCatalogPayloadError(f"release-ready model {model_id} pack manifest is too large")
+        try:
+            manifest = json.loads(archive.read("manifest.json"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError) as exc:
+            raise ModelCatalogPayloadError(f"release-ready model {model_id} pack manifest is invalid") from exc
+        if not isinstance(manifest, Mapping) or manifest.get("release_status") != "release_ready":
+            raise ModelCatalogPayloadError(
+                f"release-ready model {model_id} pack manifest must declare release_ready"
+            )
+        signature = manifest.get("signature")
+        if (not isinstance(signature, Mapping) or not isinstance(signature.get("key_id"), str) or
+                not signature["key_id"].strip() or not isinstance(signature.get("value"), str) or
+                not signature["value"].strip()):
+            raise ModelCatalogPayloadError(
+                f"release-ready model {model_id} pack must contain an external signature"
+            )
 
 
 def validate_model_catalog_payload(
@@ -119,7 +159,8 @@ def validate_model_catalog_payload(
         if not isinstance(model, Mapping):
             raise ModelCatalogPayloadError("model catalog entry must be an object")
         model_id = model.get("model_id")
-        if not isinstance(model_id, str) or not model_id.strip() or model_id in seen:
+        if (not isinstance(model_id, str) or not _MODEL_ID_RE.fullmatch(model_id) or
+                model_id in seen):
             raise ModelCatalogPayloadError(f"model catalog has an invalid or duplicate model_id: {model_id!r}")
         seen.add(model_id)
         status = model.get("release_status", "requested")
