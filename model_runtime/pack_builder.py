@@ -55,7 +55,10 @@ def build_pack(source: str | Path, output: str | Path, *, manifest: str | Path |
         raise PackBuildError(f"pack source is not a directory: {root}")
     if target.suffix.lower() != ".dvmodel":
         raise PackBuildError("pack output must use the .dvmodel suffix")
-    manifest_path = Path(manifest).expanduser().resolve() if manifest else root / "manifest.json"
+    manifest_input = Path(manifest).expanduser() if manifest else None
+    if manifest_input is not None and manifest_input.is_symlink():
+        raise PackBuildError("manifest symlink is not allowed")
+    manifest_path = manifest_input.resolve() if manifest_input is not None else root / "manifest.json"
     if not manifest_path.is_file():
         raise PackBuildError("pack source requires manifest.json")
     if manifest_path.is_symlink():

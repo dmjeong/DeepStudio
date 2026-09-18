@@ -45,6 +45,19 @@ def test_builder_rejects_symlinked_source_root(tmp_path):
         build_pack(link, tmp_path / "model.dvmodel", allow_unsigned=True)
 
 
+def test_builder_rejects_explicit_manifest_symlink(tmp_path):
+    source = _source(tmp_path)
+    external = tmp_path / "external-manifest.json"
+    external.write_text((source / "manifest.json").read_text(encoding="utf-8"), encoding="utf-8")
+    link = tmp_path / "manifest-link.json"
+    try:
+        link.symlink_to(external)
+    except OSError as exc:
+        pytest.skip(f"file symlinks unavailable: {exc}")
+    with pytest.raises(PackBuildError, match="manifest symlink"):
+        build_pack(source, tmp_path / "model.dvmodel", manifest=link, allow_unsigned=True)
+
+
 def test_builder_accepts_manifest_outside_source(tmp_path):
     source = tmp_path / "source"
     source.mkdir()

@@ -203,6 +203,7 @@
         "Managed WSL ownership checks reject symlinked marker files before discovering or unregistering a distro"
         ,"Pack installer rejects symlinked model/version directories and cleans failed staging activation without leaving orphaned payloads"
         ,"Deployment bundle builder/verifier rejects symlinked source/output paths and non-normalized checksum keys"
+        ,"Pack builder rejects explicitly supplied symlinked manifests before resolving external release metadata"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",
@@ -477,6 +478,14 @@
       "timestamp": "2026-09-19T00:25:00+09:00",
       "python": "7 deployment bundle path/integrity tests passed; 2 torch-dependent tests not run in the minimal environment",
       "deployment_bundle": "source/output symlink and normalized manifest-key gates are enforced",
+      "windows_i7": "not measured"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "pack_builder_manifest_hardening_refresh",
+      "timestamp": "2026-09-19T00:33:00+09:00",
+      "python": "32 pack/bundle integrity tests passed; 2 torch-dependent tests not run in the minimal environment",
+      "pack_builder": "explicit external manifest symlinks are rejected before resolution",
       "windows_i7": "not measured"
     }
   ]
