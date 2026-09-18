@@ -130,9 +130,15 @@ def _write_manifest(root: Path, config_name: str) -> dict[str, Any]:
 
 def build_deployment_bundle(source: str | Path, output: str | Path) -> Path:
     """Create an atomic directory bundle from an ONNX file or export folder."""
-    source_path = Path(source).expanduser().resolve()
-    destination = Path(output).expanduser().resolve()
-    if not source_path.exists() or source_path.is_symlink():
+    source_input = Path(source).expanduser()
+    output_input = Path(output).expanduser()
+    if source_input.is_symlink():
+        raise DeploymentBundleError("deployment source symlink is not allowed")
+    if output_input.is_symlink():
+        raise DeploymentBundleError("deployment bundle output symlink is not allowed")
+    source_path = source_input.resolve()
+    destination = output_input.resolve()
+    if not source_path.exists():
         raise DeploymentBundleError(f"deployment source does not exist: {source_path}")
     if destination.suffix.lower() != ".dvdeploy":
         raise DeploymentBundleError("deployment bundle output must use .dvdeploy")
@@ -177,7 +183,10 @@ def build_deployment_bundle(source: str | Path, output: str | Path) -> Path:
 
 def verify_deployment_bundle(bundle: str | Path) -> dict[str, Any]:
     """Verify every bundle byte and return its manifest."""
-    path = Path(bundle).expanduser().resolve()
+    bundle_input = Path(bundle).expanduser()
+    if bundle_input.is_symlink():
+        raise DeploymentBundleError("deployment bundle symlink is not allowed")
+    path = bundle_input.resolve()
     temporary: Path | None = None
     if path.is_file() and path.suffix.lower() == ".zip":
         temporary = Path(tempfile.mkdtemp(prefix=".dvdeploy-verify-"))
@@ -221,9 +230,13 @@ def verify_deployment_bundle(bundle: str | Path) -> dict[str, Any]:
         actual: set[str] = set()
         manifest_names: set[str] = set()
         for relative, expected in files.items():
+            if not isinstance(relative, str):
+                raise DeploymentBundleError("deployment checksum path must be a string")
             name = _safe_name(relative)
             if name in manifest_names:
                 raise DeploymentBundleError(f"duplicate deployment checksum: {name}")
+            if name != relative:
+                raise DeploymentBundleError(f"deployment checksum path is not normalized: {relative}")
             manifest_names.add(name)
             if not isinstance(expected, Mapping):
                 raise DeploymentBundleError(f"invalid deployment checksum: {name}")

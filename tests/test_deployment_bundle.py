@@ -141,3 +141,43 @@ def test_verify_rejects_drive_paths_and_duplicate_normalized_manifest_keys(tmp_p
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(DeploymentBundleError, match="duplicate"):
         verify_deployment_bundle(bundle)
+
+
+def test_build_and_verify_reject_symlinked_bundle_paths(tmp_path):
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"onnx-fixture")
+    model.with_suffix(".json").write_text(json.dumps(_config()), encoding="utf-8")
+    source_link = tmp_path / "source-link"
+    try:
+        source_link.symlink_to(model, target_is_directory=False)
+    except OSError as exc:
+        pytest.skip(f"file symlinks unavailable: {exc}")
+    with pytest.raises(DeploymentBundleError, match="source symlink"):
+        build_deployment_bundle(source_link, tmp_path / "source-link.dvdeploy")
+
+    destination = tmp_path / "destination.dvdeploy"
+    destination_link = tmp_path / "destination-link.dvdeploy"
+    destination_link.symlink_to(destination, target_is_directory=True)
+    with pytest.raises(DeploymentBundleError, match="output symlink"):
+        build_deployment_bundle(model, destination_link)
+
+
+def test_verify_rejects_symlinked_bundle_directory_and_non_normalized_key(tmp_path):
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"onnx-fixture")
+    model.with_suffix(".json").write_text(json.dumps(_config()), encoding="utf-8")
+    bundle = build_deployment_bundle(model, tmp_path / "release.dvdeploy")
+    link = tmp_path / "release-link.dvdeploy"
+    try:
+        link.symlink_to(bundle, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks unavailable: {exc}")
+    with pytest.raises(DeploymentBundleError, match="bundle symlink"):
+        verify_deployment_bundle(link)
+
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"]["model\\.onnx"] = manifest["files"].pop("model.onnx")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(DeploymentBundleError, match="not normalized"):
+        verify_deployment_bundle(bundle)
