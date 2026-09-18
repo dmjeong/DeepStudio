@@ -73,6 +73,12 @@ def test_csharp_sdk_exposes_directory_bundle_open():
     source = (ROOT / "sdk" / "csharp" / "VisionRuntime.cs").read_text(encoding="utf-8")
     assert "OpenBundle" in source
     assert "dv_create_session_from_bundle" in source
+    sample = ROOT / "sdk" / "csharp" / "sample"
+    project = (sample / "VisionRuntime.Sample.csproj").read_text(encoding="utf-8")
+    program = (sample / "Program.cs").read_text(encoding="utf-8")
+    assert '<RuntimeIdentifier>win-x64</RuntimeIdentifier>' in project
+    assert '<SelfContained>true</SelfContained>' in project
+    assert "VisionSession.OpenBundle" in program
 
 
 def test_offline_default_model_catalog_matches_registry():

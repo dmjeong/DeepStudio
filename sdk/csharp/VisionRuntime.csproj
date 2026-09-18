@@ -6,4 +6,8 @@
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="sample\**\*.cs" />
+    <None Remove="sample\**\*" />
+  </ItemGroup>
 </Project>

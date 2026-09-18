@@ -29,6 +29,27 @@ var result = session.InferClassification(bytes, width, height, channels);
 Console.WriteLine($"{result.ClassName}: {result.Confidence:P2}");
 ```
 
+## Windows self-contained 샘플
+
+저장소의 `sample/VisionRuntime.Sample.csproj`는 C# SDK와 native C ABI를 호출하는
+`win-x64` 단일 실행 파일 예제다. 예제는 별도 이미지 라이브러리 없이 8-bit raw
+BGR/gray 파일을 읽으므로, 배포 번들의 전처리·모델 검증 경로를 그대로 확인할 수 있다.
+
+```powershell
+dotnet publish sdk/csharp/sample/VisionRuntime.Sample.csproj -c Release -r win-x64 --self-contained true
+```
+
+publish 결과에 `vision_runtime.dll`, ONNX Runtime/OpenCV DLL과 `.dvdeploy` 폴더를
+함께 배치한 뒤 다음처럼 실행한다.
+
+```powershell
+VisionRuntime.Sample.exe C:\models\classify.dvdeploy C:\images\frame.bgr 224 224 3
+```
+
+관리형 .NET 런타임은 샘플에 포함되지만, native DLL과 모델 번들은 별도 payload로
+검증·해시해 설치한다. PNG/JPEG 입력은 학습툴의 이미지 디코더에서 raw buffer로
+변환한 뒤 SDK에 전달한다.
+
 탐지와 이상 결과는 다음처럼 읽는다.
 
 ```csharp
