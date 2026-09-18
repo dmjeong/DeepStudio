@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
+import threading
 import uuid
 
 from model_runtime.worker_protocol import (  # noqa: E402
@@ -19,6 +20,7 @@ from model_runtime.worker_protocol import (  # noqa: E402
     MAX_HEADER_BYTES,
     MAX_PAYLOAD_BYTES,
     WorkerProtocolError,
+    response_request_id,
 )
 
 
@@ -114,6 +116,10 @@ class ContainerWorker:
     def __init__(self, command: ContainerCommand):
         self.command = command
         self.process: subprocess.Popen[bytes] | None = None
+        self._write_lock = threading.Lock()
+        self._stderr_thread: threading.Thread | None = None
+        self._stderr_tail = bytearray()
+        self._stderr_lock = threading.Lock()
 
     def start(self) -> None:
         if self.process is not None:
@@ -125,6 +131,59 @@ class ContainerWorker:
             stderr=subprocess.PIPE,
             shell=False,
         )
+        self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
+        self._stderr_thread.start()
+
+    def _drain_stderr(self) -> None:
+        process = self.process
+        if process is None or process.stderr is None:
+            return
+        try:
+            while True:
+                chunk = process.stderr.read(4096)
+                if not chunk:
+                    return
+                with self._stderr_lock:
+                    self._stderr_tail.extend(chunk)
+                    del self._stderr_tail[:-8192]
+        except OSError:
+            return
+
+    def send(self, frame: Frame) -> None:
+        process = self.process
+        if process is None or process.stdin is None or process.poll() is not None:
+            raise ContainerWorkerError("container worker is not running")
+        raw = frame.encode()
+        with self._write_lock:
+            try:
+                process.stdin.write(raw)
+                process.stdin.flush()
+            except (BrokenPipeError, OSError) as exc:
+                raise ContainerWorkerError("container worker stdin closed") from exc
+
+    def receive(self) -> Frame:
+        process = self.process
+        if process is None or process.stdout is None:
+            raise ContainerWorkerError("container worker is not started")
+        try:
+            frame = Frame.read(process.stdout)
+        except ContainerWorkerError:
+            raise
+        if frame is None:
+            raise ContainerWorkerError(self.stderr_text() or "container worker exited without a response")
+        return frame
+
+    def request(self, frame: Frame) -> Frame:
+        """Send one request and require the matching response request_id."""
+        self.send(frame)
+        response = self.receive()
+        if response_request_id(response) != response_request_id(frame):
+            raise ContainerWorkerError("container worker response request_id mismatch")
+        return response
+
+    def stderr_text(self) -> str:
+        with self._stderr_lock:
+            return bytes(self._stderr_tail).decode("utf-8", errors="replace")
 
     def _remove_owned_container(self) -> bool:
         """Remove the named container only after checking our ownership label.
@@ -173,3 +232,7 @@ class ContainerWorker:
             # and remove it explicitly while preserving the ownership check.
             self._remove_owned_container()
             self.process = None
+            thread = self._stderr_thread
+            self._stderr_thread = None
+            if thread is not None:
+                thread.join(timeout=1.0)

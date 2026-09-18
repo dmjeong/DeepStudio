@@ -6,6 +6,7 @@ from pathlib import Path
 import struct
 import sys
 from io import BytesIO
+from unittest.mock import patch
 
 import pytest
 
@@ -15,6 +16,7 @@ from model_runtime.worker_server import WorkerServer
 from model_runtime.container_entrypoint import ContainerEntrypointError, _load_handlers
 from model_runtime.windows_worker import WindowsWorker, WindowsWorkerError, build_worker_command
 from model_runtime.worker_protocol import Frame, WorkerProtocolError, request_frame
+from gui.core.container_worker import ContainerCommand, ContainerWorker
 
 
 def test_shared_protocol_rejects_nan_and_roundtrips_partial_reads():
@@ -148,6 +150,31 @@ def test_worker_server_keeps_stdout_framed_and_returns_handler_errors():
     assert responses[1].header["artifact"] == "result.bin"
     assert responses[2].header["code"] == "unsupported_command"
     assert responses[3].header["status"] == "ok"
+
+
+def test_container_worker_sends_and_receives_shared_dvw1_frames():
+    code = (
+        "import sys\nfrom model_runtime.worker_protocol import Frame\n"
+        "while True:\n"
+        "  f=Frame.read(sys.stdin.buffer)\n"
+        "  if f is None: break\n"
+        "  out=Frame({'type':'response','request_id':f.header['request_id'],'status':'ok'}, f.payload)\n"
+        "  sys.stdout.buffer.write(out.encode()); sys.stdout.buffer.flush()\n"
+        "  if f.header['type']=='close': break\n"
+    )
+    command = ContainerCommand("fixture", "fixture", (sys.executable, "-u", "-c", code),
+                               "deepvision.owner=fixture")
+    worker = ContainerWorker(command)
+    worker.start()
+    try:
+        response = worker.request(request_frame("container-1", "infer", payload=b"image"))
+        assert response.payload == b"image"
+        close = worker.request(request_frame("container-close", "close"))
+        assert close.header["status"] == "ok"
+    finally:
+        with patch("gui.core.container_worker.subprocess.run"):
+            worker.stop()
+    assert worker.process is None
 
 
 def test_container_entrypoint_loads_plugin_inside_pack_root_only(tmp_path: Path):

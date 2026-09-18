@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 import subprocess
 import threading
-import time
 from typing import BinaryIO, Mapping, Sequence
 
 from .worker_protocol import Frame, WorkerProtocolError
@@ -91,6 +90,9 @@ class WindowsWorker:
     command: WindowsWorkerCommand
     process: subprocess.Popen[bytes] | None = field(default=None, init=False)
     _write_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _stderr_thread: threading.Thread | None = field(default=None, init=False, repr=False)
+    _stderr_tail: bytearray = field(default_factory=bytearray, init=False, repr=False)
+    _stderr_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def start(self) -> None:
         if self.process is not None:
@@ -107,8 +109,25 @@ class WindowsWorker:
                 shell=False,
                 creationflags=flags,
             )
+            self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
+            self._stderr_thread.start()
         except OSError as exc:
             raise WindowsWorkerError(f"cannot start worker: {exc}") from exc
+
+    def _drain_stderr(self) -> None:
+        process = self.process
+        if process is None or process.stderr is None:
+            return
+        try:
+            while True:
+                chunk = process.stderr.read(4096)
+                if not chunk:
+                    return
+                with self._stderr_lock:
+                    self._stderr_tail.extend(chunk)
+                    del self._stderr_tail[:-8192]
+        except OSError:
+            return
 
     @property
     def running(self) -> bool:
@@ -140,17 +159,8 @@ class WindowsWorker:
         return frame
 
     def stderr_text(self) -> str:
-        process = self.process
-        if process is None or process.stderr is None:
-            return ""
-        # Reading stderr to EOF is safe after process exit and avoids mixing it
-        # into the binary stdout protocol while preserving diagnostics.
-        if process.poll() is None:
-            return ""
-        try:
-            return process.stderr.read().decode("utf-8", errors="replace")[-8192:]
-        except OSError:
-            return ""
+        with self._stderr_lock:
+            return bytes(self._stderr_tail).decode("utf-8", errors="replace")
 
     def stop(self, timeout: float = 10.0) -> None:
         process = self.process
@@ -175,6 +185,10 @@ class WindowsWorker:
                     process.wait(timeout=5.0)
         finally:
             self.process = None
+            thread = self._stderr_thread
+            self._stderr_thread = None
+            if thread is not None:
+                thread.join(timeout=1.0)
 
     def close(self) -> None:
         self.stop()
