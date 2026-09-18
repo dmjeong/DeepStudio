@@ -105,6 +105,8 @@ public sealed class VisionSession : SafeHandle
 
     private VisionSession(IntPtr handle) : base(IntPtr.Zero, true) => SetHandle(handle);
 
+    public override bool IsInvalid => IsClosed || handle == IntPtr.Zero;
+
     public static VisionSession Open(string configPath, string runtime = "onnxruntime", int numThreads = -1)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
@@ -405,6 +407,8 @@ public sealed class VisionSession : SafeHandle
         }
 
         internal VisionSession Owner { get; }
+
+        public override bool IsInvalid => IsClosed || handle == IntPtr.Zero;
 
         protected override bool ReleaseHandle()
         {
