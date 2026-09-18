@@ -37,3 +37,6 @@ Setup 빌드 전에 공급자의 재배포 조건, 고지, 취약점 공지를 �
 설치 단계는 관리자 권한으로 `bootstrap_wsl.ps1 -PayloadRoot <runtime/wsl> -DistroName <app-owned-name> -InstallWslPackage`를
 실제 사용자 세션에서 실행한다. 기존 distro가 있으면 marker가 없거나 소유자가 다를 때 중단하고,
 새 distro는 로컬 tar만 import한 뒤 `docker info`가 성공할 때 `owned-distro.json`을 원자적으로 기록한다.
+처음 import한 distro에서 Docker smoke 또는 marker 기록이 실패하면 bootstrap이 해당 import를
+`wsl --unregister`로 되돌리고 비어 있는 상태 디렉터리와 `.pending` marker를 정리해 재시도할 수 있게 한다.
+이미 존재하며 소유 marker가 검증된 distro에는 이 정리 경로를 적용하지 않는다.

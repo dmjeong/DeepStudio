@@ -27,7 +27,8 @@ GitHub Actions의 production 단계는 `DEEPVISION_WSL_PAYLOAD_ROOT`가 가리�
 로컬 payload를 `runtime/wsl`로 복사한다. 이 경로를 제공하지 않으면 workflow가 Setup을 만들지 않는다.
 production Burn은 WSL MSI를 먼저 설치하고 제거 때 보존한 뒤 앱 MSI를 설치한다. 앱 MSI는
 실제 사용자 세션에서 `bootstrap_wsl.ps1`을 실행해 owned distro를 import하고 Docker `info`
-smoke가 성공한 뒤에만 설치를 완료한다.
+smoke가 성공한 뒤에만 설치를 완료한다. 새 import가 smoke 또는 marker 기록에서 실패하면
+bootstrap이 그 import만 unregister하고 임시 상태를 지워 다음 설치 시 재시도할 수 있다.
 
 서명 릴리스는 인증서와 `signtool.exe`가 준비된 Windows 빌드에서 다음처럼 실행한다.
 `-RequireSignature`를 사용하면 인증서가 없거나 MSI/Burn EXE의 Authenticode 검증이 실패할 때
