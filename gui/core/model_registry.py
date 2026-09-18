@@ -313,6 +313,8 @@ class ModelRegistry:
                 manifest = json.loads(archive.read("manifest.json"))
                 try:
                     validate_special_assets(manifest, set(names))
+                    from model_runtime.special_contracts import validate_container_image_asset
+                    validate_container_image_asset(manifest, set(names))
                 except ValueError as exc:
                     raise ModelRegistryError(str(exc)) from exc
         except (OSError, zipfile.BadZipFile, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -348,6 +350,8 @@ class ModelRegistry:
                 if entry.is_file():
                     files.add(entry.relative_to(root).as_posix())
             validate_special_assets(manifest, files)
+            from model_runtime.special_contracts import validate_container_image_asset
+            validate_container_image_asset(manifest, files)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             raise ModelRegistryError("invalid installed model pack") from exc
         spec = _spec_from_mapping(manifest)

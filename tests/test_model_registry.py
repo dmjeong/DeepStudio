@@ -73,6 +73,21 @@ def test_registry_loads_a_valid_new_model_pack_without_importing_code(tmp_path):
     assert loaded.release_status == "scoped"
 
 
+def test_registry_rejects_missing_declared_container_image_archive(tmp_path):
+    manifest = {
+        "schema_version": 1, "model_id": "vendor.container", "family": "Example",
+        "variant": "Container", "task": "classify", "runtimes": ["container"],
+        "capabilities": ["infer"], "input_size": [224, 224], "input_channels": [3],
+        "container_image": "registry.invalid/example@sha256:" + "a" * 64,
+        "container_image_archive": "docker/image.tar",
+    }
+    pack = tmp_path / "container.dvmodel"
+    with zipfile.ZipFile(pack, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+    with pytest.raises(ModelRegistryError, match="archive"):
+        ModelRegistry.builtin().load_pack(pack)
+
+
 def test_registry_loads_activated_pack_manifests_after_restart(tmp_path):
     root = tmp_path / "installed" / "vendor.example" / "1.0.0"
     root.mkdir(parents=True)

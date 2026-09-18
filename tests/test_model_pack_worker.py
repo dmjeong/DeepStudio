@@ -69,6 +69,15 @@ def test_pack_rejects_malformed_container_digest(tmp_path, image):
         ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
 
 
+def test_pack_rejects_windows_reserved_model_id_before_start(tmp_path):
+    _manifest(tmp_path)
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    manifest["model_id"] = "con"
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ModelPackWorkerError, match="unsafe"):
+        ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
+
+
 def test_pack_passes_offline_image_archive_to_container_command(tmp_path):
     _manifest(tmp_path)
     archive = tmp_path / "docker-image.tar"

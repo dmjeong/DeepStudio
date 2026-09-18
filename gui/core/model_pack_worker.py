@@ -21,6 +21,7 @@ from core.container_worker import (ContainerWorker, ContainerWorkerError,
 from model_runtime.special_contracts import (SpecialContractError,
                                              validate_container_entrypoint,
                                              validate_special_manifest)
+from core.model_registry import MODEL_ID_RE, WINDOWS_RESERVED_MODEL_IDS
 from model_runtime.managed_wsl import (ManagedWslError,
                                        configured_docker_command)
 from model_runtime.worker_protocol import Frame, request_frame
@@ -52,8 +53,9 @@ def _read_manifest(pack_dir: str | Path) -> tuple[Path, Mapping[str, Any]]:
     if manifest.get("schema_version") != 1:
         raise ModelPackWorkerError("unsupported model pack manifest schema")
     model_id = manifest.get("model_id")
-    if not isinstance(model_id, str) or not model_id.strip():
-        raise ModelPackWorkerError("model pack model_id is required")
+    if (not isinstance(model_id, str) or not MODEL_ID_RE.fullmatch(model_id) or
+            model_id.casefold() in WINDOWS_RESERVED_MODEL_IDS):
+        raise ModelPackWorkerError("model pack model_id is unsafe")
     runtimes = manifest.get("runtimes", ())
     if not isinstance(runtimes, (list, tuple)) or "container" not in runtimes:
         raise ModelPackWorkerError("model pack does not declare the container runtime")
