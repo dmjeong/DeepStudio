@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import xml.etree.ElementTree as ET
+import hashlib
 import json
 import os
 import runpy
@@ -91,6 +92,46 @@ def test_payload_wrapper_scripts_collect_and_verify_exact_bytes(tmp_path):
                                   required_paths=["models/default-model-catalog.json"])
 
 
+def test_offline_wsl_inventory_binds_artifacts_and_notices(tmp_path):
+    root = tmp_path / "payload"
+    wsl = root / "runtime" / "wsl"
+    licenses = wsl / "licenses"
+    licenses.mkdir(parents=True)
+    (root / "THIRD_PARTY_NOTICES.md").write_text("notice", encoding="utf-8")
+    (wsl / "wsl-offline.msi").write_bytes(b"wsl-msi")
+    (wsl / "owned-distro.tar").write_bytes(b"distro")
+    for name in ("wsl.txt", "docker.txt", "distro.txt"):
+        (licenses / name).write_text(name, encoding="utf-8")
+
+    def digest(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    inventory = {
+        "schema_version": 1,
+        "platform": "windows-x64",
+        "components": [
+            {"id": "wsl", "artifact": "runtime/wsl/wsl-offline.msi",
+             "sha256": digest(wsl / "wsl-offline.msi"), "license": "Microsoft",
+             "notice": "runtime/wsl/licenses/wsl.txt"},
+            {"id": "owned_distro", "artifact": "runtime/wsl/owned-distro.tar",
+             "sha256": digest(wsl / "owned-distro.tar"), "license": "distro-license",
+             "notice": "runtime/wsl/licenses/distro.txt"},
+            {"id": "docker_engine", "artifact": "runtime/wsl/owned-distro.tar",
+             "sha256": digest(wsl / "owned-distro.tar"), "license": "Apache-2.0",
+             "notice": "runtime/wsl/licenses/docker.txt"},
+        ],
+    }
+    (licenses / "manifest.json").write_text(json.dumps(inventory), encoding="utf-8")
+    collector = runpy.run_path(str(WINDOWS / "collect_payloads.py"))
+    manifest = collector["collect_payload"](root, version="1.0.0")
+    verifier = runpy.run_path(str(WINDOWS / "validate_payloads.py"))
+    verifier["verify_payload"](root, manifest)
+    verifier["verify_offline_wsl_payload"](root, manifest)
+    (wsl / "owned-distro.tar").write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        verifier["verify_offline_wsl_payload"](root, manifest)
+
+
 def test_payload_stager_copies_artifacts_and_rejects_symlinks(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
@@ -130,6 +171,17 @@ def test_release_script_has_optional_authenticode_sign_and_verify_gate():
     assert 'Sign-AndVerify $setup' in script
     assert 'verify /pa /all' in script
     assert 'SHA256' in script
+
+
+def test_release_script_has_production_offline_wsl_payload_gate():
+    script = (WINDOWS / "build_release.ps1").read_text(encoding="utf-8")
+    assert '[switch] $RequireOfflineWsl' in script
+    assert 'runtime\\wsl\\wsl-offline.msi' in script
+    assert 'runtime\\wsl\\owned-distro.tar' in script
+    assert 'runtime\\wsl\\licenses\\manifest.json' in script
+    workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
+    assert '-RequireOfflineWsl' in workflow
+    assert 'DEEPVISION_WSL_PAYLOAD_ROOT' in workflow
 
 
 def test_windows_workflow_builds_real_gui_and_native_runtime():

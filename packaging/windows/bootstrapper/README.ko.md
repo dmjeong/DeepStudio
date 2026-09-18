@@ -9,8 +9,22 @@ Burn bundle EXE에 첨부한다. 실행 중에 WiX extension, Python, 모델, WS
 pwsh packaging/windows/build_release.ps1 `
   -PayloadRoot .\release-payload `
   -Version 1.0.0 `
-  -OutputDirectory .\release-out
+  -OutputDirectory .\release-out `
+  -RequireOfflineWsl
 ```
+
+`-RequireOfflineWsl`은 production Setup에서 반드시 사용한다. payload에는 다음 파일이
+필요하다.
+
+- `runtime/wsl/wsl-offline.msi`: Windows WSL 오프라인 설치 패키지
+- `runtime/wsl/owned-distro.tar`: Docker Engine/Moby가 들어 있는 앱 전용 distro
+- `runtime/wsl/licenses/manifest.json`: WSL·Docker·distro 구성요소의 버전, SHA-256, 라이선스/고지 목록
+
+이 파일들은 인터넷에서 Setup 실행 중 내려받지 않는다. 각 공급자의 재배포 허가와 고지는
+`THIRD_PARTY_NOTICES.md`에도 포함해야 한다. 세 파일이 없는 unsigned 개발 계약 빌드는
+`-RequireOfflineWsl`을 생략할 수 있지만, 그 결과는 Docker 확장 포함 배포본으로 표시하지 않는다.
+GitHub Actions의 production 단계는 `DEEPVISION_WSL_PAYLOAD_ROOT`가 가리키는 사전 검증된
+로컬 payload를 `runtime/wsl`로 복사한다. 이 경로를 제공하지 않으면 workflow가 Setup을 만들지 않는다.
 
 서명 릴리스는 인증서와 `signtool.exe`가 준비된 Windows 빌드에서 다음처럼 실행한다.
 `-RequireSignature`를 사용하면 인증서가 없거나 MSI/Burn EXE의 Authenticode 검증이 실패할 때
@@ -23,6 +37,7 @@ pwsh packaging/windows/build_release.ps1 `
   -OutputDirectory .\release-out `
   -CertificatePath .\release-signing.pfx `
   -CertificatePassword $env:DEEP_VISION_SIGNING_PASSWORD `
+  -RequireOfflineWsl `
   -RequireSignature
 ```
 

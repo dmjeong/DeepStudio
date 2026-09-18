@@ -88,6 +88,8 @@ Docker Desktop이나 사용자의 기존 WSL 배포판을 자동으로 변경하
 다른 데스크톱 작업이 idle일 때만 활성화되며, 작업 종료·취소·실패 후에는 화면 잠금이 해제된다.
 
 설치 프로그램이 앱 전용 WSL2와 Docker Engine 환경을 구성한다. 다음 조건은 필요하다.
+production Setup은 `build_release.ps1 -RequireOfflineWsl` gate를 통과한 payload만 만들며,
+WSL 오프라인 MSI·앱 전용 distro tar·라이선스 inventory의 SHA-256과 고지 파일을 함께 검증한다.
 
 - WSL2/SLAT를 지원하는 CPU, BIOS/UEFI 가상화 활성화.
 - Windows 가상화 기능을 사용할 수 있는 회사 보안 정책.

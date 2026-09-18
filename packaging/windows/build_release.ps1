@@ -8,7 +8,8 @@ param(
     [string] $CertificatePassword = "",
     [string] $SignToolPath = "signtool.exe",
     [string] $TimestampUrl = "http://timestamp.digicert.com",
-    [switch] $RequireSignature
+    [switch] $RequireSignature,
+    [switch] $RequireOfflineWsl
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,6 +48,16 @@ python $validator $root --manifest $manifest `
     --require "models\default-model-catalog.json" `
     --require "sdk\VisionRuntime.dll" `
     --require "sdk\native\vision_runtime.dll"
+if ($RequireOfflineWsl) {
+    # The distro tar contains the pinned Docker Engine/Moby userspace.  Keep
+    # the host WSL installer and distro as separate payload files so their
+    # licenses, hashes, and replacement cadence remain auditable.
+    python $validator $root --manifest $manifest --require-offline-wsl `
+        --require "runtime\wsl\wsl-offline.msi" `
+        --require "runtime\wsl\owned-distro.tar" `
+        --require "runtime\wsl\licenses\manifest.json"
+    if ($LASTEXITCODE -ne 0) { throw "Offline WSL payload contract failed." }
+}
 
 $common = @("-arch", "x64", "-dVersion=$Version", "-dPayloadRoot=$root")
 $msiArgs = @("build") + $common + @("-o", $msi, (Join-Path $scriptRoot "bootstrapper\DeepVisionStudio.msi.wxs"))

@@ -10,11 +10,14 @@ import hashlib
 import json
 from pathlib import Path
 import os
+from pathlib import PurePosixPath
+import re
 from typing import Any
 
 
 MAX_SIGNED_PE_BYTES = 4 * 1024 * 1024 * 1024
 DEFAULT_BUDGET_BYTES = int(3.5 * 1024 * 1024 * 1024)
+SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 def sha256(path: Path) -> str:
@@ -92,6 +95,70 @@ def verify_payload(root: str | Path, manifest: dict[str, Any], *, required_paths
             raise ValueError(f"required payload file is missing: {relative}")
 
 
+def verify_offline_wsl_payload(root: str | Path, payload_manifest: dict[str, Any]) -> None:
+    """Verify the signed WSL/Docker payload's own provenance inventory.
+
+    The inventory is deliberately data-only.  It does not download or execute
+    anything; it binds the WSL installer, owned distro archive, and notice
+    files to the exact bytes already covered by the release payload manifest.
+    """
+    base = Path(root).expanduser().resolve()
+    if not base.is_dir():
+        raise ValueError(f"payload root is not a directory: {base}")
+    files = payload_manifest.get("files")
+    if not isinstance(files, list):
+        raise ValueError("payload manifest files are required before WSL verification")
+    payload_paths = {item.get("path") for item in files if isinstance(item, dict)}
+    required = {
+        "runtime/wsl/wsl-offline.msi",
+        "runtime/wsl/owned-distro.tar",
+        "runtime/wsl/licenses/manifest.json",
+    }
+    missing = sorted(required - payload_paths)
+    if missing:
+        raise ValueError("offline WSL payload is missing: " + ", ".join(missing))
+    inventory_path = base / "runtime" / "wsl" / "licenses" / "manifest.json"
+    try:
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("offline WSL license inventory is invalid") from exc
+    if (not isinstance(inventory, dict) or inventory.get("schema_version") != 1 or
+            inventory.get("platform") != "windows-x64" or
+            not isinstance(inventory.get("components"), list)):
+        raise ValueError("offline WSL license inventory schema is invalid")
+    seen: set[str] = set()
+    for component in inventory["components"]:
+        if not isinstance(component, dict):
+            raise ValueError("offline WSL component entry is invalid")
+        component_id = component.get("id")
+        artifact = str(component.get("artifact", "")).replace("\\", "/")
+        digest = component.get("sha256")
+        license_name = component.get("license")
+        notice = str(component.get("notice", "")).replace("\\", "/")
+        artifact_path = PurePosixPath(artifact)
+        notice_path = PurePosixPath(notice)
+        if (not isinstance(component_id, str) or not component_id.strip() or component_id in seen or
+                not artifact or ":" in artifact or artifact_path.is_absolute() or
+                any(part in {"", ".", ".."} for part in artifact_path.parts) or
+                artifact not in payload_paths or not SHA256_RE.fullmatch(str(digest or "")) or
+                not isinstance(license_name, str) or not license_name.strip() or
+                not notice or ":" in notice or notice_path.is_absolute() or
+                any(part in {"", ".", ".."} for part in notice_path.parts) or
+                notice not in payload_paths):
+            raise ValueError(f"offline WSL component inventory is invalid: {component_id!r}")
+        seen.add(component_id)
+        artifact_file = base / Path(*artifact_path.parts)
+        notice_file = base / Path(*notice_path.parts)
+        if (artifact_file.is_symlink() or not artifact_file.is_file() or
+                notice_file.is_symlink() or not notice_file.is_file()):
+            raise ValueError(f"offline WSL component files are missing: {component_id}")
+        if sha256(artifact_file).lower() != str(digest).lower():
+            raise ValueError(f"offline WSL artifact hash mismatch: {artifact}")
+    required_components = {"wsl", "owned_distro", "docker_engine"}
+    if not required_components.issubset(seen):
+        raise ValueError("offline WSL inventory must list wsl, owned_distro, and docker_engine")
+
+
 def main(argv=None) -> int:
     import argparse
     parser = argparse.ArgumentParser(description="Build or verify a Windows offline payload manifest")
@@ -101,9 +168,13 @@ def main(argv=None) -> int:
     parser.add_argument("--commit", default="")
     parser.add_argument("--budget-bytes", type=int, default=DEFAULT_BUDGET_BYTES)
     parser.add_argument("--verify", action="store_true")
+    parser.add_argument("--require-offline-wsl", action="store_true")
     args = parser.parse_args(argv)
     if args.verify:
-        verify_payload(args.root, json.loads(args.manifest.read_text(encoding="utf-8")))
+        manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+        verify_payload(args.root, manifest)
+        if args.require_offline_wsl:
+            verify_offline_wsl_payload(args.root, manifest)
     else:
         result = collect_payload(args.root, version=args.version, commit=args.commit,
                                  budget_bytes=args.budget_bytes)
