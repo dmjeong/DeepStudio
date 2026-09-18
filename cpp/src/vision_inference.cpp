@@ -92,12 +92,16 @@ void ValidateConfig(const InferenceConfig& config)
         config.crop_width > 65536 || config.crop_height > 65536 ||
         ((config.crop_width == 0) != (config.crop_height == 0)))
         throw std::invalid_argument("Invalid center crop dimensions.");
-    if (config.backend != "custom" && !(config.backend == "efficientnet" && config.task == "classify"))
-        throw std::invalid_argument("Supported backends: custom and efficientnet classification.");
+    if (config.backend != "custom" && config.backend != "patchcore" &&
+        !(config.backend == "efficientnet" && config.task == "classify"))
+        throw std::invalid_argument("Supported backends: custom, patchcore and efficientnet classification.");
+    if (config.backend == "patchcore" && config.task != "anomaly")
+        throw std::invalid_argument("PatchCore backend requires anomaly task.");
     if (config.resize_mode != "stretch" || config.classification_output != "logits")
         throw std::invalid_argument("Custom and EfficientNet models require stretch resize and logits.");
-    if (config.task != "classify" && config.task != "segment")
-        throw std::invalid_argument("Supported tasks: classify, segment.");
+    if (config.task != "classify" && config.task != "segment" &&
+        config.task != "detect" && config.task != "anomaly")
+        throw std::invalid_argument("Supported tasks: classify, segment, detect, anomaly.");
     if ((config.input_channels != 1 && config.input_channels != 3) ||
         config.input_height <= 0 || config.input_width <= 0 || config.num_classes <= 0 ||
         (config.task == "segment" && config.num_classes > 256) || config.num_threads < 0)
@@ -109,8 +113,26 @@ void ValidateConfig(const InferenceConfig& config)
         if (!std::isfinite(config.normalize_mean[c]) || !std::isfinite(config.normalize_std[c]) ||
             config.normalize_std[c] <= 0)
             throw std::invalid_argument("Normalization values must be finite; std must be positive.");
+    if (config.task == "detect") {
+        if (config.detection_box_encoding != "normalized_cxcywh" &&
+            config.detection_box_encoding != "normalized_xyxy")
+            throw std::invalid_argument("Unsupported detection box encoding.");
+        if (config.detection_objectness != "sigmoid" || config.detection_class_scores != "sigmoid")
+            throw std::invalid_argument("Detection scores must use sigmoid.");
+        if (!std::isfinite(config.detection_confidence_threshold) ||
+            config.detection_confidence_threshold < 0.0f || config.detection_confidence_threshold > 1.0f ||
+            !std::isfinite(config.detection_iou_threshold) || config.detection_iou_threshold < 0.0f ||
+            config.detection_iou_threshold > 1.0f || config.detection_max_detections < 1)
+            throw std::invalid_argument("Invalid detection thresholds or max detections.");
+    }
+    if (config.task == "anomaly" && !std::isfinite(config.anomaly_threshold))
+        throw std::invalid_argument("Invalid anomaly threshold.");
     if (config.model_path.empty() || config.input_name.empty() || config.output_name.empty())
         throw std::invalid_argument("Model path and tensor names are required.");
+    if (!config.output_names.empty() && (config.output_names.front() != config.output_name ||
+        std::any_of(config.output_names.begin(), config.output_names.end(),
+                    [](const std::string& name) { return name.empty(); })))
+        throw std::invalid_argument("Output tensor names are invalid.");
     if (!config.class_names.empty() && config.class_names.size() != static_cast<size_t>(config.num_classes))
         throw std::invalid_argument("Class names do not match class count.");
     if (config.model_implementation_version != 0)
@@ -128,9 +150,13 @@ void ValidateOutput(const Ort::Value& output, const InferenceConfig& config, siz
 {
     auto info = output.GetTensorTypeAndShapeInfo();
     auto shape = info.GetShape();
+    const int64_t expected_channels = config.task == "anomaly" ? config.input_channels : config.num_classes;
+    const bool channel_shape_valid = rank == 3
+        ? shape.size() == 3 && shape[2] == static_cast<int64_t>(5 + config.num_classes)
+        : shape.size() == rank && shape[1] == expected_channels;
     if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
-        shape.size() != rank || shape[0] != 1 || shape[1] != config.num_classes ||
-        (rank == 4 && (shape[2] <= 0 || shape[3] <= 0)))
+        shape.size() != rank || shape[0] != 1 || !channel_shape_valid ||
+        (rank == 3 && shape[1] <= 0) || (rank == 4 && (shape[2] <= 0 || shape[3] <= 0)))
         throw std::runtime_error("Model output does not match the deployment contract.");
     const float* values = output.GetTensorData<float>();
     for (size_t i = 0; i < info.GetElementCount(); ++i)
@@ -200,12 +226,18 @@ bool VisionInference::Initialize(const InferenceConfig& config)
         if (config.enable_profiling) options.EnableProfiling(ORT_TSTR("vision_profile"));
         const auto path = std::filesystem::u8path(config.model_path);
         auto session = std::make_unique<Ort::Session>(m_env, path.c_str(), options);
-        if (session->GetInputCount() != 1 || session->GetOutputCount() != 1)
-            throw std::invalid_argument("Expected one input and one output tensor.");
+        const std::vector<std::string> expected_outputs = config.output_names.empty()
+            ? std::vector<std::string>{config.output_name} : config.output_names;
+        if (session->GetInputCount() != 1 || session->GetOutputCount() != expected_outputs.size())
+            throw std::invalid_argument("Model input/output count does not match the deployment contract.");
         auto input_name = session->GetInputNameAllocated(0, m_allocator);
-        auto output_name = session->GetOutputNameAllocated(0, m_allocator);
-        if (config.input_name != input_name.get() || config.output_name != output_name.get())
+        if (config.input_name != input_name.get())
             throw std::invalid_argument("Tensor names do not match model.");
+        for (size_t index = 0; index < expected_outputs.size(); ++index) {
+            auto output_name = session->GetOutputNameAllocated(index, m_allocator);
+            if (expected_outputs[index] != output_name.get())
+                throw std::invalid_argument("Tensor names do not match model.");
+        }
         const auto input_type = session->GetInputTypeInfo(0);
         const auto input = input_type.GetTensorTypeAndShapeInfo();
         const auto shape = input.GetShape();
@@ -217,9 +249,29 @@ bool VisionInference::Initialize(const InferenceConfig& config)
         const auto output_type = session->GetOutputTypeInfo(0);
         const auto output = output_type.GetTensorTypeAndShapeInfo();
         const auto out_shape = output.GetShape();
-        const size_t rank = config.task == "classify" ? 2 : 4;
-        if (output.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
-            out_shape.size() != rank || (out_shape[1] > 0 && out_shape[1] != config.num_classes))
+        const size_t rank = config.task == "classify" ? 2 : (config.task == "detect" ? 3 : 4);
+        if (config.backend == "patchcore") {
+            if (session->GetOutputCount() != 2 || output.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+                out_shape.size() != 1 || (out_shape[0] > 0 && out_shape[0] != 1))
+                throw std::invalid_argument("PatchCore score output does not match the deployment contract.");
+            const auto map = session->GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo();
+            const auto map_shape = map.GetShape();
+            // Some ONNX Runtime builds report a rank-0 type descriptor for a
+            // constant secondary output even though the runtime tensor has its
+            // declared shape.  Validate known metadata here and always repeat
+            // the complete contract check on the actual Run() result below.
+            if (!map_shape.empty() &&
+                (map.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || map_shape.size() != 4 ||
+                 map_shape[0] != 1 || (map_shape[1] > 0 && map_shape[1] != 1) ||
+                 (map_shape[2] > 0 && map_shape[2] != config.input_height) ||
+                 (map_shape[3] > 0 && map_shape[3] != config.input_width)))
+                throw std::invalid_argument("PatchCore map output does not match the deployment contract.");
+        } else if (output.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+                   out_shape.size() != rank ||
+                   (config.task == "classify" && out_shape[1] > 0 && out_shape[1] != config.num_classes) ||
+                   (config.task == "segment" && out_shape[1] > 0 && out_shape[1] != config.num_classes) ||
+                   (config.task == "detect" && out_shape[2] > 0 && out_shape[2] != 5 + config.num_classes) ||
+                   (config.task == "anomaly" && out_shape[1] > 0 && out_shape[1] != config.input_channels))
             throw std::invalid_argument("Output shape/type does not match task.");
         // 전체 후보를 검증한 뒤 교체한다. 실패하면 기존 모델과 설정을 함께 유지한다.
         auto classification = config.task == "classify" ? std::make_unique<ClassificationState>(config) : nullptr;
@@ -289,6 +341,12 @@ bool VisionInference::InitializeFromJson(const std::string& config_path,
         config.input_width = integer("input_width");
         config.input_name = doc.at("input_name").get<std::string>();
         config.output_name = doc.at("output_name").get<std::string>();
+        if (doc.contains("output_names")) {
+            config.output_names = doc.at("output_names").get<std::vector<std::string>>();
+            if (config.output_names.empty() || config.output_names.front() != config.output_name)
+                throw std::invalid_argument("output_names must start with output_name.");
+        }
+        if (config.output_names.empty()) config.output_names.push_back(config.output_name);
         if (config.backend == "efficientnet" && doc.contains("model_config"))
         {
             const auto& model = doc.at("model_config");
@@ -314,7 +372,22 @@ bool VisionInference::InitializeFromJson(const std::string& config_path,
         if (num_threads >= 0) config.num_threads = num_threads;
         config.enable_profiling = doc.value("enable_profiling", false);
         if (doc.contains("postprocessing"))
-            config.classification_output = doc.at("postprocessing").value("output", std::string("logits"));
+        {
+            const auto& post = doc.at("postprocessing");
+            if (!post.is_object()) throw std::invalid_argument("postprocessing must be an object.");
+            config.classification_output = post.value("output", std::string("logits"));
+            if (config.task == "detect")
+            {
+                config.detection_box_encoding = post.value("box_format", std::string("normalized_cxcywh"));
+                config.detection_objectness = post.value("objectness", std::string("sigmoid"));
+                config.detection_class_scores = post.value("class_scores", std::string("sigmoid"));
+                config.detection_confidence_threshold = post.value("confidence_threshold", 0.25f);
+                config.detection_iou_threshold = post.value("iou_threshold", 0.5f);
+                config.detection_max_detections = post.value("max_detections", 300);
+            }
+            if (config.task == "anomaly")
+                config.anomaly_threshold = post.value("threshold", 0.0f);
+        }
         if (doc.contains("preprocessing"))
         {
             const auto& prep = doc.at("preprocessing");
@@ -716,6 +789,197 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
     return result;
 }
 
+float VisionInference::Sigmoid(float value)
+{
+    if (value >= 0.0f) {
+        const float z = std::exp(-value);
+        return 1.0f / (1.0f + z);
+    }
+    const float z = std::exp(value);
+    return z / (1.0f + z);
+}
+
+float VisionInference::IntersectionOverUnion(const Detection& left, const Detection& right)
+{
+    const float x1 = std::max(left.x1, right.x1);
+    const float y1 = std::max(left.y1, right.y1);
+    const float x2 = std::min(left.x2, right.x2);
+    const float y2 = std::min(left.y2, right.y2);
+    const float intersection = std::max(0.0f, x2 - x1) * std::max(0.0f, y2 - y1);
+    const float left_area = std::max(0.0f, left.x2 - left.x1) * std::max(0.0f, left.y2 - left.y1);
+    const float right_area = std::max(0.0f, right.x2 - right.x1) * std::max(0.0f, right.y2 - right.y1);
+    const float denominator = left_area + right_area - intersection;
+    return denominator > 0.0f ? intersection / denominator : 0.0f;
+}
+
+DetectResult VisionInference::Detect(const cv::Mat& image)
+{
+    DetectResult result;
+    if (!m_bInitialized) throw std::logic_error("Model is not initialized.");
+    if (m_config.task != "detect") throw std::logic_error("Detect requires a detection model.");
+    const auto start = std::chrono::steady_clock::now();
+    const auto input_tensor = Preprocess(image);
+    const auto preprocess_end = std::chrono::steady_clock::now();
+    const std::vector<int64_t> input_shape{1, m_config.input_channels,
+                                           m_config.input_height, m_config.input_width};
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    auto input = Ort::Value::CreateTensor<float>(memory_info,
+        const_cast<float*>(input_tensor.data()), input_tensor.size(), input_shape.data(), input_shape.size());
+    const char* input_names[] = {m_config.input_name.c_str()};
+    const char* output_names[] = {m_config.output_name.c_str()};
+    const auto model_start = std::chrono::steady_clock::now();
+    auto outputs = m_session->Run(Ort::RunOptions{nullptr}, input_names, &input, 1, output_names, 1);
+    const auto model_end = std::chrono::steady_clock::now();
+    ValidateOutput(outputs[0], m_config, 3);
+    const auto shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
+    const auto* values = outputs[0].GetTensorData<float>();
+    const int64_t candidates = shape[1];
+    const int stride = 5 + m_config.num_classes;
+    const int roi_width = m_config.crop_width > 0 ? m_config.crop_width : image.cols;
+    const int roi_height = m_config.crop_height > 0 ? m_config.crop_height : image.rows;
+    const int roi_x = m_config.crop_width > 0 ? (image.cols - m_config.crop_width) / 2 : 0;
+    const int roi_y = m_config.crop_height > 0 ? (image.rows - m_config.crop_height) / 2 : 0;
+    std::vector<Detection> candidates_to_keep;
+    candidates_to_keep.reserve(static_cast<size_t>(candidates));
+    for (int64_t index = 0; index < candidates; ++index)
+    {
+        const float* row = values + index * stride;
+        const float objectness = Sigmoid(row[4]);
+        int class_id = 0;
+        float best_class = 0.0f;
+        for (int cls = 0; cls < m_config.num_classes; ++cls)
+        {
+            const float score = Sigmoid(row[5 + cls]);
+            if (score > best_class) { best_class = score; class_id = cls; }
+        }
+        const float confidence = objectness * best_class;
+        if (!std::isfinite(confidence) || confidence < m_config.detection_confidence_threshold)
+            continue;
+        float x1, y1, x2, y2;
+        if (m_config.detection_box_encoding == "normalized_cxcywh")
+        {
+            const float cx = row[0], cy = row[1], width = row[2], height = row[3];
+            x1 = cx - width * 0.5f; y1 = cy - height * 0.5f;
+            x2 = cx + width * 0.5f; y2 = cy + height * 0.5f;
+        }
+        else
+        {
+            x1 = row[0]; y1 = row[1]; x2 = row[2]; y2 = row[3];
+        }
+        Detection detection;
+        detection.x1 = roi_x + std::clamp(x1, 0.0f, 1.0f) * roi_width;
+        detection.y1 = roi_y + std::clamp(y1, 0.0f, 1.0f) * roi_height;
+        detection.x2 = roi_x + std::clamp(x2, 0.0f, 1.0f) * roi_width;
+        detection.y2 = roi_y + std::clamp(y2, 0.0f, 1.0f) * roi_height;
+        detection.class_id = class_id;
+        detection.confidence = confidence;
+        if (detection.x2 > detection.x1 && detection.y2 > detection.y1)
+            candidates_to_keep.push_back(detection);
+    }
+    std::stable_sort(candidates_to_keep.begin(), candidates_to_keep.end(),
+                     [](const Detection& left, const Detection& right) {
+                         return left.confidence > right.confidence;
+                     });
+    for (const auto& candidate : candidates_to_keep)
+    {
+        bool suppressed = false;
+        for (const auto& selected : result.detections)
+            if (candidate.class_id == selected.class_id &&
+                IntersectionOverUnion(candidate, selected) > m_config.detection_iou_threshold)
+            { suppressed = true; break; }
+        if (!suppressed) {
+            result.detections.push_back(candidate);
+            if (static_cast<int>(result.detections.size()) >= m_config.detection_max_detections) break;
+        }
+    }
+    const auto end = std::chrono::steady_clock::now();
+    result.preprocess_ms = std::chrono::duration<double, std::milli>(preprocess_end - start).count();
+    result.model_ms = std::chrono::duration<double, std::milli>(model_end - model_start).count();
+    result.postprocess_ms = std::chrono::duration<double, std::milli>(end - model_end).count();
+    result.inference_ms = std::chrono::duration<double, std::milli>(end - start).count();
+    return result;
+}
+
+AnomalyResult VisionInference::Anomaly(const cv::Mat& image)
+{
+    AnomalyResult result;
+    if (!m_bInitialized) throw std::logic_error("Model is not initialized.");
+    if (m_config.task != "anomaly") throw std::logic_error("Anomaly requires an anomaly model.");
+    const auto start = std::chrono::steady_clock::now();
+    const auto input_tensor = Preprocess(image);
+    const auto preprocess_end = std::chrono::steady_clock::now();
+    const std::vector<int64_t> input_shape{1, m_config.input_channels,
+                                           m_config.input_height, m_config.input_width};
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    auto input = Ort::Value::CreateTensor<float>(memory_info,
+        const_cast<float*>(input_tensor.data()), input_tensor.size(), input_shape.data(), input_shape.size());
+    const char* input_names[] = {m_config.input_name.c_str()};
+    std::vector<const char*> output_names;
+    const auto& configured_outputs = m_config.output_names.empty()
+        ? std::vector<std::string>{m_config.output_name} : m_config.output_names;
+    for (const auto& name : configured_outputs) output_names.push_back(name.c_str());
+    const auto model_start = std::chrono::steady_clock::now();
+    auto outputs = m_session->Run(Ort::RunOptions{nullptr}, input_names, &input, 1,
+                                  output_names.data(), output_names.size());
+    const auto model_end = std::chrono::steady_clock::now();
+    cv::Mat input_map;
+    if (m_config.backend == "patchcore") {
+        const auto score_shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
+        const auto score_type = outputs[0].GetTensorTypeAndShapeInfo().GetElementType();
+        const auto map_shape = outputs[1].GetTensorTypeAndShapeInfo().GetShape();
+        const auto map_type = outputs[1].GetTensorTypeAndShapeInfo().GetElementType();
+        if (score_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+            map_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+            score_shape.size() != 1 || score_shape[0] != 1 || map_shape.size() != 4 ||
+            map_shape[0] != 1 || map_shape[1] != 1 || map_shape[2] <= 0 || map_shape[3] <= 0)
+            throw std::runtime_error("PatchCore output shape mismatch.");
+        const int map_height = static_cast<int>(map_shape[2]);
+        const int map_width = static_cast<int>(map_shape[3]);
+        input_map = cv::Mat(map_height, map_width, CV_32FC1);
+        const float* map_data = outputs[1].GetTensorData<float>();
+        std::memcpy(input_map.data, map_data, static_cast<size_t>(map_height) * map_width * sizeof(float));
+        result.score = outputs[0].GetTensorData<float>()[0];
+    } else {
+        ValidateOutput(outputs[0], m_config, 4);
+        const auto shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
+        if (shape[2] != m_config.input_height || shape[3] != m_config.input_width)
+            throw std::runtime_error("Anomaly reconstruction shape must match input shape.");
+        const auto* reconstruction = outputs[0].GetTensorData<float>();
+        input_map = cv::Mat(m_config.input_height, m_config.input_width, CV_32FC1, cv::Scalar(0));
+        const size_t plane = static_cast<size_t>(m_config.input_height) * m_config.input_width;
+        for (int y = 0; y < m_config.input_height; ++y)
+            for (int x = 0; x < m_config.input_width; ++x)
+            {
+                float error = 0.0f;
+                for (int channel = 0; channel < m_config.input_channels; ++channel)
+                    error += std::abs(input_tensor[static_cast<size_t>(channel) * plane + y * m_config.input_width + x]
+                                      - reconstruction[static_cast<size_t>(channel) * plane + y * m_config.input_width + x]);
+                input_map.at<float>(y, x) = error / static_cast<float>(m_config.input_channels);
+            }
+    }
+    const int roi_width = m_config.crop_width > 0 ? m_config.crop_width : image.cols;
+    const int roi_height = m_config.crop_height > 0 ? m_config.crop_height : image.rows;
+    const int roi_x = m_config.crop_width > 0 ? (image.cols - m_config.crop_width) / 2 : 0;
+    const int roi_y = m_config.crop_height > 0 ? (image.rows - m_config.crop_height) / 2 : 0;
+    cv::Mat resized;
+    cv::resize(input_map, resized, cv::Size(roi_width, roi_height), 0, 0, cv::INTER_LINEAR);
+    result.anomaly_map = cv::Mat::zeros(image.size(), CV_32FC1);
+    resized.copyTo(result.anomaly_map(cv::Rect(roi_x, roi_y, roi_width, roi_height)));
+    if (m_config.backend != "patchcore") {
+        double maximum = 0.0;
+        cv::minMaxLoc(result.anomaly_map, nullptr, &maximum);
+        result.score = static_cast<float>(maximum);
+    }
+    result.threshold = m_config.anomaly_threshold;
+    result.anomalous = result.score >= result.threshold;
+    const auto end = std::chrono::steady_clock::now();
+    result.preprocess_ms = std::chrono::duration<double, std::milli>(preprocess_end - start).count();
+    result.model_ms = std::chrono::duration<double, std::milli>(model_end - model_start).count();
+    result.postprocess_ms = std::chrono::duration<double, std::milli>(end - model_end).count();
+    result.inference_ms = std::chrono::duration<double, std::milli>(end - start).count();
+    return result;
+}
+
 
 // ═══════════════════════════════════════════════════
 //  파일 경로 기반 추론
@@ -741,6 +1005,20 @@ SegmentResult VisionInference::SegmentFile(const std::string& image_path)
         return SegmentResult();
     }
     return Segment(image);
+}
+
+DetectResult VisionInference::DetectFile(const std::string& image_path)
+{
+    cv::Mat image = cv::imread(image_path, cv::IMREAD_ANYCOLOR | cv::IMREAD_IGNORE_ORIENTATION);
+    if (image.empty()) throw std::runtime_error("Image load failed: " + image_path);
+    return Detect(image);
+}
+
+AnomalyResult VisionInference::AnomalyFile(const std::string& image_path)
+{
+    cv::Mat image = cv::imread(image_path, cv::IMREAD_ANYCOLOR | cv::IMREAD_IGNORE_ORIENTATION);
+    if (image.empty()) throw std::runtime_error("Image load failed: " + image_path);
+    return Anomaly(image);
 }
 
 

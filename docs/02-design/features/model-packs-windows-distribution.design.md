@@ -13,11 +13,12 @@
 - 모델 등록부와 Re-DETR v4 Small/Medium/Large·SAM2 Hiera 전 변형의 명시적 `requested` 카탈로그.
 - `DVW1` 프레임, 네트워크 없는 Docker worker, stop→kill→inspect→remove 소유권 정리.
 - `.dvmodel` 결정적 빌더, 압축 폭탄·경로·symlink·SHA-256·staging/원자 활성화 검사.
-- C++17 `vision_runtime` C ABI와 C# `VisionSession` SafeHandle. 현재 ABI 검증 태스크는 classify/semantic segment다.
+- C++17 `vision_runtime` C ABI와 C# `VisionSession` SafeHandle. generic classify/segment/detect/reconstruction anomaly와 고정 memory-bank PatchCore score/map 결과를 검증한다.
 - 오프라인 Windows payload 파일 해시·크기·3.5 GiB 예산 검사.
 - EfficientNet GUI/CLI ONNX 검증은 실제 export 그래프와 같은 Conv/BatchNorm 최적화 PyTorch 그래프를 비교한다.
 
-Re-DETR·SAM2·PatchCore의 실제 학습/특수 출력 ONNX 그래프, 모든 태스크의 C#/C++ 결과 계약,
+Re-DETR·SAM2의 실제 학습/특수 출력 ONNX 그래프, PatchCore 실제 backbone/bank 학습 계약,
+모든 태스크의 C#/C++ 결과 계약,
 WiX 단일 EXE 생성과 Windows 실기 검증은 아직 `release_ready`가 아니다. 등록부에 이름이 있다는
 이유만으로 해당 모델을 배포 가능하다고 표시하지 않는다.
 

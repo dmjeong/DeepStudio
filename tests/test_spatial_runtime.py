@@ -157,7 +157,7 @@ class SpatialRuntime(unittest.TestCase):
                 export_checkpoint(path, output, dynamic_batch=True, log=lambda _: None)
                 manifest = json.loads(output.with_suffix('.json').read_text(encoding='utf-8'))
                 self.assertEqual(manifest['verification'], 'passed')
-                self.assertEqual(manifest['cpp_supported'], task == 'segment')
+                self.assertEqual(manifest['cpp_supported'], task in {'segment', 'detect'})
                 if task == 'detect':
                     self.assertEqual(manifest['postprocessing']['box_encoding'], 'grid_sigmoid_xywh')
                     self.assertTrue(manifest['postprocessing']['class_aware_nms'])

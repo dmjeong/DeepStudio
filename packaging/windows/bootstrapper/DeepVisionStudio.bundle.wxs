@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+      xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle Name="Deep Vision Studio" Manufacturer="Deep Vision Studio"
+          Version="$(var.Version)" UpgradeCode="DAFBCB8A-F6F5-41D4-A4E0-95D50A6A8C85"
+          Condition="VersionNT64">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication Theme="hyperlinkLicense"
+          LicenseUrl="" SuppressOptionsUI="yes" />
+    </BootstrapperApplication>
+    <Chain>
+      <MsiPackage SourceFile="$(var.MsiPath)" Vital="yes" />
+    </Chain>
+  </Bundle>
+</Wix>

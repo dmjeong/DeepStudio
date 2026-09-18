@@ -5,8 +5,12 @@ C#, 다른 언어에서 같은 ONNX 세션을 호출하는 고정 ABI다. 세션
 이미지를 반복 처리한다. `dv_infer`는 동기 호출이므로 입력 버퍼는 호출이 끝날 때까지
 유효해야 하며, 결과는 반드시 `dv_release_result`로 해제한다.
 
-현재 C ABI에서 검증된 결과 종류는 `classify`와 semantic `segment`다. Re-DETR,
-PatchCore, SAM2의 C#/C++ 실행은 카탈로그에 등록되어 있지만 각 특수 출력 계약과
+현재 C ABI에서 검증된 결과 종류는 `classify`, semantic `segment`, generic
+`detect`, reconstruction `anomaly`다. `detect`는 `[1,N,5+C]` ONNX 출력에
+sigmoid score와 class-aware NMS를 적용하고, `anomaly`는 reconstruction과 입력의
+채널 평균 절대오차 map을 반환한다. 고정 memory-bank를 포함해 export한 PatchCore
+그래프도 두 번째 anomaly map 출력과 score를 같은 anomaly 결과로 읽는다. Re-DETR
+v4와 SAM2의 encoder/decoder 특수 그래프는 카탈로그에 등록되어 있지만 각 계약과
 Windows 검증이 끝날 때까지 release-ready로 표시하지 않는다.
 
 ## 최소 사용 예
@@ -40,4 +44,3 @@ MSVC에서는 `vision_runtime.dll`과 ONNX Runtime/OpenCV의 실행 DLL을 같�
 프로필로 묶는다. CMake의 `vision_runtime` target과 `install()` 규칙은 헤더와
 라이브러리 설치를 함께 처리한다. Python, PyTorch, Docker는 실행 PC에 필요하지 않다.
 Windows x64 Release와 실제 `.dvdeploy`의 JSON/그래프를 함께 검증한 뒤 배포한다.
-

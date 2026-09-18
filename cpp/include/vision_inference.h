@@ -73,6 +73,7 @@ struct InferenceConfig
     // ── ONNX 텐서 이름 ──
     std::string input_name = "input_image";     ///< 입력 텐서 이름
     std::string output_name = "class_logits";   ///< 출력 텐서 이름
+    std::vector<std::string> output_names;       ///< multi-output contracts (PatchCore)
 
     // ── 정규화 파라미터 (학습 시 사용한 값과 동일해야 함!) ──
     std::vector<float> normalize_mean = {0.449f};
@@ -94,6 +95,13 @@ struct InferenceConfig
     std::string resize_mode = "stretch";
     std::vector<int> resize_size; ///< Native classification Resize argument: [short] or [H,W]
     std::string classification_output = "logits"; ///< logits or probabilities
+    std::string detection_box_encoding = "normalized_cxcywh";
+    std::string detection_objectness = "sigmoid";
+    std::string detection_class_scores = "sigmoid";
+    float detection_confidence_threshold = 0.25f;
+    float detection_iou_threshold = 0.5f;
+    int detection_max_detections = 300;
+    float anomaly_threshold = 0.0f;
 };
 
 
@@ -127,6 +135,37 @@ struct SegmentResult
     int num_classes = 0;           ///< 클래스 수
     std::vector<int> pixel_counts; ///< 클래스별 픽셀 수
     double inference_ms = 0.0;     ///< 추론 소요 시간
+};
+
+struct Detection
+{
+    float x1 = 0.0f;
+    float y1 = 0.0f;
+    float x2 = 0.0f;
+    float y2 = 0.0f;
+    int class_id = -1;
+    float confidence = 0.0f;
+};
+
+struct DetectResult
+{
+    std::vector<Detection> detections;
+    double inference_ms = 0.0;
+    double preprocess_ms = 0.0;
+    double model_ms = 0.0;
+    double postprocess_ms = 0.0;
+};
+
+struct AnomalyResult
+{
+    cv::Mat anomaly_map;            ///< 원본 이미지 크기의 CV_32FC1 map
+    float score = 0.0f;
+    float threshold = 0.0f;
+    bool anomalous = false;
+    double inference_ms = 0.0;
+    double preprocess_ms = 0.0;
+    double model_ms = 0.0;
+    double postprocess_ms = 0.0;
 };
 
 
@@ -198,6 +237,8 @@ public:
      * @return 세그멘테이션 결과
      */
     SegmentResult Segment(const cv::Mat& image);
+    DetectResult Detect(const cv::Mat& image);
+    AnomalyResult Anomaly(const cv::Mat& image);
 
     /**
      * @brief 파일 경로로 Classification
@@ -212,6 +253,8 @@ public:
      * @return 세그멘테이션 결과
      */
     SegmentResult SegmentFile(const std::string& image_path);
+    DetectResult DetectFile(const std::string& image_path);
+    AnomalyResult AnomalyFile(const std::string& image_path);
 
     // ── 정보 조회 ──
     /**
@@ -251,6 +294,8 @@ private:
      * @brief 클래스별 컬러 마스크 생성 (시각화)
      */
     cv::Mat ColorizeMask(const cv::Mat& mask, int num_classes);
+    static float Sigmoid(float value);
+    static float IntersectionOverUnion(const Detection& left, const Detection& right);
 
     // ── 멤버 변수 ──
     InferenceConfig m_config;            ///< 추론 설정

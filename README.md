@@ -79,8 +79,9 @@ npm run build
 ## 다음 배포판 설계
 
 기본 모델 카탈로그, Docker 모델 팩, C++17/C# ONNX SDK와 단일 Windows 설치 EXE의 설계 및 기반 계약을 구현 중입니다.
-현재 실제로 SDK 검증을 통과한 기본 모델은 EfficientNet B0/B1 분류와 Custom/semantic 배포 경로이며,
-Re-DETR·SAM2·PatchCore의 특수 ONNX/C ABI 출력은 카탈로그에 등록한 뒤 별도 검증 대상으로 남겨 두었습니다.
+현재 SDK는 EfficientNet B0/B1 분류와 Custom 분류·탐지·재구성 anomaly·semantic 배포 경로를 검증하고,
+고정 memory-bank를 포함해 export한 PatchCore anomaly의 score/map도 C ABI로 읽습니다. Re-DETR·SAM2의
+특수 ONNX/C ABI 출력과 실제 Windows 모델 팩은 별도 그래프·실기 검증 대상으로 관리합니다.
 아래 문서는 구현 목표이며 위의 현재 지원 기능과 구분합니다.
 
 - [기본 모델 목록과 지원 판정](docs/01-plan/features/model-catalog.md)

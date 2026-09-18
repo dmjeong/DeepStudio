@@ -29,8 +29,19 @@ typedef enum dv_status {
 
 typedef enum dv_result_kind {
     DV_RESULT_CLASSIFICATION = 1,
-    DV_RESULT_SEGMENTATION = 2
+    DV_RESULT_SEGMENTATION = 2,
+    DV_RESULT_DETECTION = 3,
+    DV_RESULT_ANOMALY = 4
 } dv_result_kind;
+
+typedef struct dv_detection {
+    float x1;
+    float y1;
+    float x2;
+    float y2;
+    int32_t class_id;
+    float confidence;
+} dv_detection;
 
 typedef struct dv_session_options {
     uint32_t struct_size;
@@ -67,6 +78,15 @@ typedef struct dv_result {
     double preprocess_ms;
     double model_ms;
     double postprocess_ms;
+    dv_detection* detections;
+    uint32_t detection_count;
+    float anomaly_score;
+    float anomaly_threshold;
+    uint32_t anomalous;
+    float* anomaly_map;
+    uint32_t anomaly_map_width;
+    uint32_t anomaly_map_height;
+    uint32_t anomaly_map_stride_bytes;
 } dv_result;
 
 typedef struct dv_session dv_session;

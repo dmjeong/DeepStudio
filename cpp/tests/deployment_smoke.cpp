@@ -149,6 +149,22 @@ int main(int argc, char** argv)
         require(cv::countNonZero(roi_result.mask(cv::Rect(3,2,3,2)) != segmented.mask) == 0,
                 "Cropped segmentation differs from explicit ROI.");
         require(roi_result.pixel_counts == segmented.pixel_counts, "Pixels outside ROI counted as background.");
+        require(engine.InitializeFromJson((root / "detect.json").u8string()), "Detection load failed.");
+        const auto detected = engine.Detect(gray);
+        require(detected.detections.size() == 1, "Detection NMS/count mismatch.");
+        require(detected.detections[0].class_id == 0 && detected.detections[0].confidence > 0.99f,
+                "Detection score/class decode mismatch.");
+        require(detected.detections[0].x1 > 0.0f && detected.detections[0].x2 < gray.cols,
+                "Detection coordinate decode mismatch.");
+        require(engine.InitializeFromJson((root / "anomaly.json").u8string()), "Anomaly load failed.");
+        const auto anomaly = engine.Anomaly(gray);
+        require(anomaly.anomaly_map.type() == CV_32FC1 && anomaly.anomaly_map.size() == gray.size(),
+                "Anomaly map shape mismatch.");
+        require(anomaly.score == 0.0f && !anomaly.anomalous, "Anomaly reconstruction score mismatch.");
+        require(engine.InitializeFromJson((root / "patchcore.json").u8string()), "PatchCore load failed.");
+        const auto patchcore = engine.Anomaly(gray);
+        require(patchcore.anomaly_map.type() == CV_32FC1 && patchcore.score == 0.75f && patchcore.anomalous,
+                "PatchCore score/map contract mismatch.");
         require(engine.InitializeFromJson((root / "classify.json").u8string()), "Classification reload failed.");
         auto classify_crop = engine.GetConfig();
         classify_crop.crop_width = 3;

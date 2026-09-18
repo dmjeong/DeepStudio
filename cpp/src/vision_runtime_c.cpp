@@ -98,6 +98,53 @@ std::unique_ptr<dv_result> make_segmentation(const SegmentResult& source) {
     result->total_ms = source.inference_ms;
     return result;
 }
+
+std::unique_ptr<dv_result> make_detection(const DetectResult& source) {
+    auto result = std::make_unique<dv_result>();
+    result->struct_size = kResultSize;
+    result->abi_version = DV_ABI_VERSION;
+    result->kind = DV_RESULT_DETECTION;
+    result->detection_count = static_cast<uint32_t>(source.detections.size());
+    if (!source.detections.empty()) {
+        result->detections = new dv_detection[source.detections.size()];
+        for (size_t index = 0; index < source.detections.size(); ++index) {
+            const auto& source_detection = source.detections[index];
+            result->detections[index] = {
+                source_detection.x1, source_detection.y1, source_detection.x2,
+                source_detection.y2, source_detection.class_id, source_detection.confidence};
+        }
+    }
+    result->total_ms = source.inference_ms;
+    result->preprocess_ms = source.preprocess_ms;
+    result->model_ms = source.model_ms;
+    result->postprocess_ms = source.postprocess_ms;
+    return result;
+}
+
+std::unique_ptr<dv_result> make_anomaly(const AnomalyResult& source) {
+    if (source.anomaly_map.empty() || source.anomaly_map.type() != CV_32FC1)
+        throw std::runtime_error("Anomaly map is invalid.");
+    auto result = std::make_unique<dv_result>();
+    result->struct_size = kResultSize;
+    result->abi_version = DV_ABI_VERSION;
+    result->kind = DV_RESULT_ANOMALY;
+    result->anomaly_score = source.score;
+    result->anomaly_threshold = source.threshold;
+    result->anomalous = source.anomalous ? 1u : 0u;
+    result->anomaly_map_width = static_cast<uint32_t>(source.anomaly_map.cols);
+    result->anomaly_map_height = static_cast<uint32_t>(source.anomaly_map.rows);
+    result->anomaly_map_stride_bytes = result->anomaly_map_width * sizeof(float);
+    const size_t values = static_cast<size_t>(source.anomaly_map.cols) * source.anomaly_map.rows;
+    result->anomaly_map = new float[values];
+    for (int row = 0; row < source.anomaly_map.rows; ++row)
+        std::memcpy(result->anomaly_map + static_cast<size_t>(row) * source.anomaly_map.cols,
+                    source.anomaly_map.ptr<float>(row), static_cast<size_t>(source.anomaly_map.cols) * sizeof(float));
+    result->total_ms = source.inference_ms;
+    result->preprocess_ms = source.preprocess_ms;
+    result->model_ms = source.model_ms;
+    result->postprocess_ms = source.postprocess_ms;
+    return result;
+}
 } // namespace
 
 extern "C" {
@@ -158,8 +205,12 @@ dv_status dv_infer(dv_session* session, const dv_image_view* image, dv_result** 
             result = make_classification(session->engine.Classify(pixels));
         else if (session->engine.GetConfig().task == "segment")
             result = make_segmentation(session->engine.Segment(pixels));
+        else if (session->engine.GetConfig().task == "detect")
+            result = make_detection(session->engine.Detect(pixels));
+        else if (session->engine.GetConfig().task == "anomaly")
+            result = make_anomaly(session->engine.Anomaly(pixels));
         else
-            throw std::invalid_argument("The C ABI currently supports classify and segment.");
+            throw std::invalid_argument("Unsupported C ABI result task.");
         *out_result = result.release();
         return DV_STATUS_OK;
     }
@@ -175,6 +226,8 @@ void dv_release_result(dv_result* result) {
     delete[] result->probabilities;
     delete[] result->class_name_utf8;
     delete[] result->mask;
+    delete[] result->detections;
+    delete[] result->anomaly_map;
     delete result;
 }
 

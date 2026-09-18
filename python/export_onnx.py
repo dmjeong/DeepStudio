@@ -251,6 +251,9 @@ def create_inference_config(output_dir, task, num_classes, input_size,
     preprocessing = dict(preprocessing or {})
     if backend not in {"custom", "efficientnet", "patchcore"}:
         raise ValueError("지원하지 않는 모델 형식입니다. EfficientNet 체크포인트를 선택하세요.")
+    detection_cpp_supported = task != "detect" or detection_box_encoding in {
+        "grid_sigmoid_xywh", "normalized_cxcywh"
+    }
     config = {
         "schema_version": 1, "backend": backend, "model_path": onnx_filename,
         "task": task, "num_classes": num_classes, "input_channels": in_channels,
@@ -261,7 +264,9 @@ def create_inference_config(output_dir, task, num_classes, input_size,
         "normalize_std": preprocessing.get("normalize_std", [0.226] if in_channels == 1 else [0.229, 0.224, 0.225]),
         "class_names": list(class_names or []), "preprocessing": preprocessing,
         "verification": verification,
-        "cpp_supported": (backend == "custom" and task in ("classify", "segment")) or
+        "cpp_supported": ((backend == "custom" and task in ("classify", "segment", "detect", "anomaly") and
+                            detection_cpp_supported) or
+                          (backend == "patchcore" and task == "anomaly")) or
                          (backend == "efficientnet" and task == "classify"),
     }
     if architecture is not None:
@@ -287,6 +292,9 @@ def create_inference_config(output_dir, task, num_classes, input_size,
                                     "class_aware_nms": True, "confidence_threshold": .25,
                                     "iou_threshold": .5, "max_detections": 300,
                                     "box_encoding": detection_box_encoding or "legacy_raw"}
+    if backend == "custom" and task == "anomaly":
+        config["postprocessing"] = {"score": "mean_absolute_reconstruction_error",
+                                    "threshold": 0.0, "map": "per_pixel_mean_absolute_error"}
     path = Path(output_dir) / config_filename
     path.write_text(json.dumps(config, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     return str(path)
@@ -306,10 +314,12 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
     backend = checkpoint_backend(checkpoint)
     if backend not in {"custom", "efficientnet", "patchcore"}:
         raise ValueError("지원하지 않는 모델 형식입니다. EfficientNet 체크포인트를 선택하세요.")
-    if backend == "patchcore":
-        raise ValueError("PatchCore ONNX 내보내기 미지원: 특징 모델뿐 아니라 메모리 뱅크와 점수 계산이 필요합니다. 현재는 저장된 PatchCore 체크포인트로 추론해 주세요.")
     if output.resolve() == Path(checkpoint_path).resolve():
         raise ValueError("체크포인트와 ONNX 출력 경로가 같을 수 없습니다.")
+    if backend == "patchcore":
+        from export_patchcore_onnx import export_patchcore_checkpoint
+        return export_patchcore_checkpoint(checkpoint_path, output_path, verify=verify,
+                                           opset=opset_version, simplify=simplify, log=log)
     config_name = output.with_suffix(".json").name
     with tempfile.TemporaryDirectory(prefix=".onnx-export-", dir=output.parent) as temp:
         stage = Path(temp)

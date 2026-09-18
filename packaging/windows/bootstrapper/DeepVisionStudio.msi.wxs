@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Deep Vision Studio" Manufacturer="Deep Vision Studio" Version="$(var.Version)"
+           UpgradeCode="9B5C5E1E-6C0B-4BB9-AE9B-2A0A1B6D2C8A" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer Deep Vision Studio is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="DeepVisionStudio" />
+    </StandardDirectory>
+    <Feature Id="MainFeature" Title="Deep Vision Studio" Level="1">
+      <ComponentGroupRef Id="PayloadFiles" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="PayloadFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PayloadRoot)\**" />
+    </ComponentGroup>
+  </Fragment>
+</Wix>

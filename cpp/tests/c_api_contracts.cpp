@@ -50,6 +50,39 @@ int main(int argc, char** argv)
         require(std::string(dv_last_error(session)).find("stride") != std::string::npos,
                 "C ABI error detail was not preserved.");
 
+        dv_session* detect_session = nullptr;
+        dv_result* detect_result = nullptr;
+        const auto detect_config = (fs::u8path(argv[1]) / "detect.json").u8string();
+        require(dv_create_session(detect_config.c_str(), &options, &detect_session) == DV_STATUS_OK,
+                "C ABI detection session creation failed.");
+        require(dv_infer(detect_session, &view, &detect_result) == DV_STATUS_OK && detect_result &&
+                    detect_result->kind == DV_RESULT_DETECTION && detect_result->detection_count == 1,
+                "C ABI detection result mismatch.");
+        dv_release_result(detect_result);
+        dv_close_session(detect_session);
+
+        dv_session* anomaly_session = nullptr;
+        dv_result* anomaly_result = nullptr;
+        const auto anomaly_config = (fs::u8path(argv[1]) / "anomaly.json").u8string();
+        require(dv_create_session(anomaly_config.c_str(), &options, &anomaly_session) == DV_STATUS_OK,
+                "C ABI anomaly session creation failed.");
+        require(dv_infer(anomaly_session, &view, &anomaly_result) == DV_STATUS_OK && anomaly_result &&
+                    anomaly_result->kind == DV_RESULT_ANOMALY && anomaly_result->anomaly_map_width == 3,
+                "C ABI anomaly result mismatch.");
+        dv_release_result(anomaly_result);
+        dv_close_session(anomaly_session);
+
+        dv_session* patchcore_session = nullptr;
+        dv_result* patchcore_result = nullptr;
+        const auto patchcore_config = (fs::u8path(argv[1]) / "patchcore.json").u8string();
+        require(dv_create_session(patchcore_config.c_str(), &options, &patchcore_session) == DV_STATUS_OK,
+                "C ABI PatchCore session creation failed.");
+        require(dv_infer(patchcore_session, &view, &patchcore_result) == DV_STATUS_OK && patchcore_result &&
+                    patchcore_result->kind == DV_RESULT_ANOMALY && patchcore_result->anomalous == 1,
+                "C ABI PatchCore result mismatch.");
+        dv_release_result(patchcore_result);
+        dv_close_session(patchcore_session);
+
         dv_close_session(session);
         session = nullptr;
         std::cout << "C ABI contract passed." << std::endl;
