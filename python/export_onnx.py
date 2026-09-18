@@ -443,7 +443,9 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                 # Conv/BatchNorm fusion is mathematically equivalent but can
                 # reassociate FP32 operations; comparing it with the unfused
                 # checkpoint made valid graphs fail at near-zero logits.
-                log("ONNX Runtime 검증: 내보낸 PyTorch 그래프와 비교")
+                profile = verification_tolerances(spec["task"])
+                log("ONNX Runtime 검증: 내보낸 PyTorch 그래프와 비교 "
+                    f"(atol={profile['atol']}, rtol={profile['rtol']}, probes=seeded+zero)")
                 for probe in (dummy, torch.zeros_like(dummy)):
                     verified = (verify_redetr_onnx(staged_model, probe, model)
                                 if backend == "redetr_v4"
