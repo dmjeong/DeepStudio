@@ -373,3 +373,24 @@ def test_container_entrypoint_loads_plugin_inside_pack_root_only(tmp_path: Path)
     manifest_link.symlink_to(manifest)
     with pytest.raises(ContainerEntrypointError, match="regular file"):
         _load_handlers(manifest_link)
+
+
+def test_container_entrypoint_requires_plugin_source_in_pack(tmp_path: Path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"worker_entrypoint":"os:system"}', encoding="utf-8")
+    with pytest.raises(ContainerEntrypointError, match="missing from pack"):
+        _load_handlers(manifest)
+
+
+def test_container_entrypoint_loads_dotted_pack_module_without_global_import_collision(tmp_path: Path):
+    package = tmp_path / "plugin"
+    package.mkdir()
+    (package / "__init__.py").write_text("\n", encoding="utf-8")
+    (package / "worker.py").write_text(
+        "def factory(manifest):\n"
+        "    return {'describe': lambda header, payload: {'model': manifest['model_id']}}\n",
+        encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"model_id":"dotted","worker_entrypoint":"plugin.worker:factory"}', encoding="utf-8")
+    handlers = _load_handlers(manifest)
+    assert handlers["describe"]({}, {})["model"] == "dotted"
