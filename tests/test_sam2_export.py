@@ -45,6 +45,9 @@ class Sam2ExportTests(unittest.TestCase):
             manifest = json.loads(Path(result["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(manifest["schema_version"], 5)
             self.assertEqual(manifest["backend"], "sam2")
+            self.assertEqual(manifest["export"]["opset"], 17)
+            self.assertEqual(manifest["export"]["verification_tolerance"],
+                             {"atol": 1e-3, "rtol": 1e-3})
             self.assertEqual(manifest["output_names"], ["low_res_mask_logits", "iou_predictions"])
             self.assertEqual(manifest["contracts"]["prompt_types"], ["point", "box", "mask"])
             self.assertEqual(manifest["contracts"]["prompt_coordinate_space"], "resized_input")

@@ -36,4 +36,8 @@ def test_patchcore_wrapper_exports_and_verifies_fixed_bank(tmp_path):
     assert (tmp_path / "patchcore.onnx").is_file()
     config = (tmp_path / "patchcore.json")
     assert config.is_file()
-    assert json.loads(config.read_text())["schema_version"] == 5
+    manifest = json.loads(config.read_text())
+    assert manifest["schema_version"] == 5
+    assert manifest["export"]["opset"] == 17
+    assert manifest["export"]["verification_tolerance"] == {"atol": 1e-3, "rtol": 1e-3}
+    assert result["verification_tolerance"] == {"atol": 1e-3, "rtol": 1e-3}

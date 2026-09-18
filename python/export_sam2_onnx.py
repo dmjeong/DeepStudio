@@ -15,6 +15,12 @@ import tempfile
 
 import torch
 
+# Encoder and decoder are verified with the same bounded FP32 profile used by
+# the generic exporter. It is recorded in sam2.json for release audits.
+from export_onnx import validate_outputs, verification_tolerances
+
+VERIFICATION_TOLERANCE = verification_tolerances("segment")
+
 
 class Sam2ExportError(ValueError):
     pass
@@ -95,7 +101,8 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
         decoder_values.append(torch.ones((1, 1), dtype=torch.float32))
         class DecoderWithScore(torch.nn.Module):
             def __init__(self, wrapped):
-                super().__init__(); self.wrapped = wrapped
+                super().__init__()
+                self.wrapped = wrapped
             def forward(self, *values):
                 result = _outputs(self.wrapped(*values), "decoder")
                 return result[0], torch.ones((values[0].shape[0], 1), device=values[0].device)
@@ -133,8 +140,11 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
                 # CPU graph fusion can reassociate FP32 arithmetic.  Keep a
                 # bounded deployment tolerance instead of rejecting a valid
                 # graph for sub-millilogit drift.
-                if not torch.allclose(expected.detach().float(), torch.from_numpy(actual), atol=1e-3, rtol=1e-3):
-                    raise Sam2ExportError("SAM2 ONNX numeric verification failed")
+                try:
+                    validate_outputs(expected.detach().float().numpy(), actual,
+                                     **VERIFICATION_TOLERANCE)
+                except ValueError as exc:
+                    raise Sam2ExportError(str(exc)) from exc
         os.replace(staged_encoder, encoder_file)
         os.replace(staged_decoder, decoder_file)
     config = {
@@ -147,7 +157,11 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
         "preprocessing": {"input_size": [int(size[0]), int(size[1])], "in_channels": channels,
             "resize_implementation": "opencv_linear_exact_v1", "interpolation": "INTER_LINEAR_EXACT",
             "antialias": False, "layout": "NCHW", "value_scale": 255., "color_order": "RGB"},
-        "verification": "passed" if verify else "skipped", "cpp_supported": True,
+        "verification": "passed" if verify else "skipped",
+        "export": {"opset": opset, "precision": "float32", "dynamic_batch": False,
+                   "verification_tolerance": dict(VERIFICATION_TOLERANCE),
+                   "verification_reference": "exported_pytorch_graph"},
+        "cpp_supported": True,
         "contracts": {"graphs": {
             "encoder": {"file": encoder_file.name, "inputs": {"image": "input_image"},
                          "outputs": ["image_embeddings"]},
@@ -165,7 +179,7 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
     result = {"output_dir": str(output), "encoder_path": str(encoder_file),
             "decoder_path": str(decoder_file), "config_path": str(config_file),
             "backend": "sam2", "task": "segment", "verification": config["verification"],
-            "cpp_supported": True}
+            "cpp_supported": True, "verification_tolerance": dict(VERIFICATION_TOLERANCE)}
     if bundle_output is not None:
         from model_runtime.deployment_bundle import build_deployment_bundle
         bundle = build_deployment_bundle(output, bundle_output)

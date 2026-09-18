@@ -18,6 +18,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# CPU ONNX Runtime may reassociate FP32 arithmetic while preserving the
+# deployment result. Keep the same explicit parity profile as the generic
+# exporter and publish it in the manifest so every exporter is auditable.
+from export_onnx import validate_outputs, verification_tolerances
+
+VERIFICATION_TOLERANCE = verification_tolerances("anomaly")
+
 
 class PatchCoreOnnxWrapper(nn.Module):
     def __init__(self, patchcore, *, sigma: float = 4.0):
@@ -99,9 +106,8 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
                 None, {"input_image": dummy.numpy()})
             for reference, converted in zip(expected, actual):
                 # Preserve a strict bounded FP32 deployment gate while
-                # allowing normal ONNX Runtime kernel reassociation.
-                if not torch.allclose(reference, torch.from_numpy(converted), atol=1e-3, rtol=1e-3):
-                    raise ValueError("PatchCore ONNX numeric verification failed")
+                # reporting the actual failing element when a graph drifts.
+                validate_outputs(reference.detach().numpy(), converted, **VERIFICATION_TOLERANCE)
         os.replace(staged, output)
     config = {
         "schema_version": 5, "backend": "patchcore", "task": "anomaly",
@@ -113,6 +119,9 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
             "resize_implementation": "opencv_linear_exact_v1", "interpolation": "INTER_LINEAR_EXACT",
             "antialias": False, "layout": "NCHW", "resize": "bilinear", "value_scale": 255.,
         "color_order": "RGB"}, "verification": "passed" if verify else "skipped",
+        "export": {"opset": opset, "precision": "float32", "dynamic_batch": False,
+                   "verification_tolerance": dict(VERIFICATION_TOLERANCE),
+                   "verification_reference": "exported_pytorch_graph"},
         "cpp_supported": True,
         "postprocessing": {"score": "patchcore_smoothed_knn_max", "threshold": threshold,
                             "memory_bank_size": int(patchcore.memory_bank.shape[0]),
@@ -122,7 +131,8 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     result = {"output_path": str(output), "config_path": str(config_path),
             "file_size_mb": output.stat().st_size / (1024 * 1024), "backend": "patchcore",
-            "task": "anomaly", "verification": config["verification"], "cpp_supported": True}
+            "task": "anomaly", "verification": config["verification"], "cpp_supported": True,
+            "verification_tolerance": dict(VERIFICATION_TOLERANCE)}
     if bundle_output is not None:
         from model_runtime.deployment_bundle import build_deployment_bundle
         bundle = build_deployment_bundle(output, bundle_output)
