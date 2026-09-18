@@ -1,0 +1,17 @@
+# ═══════════════════════════════════════════════
+#  Deep Vision Studio — 프로젝트 설정
+# ═══════════════════════════════════════════════
+
+[tool.pytest.ini_options]
+# 테스트 디렉토리
+testpaths = ["tests"]
+# 테스트 파일 패턴
+python_files = ["test_*.py"]
+# 기본 실행 옵션: 상세 출력 + 짧은 요약
+addopts = "-v --tb=short"
+
+[tool.pyright]
+# 타입 체크 대상 (core/ 모듈만 엄격)
+include = ["gui/core"]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"

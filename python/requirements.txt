@@ -1,0 +1,31 @@
+# ═══════════════════════════════════════════════════
+#  CustomCSP Python 학습 환경 의존성
+# ═══════════════════════════════════════════════════
+#
+#  설치: pip install -r requirements.txt
+#
+#  CPU 전용 환경:
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#    pip install -r requirements.txt
+#
+
+# ── 핵심 프레임워크 ──
+torch>=2.0.0
+torchvision>=0.15.0
+truststore==0.10.4
+certifi>=2024.2.2
+
+# ── ONNX 변환 & 검증 ──
+onnx>=1.16.0
+onnxruntime>=1.20.1    # CPU 추론 검증용
+
+# ── 이미지 처리 ──
+Pillow>=9.0.0
+opencv-python>=4.7.0
+shapely==2.1.2
+numpy>=1.24.0
+
+# ── 선택적 도구 ──
+# onnxsim>=0.4.0       # ONNX 모델 단순화 (선택)
+# matplotlib>=3.7.0    # 학습 그래프 시각화 (선택)
+# tqdm>=4.65.0         # 진행률 표시줄 (선택)

@@ -1,0 +1,199 @@
+{
+  "version": "2.0",
+  "lastUpdated": "2026-09-18T03:34:16.637944+00:00",
+  "activeFeatures": [
+    "efficientnet-cpu-latency",
+    "studio-cleanup"
+  ],
+  "primaryFeature": "studio-cleanup",
+  "features": {
+    "efficientnet-cpu-latency": {
+      "phase": "completed",
+      "matchRate": 100,
+      "iterationCount": 1,
+      "documents": {
+        "plan": "docs/01-plan/features/efficientnet-cpu-latency.plan.md",
+        "design": "docs/02-design/features/efficientnet-cpu-latency.design.md",
+        "analysis": "docs/03-analysis/efficientnet-cpu-latency.analysis.md",
+        "report": "docs/04-report/efficientnet-cpu-latency.report.md"
+      },
+      "taskChain": [
+        {
+          "phase": "plan",
+          "status": "completed",
+          "createdAt": "2026-09-17T12:14:10.630Z",
+          "completedAt": "2026-09-17T12:14:48.832Z"
+        },
+        {
+          "phase": "design",
+          "status": "completed",
+          "createdAt": "2026-09-17T12:14:10.630Z",
+          "completedAt": "2026-09-17T12:14:48.849Z"
+        },
+        {
+          "phase": "do",
+          "status": "completed",
+          "createdAt": "2026-09-17T12:14:10.630Z",
+          "completedAt": "2026-09-17T12:26:59.243Z"
+        },
+        {
+          "phase": "check",
+          "status": "completed",
+          "createdAt": "2026-09-17T12:14:10.630Z",
+          "completedAt": "2026-09-17T12:28:06.633Z"
+        },
+        {
+          "phase": "report",
+          "status": "completed",
+          "createdAt": "2026-09-17T12:14:10.630Z",
+          "completedAt": "2026-09-17T12:31:03.356Z"
+        }
+      ],
+      "timestamps": {
+        "started": "2026-09-17T12:14:10.630Z",
+        "lastUpdated": "2026-09-18T01:06:05.825313+00:00"
+      },
+      "acceptance": {
+        "implementation": "verified locally",
+        "target_i7_latency": "still pending target Windows/i7 measurement",
+        "weights_licensing": "excluded by user",
+        "cpp17": "Release builds with OpenVINO ON/OFF verified on Apple M4",
+        "cpp_background": "queue/lifecycle/parity and 1000-call timings verified",
+        "hard_8ms_deadline": "not achieved for all measured background requests",
+        "windows_build": "not run",
+        "target_environment": "Windows x64 / high-end Intel i7, exact model unknown",
+        "selected_runtime": "ONNX Runtime CPU",
+        "onnx_refinement": "buffer reuse locally verified; target CPU tuning tool provided",
+        "gui_cpu_runtime": "Auto uses validated ONNX or restores existing PyTorch with visible warning; explicit ONNX remains strict",
+        "gui_validation": "14 ONNX/fallback/button tests plus 90 existing regressions passed, 2 legacy retired_engine skips; both test processes exit 0",
+        "gui_224_m4_latency": "p50 6.037 ms / p95 6.261 ms / max 8.596 ms; not Windows/i7",
+        "first_gui_image_deadline": "not guaranteed; actual first button sample 11.527 ms including decode",
+        "user_onnx_validation_failure": "Maximum absolute error 2.8339844 reported on Windows; user checkpoint unavailable and cause not reproduced locally",
+        "onnx_validation_recovery": "ALL/BASIC/DISABLED validation retained; failed auto preparation restores PyTorch; target numerical mismatch unresolved",
+        "gui_auto_fallback": "Local synthetic B0 predictions/Grad-CAM/cache preserved with injected ONNX failures; actual process button 2/2 completed, errors 0, exit 0",
+        "user_model_privacy": "Recovery verified with locally generated fixture weights/images; user private data not transferred"
+      },
+      "completedAt": "2026-09-17T12:31:03.356Z"
+    },
+    "studio-cleanup": {
+      "phase": "completed",
+      "matchRate": 100,
+      "documents": {
+        "plan": "docs/01-plan/features/studio-cleanup.plan.md",
+        "design": "docs/02-design/features/studio-cleanup.design.md",
+        "analysis": "docs/03-analysis/studio-cleanup.analysis.md",
+        "report": "docs/04-report/studio-cleanup.report.md"
+      },
+      "completedAt": "2026-09-18T03:34:16.637944+00:00",
+      "validation": "Python 589 passed/11 skipped; web 11 passed/build; C++17 two configurations each CTest 3/3; Windows/i7 not measured"
+    }
+  },
+  "pipeline": {
+    "currentPhase": 1,
+    "level": "Starter",
+    "phaseHistory": []
+  },
+  "session": {
+    "startedAt": "2026-09-17T12:14:10.629Z",
+    "onboardingCompleted": false,
+    "lastActivity": "2026-09-17T12:31:03.356Z"
+  },
+  "history": [
+    {
+      "feature": "efficientnet-cpu-latency",
+      "from": "plan",
+      "to": "design",
+      "timestamp": "2026-09-17T12:14:48.830Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "action": "phase_complete",
+      "phase": "plan",
+      "nextPhase": "design",
+      "timestamp": "2026-09-17T12:14:48.831Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "from": "design",
+      "to": "design",
+      "timestamp": "2026-09-17T12:14:48.843Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "from": "design",
+      "to": "do",
+      "timestamp": "2026-09-17T12:14:48.849Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "action": "phase_complete",
+      "phase": "design",
+      "nextPhase": "do",
+      "timestamp": "2026-09-17T12:14:48.849Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "from": "do",
+      "to": "check",
+      "timestamp": "2026-09-17T12:26:59.241Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "action": "phase_complete",
+      "phase": "do",
+      "nextPhase": "check",
+      "timestamp": "2026-09-17T12:26:59.243Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "from": "check",
+      "to": "act",
+      "timestamp": "2026-09-17T12:28:06.632Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "action": "phase_complete",
+      "phase": "check",
+      "nextPhase": "act",
+      "timestamp": "2026-09-17T12:28:06.632Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "from": "act",
+      "to": "report",
+      "timestamp": "2026-09-17T12:31:03.353Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "action": "phase_complete",
+      "phase": "act",
+      "nextPhase": "report",
+      "timestamp": "2026-09-17T12:31:03.353Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "action": "phase_complete",
+      "phase": "report",
+      "nextPhase": "completed",
+      "timestamp": "2026-09-17T12:31:03.356Z"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "action": "gui_cpu_onnx_correction_verified",
+      "timestamp": "2026-09-18T00:09:47.239379+00:00",
+      "target_hardware_acceptance": "pending"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "action": "strict_onnx_validation_recovery_verified",
+      "timestamp": "2026-09-18T00:51:17.296299+00:00",
+      "user_error_resolved": "unconfirmed"
+    },
+    {
+      "feature": "efficientnet-cpu-latency",
+      "action": "restore_pytorch_after_auto_onnx_failure",
+      "timestamp": "2026-09-18T01:06:05.825313+00:00",
+      "target_onnx_mismatch": "unresolved"
+    }
+  ]
+}

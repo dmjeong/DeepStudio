@@ -1,0 +1,23 @@
+{
+  "name": "deep-vision-studio",
+  "private": true,
+  "version": "9.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "format": "prettier --write src vite.config.ts *.json index.html"
+  },
+  "dependencies": {
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "typescript": "5.9.3",
+    "vite": "8.2.2",
+    "prettier": "3.6.2"
+  }
+}

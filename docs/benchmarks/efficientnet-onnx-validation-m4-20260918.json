@@ -1,0 +1,87 @@
+{
+  "date": "2026-09-18",
+  "platform": "macOS-26.5-arm64-arm-64bit",
+  "cpu": "Apple M4",
+  "torch": "2.14.0",
+  "source": "https://download.pytorch.org/models/efficientnet_b0_rwightman-7f5810bc.pth",
+  "weights_sha256": "7f5810bc96def8f7552d5b7e68d53c4786f81167d28291b21c0d90e1fca14934",
+  "user_checkpoint_tested": false,
+  "reported_user_max_absolute_error": 2.8339844,
+  "user_error_reproduced": false,
+  "cases": [
+    {
+      "channels": 3,
+      "classes": 1000,
+      "optimization": "all",
+      "validation_attempts": [
+        {
+          "optimization": "all",
+          "passed": true
+        }
+      ],
+      "onnxruntime": "1.30.0",
+      "probes": [
+        {
+          "input": "seeded",
+          "max_abs_error": 3.933906555175781e-06,
+          "expected_range": [
+            -1.1886768341064453,
+            1.7754391431808472
+          ],
+          "pytorch_top1": 21,
+          "onnx_top1": 21,
+          "allclose": true
+        },
+        {
+          "input": "zero",
+          "max_abs_error": 1.4990568161010742e-05,
+          "expected_range": [
+            -0.7128150463104248,
+            1.3755502700805664
+          ],
+          "pytorch_top1": 111,
+          "onnx_top1": 111,
+          "allclose": true
+        }
+      ]
+    },
+    {
+      "channels": 1,
+      "classes": 1000,
+      "optimization": "all",
+      "validation_attempts": [
+        {
+          "optimization": "all",
+          "passed": true
+        }
+      ],
+      "onnxruntime": "1.30.0",
+      "probes": [
+        {
+          "input": "seeded",
+          "max_abs_error": 1.0013580322265625e-05,
+          "expected_range": [
+            -4.2006330490112305,
+            5.631169319152832
+          ],
+          "pytorch_top1": 852,
+          "onnx_top1": 852,
+          "allclose": true
+        },
+        {
+          "input": "zero",
+          "max_abs_error": 1.4990568161010742e-05,
+          "expected_range": [
+            -0.7128150463104248,
+            1.3755502700805664
+          ],
+          "pytorch_top1": 111,
+          "onnx_top1": 111,
+          "allclose": true
+        }
+      ]
+    }
+  ],
+  "atol": 0.0001,
+  "rtol": 0.0001
+}

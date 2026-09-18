@@ -1,0 +1,10 @@
+# Standalone EfficientNet benchmark/export environment; Python 3.11 recommended.
+# CPU-only PyTorch on Intel: install torch from the official CPU wheel index first.
+# No GUI, pretrained weights or training dataset is installed here.
+# Redistribution obligations, including bundled codecs: ../docs/EFFICIENTNET_CPU_LICENSES.md
+torch>=2.0
+numpy>=1.24
+onnx>=1.16
+onnxruntime>=1.20.1
+opencv-python-headless>=4.7
+openvino>=2024.6

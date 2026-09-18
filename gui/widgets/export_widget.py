@@ -1,0 +1,254 @@
+"""
+Deep Vision Studio — 모델 내보내기 페이지
+
+기능:
+┌─────────────────────────────────────────────────────────────┐
+│ 1. PyTorch (.pt) → ONNX (.onnx) 변환                       │
+│ 2. ONNX 옵션: opset 버전, 동적 배치, 단순화                  │
+│ 3. 변환 결과 검증 (PyTorch vs ONNX 출력 비교)                │
+│ 4. C++ 추론용 inference_config.json 생성                     │
+│ 5. ONNX 모델 정보 표시 (크기, 입출력 형태)                   │
+└─────────────────────────────────────────────────────────────┘
+"""
+
+import os
+
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QLineEdit, QFileDialog, QMessageBox, QGroupBox,
+    QFormLayout, QSpinBox,
+    QCheckBox, QTextEdit, QProgressBar,
+)
+from PySide6.QtCore import QThread, Signal
+from PySide6.QtGui import QFont, QTextCursor
+
+
+# 프로젝트 모듈 경로 추가 (PyInstaller EXE 호환)
+from core.paths import ensure_python_path
+ensure_python_path()
+
+from export_onnx import export_checkpoint
+from core.project import ProjectData
+
+
+class ExportWorker(QThread):
+    """로드부터 검증까지 동일한 내보내기 서비스를 작업 스레드에서 실행한다."""
+
+    log = Signal(str)
+    completed = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, checkpoint_path, output_path, opset_version,
+                 dynamic_batch, simplify, verify, parent=None):
+        super().__init__(parent)
+        self.checkpoint_path = checkpoint_path
+        self.output_path = output_path
+        self.options = dict(opset_version=opset_version, dynamic_batch=dynamic_batch,
+                            simplify=simplify, verify=verify)
+
+    def run(self):
+        try:
+            result = export_checkpoint(self.checkpoint_path, self.output_path,
+                                       log=self.log.emit, **self.options)
+            self.completed.emit(result)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+class ExportWidget(QWidget):
+    """모델 내보내기 페이지"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.project = None
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(30, 20, 30, 20)
+
+        # ── 타이틀 ──
+        title = QLabel("모델 내보내기 (ONNX)")
+        title.setObjectName("page_title")
+        layout.addWidget(title)
+
+        subtitle = QLabel(
+            "학습된 PyTorch 모델을 ONNX 형식으로 변환할 수 있습니다. "
+            "변환된 모델은 지원하는 ONNX Runtime 추론기에서 바로 추론에 사용할 수 있습니다."
+        )
+        subtitle.setObjectName("page_subtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        # ── 입력 설정 ──
+        input_group = QGroupBox("입력 설정")
+        input_layout = QFormLayout(input_group)
+
+        # 체크포인트 경로
+        ckpt_row = QHBoxLayout()
+        self.ckpt_edit = QLineEdit()
+        self.ckpt_edit.setPlaceholderText("학습된 체크포인트 (.pt)")
+        ckpt_row.addWidget(self.ckpt_edit)
+        browse_btn = QPushButton("찾아보기...")
+        browse_btn.clicked.connect(self._browse_checkpoint)
+        ckpt_row.addWidget(browse_btn)
+        input_layout.addRow("체크포인트:", ckpt_row)
+
+        # 출력 경로
+        out_row = QHBoxLayout()
+        self.output_edit = QLineEdit()
+        self.output_edit.setPlaceholderText("출력 ONNX 파일 경로")
+        out_row.addWidget(self.output_edit)
+        out_browse = QPushButton("찾아보기...")
+        out_browse.clicked.connect(self._browse_output)
+        out_row.addWidget(out_browse)
+        input_layout.addRow("출력 경로:", out_row)
+
+        layout.addWidget(input_group)
+
+        # ── ONNX 옵션 ──
+        opt_group = QGroupBox("ONNX 옵션")
+        opt_layout = QFormLayout(opt_group)
+
+        self.opset_spin = QSpinBox()
+        self.opset_spin.setRange(11, 20)
+        self.opset_spin.setValue(17)
+        self.opset_spin.setFixedWidth(120)
+        # QFormLayout 은 필드 열을 가득 채우므로 HBox + stretch 로 폭을 고정한다
+        opset_row = QHBoxLayout()
+        opset_row.addWidget(self.opset_spin)
+        opset_row.addStretch(1)
+        opt_layout.addRow("Opset 버전:", opset_row)
+
+        self.dynamic_check = QCheckBox("동적 배치 크기 지원")
+        opt_layout.addRow("", self.dynamic_check)
+
+        self.simplify_check = QCheckBox("ONNX 단순화 (onnxsim)")
+        opt_layout.addRow("", self.simplify_check)
+
+        self.verify_check = QCheckBox("출력 검증 (PyTorch vs ONNX)")
+        self.verify_check.setChecked(True)
+        opt_layout.addRow("", self.verify_check)
+
+        layout.addWidget(opt_group)
+
+        # ── 내보내기 버튼 ──
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        self.export_btn = QPushButton("ONNX Export")
+        self.export_btn.setProperty("cssClass", "primary")
+        self.export_btn.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        self.export_btn.setFixedSize(240, 48)
+        self.export_btn.clicked.connect(self._start_export)
+        btn_row.addWidget(self.export_btn)
+
+        layout.addLayout(btn_row)
+
+        # ── 프로그레스 ──
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)  # 무한 진행
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
+
+        # ── 로그 ──
+        log_group = QGroupBox("변환 로그")
+        log_layout = QVBoxLayout(log_group)
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(250)
+        log_layout.addWidget(self.log_text)
+        layout.addWidget(log_group)
+
+        layout.addStretch()
+
+    def set_project(self, project: ProjectData):
+        """프로젝트 설정"""
+        self.project = project
+
+        # 최근 체크포인트 자동 설정
+        if project.runs:
+            latest = project.runs[-1]
+            if latest.checkpoint_path:
+                self.ckpt_edit.setText(latest.checkpoint_path)
+
+        # 기본 출력 경로
+        export_dir = os.path.join(project.project_dir, "exports")
+        os.makedirs(export_dir, exist_ok=True)
+        self.output_edit.setText(
+            os.path.join(export_dir, f"model_{project.task}.onnx")
+        )
+
+    def _browse_checkpoint(self):
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "체크포인트 선택", "",
+            "PyTorch 체크포인트 (*.pt *.pth)"
+        )
+        if filepath:
+            self.ckpt_edit.setText(filepath)
+
+    def _browse_output(self):
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "ONNX 저장", "",
+            "ONNX 모델 (*.onnx)"
+        )
+        if filepath:
+            self.output_edit.setText(filepath)
+
+    def _start_export(self):
+        """내보내기 시작"""
+        ckpt_path = self.ckpt_edit.text().strip()
+        output_path = self.output_edit.text().strip()
+
+        if not ckpt_path or not os.path.isfile(ckpt_path):
+            QMessageBox.warning(self, "알림", "체크포인트 파일을 선택해 주세요.")
+            return
+
+        if not output_path:
+            QMessageBox.warning(self, "알림", "출력 경로를 지정해 주세요.")
+            return
+
+        if getattr(self, "worker", None) is not None and self.worker.isRunning():
+            return
+        self.log_text.clear()
+        self.export_btn.setEnabled(False)
+        self.progress_bar.show()
+        self.worker = ExportWorker(
+            checkpoint_path=ckpt_path, output_path=output_path,
+            opset_version=self.opset_spin.value(),
+            dynamic_batch=self.dynamic_check.isChecked(),
+            simplify=self.simplify_check.isChecked(),
+            verify=self.verify_check.isChecked(), parent=self,
+        )
+        self.worker.log.connect(self._on_log)
+        self.worker.completed.connect(self._on_finished)
+        self.worker.error.connect(self._on_error)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.finished.connect(self._worker_finished)
+        self.worker.start()
+
+    def _worker_finished(self):
+        self.worker = None
+        self.export_btn.setEnabled(True)
+        self.progress_bar.hide()
+
+    def _on_log(self, message):
+        self.log_text.append(message)
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.log_text.setTextCursor(cursor)
+
+    def _on_finished(self, result):
+        status = "검증 통과" if result["verification"] == "passed" else "검증 건너뜀"
+        text = (f"ONNX 내보내기 완료 ({status})\n\n"
+                f"모델: {result['output_path']}\n"
+                f"설정: {result['config_path']}\n"
+                f"크기: {result['file_size_mb']:.1f} MB")
+        if result.get("cpp_supported"):
+            text += "\n제공된 C++ 추론기에서 ONNX와 JSON을 함께 로드할 수 있습니다."
+        self.log_text.append(text)
+        QMessageBox.information(self, "완료", text)
+
+    def _on_error(self, error_msg):
+        self.log_text.append(f"\n오류: {error_msg}")
+        QMessageBox.critical(self, "오류", f"내보내기 실패:\n{error_msg}")

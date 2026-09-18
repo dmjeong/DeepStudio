@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "EfficientNet: 레이어별 학습 디버깅",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/debug_train.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "args": ["--project", "${input:projectPath}", "--variant", "${input:variant}", "--device", "auto", "--batches", "1"]
+    }
+  ],
+  "inputs": [
+    {"id": "projectPath", "type": "promptString", "description": "분류 프로젝트 .dvproj 절대 경로"},
+    {"id": "variant", "type": "pickString", "description": "EfficientNet 모델", "options": ["efficientnet_b0", "efficientnet_b1"], "default": "efficientnet_b0"}
+  ]
+}

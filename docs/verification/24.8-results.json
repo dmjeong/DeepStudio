@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "source_remote_commit": "bb294762a8feefbe7d0ec8d79d092e5d9b0df480",
+  "source_local_commit": "c1dd46f6a431a4aecacf58b0984b07bf8ddfd04a",
+  "executed_at_utc": "2026-09-17T08:35:21.879216+00:00",
+  "python": "3.12.14",
+  "packages_present": {
+    "numpy": true,
+    "torch": false,
+    "torchvision": false,
+    "cv2": false,
+    "onnx": false,
+    "onnxruntime": false,
+    "pytest": false,
+    "PySide6": false
+  },
+  "overall_status": "blocked",
+  "tests_run": 18,
+  "passed": 10,
+  "blocked": 8,
+  "failures": 0,
+  "errors": 0,
+  "cases": [
+    {
+      "test": "tests.test_efficientnet_channels.ChannelContractTests.test_conflicting_channels_are_rejected_before_normalization",
+      "status": "passed"
+    },
+    {
+      "test": "tests.test_efficientnet_channels.ChannelContractTests.test_gray_api_does_not_accept_rgb_models_or_pixels",
+      "status": "passed"
+    },
+    {
+      "test": "tests.test_efficientnet_channels.ChannelContractTests.test_native_and_legacy_contracts_include_actual_stem",
+      "status": "passed"
+    },
+    {
+      "test": "tests.test_efficientnet_channels.ChannelContractTests.test_new_project_is_gray_and_old_saved_channel_is_preserved",
+      "status": "passed"
+    },
+    {
+      "test": "tests.test_efficientnet_channels.ChannelContractTests.test_weight_adaptation_matches_repeated_gray_convolution_at_borders",
+      "status": "passed"
+    },
+    {
+      "test": "tests.test_efficientnet_channels.ChannelContractTests.test_wrong_stem_and_adapter_are_rejected",
+      "status": "passed"
+    },
+    {
+      "test": "tests.test_efficientnet_channels.GrayModelTests.test_b0_b1_gray_matches_official_model_with_the_same_one_channel_stem",
+      "status": "blocked",
+      "reason": "PyTorch and torchvision required"
+    },
+    {
+      "test": "tests.test_efficientnet_channels.GrayModelTests.test_dataset_and_gui_keep_gray_input_through_first_conv",
+      "status": "blocked",
+      "reason": "PyTorch and torchvision required"
+    },
+    {
+      "test": "tests.test_efficientnet_channels.GrayModelTests.test_native_and_legacy_checkpoint_roundtrip_preserves_predictions",
+      "status": "blocked",
+      "reason": "PyTorch and torchvision required"
+    },
+    {
+      "test": "tests.test_efficientnet_channels.GrayPixelTests.test_color_to_gray_keeps_previous_pixel_values",
+      "status": "blocked",
+      "reason": "OpenCV required"
+    },
+    {
+      "test": "tests.test_efficientnet_channels.GrayPixelTests.test_gray_files_and_arrays_never_expand_to_rgb",
+      "status": "blocked",
+      "reason": "OpenCV required"
+    },
+    {
+      "test": "tests.test_efficientnet_deployment.DeploymentPolicyTests.test_failure_writes_diagnostic_and_preserves_release",
+      "status": "passed"
+    },
+    {
+      "test": "tests.test_efficientnet_deployment.DeploymentPolicyTests.test_new_classification_defaults_and_retired_modes",
+      "status": "passed"
+    },
+    {
+      "test": "tests.test_efficientnet_deployment.DeploymentPolicyTests.test_retired_export_does_not_write_manifest",
+      "status": "passed"
+    },
+    {
+      "test": "tests.test_efficientnet_deployment.DeploymentPolicyTests.test_runtime_manifest_validation",
+      "status": "passed"
+    },
+    {
+      "test": "tests.test_efficientnet_deployment.EfficientNetDeploymentRuntimeTests.test_fusion_preserves_source_parameters_outputs_and_gradcam",
+      "status": "blocked",
+      "reason": "PyTorch, torchvision, ONNX, ONNX Runtime and OpenCV required"
+    },
+    {
+      "test": "tests.test_efficientnet_deployment.EfficientNetDeploymentRuntimeTests.test_optimizer_excludes_only_bias_and_norm_from_decay",
+      "status": "blocked",
+      "reason": "PyTorch, torchvision, ONNX, ONNX Runtime and OpenCV required"
+    },
+    {
+      "test": "tests.test_efficientnet_deployment.EfficientNetDeploymentRuntimeTests.test_real_b0_b1_rgb_gray_export_dynamic_batch_and_opencv_input",
+      "status": "blocked",
+      "reason": "PyTorch, torchvision, ONNX, ONNX Runtime and OpenCV required"
+    }
+  ],
+  "source_hashes": {
+    "python/efficientnet.py": "f180b78e2a0ee29378af496eb07f26c6069f4959b2df4601cda285aa84691211",
+    "python/efficientnet_contract.py": "29b2b1786343584f008b6c97f6cf333e403c94b55e8dd025546c1614d506e9b2",
+    "python/export_onnx.py": "16d65e74247feac1c20b99508be0b74390d49351428fab1db27140431daad738",
+    "python/onnx_classifier.py": "4977d3211684eff6fad5b0a1e942d40d8810c53cc3c2b5b656d6f47f31bb82e4",
+    "python/opencv_preprocess.py": "491a8f01d7ee9b92e60c49f683106c5a78c8846fd55821570766740a4cbc4212",
+    "tests/test_efficientnet_channels.py": "ef17e85cc85a2bb695c5e84933699e0e84c1f82c6f1be1276dfc6b1d615ede22",
+    "tests/test_efficientnet_deployment.py": "593528fef1c9302f5e1472bd82b2a4300ab0503062b7cfa0bf6fa4d40b47e90b"
+  },
+  "test_log": "test_conflicting_channels_are_rejected_before_normalization (tests.test_efficientnet_channels.ChannelContractTests.test_conflicting_channels_are_rejected_before_normalization) ... ok\ntest_gray_api_does_not_accept_rgb_models_or_pixels (tests.test_efficientnet_channels.ChannelContractTests.test_gray_api_does_not_accept_rgb_models_or_pixels) ... ok\ntest_native_and_legacy_contracts_include_actual_stem (tests.test_efficientnet_channels.ChannelContractTests.test_native_and_legacy_contracts_include_actual_stem) ... ok\ntest_new_project_is_gray_and_old_saved_channel_is_preserved (tests.test_efficientnet_channels.ChannelContractTests.test_new_project_is_gray_and_old_saved_channel_is_preserved) ... ok\ntest_weight_adaptation_matches_repeated_gray_convolution_at_borders (tests.test_efficientnet_channels.ChannelContractTests.test_weight_adaptation_matches_repeated_gray_convolution_at_borders) ... ok\ntest_wrong_stem_and_adapter_are_rejected (tests.test_efficientnet_channels.ChannelContractTests.test_wrong_stem_and_adapter_are_rejected) ... ok\ntest_b0_b1_gray_matches_official_model_with_the_same_one_channel_stem (tests.test_efficientnet_channels.GrayModelTests.test_b0_b1_gray_matches_official_model_with_the_same_one_channel_stem) ... skipped 'PyTorch and torchvision required'\ntest_dataset_and_gui_keep_gray_input_through_first_conv (tests.test_efficientnet_channels.GrayModelTests.test_dataset_and_gui_keep_gray_input_through_first_conv) ... skipped 'PyTorch and torchvision required'\ntest_native_and_legacy_checkpoint_roundtrip_preserves_predictions (tests.test_efficientnet_channels.GrayModelTests.test_native_and_legacy_checkpoint_roundtrip_preserves_predictions) ... skipped 'PyTorch and torchvision required'\ntest_color_to_gray_keeps_previous_pixel_values (tests.test_efficientnet_channels.GrayPixelTests.test_color_to_gray_keeps_previous_pixel_values) ... skipped 'OpenCV required'\ntest_gray_files_and_arrays_never_expand_to_rgb (tests.test_efficientnet_channels.GrayPixelTests.test_gray_files_and_arrays_never_expand_to_rgb) ... skipped 'OpenCV required'\ntest_failure_writes_diagnostic_and_preserves_release (tests.test_efficientnet_deployment.DeploymentPolicyTests.test_failure_writes_diagnostic_and_preserves_release) ... ok\ntest_new_classification_defaults_and_retired_modes (tests.test_efficientnet_deployment.DeploymentPolicyTests.test_new_classification_defaults_and_retired_modes) ... ok\ntest_retired_export_does_not_write_manifest (tests.test_efficientnet_deployment.DeploymentPolicyTests.test_retired_export_does_not_write_manifest) ... ok\ntest_runtime_manifest_validation (tests.test_efficientnet_deployment.DeploymentPolicyTests.test_runtime_manifest_validation) ... ok\ntest_fusion_preserves_source_parameters_outputs_and_gradcam (tests.test_efficientnet_deployment.EfficientNetDeploymentRuntimeTests.test_fusion_preserves_source_parameters_outputs_and_gradcam) ... skipped 'PyTorch, torchvision, ONNX, ONNX Runtime and OpenCV required'\ntest_optimizer_excludes_only_bias_and_norm_from_decay (tests.test_efficientnet_deployment.EfficientNetDeploymentRuntimeTests.test_optimizer_excludes_only_bias_and_norm_from_decay) ... skipped 'PyTorch, torchvision, ONNX, ONNX Runtime and OpenCV required'\ntest_real_b0_b1_rgb_gray_export_dynamic_batch_and_opencv_input (tests.test_efficientnet_deployment.EfficientNetDeploymentRuntimeTests.test_real_b0_b1_rgb_gray_export_dynamic_batch_and_opencv_input) ... skipped 'PyTorch, torchvision, ONNX, ONNX Runtime and OpenCV required'\n\n----------------------------------------------------------------------\nRan 18 tests in 0.045s\n\nOK (skipped=8)\n",
+  "stem_algebra_probe": {
+    "implementation": "production efficientnet_contract.adapt_rgb_stem plus NumPy einsum",
+    "weights": "seeded synthetic float64; not pretrained weights",
+    "comparison": "one normalized gray plane with summed weights versus three identical normalized gray planes",
+    "results": [
+      {
+        "input_shape": [
+          2,
+          1,
+          8,
+          10
+        ],
+        "max_absolute_error": 5.329070518200751e-15
+      },
+      {
+        "input_shape": [
+          2,
+          1,
+          9,
+          11
+        ],
+        "max_absolute_error": 3.552713678800501e-15
+      },
+      {
+        "input_shape": [
+          2,
+          1,
+          1,
+          1
+        ],
+        "max_absolute_error": 4.440892098500626e-16
+      }
+    ],
+    "scope": "first convolution only; does not validate the old per-channel RGB normalization, full model, accuracy, speed, or export"
+  },
+  "runtime_install_attempts": [
+    {
+      "url": "https://pypi.org/simple/opencv-python-headless/",
+      "http_status": 403,
+      "response": "Forbidden. Calls to this URL via the terminal are not allowed."
+    },
+    {
+      "url": "https://download.pytorch.org/whl/cpu/torch/",
+      "http_status": 403,
+      "response": "Forbidden. Calls to this URL via the terminal are not allowed."
+    }
+  ],
+  "remote_ci": {
+    "run_id": 35197019288,
+    "url": "https://github.com/dmjeong/Vision/actions/runs/35197019288",
+    "conclusion": "failure",
+    "executed_test_steps": 0,
+    "cause": "not established; check annotations endpoint unavailable through the connector"
+  },
+  "not_verified": [
+    "Actual Torch and torchvision B0/B1 forward/backward comparison",
+    "Actual pretrained weight loading",
+    "Native and legacy Torch checkpoint restoration",
+    "OpenCV decoding and dataset-to-GUI 1-channel execution",
+    "ONNX graph channel inspection and ONNX Runtime output comparison",
+    "Conv-BatchNorm fusion and Grad-CAM runtime",
+    "C++ compilation and inference",
+    "Full training UI operation",
+    "Production accuracy, confusion matrix and inference latency",
+    "Input buffer reuse: not implemented in 24.8"
+  ]
+}

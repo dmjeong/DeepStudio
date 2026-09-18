@@ -1,0 +1,16 @@
+# 자동 시작은 NVIDIA GPU를 감지해 CUDA 환경을 준비하고 정상 GPU 환경을 유지한다.
+fastapi==0.128.0
+uvicorn==0.40.0
+pydantic>=2.10,<3
+torch>=2.0.0
+torchvision>=0.15.0
+truststore==0.10.4
+certifi>=2024.2.2
+Pillow>=9.0.0
+shapely==2.1.2
+numpy>=1.24.0
+opencv-python>=4.7.0
+matplotlib>=3.7.0
+onnx>=1.16.0
+onnxruntime>=1.20.1
+psutil>=5.9.0

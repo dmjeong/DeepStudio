@@ -1,0 +1,1330 @@
+{
+  "cpu": "Apple M4",
+  "os": "macOS-26.5-arm64-arm-64bit",
+  "onnxruntime": "1.30.0",
+  "model_sha256": "2ee96acb46027867237ed4cc041a0a3e2948cc02dc0cc32701945cebf752be6b",
+  "input": "224x224 gray; seeded random B0, 2 classes, FP32; same model/image as initial report",
+  "method": "3 alternating rounds; 50 warmup + 1000 calls each, threads=4, direct and background; CPU timings run sequentially",
+  "measurements": [
+    {
+      "background": false,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 6.393,
+        "mean_ms": 5.172442266999994,
+        "p50_ms": 5.1985,
+        "p95_ms": 5.3820327,
+        "p99_ms": 5.58639209,
+        "within_target_fraction": 1.0
+      },
+      "num_classes": 2,
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 6.433541,
+        "mean_ms": 5.213537915999999,
+        "p50_ms": 5.238479,
+        "p95_ms": 5.421313099999999,
+        "p99_ms": 5.6265575,
+        "within_target_fraction": 1.0
+      },
+      "postprocess": {
+        "max_ms": 0.017708,
+        "mean_ms": 0.002025707999999994,
+        "p50_ms": 0.001875,
+        "p95_ms": 0.002877049999999998,
+        "p99_ms": 0.004875829999999999,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.151291,
+        "mean_ms": 0.03906994100000006,
+        "p50_ms": 0.037208,
+        "p95_ms": 0.04250415,
+        "p99_ms": 0.08954532999999999,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.0,
+        "mean_ms": 0.0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "preprocessing + model + postprocessing; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": true,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 6.434458,
+        "mean_ms": 5.214360690000006,
+        "p50_ms": 5.2393545,
+        "p95_ms": 5.42254345,
+        "p99_ms": 5.62705875,
+        "within_target_fraction": 1.0
+      },
+      "warmup": 50,
+      "trial": 0,
+      "variant": "baseline"
+    },
+    {
+      "background": false,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 6.698375,
+        "mean_ms": 5.185731485999997,
+        "p50_ms": 5.189063,
+        "p95_ms": 5.4264357500000004,
+        "p99_ms": 5.9882700799999995,
+        "within_target_fraction": 1.0
+      },
+      "num_classes": 2,
+      "onnxruntime_options": {
+        "allow_spinning": -1,
+        "dynamic_block_base": 0
+      },
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 6.7345,
+        "mean_ms": 5.221473243999996,
+        "p50_ms": 5.226103999999999,
+        "p95_ms": 5.4654184500000005,
+        "p99_ms": 6.02180458,
+        "within_target_fraction": 1.0
+      },
+      "postprocess": {
+        "max_ms": 0.0105,
+        "mean_ms": 0.0016907029999999978,
+        "p50_ms": 0.001542,
+        "p95_ms": 0.0027940499999999984,
+        "p99_ms": 0.004542409999999999,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.094292,
+        "mean_ms": 0.034051054999999934,
+        "p50_ms": 0.03225,
+        "p95_ms": 0.037574349999999965,
+        "p99_ms": 0.08162541000000001,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.0,
+        "mean_ms": 0.0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "preprocessing + model + postprocessing; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": true,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 6.734834,
+        "mean_ms": 5.221627601,
+        "p50_ms": 5.2262705,
+        "p95_ms": 5.4656223,
+        "p99_ms": 6.02209449,
+        "within_target_fraction": 1.0
+      },
+      "warmup": 50,
+      "trial": 0,
+      "variant": "reuse"
+    },
+    {
+      "background": true,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 7.524958,
+        "mean_ms": 5.184979180999999,
+        "p50_ms": 5.186271,
+        "p95_ms": 5.385516049999999,
+        "p99_ms": 6.2754039299999995,
+        "within_target_fraction": 1.0
+      },
+      "num_classes": 2,
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 7.615291,
+        "mean_ms": 5.223696456000003,
+        "p50_ms": 5.2238545,
+        "p95_ms": 5.4317642500000005,
+        "p99_ms": 6.31299225,
+        "within_target_fraction": 1.0
+      },
+      "postprocess": {
+        "max_ms": 0.014333,
+        "mean_ms": 0.002214848999999996,
+        "p50_ms": 0.002,
+        "p95_ms": 0.004085099999999998,
+        "p99_ms": 0.00579241,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.114416,
+        "mean_ms": 0.036502426000000046,
+        "p50_ms": 0.033708,
+        "p95_ms": 0.05026669999999999,
+        "p99_ms": 0.09392017,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.039417,
+        "mean_ms": 0.007774269999999995,
+        "p50_ms": 0.006583,
+        "p95_ms": 0.016544049999999998,
+        "p99_ms": 0.025341759999999994,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "Submit frame copy + queue + preprocessing + model + postprocessing + future wakeup; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": true,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 7.642166,
+        "mean_ms": 5.245560042000004,
+        "p50_ms": 5.2474375,
+        "p95_ms": 5.45048815,
+        "p99_ms": 6.34107025,
+        "within_target_fraction": 1.0
+      },
+      "warmup": 50,
+      "trial": 0,
+      "variant": "baseline"
+    },
+    {
+      "background": true,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 6.645417,
+        "mean_ms": 5.1743686619999965,
+        "p50_ms": 5.1940835,
+        "p95_ms": 5.3918348,
+        "p99_ms": 5.59889,
+        "within_target_fraction": 1.0
+      },
+      "num_classes": 2,
+      "onnxruntime_options": {
+        "allow_spinning": -1,
+        "dynamic_block_base": 0
+      },
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 6.728292,
+        "mean_ms": 5.209174612999997,
+        "p50_ms": 5.2268954999999995,
+        "p95_ms": 5.4281723,
+        "p99_ms": 5.6299512499999995,
+        "within_target_fraction": 1.0
+      },
+      "postprocess": {
+        "max_ms": 0.007333,
+        "mean_ms": 0.0016846909999999923,
+        "p50_ms": 0.001542,
+        "p95_ms": 0.002959,
+        "p99_ms": 0.004500419999999999,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.102875,
+        "mean_ms": 0.03312125999999991,
+        "p50_ms": 0.0300835,
+        "p95_ms": 0.03910269999999998,
+        "p99_ms": 0.08762624999999999,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.055709,
+        "mean_ms": 0.008188564999999993,
+        "p50_ms": 0.006958,
+        "p95_ms": 0.016294049999999997,
+        "p99_ms": 0.025085919999999998,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "Submit frame copy + queue + preprocessing + model + postprocessing + future wakeup; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": true,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 6.7595,
+        "mean_ms": 5.234784520999991,
+        "p50_ms": 5.252833000000001,
+        "p95_ms": 5.4540702,
+        "p99_ms": 5.663425,
+        "within_target_fraction": 1.0
+      },
+      "warmup": 50,
+      "trial": 0,
+      "variant": "reuse"
+    },
+    {
+      "background": false,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 7.107458,
+        "mean_ms": 5.215294455000005,
+        "p50_ms": 5.2213335,
+        "p95_ms": 5.3979440499999995,
+        "p99_ms": 6.36325158,
+        "within_target_fraction": 1.0
+      },
+      "num_classes": 2,
+      "onnxruntime_options": {
+        "allow_spinning": -1,
+        "dynamic_block_base": 0
+      },
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 7.141834,
+        "mean_ms": 5.251517866999997,
+        "p50_ms": 5.258625,
+        "p95_ms": 5.43123925,
+        "p99_ms": 6.40787575,
+        "within_target_fraction": 1.0
+      },
+      "postprocess": {
+        "max_ms": 0.014292,
+        "mean_ms": 0.001646948999999993,
+        "p50_ms": 0.0015,
+        "p95_ms": 0.003045199999999996,
+        "p99_ms": 0.004292259999999998,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.092875,
+        "mean_ms": 0.03457646299999991,
+        "p50_ms": 0.03275,
+        "p95_ms": 0.037377099999999996,
+        "p99_ms": 0.07971816,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.0,
+        "mean_ms": 0.0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "preprocessing + model + postprocessing; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": true,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 7.141875,
+        "mean_ms": 5.251669248000001,
+        "p50_ms": 5.258729499999999,
+        "p95_ms": 5.431483,
+        "p99_ms": 6.40791801,
+        "within_target_fraction": 1.0
+      },
+      "warmup": 50,
+      "trial": 1,
+      "variant": "reuse"
+    },
+    {
+      "background": false,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 5.836542,
+        "mean_ms": 5.181161824999996,
+        "p50_ms": 5.201979,
+        "p95_ms": 5.377815200000001,
+        "p99_ms": 5.52593926,
+        "within_target_fraction": 1.0
+      },
+      "num_classes": 2,
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 5.89075,
+        "mean_ms": 5.223487506000009,
+        "p50_ms": 5.244896000000001,
+        "p95_ms": 5.41711215,
+        "p99_ms": 5.56551783,
+        "within_target_fraction": 1.0
+      },
+      "postprocess": {
+        "max_ms": 0.01125,
+        "mean_ms": 0.002230045999999991,
+        "p50_ms": 0.002083,
+        "p95_ms": 0.003335099999999998,
+        "p99_ms": 0.00541601,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.132125,
+        "mean_ms": 0.04009563500000004,
+        "p50_ms": 0.037542,
+        "p95_ms": 0.04496314999999999,
+        "p99_ms": 0.09426290999999999,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.0,
+        "mean_ms": 0.0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "preprocessing + model + postprocessing; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": true,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 5.893208,
+        "mean_ms": 5.224117875000004,
+        "p50_ms": 5.245479,
+        "p95_ms": 5.41761425,
+        "p99_ms": 5.5661445,
+        "within_target_fraction": 1.0
+      },
+      "warmup": 50,
+      "trial": 1,
+      "variant": "baseline"
+    },
+    {
+      "background": true,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 6.456125,
+        "mean_ms": 5.194949552999995,
+        "p50_ms": 5.212146000000001,
+        "p95_ms": 5.397068399999999,
+        "p99_ms": 5.70744125,
+        "within_target_fraction": 1.0
+      },
+      "num_classes": 2,
+      "onnxruntime_options": {
+        "allow_spinning": -1,
+        "dynamic_block_base": 0
+      },
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 6.497208,
+        "mean_ms": 5.229859242000008,
+        "p50_ms": 5.2455,
+        "p95_ms": 5.4340215,
+        "p99_ms": 5.744801160000001,
+        "within_target_fraction": 1.0
+      },
+      "postprocess": {
+        "max_ms": 0.036667,
+        "mean_ms": 0.0017937709999999987,
+        "p50_ms": 0.001625,
+        "p95_ms": 0.0029160500000000003,
+        "p99_ms": 0.004335079999999998,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.091125,
+        "mean_ms": 0.03311591799999997,
+        "p50_ms": 0.031083,
+        "p95_ms": 0.043925299999999994,
+        "p99_ms": 0.08184482,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.052916,
+        "mean_ms": 0.008316547000000004,
+        "p50_ms": 0.007125,
+        "p95_ms": 0.016752049999999997,
+        "p99_ms": 0.025375830000000002,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "Submit frame copy + queue + preprocessing + model + postprocessing + future wakeup; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": true,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 6.523792,
+        "mean_ms": 5.258475180999999,
+        "p50_ms": 5.274208,
+        "p95_ms": 5.460492299999999,
+        "p99_ms": 5.770975089999999,
+        "within_target_fraction": 1.0
+      },
+      "warmup": 50,
+      "trial": 1,
+      "variant": "reuse"
+    },
+    {
+      "background": true,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 9.714666,
+        "mean_ms": 5.253263758000002,
+        "p50_ms": 5.210312500000001,
+        "p95_ms": 5.8019913499999936,
+        "p99_ms": 6.89875767,
+        "within_target_fraction": 0.998
+      },
+      "num_classes": 2,
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 9.806208,
+        "mean_ms": 5.29352800200001,
+        "p50_ms": 5.2498745,
+        "p95_ms": 5.839168749999994,
+        "p99_ms": 6.99477592,
+        "within_target_fraction": 0.998
+      },
+      "postprocess": {
+        "max_ms": 0.016667,
+        "mean_ms": 0.0021880929999999886,
+        "p50_ms": 0.002,
+        "p95_ms": 0.003962149999999996,
+        "p99_ms": 0.005211079999999998,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.128875,
+        "mean_ms": 0.03807615099999996,
+        "p50_ms": 0.03475,
+        "p95_ms": 0.06455449999999999,
+        "p99_ms": 0.09479741,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.030417,
+        "mean_ms": 0.007883466,
+        "p50_ms": 0.006791,
+        "p95_ms": 0.015127049999999998,
+        "p99_ms": 0.02491642,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "Submit frame copy + queue + preprocessing + model + postprocessing + future wakeup; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": false,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 9.836542,
+        "mean_ms": 5.315512868999996,
+        "p50_ms": 5.2705210000000005,
+        "p95_ms": 5.857241049999994,
+        "p99_ms": 7.028659670000001,
+        "within_target_fraction": 0.998
+      },
+      "warmup": 50,
+      "trial": 1,
+      "variant": "baseline"
+    },
+    {
+      "background": false,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 6.67575,
+        "mean_ms": 5.213186921000002,
+        "p50_ms": 5.2187705,
+        "p95_ms": 5.4671021,
+        "p99_ms": 5.96647176,
+        "within_target_fraction": 1.0
+      },
+      "num_classes": 2,
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 6.739417,
+        "mean_ms": 5.2564108460000005,
+        "p50_ms": 5.260021,
+        "p95_ms": 5.5100625,
+        "p99_ms": 6.013880169999999,
+        "within_target_fraction": 1.0
+      },
+      "postprocess": {
+        "max_ms": 0.013916,
+        "mean_ms": 0.0020749569999999953,
+        "p50_ms": 0.001875,
+        "p95_ms": 0.003627099999999998,
+        "p99_ms": 0.005875839999999999,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.105,
+        "mean_ms": 0.041148968000000015,
+        "p50_ms": 0.039208,
+        "p95_ms": 0.04896105,
+        "p99_ms": 0.093292,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.0,
+        "mean_ms": 0.0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "preprocessing + model + postprocessing; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": true,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 6.7405,
+        "mean_ms": 5.257182628999997,
+        "p50_ms": 5.2606874999999995,
+        "p95_ms": 5.5106854,
+        "p99_ms": 6.014629759999999,
+        "within_target_fraction": 1.0
+      },
+      "warmup": 50,
+      "trial": 2,
+      "variant": "baseline"
+    },
+    {
+      "background": false,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 5.607208,
+        "mean_ms": 5.215453561000004,
+        "p50_ms": 5.232771,
+        "p95_ms": 5.41991285,
+        "p99_ms": 5.5430037500000005,
+        "within_target_fraction": 1.0
+      },
+      "num_classes": 2,
+      "onnxruntime_options": {
+        "allow_spinning": -1,
+        "dynamic_block_base": 0
+      },
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 5.645542,
+        "mean_ms": 5.2543597589999935,
+        "p50_ms": 5.271375,
+        "p95_ms": 5.460581550000001,
+        "p99_ms": 5.58088625,
+        "within_target_fraction": 1.0
+      },
+      "postprocess": {
+        "max_ms": 0.015875,
+        "mean_ms": 0.001686731999999994,
+        "p50_ms": 0.0015,
+        "p95_ms": 0.003458,
+        "p99_ms": 0.004544079999999998,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.095458,
+        "mean_ms": 0.03721946599999995,
+        "p50_ms": 0.036875,
+        "p95_ms": 0.04138334999999999,
+        "p99_ms": 0.08225083,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.0,
+        "mean_ms": 0.0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "preprocessing + model + postprocessing; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": true,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 5.645667,
+        "mean_ms": 5.254497718999998,
+        "p50_ms": 5.2714585,
+        "p95_ms": 5.460626749999999,
+        "p99_ms": 5.58117699,
+        "within_target_fraction": 1.0
+      },
+      "warmup": 50,
+      "trial": 2,
+      "variant": "reuse"
+    },
+    {
+      "background": true,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 7.766542,
+        "mean_ms": 5.416758365000002,
+        "p50_ms": 5.2832085,
+        "p95_ms": 6.3826944,
+        "p99_ms": 7.26953467,
+        "within_target_fraction": 1.0
+      },
+      "num_classes": 2,
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 7.820167,
+        "mean_ms": 5.461092306000001,
+        "p50_ms": 5.323354,
+        "p95_ms": 6.4226542,
+        "p99_ms": 7.35450351,
+        "within_target_fraction": 1.0
+      },
+      "postprocess": {
+        "max_ms": 0.014,
+        "mean_ms": 0.0023753819999999923,
+        "p50_ms": 0.002083,
+        "p95_ms": 0.00475,
+        "p99_ms": 0.006083839999999999,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.112459,
+        "mean_ms": 0.04195855900000001,
+        "p50_ms": 0.0358955,
+        "p95_ms": 0.0895,
+        "p99_ms": 0.09658483,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.114458,
+        "mean_ms": 0.009609242999999998,
+        "p50_ms": 0.007167,
+        "p95_ms": 0.018762499999999988,
+        "p99_ms": 0.02808441,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "Submit frame copy + queue + preprocessing + model + postprocessing + future wakeup; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": true,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 7.843417,
+        "mean_ms": 5.484172188000011,
+        "p50_ms": 5.3449375,
+        "p95_ms": 6.457883999999999,
+        "p99_ms": 7.3779764199999995,
+        "within_target_fraction": 1.0
+      },
+      "warmup": 50,
+      "trial": 2,
+      "variant": "baseline"
+    },
+    {
+      "background": true,
+      "batch_size": 1,
+      "cpp_standard": 201703,
+      "cpu_label": "Apple M4",
+      "input_shape": [
+        1,
+        1,
+        224,
+        224
+      ],
+      "last_class_id": 1,
+      "last_probabilities": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "max_ms": 34.911125,
+        "mean_ms": 5.298016360999985,
+        "p50_ms": 5.247332999999999,
+        "p95_ms": 5.5196913499999996,
+        "p99_ms": 5.9989910099999975,
+        "within_target_fraction": 0.997
+      },
+      "num_classes": 2,
+      "onnxruntime_options": {
+        "allow_spinning": -1,
+        "dynamic_block_base": 0
+      },
+      "onnxruntime_version": "1.30.0",
+      "opencv_version": "4.12.0",
+      "pipeline": {
+        "max_ms": 35.000083,
+        "mean_ms": 5.335719202999996,
+        "p50_ms": 5.2846665,
+        "p95_ms": 5.562152049999999,
+        "p99_ms": 6.036190839999997,
+        "within_target_fraction": 0.997
+      },
+      "postprocess": {
+        "max_ms": 0.01625,
+        "mean_ms": 0.0017255259999999991,
+        "p50_ms": 0.001583,
+        "p95_ms": 0.002917,
+        "p99_ms": 0.00504142,
+        "within_target_fraction": 1.0
+      },
+      "precision": "FP32",
+      "preprocess": {
+        "max_ms": 0.115208,
+        "mean_ms": 0.035977315999999905,
+        "p50_ms": 0.0345,
+        "p95_ms": 0.04468059999999999,
+        "p99_ms": 0.08309134,
+        "within_target_fraction": 1.0
+      },
+      "queue": {
+        "max_ms": 0.130667,
+        "mean_ms": 0.008498895000000008,
+        "p50_ms": 0.006917,
+        "p95_ms": 0.01771934999999999,
+        "p99_ms": 0.026423659999999995,
+        "within_target_fraction": 1.0
+      },
+      "runs": 1000,
+      "runtime": "onnxruntime",
+      "schema_version": 1,
+      "scope": "Submit frame copy + queue + preprocessing + model + postprocessing + future wakeup; excludes decode/setup",
+      "source_shape": [
+        224,
+        224,
+        1
+      ],
+      "synthetic_input": false,
+      "target": {
+        "all_measured_requests_within_target": false,
+        "met_on_this_machine": true,
+        "metric": "wall.p95_ms",
+        "threshold_ms": 8.0
+      },
+      "threads": 4,
+      "wall": {
+        "max_ms": 35.128875,
+        "mean_ms": 5.363956164000005,
+        "p50_ms": 5.309229,
+        "p95_ms": 5.587937500000001,
+        "p99_ms": 6.062423009999997,
+        "within_target_fraction": 0.997
+      },
+      "warmup": 50,
+      "trial": 2,
+      "variant": "reuse"
+    }
+  ],
+  "baseline_commit": "1d16b0900993959e3b1fd82abb358cb6926ce896",
+  "scope": "No i7/Windows measurements; no hard deadline guarantee; probabilities unchanged in parity checks.",
+  "tuning_screen": {
+    "selected": "threads-4-block-0-spin-default",
+    "rounds": 2,
+    "runs_per_round": 200,
+    "candidates": [
+      {
+        "name": "threads-4-block-0-spin-default",
+        "worst_round_p95_ms": 5.468569049999999,
+        "round_max_ms": [
+          5.526375,
+          5.63675
+        ]
+      },
+      {
+        "name": "threads-6-block-4-spin-default",
+        "worst_round_p95_ms": 6.05378605,
+        "round_max_ms": [
+          6.353083,
+          6.486583
+        ]
+      },
+      {
+        "name": "threads-8-block-0-spin-default",
+        "worst_round_p95_ms": 6.09120445,
+        "round_max_ms": [
+          6.185084,
+          6.886709
+        ]
+      },
+      {
+        "name": "threads-8-block-4-spin-default",
+        "worst_round_p95_ms": 6.164751450000001,
+        "round_max_ms": [
+          7.03125,
+          7.009417
+        ]
+      },
+      {
+        "name": "threads-6-block-0-spin-default",
+        "worst_round_p95_ms": 6.28755385,
+        "round_max_ms": [
+          6.334,
+          7.261542
+        ]
+      },
+      {
+        "name": "threads-4-block-4-spin-default",
+        "worst_round_p95_ms": 6.305187500000001,
+        "round_max_ms": [
+          6.377083,
+          6.7125
+        ]
+      },
+      {
+        "name": "threads-8-block-4-spin-off",
+        "worst_round_p95_ms": 6.401999999999999,
+        "round_max_ms": [
+          6.455625,
+          6.4465
+        ]
+      },
+      {
+        "name": "threads-8-block-0-spin-off",
+        "worst_round_p95_ms": 6.4208003,
+        "round_max_ms": [
+          7.519667,
+          6.452792
+        ]
+      },
+      {
+        "name": "threads-6-block-0-spin-off",
+        "worst_round_p95_ms": 6.4924298,
+        "round_max_ms": [
+          6.930375,
+          6.591666
+        ]
+      },
+      {
+        "name": "threads-4-block-0-spin-off",
+        "worst_round_p95_ms": 6.62061395,
+        "round_max_ms": [
+          7.658833,
+          6.357042
+        ]
+      },
+      {
+        "name": "threads-4-block-4-spin-off",
+        "worst_round_p95_ms": 7.10003065,
+        "round_max_ms": [
+          9.364625,
+          6.504542
+        ]
+      },
+      {
+        "name": "threads-6-block-4-spin-off",
+        "worst_round_p95_ms": 7.243716649999996,
+        "round_max_ms": [
+          6.897708,
+          41.127458
+        ]
+      },
+      {
+        "name": "threads-2-block-4-spin-default",
+        "worst_round_p95_ms": 7.9027899,
+        "round_max_ms": [
+          8.268542,
+          8.196208
+        ]
+      },
+      {
+        "name": "threads-2-block-0-spin-default",
+        "worst_round_p95_ms": 7.9055104,
+        "round_max_ms": [
+          8.127833,
+          8.157
+        ]
+      },
+      {
+        "name": "threads-2-block-4-spin-off",
+        "worst_round_p95_ms": 8.20613715,
+        "round_max_ms": [
+          8.260458,
+          9.073833
+        ]
+      },
+      {
+        "name": "threads-2-block-0-spin-off",
+        "worst_round_p95_ms": 8.2239399,
+        "round_max_ms": [
+          8.322958,
+          8.475667
+        ]
+      }
+    ]
+  },
+  "confirmation": {
+    "background": true,
+    "batch_size": 1,
+    "cpp_standard": 201703,
+    "cpu_label": "unspecified",
+    "input_shape": [
+      1,
+      1,
+      224,
+      224
+    ],
+    "last_class_id": 1,
+    "last_probabilities": [
+      0.5,
+      0.5
+    ],
+    "model": {
+      "max_ms": 7.654583,
+      "mean_ms": 5.2016083980000065,
+      "p50_ms": 5.2076665,
+      "p95_ms": 5.40739165,
+      "p99_ms": 6.195259999999999,
+      "within_target_fraction": 1.0
+    },
+    "num_classes": 2,
+    "onnxruntime_options": {
+      "allow_spinning": -1,
+      "dynamic_block_base": 0
+    },
+    "onnxruntime_version": "1.30.0",
+    "opencv_version": "4.12.0",
+    "pipeline": {
+      "max_ms": 7.688125,
+      "mean_ms": 5.236245596666668,
+      "p50_ms": 5.2417915,
+      "p95_ms": 5.4396372,
+      "p99_ms": 6.241119999999997,
+      "within_target_fraction": 1.0
+    },
+    "postprocess": {
+      "max_ms": 0.014583,
+      "mean_ms": 0.0017902693333333305,
+      "p50_ms": 0.001625,
+      "p95_ms": 0.003042,
+      "p99_ms": 0.00462624999999997,
+      "within_target_fraction": 1.0
+    },
+    "precision": "FP32",
+    "preprocess": {
+      "max_ms": 0.111042,
+      "mean_ms": 0.0328469293333332,
+      "p50_ms": 0.0305,
+      "p95_ms": 0.037214299999999964,
+      "p99_ms": 0.08458773999999991,
+      "within_target_fraction": 1.0
+    },
+    "queue": {
+      "max_ms": 0.085708,
+      "mean_ms": 0.00845467566666668,
+      "p50_ms": 0.007041,
+      "p95_ms": 0.01816904999999999,
+      "p99_ms": 0.02691866999999996,
+      "within_target_fraction": 1.0
+    },
+    "runs": 3000,
+    "runtime": "onnxruntime",
+    "schema_version": 1,
+    "scope": "Submit frame copy + queue + preprocessing + model + postprocessing + future wakeup; excludes decode/setup",
+    "source_shape": [
+      224,
+      224,
+      1
+    ],
+    "synthetic_input": false,
+    "target": {
+      "all_measured_requests_within_target": true,
+      "met_on_this_machine": true,
+      "metric": "wall.p95_ms",
+      "threshold_ms": 8.0
+    },
+    "threads": 4,
+    "wall": {
+      "max_ms": 7.711833,
+      "mean_ms": 5.263479861000009,
+      "p50_ms": 5.2677295,
+      "p95_ms": 5.46742945,
+      "p99_ms": 6.271887669999998,
+      "within_target_fraction": 1.0
+    },
+    "warmup": 50
+  }
+}

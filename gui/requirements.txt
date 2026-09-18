@@ -1,0 +1,56 @@
+# ═══════════════════════════════════════════════════
+#  Deep Vision Studio GUI 의존성
+# ═══════════════════════════════════════════════════
+#
+#  설치 순서 (gui/ 폴더에서 실행):
+#
+#    Step 1) PyTorch 선행 설치 (택 1):
+#
+#      [옵션 A] GPU 학습 — CUDA 13.x, RTX 4000 Ada 등 (⭐ 학습 PC 추천):
+#        pip install torch torchvision --index-url https://download.pytorch.org/whl/cu132
+#
+#      [옵션 B] CPU 전용 — 경량, 추론 전용 (엣지 PC 배포용):
+#        pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#
+#    Step 2) 나머지 패키지 설치:
+#        pip install -r requirements.txt
+#
+#  ※ cu132는 CUDA 13.3 호환 (마이너 버전 호환)
+#  ※ pip PyTorch가 CUDA Runtime을 번들로 포함 — 별도 CUDA Toolkit 불필요
+#  ※ RTX 4000 Ada (Ada Lovelace, sm_89) — CUDA 13.x 완벽 지원
+#  ※ GPU 버전: Mixed Precision(FP16/BF16) 학습 + GPU 추론 가능
+#
+
+# ── GUI 프레임워크 ──
+PySide6>=6.5.0              # Qt for Python (LGPL)
+
+# ── 차트 / 시각화 ──
+matplotlib>=3.7.0           # 학습 Loss/Metric 차트
+
+# ── 핵심 (python/ 의존성) ──
+torch>=2.0.0
+torchvision>=0.15.0
+truststore==0.10.4          # Windows 시스템 인증서로 ImageNet 다운로드
+certifi>=2024.2.2           # 공개 CA 인증서 목록
+Pillow>=9.0.0
+shapely==2.1.2             # Cropped instance polygon intersection
+numpy>=1.24.0
+
+# ── 이미지 처리 (합성 불량 생성 등) ──
+opencv-python>=4.7.0        # cv2: 불량 생성, 이미지 전처리, 히트맵
+
+# ── ONNX (내보내기 및 CPU EfficientNet 추론) ──
+onnx>=1.16.0
+onnxruntime>=1.20.1
+
+# ── 시스템 정보 ──
+psutil>=5.9.0               # CPU/RAM 정보 표시
+
+# ── EXE 빌드 ──
+pyinstaller>=6.0.0          # Windows EXE 빌드
+
+# ── 선택적 ──
+# onnxsim>=0.4.0            # ONNX 모델 단순화
+# onnxscript>=0.1.0         # torch.onnx.export 지원
+
+# Best 선정과 freeze 연동을 검증한 공식 엔진 버전

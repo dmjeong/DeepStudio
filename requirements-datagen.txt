@@ -1,0 +1,12 @@
+# Separate Python 3.11 environment. Install torch 2.8.0 / torchvision 0.23.0
+# from the official CUDA index first; see docs/DATA_GEN.md.
+diffusers==0.35.1
+peft==0.17.1
+transformers==4.55.4
+accelerate==1.10.1
+safetensors==0.6.2
+huggingface-hub==0.34.4
+numpy==2.2.6
+Pillow==11.3.0
+psutil==7.0.0
+scipy==1.16.1

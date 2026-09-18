@@ -1,0 +1,4 @@
+demo_results/
+demo_results_trained/
+data_cache/
+*.pt
