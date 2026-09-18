@@ -25,6 +25,12 @@ stdin/stdout으로 주고받는다. 실제 모델 의존성·체크포인트·ON
 6. 앱의 모델 관리 화면에서 설치된 절대 팩 경로를 선택하고 `팩 학습`, `팩 추론`,
    `팩 ONNX export`를 실행한다. 앱은 팩 코드를 호스트에서 import하지 않는다.
 
+이 기본 템플릿은 Dockerfile에서 `worker.py`를 직접 실행하는 독립 DVW1 worker다.
+호스트의 `model_runtime.container_entrypoint`를 사용하고 싶다면 이미지 안에 해당 런타임과
+플러그인 모듈을 함께 넣은 뒤 manifest에 `worker_entrypoint: "module:factory"`를 선언하고,
+Dockerfile의 entrypoint를 `container_entrypoint.py --worker-stdin-stdout`로 바꾼다.
+`worker_entrypoint`만 선언하고 직접 실행 경로를 바꾸지 않으면 factory는 호출되지 않는다.
+
 출시 팩은 외부 서명과 `THIRD_PARTY_NOTICES.md`, `licenses/`를 포함해야 한다. 템플릿의
 `release_status`는 `requested`로 남겨 두며, 실제 Windows·ONNX·SDK 검증이 끝난 뒤에만
 `release_ready`로 올린다. 템플릿의 placeholder worker는 제품 모델 구현이 아니다.
