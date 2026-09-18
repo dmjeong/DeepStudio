@@ -123,6 +123,8 @@ def test_release_script_requires_app_catalog_and_csharp_sdk_payload_files():
 
 def test_windows_workflow_builds_real_gui_and_native_runtime():
     workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
+    assert '"DeepVisionStudio/cpp/**"' in workflow
+    assert '"DeepVisionStudio/gui/widgets/**"' in workflow
     assert "vcpkg.exe" in workflow
     assert 'version = "1.20.1"' in workflow
     assert "onnxruntime-win-x64-$version.zip" in workflow
