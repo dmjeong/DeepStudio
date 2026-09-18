@@ -269,6 +269,10 @@ def test_container_command_is_networkless_and_uses_read_only_mounts(tmp_path):
     assert "readonly" in command.argv[command.argv.index("--mount") + 1]
     with pytest.raises(ContainerWorkerError, match="absolute"):
         build_container_command("sha256:" + "a" * 64, model_dir="relative", data_dir=data, work_dir=work)
+    work_file = tmp_path / "work-file"
+    work_file.write_bytes(b"not a directory")
+    with pytest.raises(ContainerWorkerError, match="work_dir must be a directory"):
+        build_container_command("sha256:" + "a" * 64, model_dir=model, data_dir=data, work_dir=work_file)
 
 
 def test_container_command_validates_offline_image_archive(tmp_path):

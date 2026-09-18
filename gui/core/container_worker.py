@@ -57,7 +57,10 @@ def _mount_path(value: str | Path, name: str, *, writable: bool = False) -> Path
         raise ContainerWorkerError(f"{name} does not exist: {path}")
     if path.is_symlink():
         raise ContainerWorkerError(f"{name} cannot be a symlink: {path}")
-    if not writable and not path.is_dir():
+    # All three mounts are directories. ``writable`` only documents the
+    # container's access mode; it must never allow a host file to be mounted
+    # at a directory endpoint such as /work.
+    if not path.is_dir():
         raise ContainerWorkerError(f"{name} must be a directory: {path}")
     return path.resolve()
 
