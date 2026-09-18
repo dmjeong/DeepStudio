@@ -17,7 +17,7 @@ from typing import Any, Mapping
 import uuid
 import zipfile
 
-from .special_contracts import SpecialContractError, validate_special_manifest
+from .special_contracts import SpecialContractError, validate_special_assets, validate_special_manifest
 
 
 class PackInstallError(ValueError):
@@ -161,6 +161,10 @@ class PackInstaller:
                 raise PackInstallError("unsigned development pack rejected")
             expected_files = {_safe_name(info.filename) for info in infos
                               if not info.is_dir() and _safe_name(info.filename) != "checksums.json"}
+            try:
+                validate_special_assets(manifest, expected_files)
+            except SpecialContractError as exc:
+                raise PackInstallError(str(exc)) from exc
             listed_files = {_safe_name(name) for name in checksums["files"]}
             if listed_files != expected_files:
                 raise PackInstallError("checksums.json does not cover exactly the pack files")

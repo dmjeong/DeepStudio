@@ -5,6 +5,7 @@ import pytest
 from model_runtime.special_contracts import (
     SpecialContractError,
     validate_re_detr_manifest,
+    validate_special_assets,
     validate_sam2_manifest,
 )
 
@@ -61,3 +62,10 @@ def test_sam2_contract_rejects_incomplete_manifest(mutator):
     mutator(item)
     with pytest.raises(SpecialContractError):
         validate_sam2_manifest(item)
+
+
+def test_sam2_contract_requires_declared_graph_files():
+    item = _sam2()
+    with pytest.raises(SpecialContractError, match="missing"):
+        validate_special_assets(item, {"manifest.json"})
+    validate_special_assets(item, {"sam2_encoder.onnx", "sam2_decoder.onnx"})

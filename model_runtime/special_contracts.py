@@ -76,3 +76,31 @@ def validate_special_manifest(manifest: Mapping) -> None:
         validate_re_detr_manifest(manifest)
     elif family == "SAM2":
         validate_sam2_manifest(manifest)
+
+
+def special_asset_paths(manifest: Mapping) -> tuple[str, ...]:
+    """Return graph files declared by a special model contract."""
+    family = manifest.get("family")
+    if family == "SAM2":
+        contracts = manifest.get("contracts")
+        graphs = contracts.get("graphs") if isinstance(contracts, Mapping) else None
+        if isinstance(graphs, Mapping):
+            return tuple(graph.get("file") for graph in graphs.values()
+                         if isinstance(graph, Mapping) and isinstance(graph.get("file"), str))
+    if family == "Re-DETR v4":
+        contracts = manifest.get("contracts")
+        onnx = contracts.get("onnx") if isinstance(contracts, Mapping) else None
+        if isinstance(onnx, Mapping):
+            declared = onnx.get("files", ())
+            if isinstance(declared, list):
+                return tuple(path for path in declared if isinstance(path, str))
+    return ()
+
+
+def validate_special_assets(manifest: Mapping, asset_names) -> None:
+    """Ensure every graph explicitly declared by a special pack is included."""
+    validate_special_manifest(manifest)
+    names = set(asset_names)
+    for path in special_asset_paths(manifest):
+        if not path or path.startswith("/") or "\\" in path or ".." in path.split("/") or path not in names:
+            raise SpecialContractError(f"special model graph is missing from pack: {path}")

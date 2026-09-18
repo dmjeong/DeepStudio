@@ -16,7 +16,7 @@ from typing import Any, Mapping
 import zipfile
 
 from .pack_installer import _safe_name, _sha256
-from .special_contracts import SpecialContractError, validate_special_manifest
+from .special_contracts import SpecialContractError, validate_special_assets, validate_special_manifest
 
 
 class PackBuildError(ValueError):
@@ -84,6 +84,10 @@ def build_pack(source: str | Path, output: str | Path, *, manifest: str | Path |
         names.add("manifest.json")
     if "manifest.json" not in {name for name, _ in files}:
         raise PackBuildError("pack source requires manifest.json")
+    try:
+        validate_special_assets(definition, {name for name, _ in files})
+    except SpecialContractError as exc:
+        raise PackBuildError(str(exc)) from exc
 
     checksums = {name: _sha256(path) for name, path in files}
     target.parent.mkdir(parents=True, exist_ok=True)
