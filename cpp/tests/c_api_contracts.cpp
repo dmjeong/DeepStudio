@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -32,18 +33,26 @@ int main(int argc, char** argv)
         require(dv_create_session(config.c_str(), &options, &session) == DV_STATUS_OK && session,
                 "C ABI session creation failed.");
         const auto bundle = fs::u8path(argv[1]) / "classify.dvdeploy";
-        fs::remove_all(bundle);
-        fs::create_directories(bundle);
-        fs::copy_file(fs::u8path(argv[1]) / "classify.json", bundle / "classify.json");
-        fs::copy_file(fs::u8path(argv[1]) / "classify.onnx", bundle / "classify.onnx");
-        std::ofstream(bundle / "manifest.json")
-            << "{\"schema_version\":1,\"bundle_type\":\"onnx-deployment\","
-               "\"config\":\"classify.json\",\"files\":{}}";
         dv_session* bundle_session = nullptr;
         require(dv_create_session_from_bundle(bundle.u8string().c_str(), &options, &bundle_session) == DV_STATUS_OK &&
                     bundle_session,
                 "C ABI deployment bundle session creation failed.");
         dv_close_session(bundle_session);
+        // The native SDK must reject a changed graph before it opens an ONNX
+        // session, because the Windows C# path does not run Python first.
+        const auto bundle_graph = bundle / "classify.onnx";
+        const auto original_graph = fs::u8path(argv[1]) / "classify.onnx";
+        auto graph_bytes = std::ifstream(bundle_graph, std::ios::binary);
+        std::string graph((std::istreambuf_iterator<char>(graph_bytes)), std::istreambuf_iterator<char>());
+        require(!graph.empty(), "Deployment bundle graph fixture is empty.");
+        graph[0] = static_cast<char>(graph[0] ^ 0x01);
+        std::ofstream(bundle_graph, std::ios::binary)
+            .write(graph.data(), static_cast<std::streamsize>(graph.size()));
+        bundle_session = nullptr;
+        require(dv_create_session_from_bundle(bundle.u8string().c_str(), &options, &bundle_session) == DV_STATUS_INVALID_ARGUMENT &&
+                    bundle_session == nullptr && std::string(dv_last_error(nullptr)).find("checksum") != std::string::npos,
+                "C ABI accepted a tampered deployment bundle.");
+        fs::copy_file(original_graph, bundle_graph, fs::copy_options::overwrite_existing);
         cv::Mat gray = (cv::Mat_<uchar>(2, 3) << 0, 127, 255, 0, 127, 255);
         dv_image_view view{sizeof(dv_image_view), DV_ABI_VERSION, gray.data, gray.cols, gray.rows,
                            gray.channels(), static_cast<int32_t>(gray.step)};

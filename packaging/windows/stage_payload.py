@@ -45,14 +45,23 @@ def _copy(source: Path, target: Path) -> None:
 
 def stage_payload(output: str | Path, sources: list[tuple[str, str | Path]], *,
                   notice: str | Path | None = None) -> Path:
-    root = Path(output).expanduser().resolve()
+    output_path = Path(output).expanduser()
+    if output_path.exists() and output_path.is_symlink():
+        raise PayloadStageError("payload output symlink is not allowed")
+    root = output_path.resolve()
     root.mkdir(parents=True, exist_ok=True)
     for destination, source in sources:
         target_root = root / _destination(destination)
-        source_path = Path(source).expanduser().resolve()
+        source_path = Path(source).expanduser()
+        if source_path.is_symlink():
+            raise PayloadStageError(f"payload source symlink is not allowed: {source_path}")
+        source_path = source_path.resolve()
         _copy(source_path, target_root)
     if notice is not None:
-        _copy(Path(notice).expanduser().resolve(), root / "THIRD_PARTY_NOTICES.md")
+        notice_path = Path(notice).expanduser()
+        if notice_path.is_symlink():
+            raise PayloadStageError(f"payload notice symlink is not allowed: {notice_path}")
+        _copy(notice_path.resolve(), root / "THIRD_PARTY_NOTICES.md")
     if not (root / "THIRD_PARTY_NOTICES.md").is_file():
         raise PayloadStageError("payload requires THIRD_PARTY_NOTICES.md")
     return root

@@ -15,8 +15,10 @@ ConvNeXt, DeepLab V3+, U-Net의 export 파일은 Python 없이 같은 C ABI를 �
 그래프 계약을 검사하므로 ONNX 파일만 따로 복사해 실행하지 않는다.
 
 디렉터리 번들을 직접 열려면 `dv_create_session_from_bundle("model.dvdeploy", ...)`를 사용한다.
-이 함수는 `manifest.json`의 설정 경로를 안전하게 해석한 뒤 같은 세션 생성 경로로 넘긴다.
-zip 파일은 실행 전에 Python 검증 도구로 풀어 디렉터리 번들로 배치한다.
+이 함수는 Python 없이 `manifest.json`의 모든 파일 크기·SHA-256, symlink·경로 안전성,
+설정이 참조하는 그래프 파일을 먼저 검증한 뒤 같은 세션 생성 경로로 넘긴다.
+zip 파일은 실행 전에 Python 검증 도구로 풀어 디렉터리 번들로 배치하고, C++ SDK가 다시
+manifest를 검증한다. 따라서 ONNX 파일만 바꾸거나 설정/외부 data를 누락한 배포는 열리지 않는다.
 
 현재 C ABI에서 검증된 결과 종류는 `classify`, semantic `segment`, generic
 `detect`, Re-DETR v4 `detect`, reconstruction `anomaly`다. generic `detect`는

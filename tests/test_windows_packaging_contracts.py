@@ -107,6 +107,10 @@ def test_payload_stager_copies_artifacts_and_rejects_symlinks(tmp_path):
     (source / "escape").symlink_to(outside)
     with pytest.raises(stager["PayloadStageError"], match="symlink"):
         stager["stage_payload"](tmp_path / "bad", [("workers", source)], notice=notice)
+    source_link = tmp_path / "source-link"
+    source_link.symlink_to(source, target_is_directory=True)
+    with pytest.raises(stager["PayloadStageError"], match="symlink"):
+        stager["stage_payload"](tmp_path / "bad-root-link", [("workers", source_link)], notice=notice)
 
 
 def test_release_script_requires_app_catalog_and_csharp_sdk_payload_files():

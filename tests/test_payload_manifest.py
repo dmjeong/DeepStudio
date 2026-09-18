@@ -36,3 +36,7 @@ def test_payload_manifest_rejects_budget_and_symlink(tmp_path):
     (root / "link").symlink_to(target)
     with pytest.raises(ValueError, match="symlink"):
         collect_payload(root, version="dev", budget_bytes=1024)
+    root_link = tmp_path / "root-link"
+    root_link.symlink_to(root, target_is_directory=True)
+    with pytest.raises(ValueError, match="root symlink"):
+        collect_payload(root_link, version="dev", budget_bytes=1024)

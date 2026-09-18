@@ -80,3 +80,50 @@ def test_pack_rejects_unknown_command(tmp_path):
         worker = ModelPackWorker.from_installed_pack(tmp_path, data_dir=tmp_path, work_dir=tmp_path)
     with pytest.raises(ModelPackWorkerError, match="unsupported"):
         worker.request("unknown")
+
+
+def test_pack_job_runs_prepare_before_operation(tmp_path):
+    from webapp.worker import model_pack_operation
+
+    class Context:
+        directory = tmp_path / "job"
+        failure = ""
+
+        def cancelled(self):
+            return False
+
+        def emit(self, event, args):
+            events.append((event, args))
+
+    class FakePack:
+        model_id = "extra_model"
+        last = None
+
+        @classmethod
+        def from_installed_pack(cls, *args, **kwargs):
+            return cls()
+
+        def __init__(self):
+            self.commands = []
+            type(self).last = self
+
+        def start(self):
+            self.commands.append("start")
+
+        def json_request(self, command, value=None):
+            self.commands.append((command, value))
+            return {"command": command, "payload": {"ready": True}}
+
+        def close(self):
+            self.commands.append("close")
+
+    events = []
+    with patch("core.model_pack_worker.ModelPackWorker", FakePack):
+        result = model_pack_operation(Context(), {
+            "operation": "train", "pack_dir": str(tmp_path),
+            "data_dir": str(tmp_path), "work_dir": str(tmp_path), "request": {"seed": 4},
+        })
+    assert result["status"] == "completed"
+    assert [event for event, _ in events] == ["log_message", "model_pack_prepared", "model_pack_result"]
+    assert [item[0] if isinstance(item, tuple) else item for item in FakePack.last.commands] == [
+        "start", "hello", "prepare", "train", "close"]

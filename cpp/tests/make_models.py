@@ -1,6 +1,8 @@
 """네트워크 다운로드 없이 C++ 규약 테스트용 작은 ONNX 그래프 생성."""
 import json
+import hashlib
 from pathlib import Path
+import shutil
 import sys
 
 import onnx
@@ -32,7 +34,8 @@ for task in ("classify", "segment"):
               "class_names": ['OK "quoted"', 'NG'],
               "preprocessing": {"resize_implementation": "opencv_linear_exact_v1", "resize": "bilinear",
                                 "interpolation": "INTER_LINEAR_EXACT", "antialias": False,
-                                "layout": "NCHW", "value_scale": 255., "color_order": "GRAY"}}
+                                "layout": "NCHW", "value_scale": 255., "color_order": "GRAY"},
+              "cpp_supported": True}
     (root / f"{task}.json").write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
     if task == "classify":
         builtin_config = dict(config)
@@ -186,3 +189,20 @@ onnx.save(model, root / "close_logits.onnx")
 config = json.loads((root / "classify.json").read_text(encoding="utf-8"))
 config["model_path"] = "close_logits.onnx"
 (root / "close_logits.json").write_text(json.dumps(config), encoding="utf-8")
+
+# A native SDK fixture must be self-verifying without importing Python at
+# runtime. Keep the manifest intentionally small while covering both the
+# config and graph bytes.
+bundle = root / "classify.dvdeploy"
+shutil.rmtree(bundle, ignore_errors=True)
+bundle.mkdir()
+for name in ("classify.json", "classify.onnx"):
+    (bundle / name).write_bytes((root / name).read_bytes())
+files = {}
+for path in sorted(bundle.iterdir()):
+    files[path.name] = {"size": path.stat().st_size,
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+(bundle / "manifest.json").write_text(json.dumps({
+    "schema_version": 1, "bundle_type": "onnx-deployment", "config": "classify.json",
+    "backend": "custom", "task": "classify", "verification": "passed", "files": files,
+}, sort_keys=True), encoding="utf-8")

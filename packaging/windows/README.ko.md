@@ -125,7 +125,8 @@ PatchCore는 memory bank와 점수 계산을 포함한 배포 결과를 사용�
 
 최종 C++/C# 전달물은 `tools/build_deployment_bundle.py <export.onnx> <model.dvdeploy>`로 묶는다.
 번들은 설정 JSON, 모든 ONNX 그래프, external data와 고정 SHA-256 manifest를 포함하며 검증되지 않은
-파일이 하나라도 있으면 SDK에 전달하지 않는다. SAM2 export 디렉터리는 디렉터리 자체를 source로 넘긴다.
+파일이 하나라도 있으면 SDK에 전달하지 않는다. C++/C#의 `OpenBundle`도 Python 없이 manifest의
+모든 파일 hash와 그래프 참조를 다시 검증한다. SAM2 export 디렉터리는 디렉터리 자체를 source로 넘긴다.
 
 C++17 또는 C# SDK는 이 배포 폴더를 열어 추론한다. 추론 프로그램에 Python·학습툴·Docker 설치를 요구하지 않는다.
 현재 저장소에는 `sdk/cpp/README.ko.md`와 C# `VisionSession` SafeHandle 래퍼가 포함되어 있다.

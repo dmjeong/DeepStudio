@@ -27,7 +27,10 @@ def sha256(path: Path) -> str:
 
 def collect_payload(root: str | Path, *, version: str, commit: str = "",
                     budget_bytes: int = DEFAULT_BUDGET_BYTES) -> dict[str, Any]:
-    base = Path(root).resolve()
+    root_path = Path(root)
+    if root_path.is_symlink():
+        raise ValueError("payload root symlink is not allowed")
+    base = root_path.resolve()
     if not base.is_dir():
         raise ValueError(f"payload root is not a directory: {base}")
     if budget_bytes <= 0 or budget_bytes >= MAX_SIGNED_PE_BYTES:
@@ -53,7 +56,10 @@ def collect_payload(root: str | Path, *, version: str, commit: str = "",
 
 
 def verify_payload(root: str | Path, manifest: dict[str, Any], *, required_paths=()) -> None:
-    base = Path(root).resolve()
+    root_path = Path(root)
+    if root_path.is_symlink():
+        raise ValueError("payload root symlink is not allowed")
+    base = root_path.resolve()
     if manifest.get("schema_version") != 1 or not isinstance(manifest.get("files"), list):
         raise ValueError("unsupported payload manifest")
     if manifest.get("payload_bytes", -1) > manifest.get("budget_bytes", 0):
@@ -63,8 +69,9 @@ def verify_payload(root: str | Path, manifest: dict[str, Any], *, required_paths
     for item in manifest["files"]:
         if not isinstance(item, dict) or not isinstance(item.get("path"), str):
             raise ValueError("invalid payload file entry")
-        relative = item["path"]
-        if relative in seen or relative.startswith("/") or ".." in Path(relative).parts:
+        relative = item["path"].replace("\\", "/")
+        if (relative in seen or relative.startswith("/") or "//" in relative or
+                any(part in {"", ".", ".."} for part in Path(relative).parts)):
             raise ValueError(f"unsafe or duplicate payload path: {relative}")
         seen.add(relative)
         path = base / Path(*Path(relative).parts)

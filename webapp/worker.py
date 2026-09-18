@@ -325,6 +325,16 @@ def model_pack_operation(context, payload):
         worker.start()
         hello = worker.json_request("hello")
         context.emit("log_message", [f"모델 팩 worker 준비: {worker.model_id}"])
+        # Keep the lifecycle explicit even for packs that use the protocol's
+        # default no-op handler.  A pack may validate its dataset/checkpoint
+        # here and fail before a long train/export operation starts.
+        prepared = worker.json_request("prepare", {
+            "operation": operation,
+            "data_dir": str(payload["data_dir"]),
+            "work_dir": str(payload["work_dir"]),
+            "request": payload.get("request", {}),
+        })
+        context.emit("model_pack_prepared", [prepared])
         if context.cancelled():
             try:
                 worker.json_request("cancel")
@@ -333,7 +343,7 @@ def model_pack_operation(context, payload):
             return {"status": "cancelled"}
         result = worker.json_request(operation, payload.get("request", {}))
         context.emit("model_pack_result", [result])
-        return {"status": "completed", "output": {"hello": hello, "result": result}}
+        return {"status": "completed", "output": {"hello": hello, "prepared": prepared, "result": result}}
     finally:
         worker.close()
 
