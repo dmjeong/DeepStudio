@@ -1,11 +1,12 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-18T03:34:16.637944+00:00",
+  "lastUpdated": "2026-09-18T03:45:52.134319+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
-    "studio-cleanup"
+    "studio-cleanup",
+    "model-packs-windows-distribution"
   ],
-  "primaryFeature": "studio-cleanup",
+  "primaryFeature": "model-packs-windows-distribution",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -86,6 +87,50 @@
       },
       "completedAt": "2026-09-18T03:34:16.637944+00:00",
       "validation": "Python 589 passed/11 skipped; web 11 passed/build; C++17 two configurations each CTest 3/3; Windows/i7 not measured"
+    },
+    "model-packs-windows-distribution": {
+      "phase": "design",
+      "matchRate": null,
+      "iterationCount": 0,
+      "documents": {
+        "plan": "docs/01-plan/features/model-packs-windows-distribution.plan.md",
+        "design": "docs/02-design/features/model-packs-windows-distribution.design.md"
+      },
+      "taskChain": [
+        {
+          "phase": "plan",
+          "status": "completed",
+          "createdAt": "2026-09-18T03:37:37.983Z",
+          "completedAt": "2026-09-18T03:41:05.747Z"
+        },
+        {
+          "phase": "design",
+          "status": "completed",
+          "createdAt": "2026-09-18T03:37:37.983Z",
+          "completedAt": "2026-09-18T03:45:52.038Z"
+        },
+        {
+          "phase": "do",
+          "status": "pending",
+          "createdAt": "2026-09-18T03:37:37.983Z"
+        },
+        {
+          "phase": "check",
+          "status": "pending",
+          "createdAt": "2026-09-18T03:37:37.983Z"
+        },
+        {
+          "phase": "report",
+          "status": "pending",
+          "createdAt": "2026-09-18T03:37:37.983Z"
+        }
+      ],
+      "timestamps": {
+        "started": "2026-09-18T03:37:37.984Z",
+        "lastUpdated": "2026-09-18T03:45:52.134319+00:00"
+      },
+      "designStatus": "completed",
+      "implementationStatus": "not_started"
     }
   },
   "pipeline": {
@@ -194,6 +239,12 @@
       "action": "restore_pytorch_after_auto_onnx_failure",
       "timestamp": "2026-09-18T01:06:05.825313+00:00",
       "target_onnx_mismatch": "unresolved"
+    },
+    {
+      "feature": "model-packs-windows-distribution",
+      "action": "plan_and_design_completed",
+      "implementation": "not_started",
+      "timestamp": "2026-09-18T03:45:52.134319+00:00"
     }
   ]
 }
