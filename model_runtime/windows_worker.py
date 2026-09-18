@@ -25,6 +25,27 @@ class WindowsWorkerError(RuntimeError):
     """Worker command, startup, protocol, or shutdown failure."""
 
 
+# A frozen release owns its Python/runtime search path.  Inheriting one of
+# these variables from a developer shell can silently load a different torch,
+# native DLL, or site-packages directory.  ``PATH`` and Windows system
+# variables remain inherited so bundled DLL resolution and process startup
+# continue to work.
+_EXTERNAL_RUNTIME_ENV = frozenset({
+    "PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONUSERBASE",
+    "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "CONDA_PROMPT",
+})
+
+
+def _worker_environment(overrides: Mapping[str, str]) -> dict[str, str]:
+    """Return a clean inherited environment plus explicit worker overrides."""
+    environment = {
+        key: value for key, value in os.environ.items()
+        if key.upper() not in _EXTERNAL_RUNTIME_ENV
+    }
+    environment.update(overrides)
+    return environment
+
+
 class _JobObjectExtendedLimitInformation(ctypes.Structure):
     """The small part of the Win32 Job Object contract we need.
 
@@ -205,7 +226,7 @@ class WindowsWorker:
             self.process = subprocess.Popen(
                 self.command.command,
                 cwd=str(self.command.cwd),
-                env={**os.environ, **self.command.env},
+                env=_worker_environment(self.command.env),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

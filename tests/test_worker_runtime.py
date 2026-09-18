@@ -16,7 +16,8 @@ from model_runtime.worker_manager import WorkerManager, WorkerManagerError
 from model_runtime.worker_server import WorkerServer
 from model_runtime.container_entrypoint import ContainerEntrypointError, _load_handlers
 from model_runtime.windows_worker import (WindowsWorker, WindowsWorkerError,
-                                          _WindowsJobObject, build_worker_command)
+                                          _WindowsJobObject, _worker_environment,
+                                          build_worker_command)
 from model_runtime.worker_protocol import Frame, WorkerProtocolError, request_frame
 from gui.core.container_worker import ContainerCommand, ContainerWorker
 
@@ -125,6 +126,18 @@ def test_windows_worker_rejects_external_python_overrides(tmp_path: Path):
     with pytest.raises(WindowsWorkerError, match="Python search"):
         build_worker_command(sys.executable, runtime_id="runtime", cwd=tmp_path,
                              env={"PYTHONPATH": "/tmp"})
+
+
+def test_windows_worker_environment_drops_external_python_runtime(monkeypatch):
+    monkeypatch.setenv("PYTHONHOME", "/foreign/python")
+    monkeypatch.setenv("PYTHONPATH", "/foreign/modules")
+    monkeypatch.setenv("VIRTUAL_ENV", "/foreign/venv")
+    monkeypatch.setenv("CONDA_PREFIX", "/foreign/conda")
+    environment = _worker_environment({"PATH": "bundle-bin", "PYTHONUNBUFFERED": "1"})
+    assert all(name not in environment for name in
+               ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX"))
+    assert environment["PATH"] == "bundle-bin"
+    assert environment["PYTHONUNBUFFERED"] == "1"
 
 
 def test_managed_wsl_imports_only_local_owned_distro(tmp_path: Path):
