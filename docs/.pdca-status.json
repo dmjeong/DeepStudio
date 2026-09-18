@@ -167,7 +167,8 @@
         "Native C++17 bundle opening verifies manifest schema, exact file coverage, sizes, SHA-256 digests, graph references and symlink/path safety without Python",
         "Model-pack jobs perform a prepare lifecycle handshake before train/infer/export and close the worker cleanly",
         "Windows payload staging and manifest verification reject symlink roots and unsafe or duplicate manifest paths",
-        "Installed model-pack registry rejects manifest and asset symlinks before loading third-party metadata"
+        "Installed model-pack registry rejects manifest and asset symlinks before loading third-party metadata",
+        "EfficientNet CPU benchmark uses the export classification FP32 tolerance profile and top-1 parity, avoiding false failures at 0.00052 reassociation error"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",

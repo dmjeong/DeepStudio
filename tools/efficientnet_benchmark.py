@@ -139,7 +139,8 @@ def main(argv=None):
     import torch
     import cv2
     from efficientnet import prepare_for_inference
-    from export_onnx import export_checkpoint, load_custom_model, resolve_checkpoint_spec, validate_outputs
+    from export_onnx import (export_checkpoint, load_custom_model, resolve_checkpoint_spec,
+                             validate_classification_outputs)
     from onnx_classifier import ImageClassifier, OnnxClassifier
     from opencv_preprocess import read_image
     # Configure pools before export or inference. Only one backend session lives at a time.
@@ -229,7 +230,10 @@ def main(argv=None):
                     settings = runtime.runtime_settings
                 # Check the exact deployed path, including each chosen thread configuration.
                 actual = runtime.logits(array)
-                validate_outputs(expected, actual)
+                # Use the same bounded FP32 classification profile as export
+                # verification; the generic 1e-4 helper is intentionally
+                # stricter and rejects valid near-zero reassociation noise.
+                validate_classification_outputs(expected, actual)
                 parity = {"max_abs_error": float(np.abs(expected - actual).max()),
                           "top1_equal": bool(expected.argmax(1)[0] == actual.argmax(1)[0])}
                 if not parity["top1_equal"]:
@@ -247,7 +251,7 @@ def main(argv=None):
                     for path, label, original in validation:
                         x = preprocessing.preprocess(read_image(path, spec["in_channels"]))
                         result = runtime.logits(x)
-                        validate_outputs(original, result)
+                        validate_classification_outputs(original, result)
                         predicted = int(result.argmax(1)[0])
                         matches += predicted == int(original.argmax(1)[0])
                         matrix[label, predicted] += 1

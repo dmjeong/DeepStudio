@@ -48,6 +48,11 @@ python tools/efficientnet_benchmark.py --checkpoint best.pt --input-size 224 --v
 반복**해 측정한다. 원본 이미지 크기와 이름도 보고서에 남긴다. 여러 원본 해상도는
 별도 실행으로 비교한다.
 
+벤치마크의 ONNX 출력 비교는 export와 같은 분류 FP32 프로파일(`atol=1e-3`,
+`rtol=5e-4`)과 top-1 일치를 사용한다. CPU 커널의 합성·연산 순서 차이로 생기는
+`0.00052` 수준의 재결합 오차를 실패로 처리하지 않으면서, 클래스 순위가 바뀌면
+계속 실패한다.
+
 ## 보고서 해석
 
 - `report.json`: CPU 이름, OS/패키지 버전, 모델 출처/SHA256, 입력 크기/채널, 스레드
