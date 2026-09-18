@@ -54,6 +54,10 @@ def checkpoint_backend(checkpoint):
         return "patchcore"
     if checkpoint.get("type") == "builtin_model" or checkpoint.get("backend") == "builtin":
         return "builtin"
+    if checkpoint.get("type") in {"redetr_v4", "redetr"} or checkpoint.get("backend") == "redetr_v4":
+        return "redetr_v4"
+    if checkpoint.get("type") == "sam2" or checkpoint.get("backend") == "sam2":
+        return "sam2"
     if "model_state_dict" in checkpoint:
         if checkpoint.get("engine") == "efficientnet":
             return "efficientnet"
@@ -74,7 +78,9 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
     기존 메타데이터와 충돌하는 값은 암묵적으로 덮어쓰지 않는다.
     """
     backend = checkpoint_backend(checkpoint)
-    if backend not in {"custom", "efficientnet", "builtin"}:
+    if backend == "sam2":
+        raise ValueError("SAM2 multi-graph checkpoint uses export_sam2_checkpoint")
+    if backend not in {"custom", "efficientnet", "builtin", "redetr_v4"}:
         raise ValueError("커스텀 또는 기본 모델 체크포인트 필요")
     overrides = {k: v for k, v in (overrides or {}).items() if v is not None}
     preprocessing = dict(checkpoint.get("preprocessing") or {})
@@ -83,6 +89,15 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
     if crop:
         preprocessing["center_crop"] = crop
     model_config = dict(checkpoint.get("model_config") or {})
+    if backend == "redetr_v4":
+        if checkpoint.get("task", "detect") != "detect":
+            raise ValueError("Re-DETR v4 checkpoint는 detect 태스크여야 합니다.")
+        model_config.setdefault("boxes_format", checkpoint.get("boxes_format", "normalized_cxcywh"))
+        if model_config["boxes_format"] not in {"normalized_cxcywh", "normalized_xyxy"}:
+            raise ValueError("Re-DETR boxes_format은 normalized_cxcywh 또는 normalized_xyxy여야 합니다.")
+        model_config.setdefault("score_activation", checkpoint.get("score_activation", "sigmoid"))
+        if model_config["score_activation"] not in {"sigmoid", "softmax"}:
+            raise ValueError("Re-DETR score_activation은 sigmoid 또는 softmax여야 합니다.")
     if backend == "builtin":
         from builtin_models import get_builtin_spec
         model_id = checkpoint.get("model_id") or model_config.get("model_id")
@@ -109,7 +124,7 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
             raise ValueError(f"구형 체크포인트의 {key} 메타데이터 누락: CLI에서 명시 필요")
         return value
 
-    task = select("task")
+    task = select("task", "detect" if backend == "redetr_v4" else None)
     if task not in OUTPUT_NAMES:
         raise ValueError(f"지원하지 않는 태스크: {task}")
     num_classes = _positive_int(select("num_classes", len(names) or None), "num_classes")
@@ -152,6 +167,12 @@ def load_custom_model(checkpoint, spec=None):
     spec = spec or resolve_checkpoint_spec(checkpoint)
     config = spec["model_config"]
     backend = checkpoint_backend(checkpoint)
+    if backend == "redetr_v4":
+        import torch.nn as nn
+        model = checkpoint.get("model")
+        if not isinstance(model, nn.Module):
+            raise ValueError("Re-DETR checkpoint는 export 가능한 nn.Module을 model 필드에 포함해야 합니다.")
+        return model.cpu().eval()
     if backend == "builtin":
         from builtin_models import load_builtin_checkpoint
         return load_builtin_checkpoint(checkpoint)
@@ -209,14 +230,16 @@ def validate_outputs(expected, actual, atol=1e-4, rtol=1e-4):
 
 
 def export_to_onnx(model, dummy_input, output_path, opset_version=17,
-                   dynamic_batch=False, task="classify"):
+                   dynamic_batch=False, task="classify", output_names=None):
     import torch
     from torch.onnx import _constants
     maximum = getattr(_constants, "ONNX_MAX_OPSET", 17)
     if type(opset_version) is not int or not 11 <= opset_version <= maximum:
         raise ValueError(f"설치된 PyTorch의 ONNX opset 범위: 11~{maximum}. 기본값 17을 사용하세요.")
     output_name = OUTPUT_NAMES[task]
-    axes = {"input_image": {0: "batch_size"}, output_name: {0: "batch_size"}} if dynamic_batch else None
+    names = list(output_names or [output_name])
+    axes = ({"input_image": {0: "batch_size"},
+             **{name: {0: "batch_size"} for name in names}} if dynamic_batch else None)
     model.cpu().eval()
     # 명시적 legacy exporter로 버전별 기본값 변화와 외부 데이터 분리를 피한다.
     exporter_options = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
@@ -225,7 +248,7 @@ def export_to_onnx(model, dummy_input, output_path, opset_version=17,
     with torch.no_grad():
         torch.onnx.export(model, dummy_input.cpu(), str(output_path), export_params=True,
                           opset_version=opset_version, do_constant_folding=True,
-                          input_names=["input_image"], output_names=[output_name],
+                          input_names=["input_image"], output_names=names,
                           dynamic_axes=axes, **exporter_options)
     return str(output_path)
 
@@ -247,6 +270,30 @@ def verify_onnx(onnx_path, dummy_input, pytorch_model, task="classify", atol=1e-
     # asks for a stricter absolute floor.
     tolerances["atol"] = atol
     return validate_outputs(expected, actual[0], **tolerances)
+
+
+def verify_redetr_onnx(onnx_path, dummy_input, pytorch_model):
+    """Verify both Re-DETR outputs and their required tensor shapes."""
+    import torch
+    import onnxruntime as ort
+    pytorch_model.cpu().eval()
+    with torch.no_grad():
+        expected = pytorch_model(dummy_input.cpu())
+    if not isinstance(expected, (tuple, list)) or len(expected) != 2:
+        raise ValueError("Re-DETR model must return (pred_boxes, pred_logits)")
+    actual = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"]).run(
+        None, {"input_image": dummy_input.cpu().numpy()})
+    if len(actual) != 2:
+        raise ValueError("Re-DETR ONNX must contain pred_boxes and pred_logits outputs")
+    expected_boxes, expected_logits = (value.detach().numpy() for value in expected)
+    actual_boxes, actual_logits = actual
+    if expected_boxes.ndim != 3 or expected_boxes.shape[-1] != 4:
+        raise ValueError("Re-DETR boxes must have shape [batch, queries, 4]")
+    if expected_logits.ndim != 3 or expected_logits.shape[:2] != expected_boxes.shape[:2]:
+        raise ValueError("Re-DETR logits must have shape [batch, queries, classes]")
+    validate_outputs(expected_boxes, actual_boxes)
+    validate_outputs(expected_logits, actual_logits)
+    return True
 
 
 def simplify_onnx(onnx_path):
@@ -345,7 +392,7 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
     # 사용자 선택 체크포인트를 로드한다.
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     backend = checkpoint_backend(checkpoint)
-    if backend not in {"custom", "efficientnet", "builtin", "patchcore"}:
+    if backend not in {"custom", "efficientnet", "builtin", "patchcore", "redetr_v4", "sam2"}:
         raise ValueError("지원하지 않는 모델 형식입니다. 등록된 모델 체크포인트를 선택하세요.")
     if output.resolve() == Path(checkpoint_path).resolve():
         raise ValueError("체크포인트와 ONNX 출력 경로가 같을 수 없습니다.")
@@ -353,12 +400,16 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
         from export_patchcore_onnx import export_patchcore_checkpoint
         return export_patchcore_checkpoint(checkpoint_path, output_path, verify=verify,
                                            opset=opset_version, simplify=simplify, log=log)
+    if backend == "sam2":
+        from export_sam2_onnx import export_sam2_checkpoint
+        return export_sam2_checkpoint(checkpoint_path, output.parent, verify=verify,
+                                      opset=opset_version, log=log)
     config_name = output.with_suffix(".json").name
     with tempfile.TemporaryDirectory(prefix=".onnx-export-", dir=output.parent) as temp:
         stage = Path(temp)
         staged_model = stage / output.name
         log(f"내보내기 시작: {backend}")
-        if backend in {"custom", "efficientnet", "builtin"}:
+        if backend in {"custom", "efficientnet", "builtin", "redetr_v4"}:
             spec = resolve_checkpoint_spec(checkpoint, overrides)
             model = load_custom_model(checkpoint, spec)
             if backend == "efficientnet":
@@ -368,7 +419,10 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             generator = torch.Generator().manual_seed(42)
             dummy = torch.randn(1, spec["in_channels"], spec["input_height"], spec["input_width"], generator=generator)
             log(f"ONNX 그래프 생성: opset={opset_version}, 입력={tuple(dummy.shape)}")
-            export_to_onnx(model, dummy, staged_model, opset_version, dynamic_batch, spec["task"])
+            redetr_outputs = ["pred_boxes", "pred_logits"] if backend == "redetr_v4" else None
+            export_kwargs = {} if redetr_outputs is None else {"output_names": redetr_outputs}
+            export_to_onnx(model, dummy, staged_model, opset_version, dynamic_batch,
+                           spec["task"], **export_kwargs)
             if simplify:
                 simplify_onnx(staged_model)
             if verify:
@@ -378,11 +432,16 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                 # checkpoint made valid graphs fail at near-zero logits.
                 log("ONNX Runtime 검증: 내보낸 PyTorch 그래프와 비교")
                 for probe in (dummy, torch.zeros_like(dummy)):
-                    if not verify_onnx(staged_model, probe, model, task=spec["task"]):
+                    verified = (verify_redetr_onnx(staged_model, probe, model)
+                                if backend == "redetr_v4"
+                                else verify_onnx(staged_model, probe, model, task=spec["task"]))
+                    if not verified:
                         raise ValueError("ONNX 검증 실패")
-                if dynamic_batch:
+                if dynamic_batch and backend != "redetr_v4":
                     if not verify_onnx(staged_model, dummy.repeat(2, 1, 1, 1), model, task=spec["task"]):
                         raise ValueError("동적 배치 ONNX 검증 실패")
+                if dynamic_batch and backend == "redetr_v4":
+                    verify_redetr_onnx(staged_model, dummy.repeat(2, 1, 1, 1), model)
             metadata = {"task": spec["task"], "num_classes": spec["num_classes"],
                         "input_size": [spec["input_height"], spec["input_width"]],
                         "in_channels": spec["in_channels"], "class_names": spec["class_names"],
@@ -393,19 +452,29 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             if backend == "builtin":
                 metadata["architecture"] = spec["model_config"]["model_id"]
                 metadata["model_config"] = {"model_id": spec["model_config"]["model_id"]}
+            if backend == "redetr_v4":
+                metadata["model_config"] = dict(spec["model_config"])
+                metadata["model_config"]["output_names"] = ["pred_boxes", "pred_logits"]
+                metadata["detection_box_encoding"] = metadata["model_config"].get(
+                    "boxes_format", "normalized_cxcywh")
             if spec["task"] == "detect":
-                metadata["detection_box_encoding"] = spec["model_config"].get("detection_box_encoding", "legacy_raw")
+                metadata.setdefault("detection_box_encoding",
+                                    spec["model_config"].get("detection_box_encoding", "legacy_raw"))
         else:
             raise ValueError(f"내보내기 미지원: {backend}")
         onnx.checker.check_model(str(staged_model))
         staged_config = create_inference_config(stage, onnx_filename=output.name,
             backend=backend, verification="passed" if verify else "skipped",
-            config_filename=config_name, **metadata)
+            config_filename=config_name, output_names=(redetr_outputs if backend == "redetr_v4" else None),
+            **metadata)
         manifest = json.loads(Path(staged_config).read_text(encoding="utf-8"))
         manifest["export"] = {"opset": opset_version, "precision": "float32", "dynamic_batch": dynamic_batch}
         if backend == "efficientnet":
             manifest["export"]["optimization"] = model.inference_optimization
             manifest["export"]["verification_reference"] = "exported_pytorch_graph"
+        if backend == "redetr_v4":
+            manifest["export"]["output_names"] = ["pred_boxes", "pred_logits"]
+            manifest["postprocessing"]["class_scores"] = spec["model_config"].get("score_activation", "sigmoid")
         Path(staged_config).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         # 검증 실패 시 기존 파일은 그대로 유지된다. 각 파일은 같은 파일시스템에서 교체한다.
         os.replace(staged_model, output)

@@ -9,11 +9,24 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+import torch
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[1] / "python"),
                 str(Path(__file__).resolve().parents[1] / "gui")]
 import export_onnx
 from checkpoint import make_checkpoint_metadata
+
+
+class TinyReDetr(torch.nn.Module):
+    """Two-output fixture used only when torch is available in the test env."""
+
+    def forward(self, images):
+        value = images.mean(dim=(1, 2, 3))
+        boxes = torch.stack((value, value, value, value,
+                             value, value, value, value), dim=1).reshape(images.shape[0], 2, 4)
+        logits = torch.stack((value, value, value,
+                              value, value, value), dim=1).reshape(images.shape[0], 2, 3)
+        return boxes, logits
 
 
 class ExportContractTests(unittest.TestCase):
@@ -120,6 +133,37 @@ class ExportContractTests(unittest.TestCase):
             export_onnx.create_inference_config(
                 directory, "detect", 2, 640, 3, "redetr.onnx", backend="redetr_v4",
                 output_names=["pred_boxes"])
+
+    def test_redetr_module_checkpoint_exports_and_verifies_both_outputs(self):
+        checkpoint = {
+            "type": "redetr_v4", "backend": "redetr_v4", "task": "detect",
+            "num_classes": 3, "in_channels": 3, "input_size": [8, 8],
+            "class_names": ["a", "b", "c"],
+            "model_config": {"boxes_format": "normalized_cxcywh", "score_activation": "softmax"},
+            "model": TinyReDetr().eval(),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "redetr.pt"
+            output = Path(directory) / "redetr.onnx"
+            torch.save(checkpoint, checkpoint_path)
+            result = export_onnx.export_checkpoint(checkpoint_path, output, verify=True, log=lambda _: None)
+            manifest = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+        self.assertEqual(result["backend"], "redetr_v4")
+        self.assertEqual(manifest["output_names"], ["pred_boxes", "pred_logits"])
+        self.assertEqual(manifest["postprocessing"]["class_scores"], "softmax")
+        self.assertTrue(manifest["cpp_supported"])
+
+    def test_sam2_checkpoint_routes_to_multi_graph_exporter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "sam2.pt"
+            output = Path(directory) / "sam2.onnx"
+            torch.save({"type": "sam2", "backend": "sam2", "task": "segment"}, checkpoint_path)
+            with patch("export_sam2_onnx.export_sam2_checkpoint",
+                       return_value={"backend": "sam2", "verification": "passed"}) as exporter:
+                result = export_onnx.export_checkpoint(checkpoint_path, output, log=lambda _: None)
+        self.assertEqual(result["backend"], "sam2")
+        exporter.assert_called_once_with(checkpoint_path, output.parent.resolve(), verify=True,
+                                         opset=17, log=unittest.mock.ANY)
 
     def test_incompatible_resize_metadata_is_rejected(self):
         for key, value in (("resize", "bicubic"), ("resize_implementation", "opencv"),

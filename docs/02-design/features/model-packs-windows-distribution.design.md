@@ -19,6 +19,10 @@
   Re-DETR v4의 `pred_boxes`/`pred_logits` 탐지와 고정 memory-bank PatchCore score/map 결과를 검증한다.
 - 오프라인 Windows payload 파일 해시·크기·3.5 GiB 예산 검사.
 - EfficientNet GUI/CLI ONNX 검증은 실제 export 그래프와 같은 Conv/BatchNorm 최적화 PyTorch 그래프를 비교한다.
+- `export_onnx.py`는 Re-DETR v4 module checkpoint의 `pred_boxes`/`pred_logits` 두 출력을
+  고정된 이름으로 내보내고 shape·수치·동적 batch를 ONNX Runtime에서 확인한다.
+- `export_sam2_onnx.py`는 checkpoint가 제공한 encoder/decoder를 다운로드 없이 두 ONNX 그래프와
+  schema 5 prompt manifest로 내보내며 point/box/mask 입력과 mask·quality 두 출력을 검증한다.
 - ResNet 18/50, ConvNeXt V1 Tiny, DeepLab V3+ ResNet34, U-Net ResNet18은 가중치를 포함하지 않는
   native adapter와 공통 ONNX exporter를 사용하며 `builtin` backend manifest를 만든다.
 - Re-DETR v4와 SAM2 팩은 `contracts` 필드에서 특수 다중 그래프·프롬프트 계약을 명시해야 하며,
