@@ -45,7 +45,8 @@ freeze/unfreeze, 클래스별 weight, augmentation, resume도 실제 지원하�
 
 제품 ID는 `re_detr_v4_small`, `re_detr_v4_medium`, `re_detr_v4_large`로 고정한다.
 세 변형은 등록부에서 각각 독립적인 입력 크기·runtime·checkpoint·후처리 계약을 갖는다.
-실제 upstream 구현을 선택하기 전에는 모두 `requested` 상태이며 release-ready로 표시하지 않는다.
+네이티브 SDK는 `pred_boxes=[1,N,4]`와 `pred_logits=[1,N,C]`를 검증하고 공통 detection 결과로 변환한다.
+실제 upstream 구현·checkpoint를 변형별로 연결하기 전에는 카탈로그 항목을 release-ready로 표시하지 않는다.
 
 - class offset, query 선택, sigmoid/softmax, decode, resize 방식은 변형별 manifest에 기록한다.
 - NMS가 없는 모델에는 임의 NMS를 넣지 않는다. Libre 탐지의 NMS 규칙은 별도 계약이다.

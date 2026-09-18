@@ -16,6 +16,7 @@ from typing import Any, Mapping
 import zipfile
 
 from .pack_installer import _safe_name, _sha256
+from .special_contracts import SpecialContractError, validate_special_manifest
 
 
 class PackBuildError(ValueError):
@@ -49,6 +50,10 @@ def build_pack(source: str | Path, output: str | Path, *, manifest: str | Path |
         raise PackBuildError("invalid manifest.json") from exc
     if not isinstance(definition, Mapping) or definition.get("schema_version") != 1:
         raise PackBuildError("manifest schema_version must be 1")
+    try:
+        validate_special_manifest(definition)
+    except SpecialContractError as exc:
+        raise PackBuildError(str(exc)) from exc
     _required_text(definition, "model_id")
     _required_text(definition, "pack_version")
     signature = definition.get("signature")

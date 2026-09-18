@@ -73,7 +73,7 @@ struct InferenceConfig
     // ── ONNX 텐서 이름 ──
     std::string input_name = "input_image";     ///< 입력 텐서 이름
     std::string output_name = "class_logits";   ///< 출력 텐서 이름
-    std::vector<std::string> output_names;       ///< multi-output contracts (PatchCore)
+    std::vector<std::string> output_names;       ///< multi-output contracts (PatchCore, Re-DETR v4)
 
     // ── 정규화 파라미터 (학습 시 사용한 값과 동일해야 함!) ──
     std::vector<float> normalize_mean = {0.449f};

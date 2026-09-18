@@ -101,7 +101,9 @@ BIOS 설정이나 조직 정책 때문에 가상화를 사용할 수 없다면 �
   자동 mask와 영상 state는 각각의 export/runtime 검증을 통과한 기능만 활성화한다.
 - Re-DETR v4는 Small/Medium/Large 세 변형만 제공 대상으로 관리하며, 실제 검증 전에는 설치기에서
   release-ready로 표시하지 않는다.
-- Re-DETR 팩은 `pred_boxes`/`pred_logits` 출력 계약을, SAM2 팩은 encoder·decoder 파일과
+- Re-DETR 팩은 `pred_boxes`/`pred_logits` 출력 계약을 C++17/C ABI에서 검증한다. 실제 Small/Medium/Large
+  checkpoint의 ONNX 수치 및 Windows 인수 검증 전에는 설치기에서 release-ready로 표시하지 않는다.
+- SAM2 팩은 encoder·decoder 파일과
   point/box/mask prompt 계약을 manifest에 기록해야 한다. 계약이 없는 팩은 등록되지 않는다.
 
 ## ONNX 배포와 C#/C++

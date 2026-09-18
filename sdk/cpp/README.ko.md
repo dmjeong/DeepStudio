@@ -9,12 +9,14 @@ C#, 다른 언어에서 같은 ONNX 세션을 호출하는 고정 ABI다. 세션
 ConvNeXt, DeepLab V3+, U-Net의 export 파일은 Python 없이 같은 C ABI를 사용한다.
 
 현재 C ABI에서 검증된 결과 종류는 `classify`, semantic `segment`, generic
-`detect`, reconstruction `anomaly`다. `detect`는 `[1,N,5+C]` ONNX 출력에
-sigmoid score와 class-aware NMS를 적용하고, `anomaly`는 reconstruction과 입력의
+`detect`, Re-DETR v4 `detect`, reconstruction `anomaly`다. generic `detect`는
+`[1,N,5+C]` ONNX 출력에 sigmoid score와 class-aware NMS를 적용한다. Re-DETR v4는
+`pred_boxes=[1,N,4]`와 `pred_logits=[1,N,C]`를 함께 읽고 sigmoid/softmax class score와
+같은 NMS 결과를 반환한다. `anomaly`는 reconstruction과 입력의
 채널 평균 절대오차 map을 반환한다. 고정 memory-bank를 포함해 export한 PatchCore
-그래프도 두 번째 anomaly map 출력과 score를 같은 anomaly 결과로 읽는다. Re-DETR
-v4와 SAM2의 encoder/decoder 특수 그래프는 카탈로그에 등록되어 있지만 각 계약과
-Windows 검증이 끝날 때까지 release-ready로 표시하지 않는다.
+그래프도 두 번째 anomaly map 출력과 score를 같은 anomaly 결과로 읽는다. SAM2의
+encoder/decoder prompt·video 그래프는 카탈로그에 등록되어 있지만 Windows 실기 검증이
+끝날 때까지 release-ready로 표시하지 않는다.
 
 ## 최소 사용 예
 

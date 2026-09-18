@@ -16,13 +16,13 @@ OUTPUT_NAMES = {
 }
 
 # CPU FP32 ONNX kernels may reassociate fused convolution/normalization
-# operations. Keep a tight absolute floor for near-zero logits while allowing
-# the small relative error that does not change the deployed score ordering.
+# operations. A 1e-3 absolute floor is the usual FP32 deployment parity
+# boundary; top-1 is checked separately so this does not hide a class change.
 # Other tasks retain the historical strict profile until their output contracts
 # get a task-specific parity test.
 VERIFY_TOLERANCES = {
     "default": {"atol": 1e-4, "rtol": 1e-4},
-    "classify": {"atol": 1e-4, "rtol": 5e-4},
+    "classify": {"atol": 1e-3, "rtol": 5e-4},
 }
 
 

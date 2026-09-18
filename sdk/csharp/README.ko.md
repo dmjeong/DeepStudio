@@ -3,10 +3,10 @@
 `VisionRuntime.csproj`는 C ABI DLL `vision_runtime`를 `SafeHandle`로 감싼다.
 Python, PyTorch, Docker 없이 ONNX 배포 폴더의 JSON 설정을 열고 이미지 byte buffer를
 동기 추론한다. 현재 C ABI 결과 종류는 classification, semantic segmentation, generic
-detection(``[1,N,5+C]``), reconstruction anomaly다. 고정 memory-bank를 포함해
-export한 PatchCore는 score와 anomaly map을 anomaly 결과로 제공한다. Re-DETR v4의
-탐지 특수 출력과 SAM2 encoder/decoder prompt/video 계약은 별도 그래프로 관리하며
-Windows 검증 전에는 release-ready가 아니다.
+detection(``[1,N,5+C]``), Re-DETR v4 detection(``pred_boxes``/``pred_logits``),
+reconstruction anomaly다. 고정 memory-bank를 포함해 export한 PatchCore는 score와
+anomaly map을 anomaly 결과로 제공한다. SAM2 encoder/decoder prompt/video 계약은 별도
+그래프로 관리하며 Windows 검증 전에는 release-ready가 아니다.
 
 ResNet, ConvNeXt V1, DeepLab V3+, U-Net의 `builtin` manifest도 동일한
 classification/segmentation API로 읽는다. 모델 가중치는 SDK에 포함하지 않는다.

@@ -93,10 +93,13 @@ void ValidateConfig(const InferenceConfig& config)
         ((config.crop_width == 0) != (config.crop_height == 0)))
         throw std::invalid_argument("Invalid center crop dimensions.");
     if (config.backend != "custom" && config.backend != "builtin" && config.backend != "patchcore" &&
+        config.backend != "redetr_v4" &&
         !(config.backend == "efficientnet" && config.task == "classify"))
-        throw std::invalid_argument("Supported backends: custom, builtin, patchcore and efficientnet classification.");
+        throw std::invalid_argument("Supported backends: custom, builtin, patchcore, redetr_v4 and efficientnet classification.");
     if (config.backend == "patchcore" && config.task != "anomaly")
         throw std::invalid_argument("PatchCore backend requires anomaly task.");
+    if (config.backend == "redetr_v4" && config.task != "detect")
+        throw std::invalid_argument("Re-DETR backend requires detect task.");
     if (config.resize_mode != "stretch" || config.classification_output != "logits")
         throw std::invalid_argument("Custom and EfficientNet models require stretch resize and logits.");
     if (config.task != "classify" && config.task != "segment" &&
@@ -117,8 +120,11 @@ void ValidateConfig(const InferenceConfig& config)
         if (config.detection_box_encoding != "normalized_cxcywh" &&
             config.detection_box_encoding != "normalized_xyxy")
             throw std::invalid_argument("Unsupported detection box encoding.");
-        if (config.detection_objectness != "sigmoid" || config.detection_class_scores != "sigmoid")
-            throw std::invalid_argument("Detection scores must use sigmoid.");
+        const bool redetr = config.backend == "redetr_v4";
+        if ((!redetr && config.detection_objectness != "sigmoid") ||
+            (redetr && config.detection_objectness != "none") ||
+            (config.detection_class_scores != "sigmoid" && config.detection_class_scores != "softmax"))
+            throw std::invalid_argument("Unsupported detection score activation.");
         if (!std::isfinite(config.detection_confidence_threshold) ||
             config.detection_confidence_threshold < 0.0f || config.detection_confidence_threshold > 1.0f ||
             !std::isfinite(config.detection_iou_threshold) || config.detection_iou_threshold < 0.0f ||
@@ -266,6 +272,23 @@ bool VisionInference::Initialize(const InferenceConfig& config)
                  (map_shape[2] > 0 && map_shape[2] != config.input_height) ||
                  (map_shape[3] > 0 && map_shape[3] != config.input_width)))
                 throw std::invalid_argument("PatchCore map output does not match the deployment contract.");
+        } else if (config.backend == "redetr_v4") {
+            if (session->GetOutputCount() != 2 || output.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+                out_shape.size() != 3 || (out_shape[0] > 0 && out_shape[0] != 1) ||
+                (out_shape[2] > 0 && out_shape[2] != 4))
+                throw std::invalid_argument("Re-DETR boxes output does not match the deployment contract.");
+            const auto logits = session->GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo();
+            const auto logits_shape = logits.GetShape();
+            // As with PatchCore's constant map output, some ORT builds expose
+            // no static type descriptor for a constant secondary output.  If
+            // metadata is known, validate it here; the runtime tensor is
+            // checked again in Detect() in all cases.
+            if (!logits_shape.empty() &&
+                (logits.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || logits_shape.size() != 3 ||
+                 (logits_shape[0] > 0 && logits_shape[0] != 1) ||
+                 (logits_shape[1] > 0 && out_shape[1] > 0 && logits_shape[1] != out_shape[1]) ||
+                 (logits_shape[2] > 0 && logits_shape[2] != config.num_classes)))
+                throw std::invalid_argument("Re-DETR logits output does not match the deployment contract.");
         } else if (output.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
                    out_shape.size() != rank ||
                    (config.task == "classify" && out_shape[1] > 0 && out_shape[1] != config.num_classes) ||
@@ -379,7 +402,7 @@ bool VisionInference::InitializeFromJson(const std::string& config_path,
             if (config.task == "detect")
             {
                 config.detection_box_encoding = post.value("box_format", std::string("normalized_cxcywh"));
-                config.detection_objectness = post.value("objectness", std::string("sigmoid"));
+                config.detection_objectness = post.value("objectness", config.backend == "redetr_v4" ? std::string("none") : std::string("sigmoid"));
                 config.detection_class_scores = post.value("class_scores", std::string("sigmoid"));
                 config.detection_confidence_threshold = post.value("confidence_threshold", 0.25f);
                 config.detection_iou_threshold = post.value("iou_threshold", 0.5f);
@@ -826,14 +849,43 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
     auto input = Ort::Value::CreateTensor<float>(memory_info,
         const_cast<float*>(input_tensor.data()), input_tensor.size(), input_shape.data(), input_shape.size());
     const char* input_names[] = {m_config.input_name.c_str()};
-    const char* output_names[] = {m_config.output_name.c_str()};
+    const auto& configured_outputs = m_config.output_names.empty()
+        ? std::vector<std::string>{m_config.output_name} : m_config.output_names;
+    std::vector<const char*> output_names;
+    for (const auto& name : configured_outputs) output_names.push_back(name.c_str());
     const auto model_start = std::chrono::steady_clock::now();
-    auto outputs = m_session->Run(Ort::RunOptions{nullptr}, input_names, &input, 1, output_names, 1);
+    auto outputs = m_session->Run(Ort::RunOptions{nullptr}, input_names, &input, 1,
+                                  output_names.data(), output_names.size());
     const auto model_end = std::chrono::steady_clock::now();
-    ValidateOutput(outputs[0], m_config, 3);
-    const auto shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
-    const auto* values = outputs[0].GetTensorData<float>();
-    const int64_t candidates = shape[1];
+    const float* boxes = nullptr;
+    const float* scores = nullptr;
+    int64_t candidates = 0;
+    if (m_config.backend == "redetr_v4") {
+        if (outputs.size() != 2) throw std::runtime_error("Re-DETR output count mismatch.");
+        const auto box_info = outputs[0].GetTensorTypeAndShapeInfo();
+        const auto box_shape = box_info.GetShape();
+        const auto logit_info = outputs[1].GetTensorTypeAndShapeInfo();
+        const auto logit_shape = logit_info.GetShape();
+        if (box_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+            logit_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+            box_shape.size() != 3 || logit_shape.size() != 3 || box_shape[0] != 1 || logit_shape[0] != 1 ||
+            box_shape[2] != 4 || logit_shape[2] != m_config.num_classes ||
+            box_shape[1] <= 0 || logit_shape[1] != box_shape[1])
+            throw std::runtime_error("Re-DETR output shape/type mismatch.");
+        boxes = outputs[0].GetTensorData<float>();
+        scores = outputs[1].GetTensorData<float>();
+        candidates = box_shape[1];
+        for (size_t index = 0; index < logit_info.GetElementCount(); ++index)
+            if (!std::isfinite(scores[index])) throw std::runtime_error("Re-DETR returned non-finite scores.");
+        for (size_t index = 0; index < box_info.GetElementCount(); ++index)
+            if (!std::isfinite(boxes[index])) throw std::runtime_error("Re-DETR returned non-finite boxes.");
+    } else {
+        if (outputs.size() != 1) throw std::runtime_error("Detection output count mismatch.");
+        ValidateOutput(outputs[0], m_config, 3);
+        const auto shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
+        boxes = outputs[0].GetTensorData<float>();
+        candidates = shape[1];
+    }
     const int stride = 5 + m_config.num_classes;
     const int roi_width = m_config.crop_width > 0 ? m_config.crop_width : image.cols;
     const int roi_height = m_config.crop_height > 0 ? m_config.crop_height : image.rows;
@@ -843,13 +895,25 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
     candidates_to_keep.reserve(static_cast<size_t>(candidates));
     for (int64_t index = 0; index < candidates; ++index)
     {
-        const float* row = values + index * stride;
-        const float objectness = Sigmoid(row[4]);
+        const float* row = boxes + index * (m_config.backend == "redetr_v4" ? 4 : stride);
+        const float objectness = m_config.backend == "redetr_v4" && m_config.detection_objectness == "none"
+            ? 1.0f : Sigmoid(row[4]);
         int class_id = 0;
-        float best_class = 0.0f;
+        float best_class = -std::numeric_limits<float>::infinity();
+        float score_sum = 0.0f;
+        float score_max = -std::numeric_limits<float>::infinity();
+        if (m_config.backend == "redetr_v4" && m_config.detection_class_scores == "softmax") {
+            for (int cls = 0; cls < m_config.num_classes; ++cls)
+                score_max = std::max(score_max, scores[index * m_config.num_classes + cls]);
+            for (int cls = 0; cls < m_config.num_classes; ++cls)
+                score_sum += std::exp(scores[index * m_config.num_classes + cls] - score_max);
+        }
         for (int cls = 0; cls < m_config.num_classes; ++cls)
         {
-            const float score = Sigmoid(row[5 + cls]);
+            const float raw_score = m_config.backend == "redetr_v4"
+                ? scores[index * m_config.num_classes + cls] : row[5 + cls];
+            const float score = m_config.backend == "redetr_v4" && m_config.detection_class_scores == "softmax"
+                ? std::exp(raw_score - score_max) / score_sum : Sigmoid(raw_score);
             if (score > best_class) { best_class = score; class_id = cls; }
         }
         const float confidence = objectness * best_class;

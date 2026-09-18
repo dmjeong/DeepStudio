@@ -58,6 +58,29 @@ detect_config.update({"model_path": "detect.onnx", "task": "detect", "num_classe
                                          "iou_threshold": 0.5, "max_detections": 10}})
 (root / "detect.json").write_text(json.dumps(detect_config, ensure_ascii=False), encoding="utf-8")
 
+# Re-DETR v4 two-output contract: normalized cx/xy boxes and class logits.
+# Keeping this graph constant makes the native contract test deterministic and
+# avoids bundling model weights or a third-party checkpoint.
+redetr_boxes = helper.make_tensor("pred_boxes_value", TensorProto.FLOAT, [1, 1, 4],
+                                  [0.5, 0.5, 0.5, 0.5])
+redetr_logits = helper.make_tensor("pred_logits_value", TensorProto.FLOAT, [1, 1, 2],
+                                   [10.0, -10.0])
+redetr_nodes = [helper.make_node("Constant", [], ["pred_boxes"], value=redetr_boxes),
+                helper.make_node("Constant", [], ["pred_logits"], value=redetr_logits)]
+redetr_outputs = [helper.make_tensor_value_info("pred_boxes", TensorProto.FLOAT, [1, 1, 4]),
+                  helper.make_tensor_value_info("pred_logits", TensorProto.FLOAT, [1, 1, 2])]
+redetr_model = helper.make_model(helper.make_graph(redetr_nodes, "redetr_v4", inputs, redetr_outputs),
+                                 opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
+onnx.checker.check_model(redetr_model)
+onnx.save(redetr_model, root / "redetr.onnx")
+redetr_config = dict(detect_config)
+redetr_config.update({"backend": "redetr_v4", "model_path": "redetr.onnx",
+                      "output_name": "pred_boxes", "output_names": ["pred_boxes", "pred_logits"],
+                      "postprocessing": {"box_format": "normalized_cxcywh", "objectness": "none",
+                                         "class_scores": "sigmoid", "confidence_threshold": 0.25,
+                                         "iou_threshold": 0.5, "max_detections": 10}})
+(root / "redetr.json").write_text(json.dumps(redetr_config, ensure_ascii=False), encoding="utf-8")
+
 # Reconstruction anomaly contract: identity output yields a zero error map.
 anomaly_node = helper.make_node("Identity", ["input_image"], ["reconstruction"])
 anomaly_output = helper.make_tensor_value_info("reconstruction", TensorProto.FLOAT, [1, 1, 2, 3])

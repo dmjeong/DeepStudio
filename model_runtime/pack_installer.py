@@ -17,6 +17,8 @@ from typing import Any, Mapping
 import uuid
 import zipfile
 
+from .special_contracts import SpecialContractError, validate_special_manifest
+
 
 class PackInstallError(ValueError):
     """Raised when a model pack is unsafe, corrupt, or incompatible."""
@@ -147,6 +149,10 @@ class PackInstaller:
             checksums = _read_json(archive, "checksums.json")
             if manifest.get("schema_version") != 1:
                 raise PackInstallError("unsupported model pack schema_version")
+            try:
+                validate_special_manifest(manifest)
+            except SpecialContractError as exc:
+                raise PackInstallError(str(exc)) from exc
             if not isinstance(checksums.get("files"), Mapping):
                 raise PackInstallError("checksums.json.files must be an object")
             signature = manifest.get("signature")

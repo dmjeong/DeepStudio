@@ -61,6 +61,18 @@ int main(int argc, char** argv)
         dv_release_result(detect_result);
         dv_close_session(detect_session);
 
+        dv_session* redetr_session = nullptr;
+        dv_result* redetr_result = nullptr;
+        const auto redetr_config = (fs::u8path(argv[1]) / "redetr.json").u8string();
+        require(dv_create_session(redetr_config.c_str(), &options, &redetr_session) == DV_STATUS_OK,
+                "C ABI Re-DETR v4 session creation failed.");
+        require(dv_infer(redetr_session, &view, &redetr_result) == DV_STATUS_OK && redetr_result &&
+                    redetr_result->kind == DV_RESULT_DETECTION && redetr_result->detection_count == 1 &&
+                    redetr_result->detections[0].class_id == 0 && redetr_result->detections[0].confidence > 0.99f,
+                "C ABI Re-DETR v4 result mismatch.");
+        dv_release_result(redetr_result);
+        dv_close_session(redetr_session);
+
         dv_session* anomaly_session = nullptr;
         dv_result* anomaly_result = nullptr;
         const auto anomaly_config = (fs::u8path(argv[1]) / "anomaly.json").u8string();

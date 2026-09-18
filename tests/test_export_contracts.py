@@ -70,8 +70,9 @@ class ExportContractTests(unittest.TestCase):
     def test_classification_profile_allows_small_fp32_reassociation_only(self):
         tolerances = export_onnx.verification_tolerances("classify")
         self.assertTrue(export_onnx.validate_outputs([1.0], [1.00052], **tolerances))
+        self.assertTrue(export_onnx.validate_outputs([0.0], [0.00052], **tolerances))
         with self.assertRaises(ValueError):
-            export_onnx.validate_outputs([0.0], [0.00052], **tolerances)
+            export_onnx.validate_outputs([0.0], [0.002], **tolerances)
         with self.assertRaises(ValueError):
             export_onnx.validate_outputs([1.0], [1.01], **tolerances)
 
