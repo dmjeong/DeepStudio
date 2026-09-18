@@ -132,3 +132,32 @@ def test_windows_workflow_builds_real_gui_and_native_runtime():
     assert 'source "app=$app"' in workflow
     assert 'source "sdk/native=$native"' in workflow
     assert "release-contract" not in workflow
+
+
+def test_real_payload_layout_contains_managed_and_native_sdk_runtime(tmp_path):
+    stager = runpy.run_path(str(WINDOWS / "stage_payload.py"))
+    collector = runpy.run_path(str(WINDOWS / "collect_payloads.py"))
+    verifier = runpy.run_path(str(WINDOWS / "validate_payloads.py"))
+    app = tmp_path / "app"
+    sdk = tmp_path / "sdk"
+    native = tmp_path / "native"
+    models = tmp_path / "models"
+    for directory in (app, sdk, native, models):
+        directory.mkdir()
+    (app / "DeepVisionStudio.exe").write_bytes(b"frozen-gui")
+    (sdk / "VisionRuntime.dll").write_bytes(b"managed-sdk")
+    (native / "vision_runtime.dll").write_bytes(b"native-sdk")
+    (models / "default-model-catalog.json").write_text("{}", encoding="utf-8")
+    notice = tmp_path / "THIRD_PARTY_NOTICES.md"
+    notice.write_text("notice", encoding="utf-8")
+    payload = stager["stage_payload"](
+        tmp_path / "payload",
+        [("app", app), ("sdk", sdk), ("sdk/native", native), ("models", models)],
+        notice=notice,
+    )
+    manifest = collector["collect_payload"](payload, version="1.0.0")
+    verifier["verify_payload"](
+        payload, manifest,
+        required_paths=["app/DeepVisionStudio.exe", "sdk/VisionRuntime.dll",
+                        "sdk/native/vision_runtime.dll", "models/default-model-catalog.json"],
+    )
