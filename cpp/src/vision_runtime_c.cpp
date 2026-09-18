@@ -349,7 +349,13 @@ void validate_bundle_references(const std::filesystem::path& root, const nlohman
 std::string bundle_config_path(const char* bundle_path_utf8) {
     if (!bundle_path_utf8 || !*bundle_path_utf8)
         throw std::invalid_argument("Deployment bundle path is empty.");
-    const auto root = std::filesystem::u8path(bundle_path_utf8);
+    auto root = std::filesystem::u8path(bundle_path_utf8);
+    // The public C/C# APIs accept a relative bundle path. Resolve it once
+    // before returning the config path so model_path and graph references are
+    // interpreted relative to the bundle, never relative to the caller's
+    // current working directory.
+    if (root.is_relative()) root = std::filesystem::absolute(root);
+    root = root.lexically_normal();
     if (!std::filesystem::is_directory(root) || std::filesystem::is_symlink(root))
         throw std::invalid_argument("Deployment bundle must be a directory.");
     std::ifstream stream(root / "manifest.json");

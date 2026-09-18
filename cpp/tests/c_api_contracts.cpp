@@ -38,6 +38,11 @@ int main(int argc, char** argv)
                     bundle_session,
                 "C ABI deployment bundle session creation failed.");
         dv_close_session(bundle_session);
+        const auto relative_bundle = fs::relative(bundle, fs::current_path());
+        require(dv_create_session_from_bundle(relative_bundle.u8string().c_str(), &options, &bundle_session) == DV_STATUS_OK &&
+                    bundle_session,
+                "C ABI relative deployment bundle session creation failed.");
+        dv_close_session(bundle_session);
         // The native SDK must reject a changed graph before it opens an ONNX
         // session, because the Windows C# path does not run Python first.
         const auto bundle_graph = bundle / "classify.onnx";
