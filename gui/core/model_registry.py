@@ -196,8 +196,8 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         ModelSpec("resnet50", "ResNet", "50", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", notes="weight-free native adapter"),
         ModelSpec("convnext_v1_tiny", "ConvNeXt V1", "Tiny", "classify", ("windows_native", "onnx"), common, (224, 224), (3,), "export_verified", notes="weight-free native adapter"),
         ModelSpec("libreyolo_classify_mobilenetv4_small", "LibreYOLO", "MobileNetV4 Small", "classify", ("container", "onnx"), common, (224, 224), (3,)),
-        ModelSpec("patchcore_wide_resnet50_2", "PatchCore", "Wide-ResNet50-2", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), notes="memory bank와 kNN 포함"),
-        ModelSpec("patchcore_resnet18", "PatchCore", "ResNet18", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), notes="memory bank와 kNN 포함"),
+        ModelSpec("patchcore_wide_resnet50_2", "PatchCore", "Wide-ResNet50-2", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
+        ModelSpec("patchcore_resnet18", "PatchCore", "ResNet18", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
     ]
     for variant, size in (("small", 640), ("medium", 800), ("large", 1024)):
         specs.append(ModelSpec(

@@ -204,7 +204,7 @@
       "input_channels": [
         3
       ],
-      "release_status": "requested",
+      "release_status": "export_verified",
       "pretrained_asset": "",
       "notes": "memory bank와 kNN 포함",
       "metadata": {}
@@ -232,7 +232,7 @@
       "input_channels": [
         3
       ],
-      "release_status": "requested",
+      "release_status": "export_verified",
       "pretrained_asset": "",
       "notes": "memory bank와 kNN 포함",
       "metadata": {}
