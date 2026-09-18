@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-18T10:05:00+00:00",
+  "lastUpdated": "2026-09-18T19:50:00+09:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -129,12 +129,12 @@
       ],
       "timestamps": {
         "started": "2026-09-18T03:37:37.984Z",
-        "lastUpdated": "2026-09-18T13:30:00+00:00"
+        "lastUpdated": "2026-09-18T19:50:00+09:00"
       },
       "designStatus": "revised_with_open_decisions",
       "implementationStatus": "in_progress",
       "requirementsRevision": 3,
-      "validation": "Python 697 passed/11 skipped; C++17 CTest 4/4 including SAM2 automatic-mask C ABI; deployment bundle targeted tests passed; desktop model-pack action lifecycle regression passed; C# net8 Release build passed locally; Windows/i7 not measured",
+      "validation": "Python 699 passed/11 skipped; web node tests 11/11 and production build passed; C++17 CTest 4/4 including SAM2 automatic-mask C ABI; model-pack template, deployment and Windows packaging targeted tests passed; C# net8 Release build passed locally; Windows/i7 not measured",
       "implementationProgress": [
         "ModelRegistry catalog with Re-DETR v4 Small/Medium/Large and all SAM2 Hiera variants",
         "Versioned .dvmodel manifest validation and safe pack loading",
@@ -178,7 +178,8 @@
         "Offline Docker image archive loading with digest verification before DVW1 worker start",
         "Managed WSL Docker argv prefix is shared by container run, image load, stop, kill, inspect and cleanup; unowned distro cannot fall back to host Docker",
         "Production Windows release gate requires offline WSL MSI, owned distro tar, license inventory, artifact SHA-256 and notice files before WiX; workflow requires a licensed DEEPVISION_WSL_PAYLOAD_ROOT source and ships bootstrap_wsl.ps1, which installs the bundled WSL MSI before probing wsl.exe",
-        "WiX production bundle installs the permanent offline WSL MSI first and the app MSI runs owned-distro bootstrap in the user session after InstallFiles; uninstall skips the bootstrap; release script uses WiX 4 -d name=value defines"
+        "WiX production bundle installs the permanent offline WSL MSI first and the app MSI runs owned-distro bootstrap in the user session after InstallFiles; uninstall skips the bootstrap; release script uses WiX 4 -d name=value defines",
+        "Checked-in Docker model-pack template provides an independent DVW1 worker, digest-pinned manifest, Dockerfile and build/install instructions; host protocol round-trip and unsigned development pack build are regression-tested"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",

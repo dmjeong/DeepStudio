@@ -38,6 +38,7 @@ python gui/main.py
 - `cpp/`: C++17 `VisionInference`, `ClassificationWorker`, 고정 C ABI `vision_runtime`, CPU 벤치마크
 - `sdk/csharp/`, `sdk/cpp/`: C ABI SafeHandle 래퍼와 C++17 사용 예
 - `model_runtime/`, `tools/build_model_pack.py`, `tools/install_model_pack.py`: 오프라인 `.dvmodel` 팩 생성·검증·원자 설치
+- `packaging/model-pack-template/`: 호스트 Python import 없이 DVW1를 말하는 Docker 모델 팩 템플릿
 - `tools/`, `tests/`: 검증·배포 도구 및 회귀 검사
 
 ## EfficientNet CPU와 C++17
@@ -57,6 +58,11 @@ python tools/cpu_benchmark.py --weights model.pt --images images --runtime auto 
 Re-DETR v4, SAM2, LibreYOLO처럼 `container` 전용으로 등록된 모델은 설치된 `.dvmodel`의
 검증된 경로를 프로젝트에 저장한 뒤 `pack_train`·`pack_infer`·`pack_export` DVW1 작업으로 실행한다.
 일반 Custom CSP 학습기로 자동 대체하지 않으며, 팩이 없거나 manifest의 모델 ID가 다르면 작업을 거부한다.
+
+새 컨테이너 모델은 [Docker 모델 팩 템플릿](packaging/model-pack-template/README.ko.md)을 복사해
+`manifest.json`의 digest와 입출력 계약을 고정하고, worker의 `prepare`·`train`·`infer`·`export`를
+구현한다. 개발 팩은 `--allow-unsigned`로만 만들 수 있고, 출시 팩은 third-party 고지와 서명을
+통과해야 한다.
 
 C++ 공개 헤더는 `vision_inference.h`, 클래스는 `VisionInference`, 정적 라이브러리는
 `vision_inference`입니다. 모델과 작업자는 초기화 후 재사용합니다.

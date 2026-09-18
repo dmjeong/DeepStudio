@@ -65,6 +65,11 @@ SAM2의 최소 프로필은 encoder를 고정한 decoder fine-tune이다. 전체
 
 ## Docker 모델 확장 사전조건
 
+새 모델을 추가할 때 바로 사용할 수 있는 독립 Docker worker·manifest·Dockerfile 예시는
+저장소의 [`packaging/model-pack-template`](../model-pack-template/README.ko.md)에 있다. 템플릿은
+호스트 Python을 import하지 않고 DVW1만 사용하므로, 모델 의존성과 ONNX exporter를 이미지에
+고정한 뒤 `.dvmodel`로 묶으면 된다.
+
 추가 모델은 앱의 `모델 관리 → 모델 팩 가져오기`에서 `.dvmodel`을 선택한다.
 이미지와 의존성이 들어 있는 팩을 로컬로 가져와 실행하며 설치 중 Docker Hub/pip/apt 다운로드를 하지 않는다.
 팩의 `manifest.json`은 선택적으로 `worker_entrypoint: "module:factory"`를 선언한다. 앱은 이 값을

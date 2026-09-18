@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "model_id": "vendor.example_classifier",
+  "pack_version": "0.1.0",
+  "family": "Example",
+  "variant": "Container",
+  "task": "classify",
+  "runtimes": ["container", "onnx"],
+  "capabilities": ["train", "infer", "export_onnx"],
+  "input_size": [224, 224],
+  "input_channels": [3],
+  "release_status": "requested",
+  "container_image": "deepvision-model-template@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "worker_entrypoint": "worker:factory",
+  "runtime_requirements": {
+    "container_image": "deepvision-model-template@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "network": "none",
+    "python": "3.11"
+  }
+}
