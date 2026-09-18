@@ -60,6 +60,18 @@ typedef struct dv_image_view {
     int32_t stride_bytes;      /* 0 means tightly packed. */
 } dv_image_view;
 
+typedef struct dv_sam_prompt {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    const float* point_coords_xy; /* point_count pairs in original image pixels. */
+    const int32_t* point_labels;  /* 1 positive, 0 negative, -1 no point, 2/3 box corners. */
+    uint32_t point_count;
+    const float* box_xyxy;        /* optional four values in original image pixels. */
+    const float* mask_input;      /* optional row-major FP32 low-resolution mask. */
+    uint32_t mask_width;
+    uint32_t mask_height;
+} dv_sam_prompt;
+
 typedef struct dv_result {
     uint32_t struct_size;
     uint32_t abi_version;
@@ -90,6 +102,7 @@ typedef struct dv_result {
 } dv_result;
 
 typedef struct dv_session dv_session;
+typedef struct dv_image_context dv_image_context;
 
 DV_API uint32_t dv_abi_version(void);
 DV_API const char* dv_status_name(dv_status status);
@@ -98,8 +111,13 @@ DV_API dv_status dv_create_session(const char* config_path_utf8,
                                    dv_session** out_session);
 DV_API dv_status dv_infer(dv_session* session, const dv_image_view* image,
                           dv_result** out_result);
+DV_API dv_status dv_sam_encode(dv_session* session, const dv_image_view* image,
+                               dv_image_context** out_context);
+DV_API dv_status dv_sam_segment(dv_session* session, const dv_image_context* context,
+                                const dv_sam_prompt* prompt, dv_result** out_result);
 DV_API const char* dv_last_error(const dv_session* session);
 DV_API void dv_release_result(dv_result* result);
+DV_API void dv_release_image_context(dv_image_context* context);
 DV_API void dv_close_session(dv_session* session);
 
 #ifdef __cplusplus

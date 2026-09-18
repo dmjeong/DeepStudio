@@ -1,4 +1,5 @@
 #include "vision_inference.h"
+#include "sam2_inference.h"
 #include <nlohmann/json.hpp>
 #include <cmath>
 #include <filesystem>
@@ -169,6 +170,24 @@ int main(int argc, char** argv)
         require(redetr_softmax.detections.size() == 1 && redetr_softmax.detections[0].class_id == 0 &&
                     redetr_softmax.detections[0].confidence > 0.99f,
                 "Re-DETR softmax decode mismatch.");
+        Sam2Inference sam2;
+        require(sam2.InitializeFromJson((root / "sam2.json").u8string(), "onnxruntime", 2),
+                "SAM2 encoder/decoder load failed.");
+        const auto image_context = sam2.Encode(bgr);
+        Sam2Prompt sam_prompt;
+        sam_prompt.points.emplace_back(1.0f, 1.0f);
+        sam_prompt.labels.push_back(1);
+        const auto sam_result = sam2.Segment(image_context, sam_prompt);
+        require(sam_result.mask.size() == cv::Size(2, 2) && sam_result.selected_mask == 1,
+                "SAM2 selected mask shape/index mismatch.");
+        require(cv::countNonZero(sam_result.mask) == 4 && sam_result.scores.size() == 2,
+                "SAM2 prompt decode mismatch.");
+        Sam2Prompt sam_box_prompt;
+        sam_box_prompt.box_xyxy = {0.0f, 0.0f, 1.0f, 1.0f};
+        sam_box_prompt.mask_input = cv::Mat::ones(2, 2, CV_32FC1);
+        const auto sam_box_result = sam2.Segment(image_context, sam_box_prompt);
+        require(sam_box_result.mask.size() == cv::Size(2, 2) && cv::countNonZero(sam_box_result.mask) == 4,
+                "SAM2 box/mask prompt decode mismatch.");
         require(engine.InitializeFromJson((root / "anomaly.json").u8string()), "Anomaly load failed.");
         const auto anomaly = engine.Anomaly(gray);
         require(anomaly.anomaly_map.type() == CV_32FC1 && anomaly.anomaly_map.size() == gray.size(),

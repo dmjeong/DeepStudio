@@ -54,6 +54,14 @@ public sealed record AnomalyResult(
     double ModelMilliseconds,
     double PostprocessMilliseconds);
 
+public sealed record SamPrompt(
+    float[] PointCoordinates,
+    int[] PointLabels,
+    float[]? BoxXYXY = null,
+    float[]? MaskInput = null,
+    int MaskWidth = 256,
+    int MaskHeight = 256);
+
 public sealed class VisionSession : SafeHandle
 {
     private const string NativeLibrary = "vision_runtime";
@@ -119,6 +127,110 @@ public sealed class VisionSession : SafeHandle
         if (result.Kind != VisionResultKind.Anomaly)
             throw new InvalidOperationException("The loaded model is not an anomaly model.");
         return result.Anomaly!;
+    }
+
+    public SamImageContext EncodeSam(byte[] image, int width, int height, int channels,
+                                     int strideBytes = 0)
+    {
+        ObjectDisposedException.ThrowIf(IsInvalid, this);
+        ArgumentNullException.ThrowIfNull(image);
+        var view = PinImage(image, width, height, channels, strideBytes, out var pin);
+        try
+        {
+            var status = Native.dv_sam_encode(handle, ref view, out var raw);
+            if (status != 0 || raw == IntPtr.Zero)
+                throw new InvalidOperationException($"SAM2 encode failed ({StatusName(status)}): {LastError}");
+            return new SamImageContext(this, raw);
+        }
+        finally { pin.Free(); }
+    }
+
+    public SegmentationResult SegmentSam(SamImageContext context, SamPrompt prompt)
+    {
+        ObjectDisposedException.ThrowIf(IsInvalid, this);
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(prompt);
+        if (context.Owner != this || context.IsInvalid)
+            throw new ArgumentException("The SAM2 image context belongs to another session.", nameof(context));
+        ArgumentNullException.ThrowIfNull(prompt.PointCoordinates);
+        ArgumentNullException.ThrowIfNull(prompt.PointLabels);
+        if ((prompt.PointCoordinates.Length & 1) != 0 ||
+            prompt.PointCoordinates.Length / 2 != prompt.PointLabels.Length)
+            throw new ArgumentException("SAM2 point coordinates and labels must have matching lengths.", nameof(prompt));
+        if (prompt.BoxXYXY is not null && prompt.BoxXYXY.Length != 4)
+            throw new ArgumentException("SAM2 box prompt must contain four values.", nameof(prompt));
+        if (prompt.MaskInput is not null &&
+            (prompt.MaskWidth <= 0 || prompt.MaskHeight <= 0 ||
+             prompt.MaskInput.Length != checked(prompt.MaskWidth * prompt.MaskHeight)))
+            throw new ArgumentException("SAM2 mask prompt dimensions do not match the buffer.", nameof(prompt));
+
+        GCHandle points = default, labels = default, box = default, mask = default;
+        try
+        {
+            var pointPtr = PinIfNonEmpty(prompt.PointCoordinates, ref points);
+            var labelPtr = PinIfNonEmpty(prompt.PointLabels, ref labels);
+            var boxPtr = prompt.BoxXYXY is null ? IntPtr.Zero : PinIfNonEmpty(prompt.BoxXYXY, ref box);
+            var maskPtr = prompt.MaskInput is null ? IntPtr.Zero : PinIfNonEmpty(prompt.MaskInput, ref mask);
+            var nativePrompt = new NativeSamPrompt
+            {
+                StructSize = (uint)Marshal.SizeOf<NativeSamPrompt>(),
+                AbiVersion = AbiVersion,
+                PointCoordinatesXY = pointPtr,
+                PointLabels = labelPtr,
+                PointCount = (uint)prompt.PointLabels.Length,
+                BoxXYXY = boxPtr,
+                MaskInput = maskPtr,
+                MaskWidth = prompt.MaskInput is null ? 0u : (uint)prompt.MaskWidth,
+                MaskHeight = prompt.MaskInput is null ? 0u : (uint)prompt.MaskHeight,
+            };
+            var status = Native.dv_sam_segment(handle, context.DangerousGetHandle(), ref nativePrompt, out var raw);
+            if (status != 0 || raw == IntPtr.Zero)
+                throw new InvalidOperationException($"SAM2 prompt failed ({StatusName(status)}): {LastError}");
+            try
+            {
+                var result = NativeResultCopy.From(raw);
+                if (result.Kind != VisionResultKind.Segmentation)
+                    throw new InvalidOperationException("SAM2 returned a non-segmentation result.");
+                return result.Segmentation!;
+            }
+            finally { Native.dv_release_result(raw); }
+        }
+        finally
+        {
+            if (points.IsAllocated) points.Free();
+            if (labels.IsAllocated) labels.Free();
+            if (box.IsAllocated) box.Free();
+            if (mask.IsAllocated) mask.Free();
+        }
+    }
+
+    private static IntPtr PinIfNonEmpty(Array value, ref GCHandle handle)
+    {
+        if (value.Length == 0) return IntPtr.Zero;
+        handle = GCHandle.Alloc(value, GCHandleType.Pinned);
+        return handle.AddrOfPinnedObject();
+    }
+
+    private static NativeImageView PinImage(byte[] image, int width, int height, int channels,
+                                            int strideBytes, out GCHandle pin)
+    {
+        if (width <= 0 || height <= 0 || (channels != 1 && channels != 3 && channels != 4))
+            throw new ArgumentOutOfRangeException(nameof(width));
+        var packed = checked(width * channels);
+        var stride = strideBytes == 0 ? packed : strideBytes;
+        if (stride < packed || image.Length < checked(stride * height))
+            throw new ArgumentException("Image buffer is smaller than the declared view.", nameof(image));
+        pin = GCHandle.Alloc(image, GCHandleType.Pinned);
+        return new NativeImageView
+        {
+            StructSize = (uint)Marshal.SizeOf<NativeImageView>(),
+            AbiVersion = AbiVersion,
+            Data = pin.AddrOfPinnedObject(),
+            Width = width,
+            Height = height,
+            Channels = channels,
+            StrideBytes = stride,
+        };
     }
 
     private NativeResultCopy Infer(byte[] image, int width, int height, int channels, int strideBytes)
@@ -224,6 +336,23 @@ public sealed class VisionSession : SafeHandle
         }
     }
 
+    public sealed class SamImageContext : SafeHandle
+    {
+        internal SamImageContext(VisionSession owner, IntPtr handle) : base(IntPtr.Zero, true)
+        {
+            Owner = owner;
+            SetHandle(handle);
+        }
+
+        internal VisionSession Owner { get; }
+
+        protected override bool ReleaseHandle()
+        {
+            Native.dv_release_image_context(handle);
+            return true;
+        }
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeSessionOptions
     {
@@ -243,6 +372,20 @@ public sealed class VisionSession : SafeHandle
         public int Height;
         public int Channels;
         public int StrideBytes;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeSamPrompt
+    {
+        public uint StructSize;
+        public uint AbiVersion;
+        public IntPtr PointCoordinatesXY;
+        public IntPtr PointLabels;
+        public uint PointCount;
+        public IntPtr BoxXYXY;
+        public IntPtr MaskInput;
+        public uint MaskWidth;
+        public uint MaskHeight;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -297,6 +440,13 @@ public sealed class VisionSession : SafeHandle
         internal static extern int dv_infer(IntPtr session, ref NativeImageView image, out IntPtr result);
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int dv_sam_encode(IntPtr session, ref NativeImageView image, out IntPtr context);
+
+        [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int dv_sam_segment(IntPtr session, IntPtr context,
+            ref NativeSamPrompt prompt, out IntPtr result);
+
+        [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr dv_last_error(IntPtr session);
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
@@ -304,6 +454,9 @@ public sealed class VisionSession : SafeHandle
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void dv_release_result(IntPtr result);
+
+        [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void dv_release_image_context(IntPtr context);
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void dv_close_session(IntPtr session);

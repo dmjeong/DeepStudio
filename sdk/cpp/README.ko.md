@@ -18,6 +18,10 @@ ConvNeXt, DeepLab V3+, U-Net의 export 파일은 Python 없이 같은 C ABI를 �
 encoder/decoder prompt·video 그래프는 카탈로그에 등록되어 있지만 Windows 실기 검증이
 끝날 때까지 release-ready로 표시하지 않는다.
 
+SAM2 배포 번들은 encoder/decoder graph와 manifest의 prompt 입력 이름을 함께 열어야 한다.
+`Sam2Inference::Encode`를 한 번 호출한 뒤 `Segment`에 점·박스·이전 mask를 넘겨 여러 prompt를
+처리하며, 반환 mask는 decoder의 선택된 low-resolution logits를 threshold한 결과다.
+
 ## 최소 사용 예
 
 ```cpp

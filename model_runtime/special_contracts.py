@@ -62,6 +62,15 @@ def validate_sam2_manifest(manifest: Mapping) -> None:
         outputs = graph.get("outputs")
         if not isinstance(outputs, list) or not outputs or any(not isinstance(name, str) or not name for name in outputs):
             raise SpecialContractError(f"contracts.graphs.{graph_name}.outputs must be a string list")
+        inputs = _require_mapping(graph.get("inputs"), f"contracts.graphs.{graph_name}.inputs")
+        if any(not isinstance(name, str) or not name for name in inputs.values()):
+            raise SpecialContractError(f"contracts.graphs.{graph_name}.inputs must map to tensor names")
+        required_inputs = {"image"} if graph_name == "encoder" else {
+            "image_embeddings", "point_coords", "point_labels", "mask_input",
+            "has_mask_input", "orig_im_size",
+        }
+        if not required_inputs.issubset(inputs):
+            raise SpecialContractError(f"contracts.graphs.{graph_name}.inputs is incomplete")
     prompts = contract.get("prompt_types")
     if not isinstance(prompts, list) or not prompts or any(prompt not in {"point", "box", "mask"} for prompt in prompts):
         raise SpecialContractError("SAM2 prompt_types must contain point, box or mask")

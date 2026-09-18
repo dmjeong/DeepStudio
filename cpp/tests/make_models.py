@@ -84,6 +84,58 @@ redetr_softmax_config = json.loads(json.dumps(redetr_config))
 redetr_softmax_config["postprocessing"]["class_scores"] = "softmax"
 (root / "redetr_softmax.json").write_text(json.dumps(redetr_softmax_config, ensure_ascii=False), encoding="utf-8")
 
+# Minimal SAM2-style encoder/decoder graphs.  They keep every declared prompt
+# input in the graph contract while returning deterministic masks/scores, so
+# the C++/C ABI multi-graph lifecycle is tested without shipping weights.
+sam_input = helper.make_tensor_value_info("input_image", TensorProto.FLOAT, [1, 3, 2, 3])
+sam_embedding = helper.make_tensor_value_info("image_embeddings", TensorProto.FLOAT, [1, 1, 1, 1])
+sam_encoder = helper.make_model(
+    helper.make_graph([helper.make_node("ReduceMean", ["input_image"], ["image_embeddings"],
+                                           axes=[1, 2, 3], keepdims=1)],
+                      "sam2_encoder", [sam_input], [sam_embedding]),
+    opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
+onnx.checker.check_model(sam_encoder)
+onnx.save(sam_encoder, root / "sam2_encoder.onnx")
+decoder_inputs = [
+    helper.make_tensor_value_info("image_embeddings", TensorProto.FLOAT, [1, 1, 1, 1]),
+    helper.make_tensor_value_info("point_coords", TensorProto.FLOAT, [1, "points", 2]),
+    helper.make_tensor_value_info("point_labels", TensorProto.INT64, [1, "points"]),
+    helper.make_tensor_value_info("mask_input", TensorProto.FLOAT, [1, 1, 2, 2]),
+    helper.make_tensor_value_info("has_mask_input", TensorProto.FLOAT, [1]),
+    helper.make_tensor_value_info("orig_im_size", TensorProto.FLOAT, [2]),
+]
+sam_logits_value = helper.make_tensor("sam_logits_value", TensorProto.FLOAT, [1, 2, 2, 2],
+                                      [-1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0])
+sam_scores_value = helper.make_tensor("sam_scores_value", TensorProto.FLOAT, [1, 2], [0.1, 0.9])
+sam_decoder = helper.make_model(
+    helper.make_graph([
+        helper.make_node("Constant", [], ["low_res_mask_logits"], value=sam_logits_value),
+        helper.make_node("Constant", [], ["iou_predictions"], value=sam_scores_value),
+    ], "sam2_decoder", decoder_inputs,
+       [helper.make_tensor_value_info("low_res_mask_logits", TensorProto.FLOAT, [1, 2, 2, 2]),
+        helper.make_tensor_value_info("iou_predictions", TensorProto.FLOAT, [1, 2])]),
+    opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
+onnx.checker.check_model(sam_decoder)
+onnx.save(sam_decoder, root / "sam2_decoder.onnx")
+sam_config = {
+    "schema_version": 5, "backend": "sam2", "task": "segment", "model_path": "sam2_encoder.onnx",
+    "num_classes": 1, "input_channels": 3, "input_height": 2, "input_width": 3,
+    "input_name": "input_image", "output_name": "low_res_mask_logits",
+    "normalize_mean": [0.485, 0.456, 0.406], "normalize_std": [0.229, 0.224, 0.225],
+    "class_names": [], "preprocessing": {"resize_implementation": "opencv_linear_exact_v1",
+        "resize": "bilinear", "interpolation": "INTER_LINEAR_EXACT", "antialias": False,
+        "layout": "NCHW", "value_scale": 255., "color_order": "RGB"},
+    "contracts": {"graphs": {
+        "encoder": {"file": "sam2_encoder.onnx", "outputs": ["image_embeddings"]},
+        "decoder": {"file": "sam2_decoder.onnx", "inputs": {
+            "image_embeddings": "image_embeddings", "point_coords": "point_coords",
+            "point_labels": "point_labels", "mask_input": "mask_input",
+            "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"},
+            "outputs": ["low_res_mask_logits", "iou_predictions"]}},
+        "prompt_types": ["point", "box", "mask"], "video_state": False, "mask_size": [2, 2]},
+}
+(root / "sam2.json").write_text(json.dumps(sam_config, ensure_ascii=False), encoding="utf-8")
+
 # Reconstruction anomaly contract: identity output yields a zero error map.
 anomaly_node = helper.make_node("Identity", ["input_image"], ["reconstruction"])
 anomaly_output = helper.make_tensor_value_info("reconstruction", TensorProto.FLOAT, [1, 1, 2, 3])

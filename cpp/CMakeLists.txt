@@ -125,8 +125,10 @@ message(STATUS "ONNX Runtime 라이브러리: ${ONNXRUNTIME_LIB}")
 # ── 정적 라이브러리 빌드 (다른 프로젝트에서 사용 가능) ──
 add_library(vision_inference STATIC
     src/vision_inference.cpp
+    src/sam2_inference.cpp
     src/classification_worker.cpp
     include/classification_worker.h
+    include/sam2_inference.h
     include/vision_inference.h
 )
 set_target_properties(vision_inference PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -179,7 +181,7 @@ install(TARGETS efficientnet_cpu_benchmark efficientnet_background_demo DESTINAT
 # ── 설치 설정 ────────────────────────────────────────
 install(TARGETS vision_inference DESTINATION lib)
 install(TARGETS vision_runtime DESTINATION bin)
-install(FILES include/classification_worker.h include/vision_inference.h include/vision_runtime_c.h include/opencv_preprocess.h DESTINATION include)
+install(FILES include/classification_worker.h include/sam2_inference.h include/vision_inference.h include/vision_runtime_c.h include/opencv_preprocess.h DESTINATION include)
 
 # ── 빌드 정보 출력 ───────────────────────────────────
 message(STATUS "")

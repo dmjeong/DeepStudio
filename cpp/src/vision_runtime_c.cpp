@@ -1,5 +1,6 @@
 #include "vision_runtime_c.h"
 
+#include "sam2_inference.h"
 #include "vision_inference.h"
 #include <opencv2/core.hpp>
 
@@ -14,14 +15,21 @@
 
 struct dv_session {
     VisionInference engine;
+    std::unique_ptr<Sam2Inference> sam2;
     mutable std::mutex mutex;
     std::string error;
+};
+
+struct dv_image_context {
+    dv_session* owner = nullptr;
+    Sam2ImageContext value;
 };
 
 namespace {
 thread_local std::string g_last_create_error;
 constexpr uint32_t kMinOptionsSize = static_cast<uint32_t>(sizeof(dv_session_options));
 constexpr uint32_t kMinImageSize = static_cast<uint32_t>(sizeof(dv_image_view));
+constexpr uint32_t kMinSamPromptSize = static_cast<uint32_t>(sizeof(dv_sam_prompt));
 constexpr uint32_t kResultSize = static_cast<uint32_t>(sizeof(dv_result));
 
 void clear_error(dv_session* session) {
@@ -145,6 +153,30 @@ std::unique_ptr<dv_result> make_anomaly(const AnomalyResult& source) {
     result->postprocess_ms = source.postprocess_ms;
     return result;
 }
+
+std::unique_ptr<dv_result> make_sam_result(const Sam2Result& source) {
+    if (source.mask.empty() || source.mask.type() != CV_8UC1)
+        throw std::runtime_error("SAM2 mask is invalid.");
+    auto result = std::make_unique<dv_result>();
+    result->struct_size = kResultSize;
+    result->abi_version = DV_ABI_VERSION;
+    result->kind = DV_RESULT_SEGMENTATION;
+    result->mask_width = static_cast<uint32_t>(source.mask.cols);
+    result->mask_height = static_cast<uint32_t>(source.mask.rows);
+    result->mask_stride_bytes = result->mask_width;
+    result->mask_classes = 1;
+    const size_t bytes = static_cast<size_t>(source.mask.cols) * source.mask.rows;
+    result->mask = new uint8_t[bytes];
+    for (int row = 0; row < source.mask.rows; ++row)
+        std::memcpy(result->mask + static_cast<size_t>(row) * source.mask.cols,
+                    source.mask.ptr<uint8_t>(row), static_cast<size_t>(source.mask.cols));
+    result->total_ms = source.total_ms;
+    result->model_ms = source.model_ms;
+    result->postprocess_ms = source.postprocess_ms;
+    result->preprocess_ms = source.total_ms - source.model_ms - source.postprocess_ms;
+    if (result->preprocess_ms < 0.0) result->preprocess_ms = 0.0;
+    return result;
+}
 } // namespace
 
 extern "C" {
@@ -177,7 +209,14 @@ dv_status dv_create_session(const char* config_path_utf8, const dv_session_optio
         const int threads = options ? options->num_threads : -1;
         if (threads < -1) throw std::invalid_argument("Invalid thread count.");
         auto session = std::make_unique<dv_session>();
-        if (!session->engine.InitializeFromJson(config_path_utf8, runtime, threads)) {
+        if (Sam2Inference::LooksLikeConfig(config_path_utf8)) {
+            session->sam2 = std::make_unique<Sam2Inference>();
+            if (!session->sam2->InitializeFromJson(config_path_utf8, runtime, threads)) {
+                set_error(session.get(), session->sam2->LastError().c_str());
+                g_last_create_error = session->error;
+                return DV_STATUS_RUNTIME_ERROR;
+            }
+        } else if (!session->engine.InitializeFromJson(config_path_utf8, runtime, threads)) {
             set_error(session.get(), "Vision configuration or model initialization failed.");
             g_last_create_error = session->error;
             return DV_STATUS_RUNTIME_ERROR;
@@ -199,9 +238,13 @@ dv_status dv_infer(dv_session* session, const dv_image_view* image, dv_result** 
     clear_error(session);
     try {
         const auto pixels = view_to_mat(*image);
-        if (!session->engine.IsReady()) throw std::logic_error("Session is not ready.");
         std::unique_ptr<dv_result> result;
-        if (session->engine.GetConfig().task == "classify")
+        if (session->sam2) {
+            auto context = session->sam2->Encode(pixels);
+            Sam2Prompt prompt;
+            result = make_sam_result(session->sam2->Segment(context, prompt));
+        } else if (!session->engine.IsReady()) throw std::logic_error("Session is not ready.");
+        else if (session->engine.GetConfig().task == "classify")
             result = make_classification(session->engine.Classify(pixels));
         else if (session->engine.GetConfig().task == "segment")
             result = make_segmentation(session->engine.Segment(pixels));
@@ -217,6 +260,55 @@ dv_status dv_infer(dv_session* session, const dv_image_view* image, dv_result** 
     catch (...) { return classify_exception(session); }
 }
 
+dv_status dv_sam_encode(dv_session* session, const dv_image_view* image,
+                        dv_image_context** out_context) {
+    if (out_context) *out_context = nullptr;
+    if (!session || !image || !out_context) return DV_STATUS_INVALID_ARGUMENT;
+    std::lock_guard<std::mutex> lock(session->mutex);
+    clear_error(session);
+    try {
+        if (!session->sam2) throw std::logic_error("The session is not a SAM2 session.");
+        auto context = std::make_unique<dv_image_context>();
+        context->owner = session;
+        context->value = session->sam2->Encode(view_to_mat(*image));
+        *out_context = context.release();
+        return DV_STATUS_OK;
+    } catch (...) { return classify_exception(session); }
+}
+
+dv_status dv_sam_segment(dv_session* session, const dv_image_context* context,
+                         const dv_sam_prompt* prompt, dv_result** out_result) {
+    if (out_result) *out_result = nullptr;
+    if (!session || !context || !prompt || !out_result) return DV_STATUS_INVALID_ARGUMENT;
+    std::lock_guard<std::mutex> lock(session->mutex);
+    clear_error(session);
+    try {
+        if (!session->sam2 || context->owner != session)
+            throw std::invalid_argument("SAM2 image context does not belong to this session.");
+        if (prompt->struct_size < kMinSamPromptSize || prompt->abi_version != DV_ABI_VERSION)
+            throw std::invalid_argument("Invalid SAM2 prompt.");
+        if (prompt->point_count > 0 && (!prompt->point_coords_xy || !prompt->point_labels))
+            throw std::invalid_argument("SAM2 point arrays are incomplete.");
+        if ((prompt->mask_input != nullptr) != (prompt->mask_width > 0 && prompt->mask_height > 0))
+            throw std::invalid_argument("SAM2 mask dimensions are incomplete.");
+        Sam2Prompt native;
+        native.points.reserve(prompt->point_count);
+        native.labels.reserve(prompt->point_count);
+        for (uint32_t index = 0; index < prompt->point_count; ++index) {
+            native.points.emplace_back(prompt->point_coords_xy[index * 2], prompt->point_coords_xy[index * 2 + 1]);
+            native.labels.push_back(prompt->point_labels[index]);
+        }
+        if (prompt->box_xyxy) native.box_xyxy.assign(prompt->box_xyxy, prompt->box_xyxy + 4);
+        if (prompt->mask_input) {
+            native.mask_input = cv::Mat(static_cast<int>(prompt->mask_height),
+                                        static_cast<int>(prompt->mask_width), CV_32FC1,
+                                        const_cast<float*>(prompt->mask_input)).clone();
+        }
+        *out_result = make_sam_result(session->sam2->Segment(context->value, native)).release();
+        return DV_STATUS_OK;
+    } catch (...) { return classify_exception(session); }
+}
+
 const char* dv_last_error(const dv_session* session) {
     return session ? session->error.c_str() : g_last_create_error.c_str();
 }
@@ -230,6 +322,8 @@ void dv_release_result(dv_result* result) {
     delete[] result->anomaly_map;
     delete result;
 }
+
+void dv_release_image_context(dv_image_context* context) { delete context; }
 
 void dv_close_session(dv_session* session) { delete session; }
 

@@ -25,8 +25,13 @@ def _sam2():
         "family": "SAM2", "variant": "Hiera Small", "task": "segment",
         "runtimes": ["container", "onnx"],
         "contracts": {"graphs": {
-            "encoder": {"file": "sam2_encoder.onnx", "outputs": ["image_embeddings"]},
-            "decoder": {"file": "sam2_decoder.onnx", "outputs": ["low_res_mask_logits", "iou_predictions"]},
+            "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},
+                         "outputs": ["image_embeddings"]},
+            "decoder": {"file": "sam2_decoder.onnx", "inputs": {
+                "image_embeddings": "image_embeddings", "point_coords": "point_coords",
+                "point_labels": "point_labels", "mask_input": "mask_input",
+                "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"},
+                        "outputs": ["low_res_mask_logits", "iou_predictions"]},
         }, "prompt_types": ["point", "box", "mask"], "video_state": True},
     }
 
@@ -55,6 +60,7 @@ def test_redetr_contract_rejects_incomplete_manifest(mutator):
 
 @pytest.mark.parametrize("mutator", [
     lambda item: item["contracts"]["graphs"].pop("decoder"),
+    lambda item: item["contracts"]["graphs"]["decoder"]["inputs"].pop("point_labels"),
     lambda item: item["contracts"].update(video_state="yes"),
 ])
 def test_sam2_contract_rejects_incomplete_manifest(mutator):

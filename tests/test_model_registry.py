@@ -79,8 +79,13 @@ def test_registry_requires_special_graph_assets(tmp_path):
         "variant": "Hiera Tiny", "task": "segment", "runtimes": ["onnx", "container"],
         "capabilities": ["infer"], "input_size": [1024, 1024], "input_channels": [3],
         "contracts": {"graphs": {
-            "encoder": {"file": "encoder.onnx", "outputs": ["image_embeddings"]},
-            "decoder": {"file": "decoder.onnx", "outputs": ["low_res_mask_logits"]},
+            "encoder": {"file": "encoder.onnx", "inputs": {"image": "input_image"},
+                         "outputs": ["image_embeddings"]},
+            "decoder": {"file": "decoder.onnx", "inputs": {
+                "image_embeddings": "image_embeddings", "point_coords": "point_coords",
+                "point_labels": "point_labels", "mask_input": "mask_input",
+                "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"},
+                        "outputs": ["low_res_mask_logits"]},
         }, "prompt_types": ["point"], "video_state": False},
     }
     pack = tmp_path / "sam2.dvmodel"

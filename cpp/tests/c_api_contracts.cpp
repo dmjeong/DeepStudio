@@ -73,6 +73,36 @@ int main(int argc, char** argv)
         dv_release_result(redetr_result);
         dv_close_session(redetr_session);
 
+        dv_session* sam_session = nullptr;
+        dv_result* sam_result = nullptr;
+        dv_image_context* sam_context = nullptr;
+        const auto sam_config = (fs::u8path(argv[1]) / "sam2.json").u8string();
+        require(dv_create_session(sam_config.c_str(), &options, &sam_session) == DV_STATUS_OK,
+                "C ABI SAM2 session creation failed.");
+        require(dv_sam_encode(sam_session, &view, &sam_context) == DV_STATUS_OK && sam_context,
+                "C ABI SAM2 encode failed.");
+        const float points[] = {1.0f, 1.0f};
+        const int32_t labels[] = {1};
+        dv_sam_prompt prompt{sizeof(dv_sam_prompt), DV_ABI_VERSION, points, labels, 1,
+                             nullptr, nullptr, 0, 0};
+        require(dv_sam_segment(sam_session, sam_context, &prompt, &sam_result) == DV_STATUS_OK && sam_result &&
+                    sam_result->kind == DV_RESULT_SEGMENTATION && sam_result->mask_width == 2 &&
+                    sam_result->mask_height == 2,
+                "C ABI SAM2 prompt result mismatch.");
+        dv_release_result(sam_result);
+        sam_result = nullptr;
+        const float box[] = {0.0f, 0.0f, 1.0f, 1.0f};
+        const float mask[] = {1.0f, 1.0f, 1.0f, 1.0f};
+        dv_sam_prompt box_prompt{sizeof(dv_sam_prompt), DV_ABI_VERSION, nullptr, nullptr, 0,
+                                 box, mask, 2, 2};
+        require(dv_sam_segment(sam_session, sam_context, &box_prompt, &sam_result) == DV_STATUS_OK && sam_result &&
+                    sam_result->kind == DV_RESULT_SEGMENTATION && sam_result->mask_width == 2 &&
+                    sam_result->mask_height == 2,
+                "C ABI SAM2 box/mask prompt result mismatch.");
+        dv_release_result(sam_result);
+        dv_release_image_context(sam_context);
+        dv_close_session(sam_session);
+
         dv_session* anomaly_session = nullptr;
         dv_result* anomaly_result = nullptr;
         const auto anomaly_config = (fs::u8path(argv[1]) / "anomaly.json").u8string();
