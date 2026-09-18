@@ -57,11 +57,13 @@ New-Item -ItemType Directory -Force -Path $output | Out-Null
 $collector = Join-Path $scriptRoot "collect_payloads.py"
 $validator = Join-Path $scriptRoot "validate_payloads.py"
 python $collector $root --manifest $manifest --version $Version --commit $env:GITHUB_SHA
+if ($LASTEXITCODE -ne 0) { throw "Payload manifest collection failed." }
 python $validator $root --manifest $manifest `
     --require "app\DeepVisionStudio.exe" `
     --require "models\default-model-catalog.json" `
     --require "sdk\VisionRuntime.dll" `
     --require "sdk\native\vision_runtime.dll"
+if ($LASTEXITCODE -ne 0) { throw "Payload contract validation failed." }
 if ($RequireOfflineWsl) {
     # The distro tar contains the pinned Docker Engine/Moby userspace.  Keep
     # the host WSL installer and distro as separate payload files so their

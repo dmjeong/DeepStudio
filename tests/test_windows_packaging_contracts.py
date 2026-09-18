@@ -214,6 +214,14 @@ def test_release_script_removes_partial_installer_artifacts_on_failure():
     assert "$releaseSucceeded = $true" in script
 
 
+def test_release_script_fails_closed_when_python_payload_contracts_fail():
+    script = (WINDOWS / "build_release.ps1").read_text(encoding="utf-8")
+    assert 'throw "Payload manifest collection failed."' in script
+    assert 'throw "Payload contract validation failed."' in script
+    assert script.index('throw "Payload manifest collection failed."') > script.index('python $collector')
+    assert script.index('throw "Payload contract validation failed."') > script.index('python $validator')
+
+
 def test_release_script_has_production_offline_wsl_payload_gate():
     script = (WINDOWS / "build_release.ps1").read_text(encoding="utf-8")
     assert '[switch] $RequireOfflineWsl' in script
