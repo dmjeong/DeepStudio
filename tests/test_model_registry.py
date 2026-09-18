@@ -273,6 +273,12 @@ def test_container_command_is_networkless_and_uses_read_only_mounts(tmp_path):
     work_file.write_bytes(b"not a directory")
     with pytest.raises(ContainerWorkerError, match="work_dir must be a directory"):
         build_container_command("sha256:" + "a" * 64, model_dir=model, data_dir=data, work_dir=work_file)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked_data = tmp_path / "linked-data"
+    linked_data.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ContainerWorkerError, match="data_dir cannot be a symlink"):
+        build_container_command("sha256:" + "a" * 64, model_dir=model, data_dir=linked_data, work_dir=work)
 
 
 def test_container_command_validates_offline_image_archive(tmp_path):
@@ -287,6 +293,11 @@ def test_container_command_validates_offline_image_archive(tmp_path):
     with pytest.raises(ContainerWorkerError, match="file"):
         build_container_command("sha256:" + "a" * 64, model_dir=model, data_dir=data,
                                work_dir=work, image_archive=tmp_path / "missing.tar")
+    linked = tmp_path / "linked-archive.tar"
+    linked.symlink_to(archive)
+    with pytest.raises(ContainerWorkerError, match="archive"):
+        build_container_command("sha256:" + "a" * 64, model_dir=model, data_dir=data,
+                               work_dir=work, image_archive=linked)
 
 
 def test_container_command_supports_owned_wsl_docker_prefix(tmp_path):

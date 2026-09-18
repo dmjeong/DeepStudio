@@ -30,6 +30,18 @@ class ContainerWorkerError(RuntimeError):
     pass
 
 
+def _has_symlink_component(path: Path) -> bool:
+    """Reject a path when any existing component is a symbolic link."""
+    current = path
+    while True:
+        if current.is_symlink():
+            return True
+        parent = current.parent
+        if parent == current:
+            return False
+        current = parent
+
+
 @dataclass(frozen=True)
 class Frame(_ProtocolFrame):
     """Compatibility wrapper preserving the historical container error type."""
@@ -55,7 +67,7 @@ def _mount_path(value: str | Path, name: str, *, writable: bool = False) -> Path
         raise ContainerWorkerError(f"{name} must be an absolute path")
     if not path.exists():
         raise ContainerWorkerError(f"{name} does not exist: {path}")
-    if path.is_symlink():
+    if _has_symlink_component(path):
         raise ContainerWorkerError(f"{name} cannot be a symlink: {path}")
     # All three mounts are directories. ``writable`` only documents the
     # container's access mode; it must never allow a host file to be mounted
@@ -107,7 +119,8 @@ def build_container_command(
     archive: Path | None = None
     if image_archive is not None:
         archive = Path(image_archive).expanduser()
-        if not archive.is_absolute() or archive.is_symlink() or not archive.is_file():
+        if (not archive.is_absolute() or _has_symlink_component(archive) or
+                not archive.is_file()):
             raise ContainerWorkerError("image_archive must be an existing absolute file")
         archive = archive.resolve()
     container_name = name or f"deepvision-worker-{uuid.uuid4().hex[:12]}"
