@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-18T10:00:00+00:00",
+  "lastUpdated": "2026-09-18T10:20:00+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -129,7 +129,7 @@
       ],
       "timestamps": {
         "started": "2026-09-18T03:37:37.984Z",
-        "lastUpdated": "2026-09-18T10:00:00+00:00"
+        "lastUpdated": "2026-09-18T10:20:00+00:00"
       },
       "designStatus": "revised_with_open_decisions",
       "implementationStatus": "in_progress",
@@ -161,7 +161,8 @@
         "C ABI dv_create_session_from_bundle and C# VisionSession.OpenBundle resolve a verified bundle directory manifest",
         "Offline default-model-catalog.json is generated from ModelRegistry and included in the frozen app and Windows payload",
         "Installed-pack current.json activation overlays catalog entries without loading old versions or allowing release-status downgrades",
-        "release_ready model packs require THIRD_PARTY_NOTICES.md and licenses/ during build and install"
+        "release_ready model packs require THIRD_PARTY_NOTICES.md and licenses/ during build and install",
+        "WiX payload validation requires the app EXE, offline model catalog, and published C# SDK DLL before installer generation"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",
