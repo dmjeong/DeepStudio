@@ -2,6 +2,9 @@
 
 from pathlib import Path
 import xml.etree.ElementTree as ET
+import json
+import runpy
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +23,39 @@ def test_wix_sources_are_well_formed_and_use_payload_contract():
 
 def test_release_script_verifies_payload_before_wix_build():
     script = (WINDOWS / "build_release.ps1").read_text(encoding="utf-8")
-    assert "--manifest" in script and "--verify" in script
+    assert "collect_payloads.py" in script and "validate_payloads.py" in script
+    assert "--manifest" in script
     assert "WixToolset.Bal.wixext" in script
     assert "THIRD_PARTY_NOTICES.md" in script
     assert "external_downloads" not in script
+
+
+def test_payload_wrapper_scripts_collect_and_verify_exact_bytes(tmp_path):
+    root = tmp_path / "payload"
+    root.mkdir()
+    (root / "THIRD_PARTY_NOTICES.md").write_text("notice", encoding="utf-8")
+    (root / "worker.exe").write_bytes(b"worker")
+    manifest_path = tmp_path / "release-manifest.json"
+    collect = runpy.run_path(str(WINDOWS / "collect_payloads.py"))
+    manifest = collect["collect_payload"](root, version="1.0.0")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    verify = runpy.run_path(str(WINDOWS / "validate_payloads.py"))
+    verify["verify_payload"](root, json.loads(manifest_path.read_text(encoding="utf-8")))
+
+
+def test_payload_stager_copies_artifacts_and_rejects_symlinks(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "worker.exe").write_bytes(b"worker")
+    notice = tmp_path / "NOTICE.md"
+    notice.write_text("notice", encoding="utf-8")
+    stager = runpy.run_path(str(WINDOWS / "stage_payload.py"))
+    output = stager["stage_payload"](tmp_path / "payload", [("workers", source)], notice=notice)
+    assert (output / "workers/worker.exe").read_bytes() == b"worker"
+    assert (output / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8") == "notice"
+
+    outside = tmp_path / "outside"
+    outside.write_text("private", encoding="utf-8")
+    (source / "escape").symlink_to(outside)
+    with pytest.raises(stager["PayloadStageError"], match="symlink"):
+        stager["stage_payload"](tmp_path / "bad", [("workers", source)], notice=notice)

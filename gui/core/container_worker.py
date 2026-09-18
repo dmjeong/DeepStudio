@@ -8,71 +8,41 @@ worker 하나를 준비해 여러 요청을 처리하는 것을 전제로 한다
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from pathlib import Path
-import struct
 import subprocess
-from typing import BinaryIO, Mapping
 import uuid
 
-
-MAGIC = b"DVW1"
-HEADER = struct.Struct("<4sIQ")
-MAX_HEADER_BYTES = 64 * 1024
-MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
+from model_runtime.worker_protocol import (  # noqa: E402
+    Frame as _ProtocolFrame,
+    HEADER,
+    MAGIC,
+    MAX_HEADER_BYTES,
+    MAX_PAYLOAD_BYTES,
+    WorkerProtocolError,
+)
 
 
 class ContainerWorkerError(RuntimeError):
     pass
 
 
-def _read_exact(stream: BinaryIO, size: int) -> bytes:
-    """Pipes may return a partial read even when more bytes are available."""
-    chunks: list[bytes] = []
-    remaining = size
-    while remaining:
-        chunk = stream.read(remaining)
-        if not chunk:
-            break
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
-
-
 @dataclass(frozen=True)
-class Frame:
-    header: Mapping[str, object]
-    payload: bytes = b""
+class Frame(_ProtocolFrame):
+    """Compatibility wrapper preserving the historical container error type."""
 
     def encode(self) -> bytes:
-        header = json.dumps(self.header, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
-        if len(header) > MAX_HEADER_BYTES:
-            raise ContainerWorkerError("worker frame header too large")
-        if len(self.payload) > MAX_PAYLOAD_BYTES:
-            raise ContainerWorkerError("worker frame payload too large")
-        return HEADER.pack(MAGIC, len(header), len(self.payload)) + header + self.payload
+        try:
+            return super().encode()
+        except WorkerProtocolError as exc:
+            raise ContainerWorkerError(str(exc)) from exc
 
     @classmethod
-    def read(cls, stream: BinaryIO) -> "Frame | None":
-        prefix = _read_exact(stream, HEADER.size)
-        if not prefix:
-            return None
-        if len(prefix) != HEADER.size:
-            raise ContainerWorkerError("truncated worker frame header")
-        magic, header_size, payload_size = HEADER.unpack(prefix)
-        if magic != MAGIC or header_size > MAX_HEADER_BYTES or payload_size > MAX_PAYLOAD_BYTES:
-            raise ContainerWorkerError("invalid worker frame limits or magic")
-        raw_header = _read_exact(stream, header_size)
-        payload = _read_exact(stream, payload_size)
-        if len(raw_header) != header_size or len(payload) != payload_size:
-            raise ContainerWorkerError("truncated worker frame payload")
+    def read(cls, stream):
         try:
-            header = json.loads(raw_header.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ContainerWorkerError("invalid worker frame JSON") from exc
-        if not isinstance(header, dict) or not isinstance(header.get("type"), str):
-            raise ContainerWorkerError("worker frame requires an object and type")
-        return cls(header, payload)
+            value = _ProtocolFrame.read(stream)
+        except WorkerProtocolError as exc:
+            raise ContainerWorkerError(str(exc)) from exc
+        return None if value is None else cls(value.header, value.payload)
 
 
 def _mount_path(value: str | Path, name: str, *, writable: bool = False) -> Path:
@@ -133,7 +103,7 @@ def build_container_command(
         "--mount", f"type=bind,src={data},dst=/data,readonly",
         "--mount", f"type=bind,src={work},dst=/work",
         image,
-        "--worker-stdin-stdout",
+        "--worker-stdin-stdout", "--manifest", "/models/manifest.json",
     )
     return ContainerCommand(image, container_name, argv, label)
 

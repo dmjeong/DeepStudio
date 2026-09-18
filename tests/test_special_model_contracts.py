@@ -5,6 +5,7 @@ import pytest
 from model_runtime.special_contracts import (
     SpecialContractError,
     validate_re_detr_manifest,
+    validate_container_entrypoint,
     validate_special_assets,
     validate_sam2_manifest,
 )
@@ -75,3 +76,9 @@ def test_sam2_contract_requires_declared_graph_files():
     with pytest.raises(SpecialContractError, match="missing"):
         validate_special_assets(item, {"manifest.json"})
     validate_special_assets(item, {"sam2_encoder.onnx", "sam2_decoder.onnx"})
+
+
+def test_container_entrypoint_is_validated_without_importing_plugin():
+    validate_container_entrypoint({"worker_entrypoint": "plugin.worker:factory"})
+    with pytest.raises(SpecialContractError, match="worker_entrypoint"):
+        validate_container_entrypoint({"worker_entrypoint": "../plugin:factory"})

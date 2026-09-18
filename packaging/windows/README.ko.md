@@ -64,6 +64,10 @@ SAM2의 최소 프로필은 encoder를 고정한 decoder fine-tune이다. 전체
 
 추가 모델은 앱의 `모델 관리 → 모델 팩 가져오기`에서 `.dvmodel`을 선택한다.
 이미지와 의존성이 들어 있는 팩을 로컬로 가져와 실행하며 설치 중 Docker Hub/pip/apt 다운로드를 하지 않는다.
+팩의 `manifest.json`은 선택적으로 `worker_entrypoint: "module:factory"`를 선언한다. 앱은 이 값을
+호스트에서 import하지 않고, 격리된 컨테이너 안의 `DVW1` stdin/stdout worker가 로드한다.
+worker는 `hello`, `describe`, `prepare`, `train`, `infer`, `export`, `cancel`, `close` 프레임을 사용하며
+stdout에는 프레임 외의 로그를 쓰지 않는다. 모델 팩을 다시 만들지 않고도 이 계약을 구현한 새 모델을 추가할 수 있다.
 
 설치 프로그램이 앱 전용 WSL2와 Docker Engine 환경을 구성한다. 다음 조건은 필요하다.
 
@@ -151,3 +155,8 @@ Docker 추가가 자동으로 더 빠른 추론을 뜻하지 않는다.
 팩을 만들고 `tools/install_model_pack.py`는 경로 탈출·symlink·압축 폭탄·모든 SHA-256을
 검사한 뒤 staging 디렉터리에서 원자 활성화한다. `--allow-unsigned`는 개발용에서만 사용하며,
 출시 팩은 외부 서명/신뢰 키 검증을 통과한 manifest를 사용한다.
+
+Windows 빌드 이미지는 먼저 `stage_payload.py`로 UI·worker·SDK·팩·고지·SBOM을 하나의 payload
+루트에 모은다. `collect_payloads.py`와 `validate_payloads.py`가 모든 파일의 크기·SHA-256과
+3.5 GiB 예산을 검사한 뒤에만 WiX MSI/Burn EXE를 생성한다. 이 단계는 인터넷 다운로드나 외부
+모델 허브 호출을 수행하지 않는다.

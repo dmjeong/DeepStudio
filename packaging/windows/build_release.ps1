@@ -23,9 +23,10 @@ $wix = Get-Command wix -ErrorAction SilentlyContinue
 if (-not $wix) { throw "WiX v4 'wix' command is required on the locked Windows build image." }
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
-$payloadTool = Join-Path $scriptRoot "payload_manifest.py"
-python $payloadTool $root --manifest $manifest --version $Version --commit $env:GITHUB_SHA
-python $payloadTool $root --manifest $manifest --verify
+$collector = Join-Path $scriptRoot "collect_payloads.py"
+$validator = Join-Path $scriptRoot "validate_payloads.py"
+python $collector $root --manifest $manifest --version $Version --commit $env:GITHUB_SHA
+python $validator $root --manifest $manifest
 
 $common = @("-arch", "x64", "-dVersion=$Version", "-dPayloadRoot=$root")
 $msiArgs = @("build") + $common + @("-o", $msi, (Join-Path $scriptRoot "bootstrapper\DeepVisionStudio.msi.wxs"))

@@ -87,6 +87,19 @@ def validate_special_manifest(manifest: Mapping) -> None:
         validate_sam2_manifest(manifest)
 
 
+def validate_container_entrypoint(manifest: Mapping) -> None:
+    """Validate the optional Docker plugin factory without importing it."""
+    entrypoint = manifest.get("worker_entrypoint")
+    if entrypoint is None:
+        return
+    if not isinstance(entrypoint, str) or entrypoint.count(":") != 1:
+        raise SpecialContractError("worker_entrypoint must use module:factory")
+    module, factory = entrypoint.split(":", 1)
+    if (not module or not factory or any(part in module for part in ("/", "\\", "..")) or
+            any(char.isspace() or char == "\x00" for char in entrypoint)):
+        raise SpecialContractError("worker_entrypoint contains an unsafe module or factory")
+
+
 def special_asset_paths(manifest: Mapping) -> tuple[str, ...]:
     """Return graph files declared by a special model contract."""
     family = manifest.get("family")

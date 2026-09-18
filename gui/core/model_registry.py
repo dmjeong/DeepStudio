@@ -17,7 +17,8 @@ import re
 from typing import Any, Iterable, Mapping
 import zipfile
 
-from model_runtime.special_contracts import validate_special_assets, validate_special_manifest
+from model_runtime.special_contracts import (validate_container_entrypoint,
+                                              validate_special_assets, validate_special_manifest)
 
 
 MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,79}$")
@@ -96,6 +97,11 @@ def validate_model_spec(spec: ModelSpec) -> None:
             validate_special_manifest(manifest)
         except ValueError as exc:
             raise ModelRegistryError(str(exc)) from exc
+    if "container" in spec.runtimes:
+        try:
+            validate_container_entrypoint(spec.metadata)
+        except ValueError as exc:
+            raise ModelRegistryError(str(exc)) from exc
 
 
 def builtin_model_specs() -> tuple[ModelSpec, ...]:
@@ -146,7 +152,7 @@ def _spec_from_mapping(data: Mapping[str, Any]) -> ModelSpec:
     if missing:
         raise ModelRegistryError("manifest missing fields: " + ", ".join(sorted(missing)))
     metadata = dict(data.get("metadata", {}))
-    for key in ("contracts", "runtime_requirements"):
+    for key in ("contracts", "runtime_requirements", "worker_entrypoint"):
         if key in data:
             metadata[key] = data[key]
     return ModelSpec(

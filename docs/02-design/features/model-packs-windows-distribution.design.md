@@ -12,6 +12,8 @@
 
 - 모델 등록부와 Re-DETR v4 Small/Medium/Large·SAM2 Hiera 전 변형의 명시적 `requested` 카탈로그.
 - `DVW1` 프레임, 네트워크 없는 Docker worker, stop→kill→inspect→remove 소유권 정리.
+- 공통 `worker_protocol`, absolute-path Windows worker launcher, owned WSL lifecycle, Docker
+  plugin entrypoint, 오프라인 asset resolver와 worker manager를 구현했다.
 - `.dvmodel` 결정적 빌더, 압축 폭탄·경로·symlink·SHA-256·staging/원자 활성화 검사.
 - C++17 `vision_runtime` C ABI와 C# `VisionSession` SafeHandle. generic classify/segment/detect/reconstruction anomaly,
   Re-DETR v4의 `pred_boxes`/`pred_logits` 탐지와 고정 memory-bank PatchCore score/map 결과를 검증한다.
@@ -70,15 +72,16 @@ model_sdk/
   schemas/manifest.schema.json
   schemas/job.schema.json
   contracts/                       # image, classification, detection, anomaly, semantic, prompted
-  worker_protocol.py
+  worker_protocol.py                 # DVW1 frame/read/write limits
 model_runtime/
   registry.py                      # 목록·상태·호환성·버전
   installer.py                     # 팩 검증·활성화·롤백
-  assets.py                        # 로컬 가중치 조회
+  assets.py                        # 로컬 가중치 조회·hash/size 검증
   manager.py                       # worker 준비·큐·자원·취소
-  windows_worker.py
+  windows_worker.py                # bundled absolute-path native worker
   container_worker.py
-  managed_wsl.py
+  managed_wsl.py                   # owned offline distro/engine lifecycle
+  worker_manager.py                # native/container ownership
 model_adapters/
   efficientnet/
   resnet/
