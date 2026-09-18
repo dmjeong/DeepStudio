@@ -344,9 +344,9 @@ def test_windows_workflow_builds_real_gui_and_native_runtime():
     assert '"DeepVisionStudio/cpp/**"' in workflow
     assert '"DeepVisionStudio/gui/widgets/**"' in workflow
     assert "vcpkg.exe" in workflow
-    assert 'version = "1.30.0"' in workflow
+    assert 'version = "1.29.0"' in workflow
     assert "onnxruntime-win-x64-$version.zip" in workflow
-    assert '$version = "1.30.0"' in workflow
+    assert '$version = "1.29.0"' in workflow
     assert "python gui/build_exe.py" in workflow
     assert '"--source", "app=$app"' in workflow
     assert '"--source", "sdk/native=$native"' in workflow
@@ -358,8 +358,8 @@ def test_windows_workflow_builds_real_gui_and_native_runtime():
 
 def test_ci_cpp_runtime_pin_matches_measured_onnx_runtime():
     workflow = (ROOT.parent / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "onnxruntime-linux-x64-1.30.0.tgz" in workflow
-    assert "onnxruntime-linux-x64-1.30.0\"" in workflow
+    assert "onnxruntime-linux-x64-1.29.0.tgz" in workflow
+    assert "onnxruntime-linux-x64-1.29.0\"" in workflow
 
 
 def test_windows_workflow_keeps_offline_wsl_as_an_explicit_release_gate():

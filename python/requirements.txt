@@ -17,7 +17,7 @@ certifi>=2024.2.2
 
 # ── ONNX 변환 & 검증 ──
 onnx>=1.16.0
-onnxruntime>=1.20.1    # CPU 추론 검증용
+onnxruntime==1.29.0    # CPU 추론 검증용
 
 # ── 이미지 처리 ──
 Pillow>=9.0.0

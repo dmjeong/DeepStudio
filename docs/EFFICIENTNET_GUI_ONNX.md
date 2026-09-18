@@ -27,6 +27,8 @@ CPU 모델을 로드한 뒤 작업 워커에서 batch=1의 고정 입력 ONNX(op
 이미 로드한 가중치를 사용하고 원본 체크포인트는 수정하지 않는다. 새 가중치 다운로드도 없다.
 기존 전처리, 채널 수, crop과 클래스 순서를 보존한다. FP32를 유지한다.
 
+현재 배포 요구사항과 Windows/Linux native SDK CI는 ONNX Runtime **1.29.0**으로 고정한다.
+과거 M4 벤치마크 문서에 기록된 1.30.0 수치는 당시 실행 결과이며 현재 배포 pin과 다르다.
 ORT는 CPUExecutionProvider, ORT_ENABLE_ALL, sequential, 4 intra-op threads를 기본으로 사용한다.
 로드한 PyTorch 모델과 seeded/zero 입력의 logits를 비교하고 10회 워밍업한다.
 변환·검증·워밍업은 이미지별 측정 전에 수행되며 시작 대기에 포함된다.

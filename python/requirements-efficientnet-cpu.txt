@@ -5,6 +5,6 @@
 torch>=2.0
 numpy>=1.24
 onnx>=1.16
-onnxruntime>=1.20.1
+onnxruntime==1.29.0
 opencv-python-headless>=4.7
 openvino>=2024.6

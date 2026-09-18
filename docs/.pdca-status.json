@@ -198,7 +198,7 @@
         "Owned WSL bootstrap unregisters and removes only a newly imported distro after Docker smoke or marker commit failure, enabling safe retries",
         "Payload manifest verification enforces offline Windows x64 artifacts and rejects external-download or architecture policy tampering",
         "Windows release script fails closed on native Python manifest collector and validator exit codes",
-        "Windows and Linux native SDK CI pins ONNX Runtime 1.30.0, matching the measured C++/CPU deployment runtime",
+        "Windows and Linux native SDK CI pins ONNX Runtime 1.29.0, matching the supported user validation environment",
         "ManagedWsl import uses an atomic ownership marker and rolls back attempted new distro registrations after import or marker failures",
         "Managed WSL ownership checks reject symlinked marker files before discovering or unregistering a distro"
         ,"Pack installer rejects symlinked model/version directories and cleans failed staging activation without leaving orphaned payloads"
@@ -439,7 +439,7 @@
       "action": "onnxruntime_release_pin_refresh",
       "timestamp": "2026-09-18T23:05:00+09:00",
       "python": "39 packaging, payload and worker tests passed",
-      "onnxruntime": "Windows/Linux native SDK CI pinned to 1.30.0; archive names verified against upstream release assets",
+      "onnxruntime": "Windows/Linux native SDK CI pinned to 1.29.0; archive names verified against upstream release assets",
       "windows_i7": "not measured"
     },
     {

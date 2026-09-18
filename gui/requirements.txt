@@ -41,7 +41,7 @@ opencv-python>=4.7.0        # cv2: 불량 생성, 이미지 전처리, 히트맵
 
 # ── ONNX (내보내기 및 CPU EfficientNet 추론) ──
 onnx>=1.16.0
-onnxruntime>=1.20.1
+onnxruntime==1.29.0
 
 # ── 시스템 정보 ──
 psutil>=5.9.0               # CPU/RAM 정보 표시
