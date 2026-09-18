@@ -106,6 +106,12 @@ def test_release_ready_pack_requires_redistribution_notices(tmp_path):
     (source / "THIRD_PARTY_NOTICES.md").write_text("notice", encoding="utf-8")
     (source / "licenses").mkdir()
     (source / "licenses" / "model.txt").write_text("license", encoding="utf-8")
+    with pytest.raises(PackBuildError, match="license object"):
+        build_pack(source, tmp_path / "release-without-metadata.dvmodel", allow_unsigned=True)
+    manifest["license"] = {
+        "spdx": "MIT", "source": "https://example.invalid/model", "revision": "v1"
+    }
+    (source / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     assert build_pack(source, tmp_path / "release.dvmodel", allow_unsigned=True).is_file()
 
 

@@ -133,6 +133,7 @@ def test_model_catalog_payload_gate_is_optional_for_development_and_strict_for_r
         archive.writestr("manifest.json", json.dumps({
             "model_id": "demo",
             "release_status": "release_ready",
+            "license": {"spdx": "MIT", "source": "https://example.invalid/model", "revision": "v1"},
             "signature": {"key_id": "release-key", "value": "signed"},
         }))
         archive.writestr("checksums.json", json.dumps({"files": {}}))

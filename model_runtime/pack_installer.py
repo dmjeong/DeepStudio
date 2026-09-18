@@ -49,6 +49,19 @@ def _validate_release_notices(manifest: Mapping[str, Any], files) -> None:
         raise PackInstallError("release-ready model pack requires licenses/")
 
 
+def _validate_release_metadata(manifest: Mapping[str, Any]) -> None:
+    """Require auditable provenance fields before accepting a release pack."""
+    if manifest.get("release_status", "requested") != "release_ready":
+        return
+    license_info = manifest.get("license")
+    if not isinstance(license_info, Mapping):
+        raise PackInstallError("release-ready model pack requires a license object")
+    for field in ("spdx", "source", "revision"):
+        value = license_info.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise PackInstallError(f"release-ready model pack license.{field} is required")
+
+
 def _safe_name(name: str) -> str:
     if not isinstance(name, str) or not name or "\x00" in name:
         raise PackInstallError("model pack contains an invalid path")
@@ -220,6 +233,7 @@ class PackInstaller:
             expected_files = {_safe_name(info.filename) for info in infos
                               if not info.is_dir() and _safe_name(info.filename) != "checksums.json"}
             _validate_release_notices(manifest, expected_files)
+            _validate_release_metadata(manifest)
             try:
                 validate_special_assets(manifest, expected_files)
                 validate_container_image_asset(manifest, expected_files)

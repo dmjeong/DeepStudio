@@ -121,6 +121,26 @@ def test_installer_rejects_release_ready_pack_without_redistribution_notices(tmp
         PackInstaller(tmp_path / "installed").install(pack, allow_unsigned=True)
 
 
+def test_installer_rejects_release_ready_pack_without_license_metadata(tmp_path):
+    pack = tmp_path / "release-metadata.dvmodel"
+    files = {
+        "manifest.json": json.dumps({
+            "schema_version": 1, "model_id": "vendor.release", "pack_version": "1.0.0",
+            "release_status": "release_ready",
+        }).encode(),
+        "model.onnx": b"fixture",
+        "THIRD_PARTY_NOTICES.md": b"notice",
+        "licenses/model.txt": b"license",
+    }
+    checksums = {name: hashlib.sha256(value).hexdigest() for name, value in files.items()}
+    with zipfile.ZipFile(pack, "w") as archive:
+        for name, value in files.items():
+            archive.writestr(name, value)
+        archive.writestr("checksums.json", json.dumps({"files": checksums}))
+    with pytest.raises(PackInstallError, match="license object"):
+        PackInstaller(tmp_path / "installed").install(pack, allow_unsigned=True)
+
+
 def test_installer_rejects_symlinked_model_directory(tmp_path):
     pack = tmp_path / "model.dvmodel"
     _write_pack(pack)

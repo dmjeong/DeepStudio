@@ -136,6 +136,15 @@ def _validate_model_pack(path: Path, model_id: str) -> None:
             raise ModelCatalogPayloadError(
                 f"release-ready model {model_id} pack manifest must match model_id and declare release_ready"
             )
+        license_info = manifest.get("license")
+        if not isinstance(license_info, Mapping):
+            raise ModelCatalogPayloadError(f"release-ready model {model_id} pack requires a license object")
+        for field in ("spdx", "source", "revision"):
+            value = license_info.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ModelCatalogPayloadError(
+                    f"release-ready model {model_id} pack license.{field} is required"
+                )
         signature = manifest.get("signature")
         if (not isinstance(signature, Mapping) or not isinstance(signature.get("key_id"), str) or
                 not signature["key_id"].strip() or not isinstance(signature.get("value"), str) or
