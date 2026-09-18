@@ -45,6 +45,12 @@ def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk()
     assert "packaging" in script and "windows" in script and "models" in script
 
 
+def test_csharp_sdk_exposes_directory_bundle_open():
+    source = (ROOT / "sdk" / "csharp" / "VisionRuntime.cs").read_text(encoding="utf-8")
+    assert "OpenBundle" in source
+    assert "dv_create_session_from_bundle" in source
+
+
 def test_offline_default_model_catalog_matches_registry():
     catalog = json.loads((WINDOWS / "models" / "default-model-catalog.json").read_text(encoding="utf-8"))
     assert catalog["schema_version"] == 1
