@@ -392,6 +392,7 @@
         "onnx"
       ],
       "capabilities": [
+        "automatic_mask",
         "cpp",
         "csharp",
         "export_onnx",
@@ -409,7 +410,7 @@
       ],
       "release_status": "requested",
       "pretrained_asset": "",
-      "notes": "image/prompt/video 계약은 별도 검증",
+      "notes": "image/prompt/automatic-mask/video 계약은 별도 검증",
       "metadata": {
         "contracts": {
           "graphs": {
@@ -443,7 +444,11 @@
             "box",
             "mask"
           ],
-          "video_state": true
+          "video_state": true,
+          "automatic_mask": {
+            "mode": "positive_point_grid_union",
+            "max_grid": 32
+          }
         }
       }
     },
@@ -457,6 +462,7 @@
         "onnx"
       ],
       "capabilities": [
+        "automatic_mask",
         "cpp",
         "csharp",
         "export_onnx",
@@ -474,7 +480,7 @@
       ],
       "release_status": "requested",
       "pretrained_asset": "",
-      "notes": "image/prompt/video 계약은 별도 검증",
+      "notes": "image/prompt/automatic-mask/video 계약은 별도 검증",
       "metadata": {
         "contracts": {
           "graphs": {
@@ -508,7 +514,11 @@
             "box",
             "mask"
           ],
-          "video_state": true
+          "video_state": true,
+          "automatic_mask": {
+            "mode": "positive_point_grid_union",
+            "max_grid": 32
+          }
         }
       }
     },
@@ -522,6 +532,7 @@
         "onnx"
       ],
       "capabilities": [
+        "automatic_mask",
         "cpp",
         "csharp",
         "export_onnx",
@@ -539,7 +550,7 @@
       ],
       "release_status": "requested",
       "pretrained_asset": "",
-      "notes": "image/prompt/video 계약은 별도 검증",
+      "notes": "image/prompt/automatic-mask/video 계약은 별도 검증",
       "metadata": {
         "contracts": {
           "graphs": {
@@ -573,7 +584,11 @@
             "box",
             "mask"
           ],
-          "video_state": true
+          "video_state": true,
+          "automatic_mask": {
+            "mode": "positive_point_grid_union",
+            "max_grid": 32
+          }
         }
       }
     },
@@ -587,6 +602,7 @@
         "onnx"
       ],
       "capabilities": [
+        "automatic_mask",
         "cpp",
         "csharp",
         "export_onnx",
@@ -604,7 +620,7 @@
       ],
       "release_status": "requested",
       "pretrained_asset": "",
-      "notes": "image/prompt/video 계약은 별도 검증",
+      "notes": "image/prompt/automatic-mask/video 계약은 별도 검증",
       "metadata": {
         "contracts": {
           "graphs": {
@@ -638,7 +654,11 @@
             "box",
             "mask"
           ],
-          "video_state": true
+          "video_state": true,
+          "automatic_mask": {
+            "mode": "positive_point_grid_union",
+            "max_grid": 32
+          }
         }
       }
     },

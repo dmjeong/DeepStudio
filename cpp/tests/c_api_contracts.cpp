@@ -124,6 +124,16 @@ int main(int argc, char** argv)
                     sam_result->mask_height == 2,
                 "C ABI SAM2 box/mask prompt result mismatch.");
         dv_release_result(sam_result);
+        sam_result = nullptr;
+        require(dv_sam_auto_mask(sam_session, sam_context, 2, 2, 0.5f, &sam_result) == DV_STATUS_OK &&
+                    sam_result && sam_result->kind == DV_RESULT_SEGMENTATION &&
+                    sam_result->mask_width == 2 && sam_result->mask_height == 2,
+                "C ABI SAM2 automatic-mask result mismatch.");
+        dv_release_result(sam_result);
+        sam_result = nullptr;
+        require(dv_sam_auto_mask(sam_session, sam_context, 33, 1, 0.0f, &sam_result) ==
+                    DV_STATUS_INVALID_ARGUMENT && !sam_result,
+                "C ABI SAM2 automatic-mask grid limit was not enforced.");
         dv_release_image_context(sam_context);
         dv_close_session(sam_session);
 

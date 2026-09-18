@@ -33,6 +33,10 @@ encoder/decoder prompt·video 그래프는 카탈로그에 등록되어 있지�
 SAM2 배포 번들은 encoder/decoder graph와 manifest의 prompt 입력 이름을 함께 열어야 한다.
 `Sam2Inference::Encode`를 한 번 호출한 뒤 `Segment`에 점·박스·이전 mask를 넘겨 여러 prompt를
 처리하며, 반환 mask는 decoder의 선택된 low-resolution logits를 threshold한 결과다.
+자동 마스크가 필요한 경우 C ABI의 `dv_sam_auto_mask`를 사용한다. 지정한 1~32 격자의
+positive point를 순회해 score threshold를 통과한 선택 mask를 합친다. 이 기능은 고정된
+encoder/decoder 그래프에서 동작하는 이미지 자동 마스크 primitive이며, SAM2 upstream의
+영상 memory propagation은 별도 검증이 필요하다.
 
 ## 최소 사용 예
 

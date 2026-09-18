@@ -86,7 +86,7 @@
         "report": "docs/04-report/studio-cleanup.report.md"
       },
       "completedAt": "2026-09-18T03:34:16.637944+00:00",
-      "validation": "Python 627 passed/11 skipped; C++17 CTest 4/4; Windows/i7 not measured"
+      "validation": "Python 682 passed/11 skipped; C++17 CTest 4/4; Windows/i7 not measured"
     },
     "model-packs-windows-distribution": {
       "phase": "do",
@@ -129,12 +129,12 @@
       ],
       "timestamps": {
         "started": "2026-09-18T03:37:37.984Z",
-        "lastUpdated": "2026-09-18T10:05:00+00:00"
+        "lastUpdated": "2026-09-18T12:30:00+00:00"
       },
       "designStatus": "revised_with_open_decisions",
       "implementationStatus": "in_progress",
       "requirementsRevision": 3,
-      "validation": "Python 681 passed/11 skipped; C++17 CTest 4/4 including native bundle checksum/tamper checks; deployment bundle targeted tests passed; desktop model-pack action lifecycle regression passed; C# net8 Release build passed locally; Windows/i7 not measured",
+      "validation": "Python 682 passed/11 skipped; C++17 CTest 4/4 including SAM2 automatic-mask C ABI; deployment bundle targeted tests passed; desktop model-pack action lifecycle regression passed; C# net8 Release build passed locally; Windows/i7 not measured",
       "implementationProgress": [
         "ModelRegistry catalog with Re-DETR v4 Small/Medium/Large and all SAM2 Hiera variants",
         "Versioned .dvmodel manifest validation and safe pack loading",
@@ -173,12 +173,13 @@
         "Desktop training UI exposes pack train/infer/ONNX export actions with idle-lock checks and terminal failure cleanup",
         "Windows payload workflow builds the actual PyInstaller GUI and C++17 native runtime; C# resolver locates sdk/native DLLs",
         "C# SafeHandle validity and native DLL resolver compile under .NET 8",
-        "Offline payload staging regression verifies frozen EXE, managed C# SDK, sdk/native C++ DLL and catalog together"
+        "Offline payload staging regression verifies frozen EXE, managed C# SDK, sdk/native C++ DLL and catalog together",
+        "SAM2 native automatic-mask positive-point grid and C++17/C ABI/C# SDK contract"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",
-        "SAM2 Hiera Windows/ONNX validation for automatic mask and video state; local fixture covers point/box/mask prompts",
-        "P0 single EXE payload size and signature, Windows SAM2, PatchCore full ONNX, offline WSL",
+        "SAM2 Hiera Windows/ONNX validation for upstream automatic mask and video memory state; local automatic-mask grid primitive is verified",
+        "P0 single EXE payload size and signature, Windows SAM2, offline WSL",
         "Hardware/driver minima require measured model profiles before release"
       ]
     }

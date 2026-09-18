@@ -119,6 +119,10 @@ DV_API dv_status dv_sam_encode(dv_session* session, const dv_image_view* image,
                                dv_image_context** out_context);
 DV_API dv_status dv_sam_segment(dv_session* session, const dv_image_context* context,
                                 const dv_sam_prompt* prompt, dv_result** out_result);
+/* Run a bounded positive-point grid and union the selected masks. */
+DV_API dv_status dv_sam_auto_mask(dv_session* session, const dv_image_context* context,
+                                  uint32_t grid_width, uint32_t grid_height,
+                                  float min_score, dv_result** out_result);
 DV_API const char* dv_last_error(const dv_session* session);
 DV_API void dv_release_result(dv_result* result);
 DV_API void dv_release_image_context(dv_image_context* context);

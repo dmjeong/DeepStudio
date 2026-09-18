@@ -4,6 +4,7 @@
 #include <opencv2/core.hpp>
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -56,6 +57,11 @@ public:
 
     Sam2ImageContext Encode(const cv::Mat& image);
     Sam2Result Segment(const Sam2ImageContext& context, const Sam2Prompt& prompt);
+    // Run a deterministic positive-point grid and union accepted masks. This
+    // is the native SDK's automatic-mask primitive; upstream video memory is
+    // intentionally a separate contract and is not inferred from this call.
+    Sam2Result Automatic(const Sam2ImageContext& context, int grid_width, int grid_height,
+                         float min_score = -std::numeric_limits<float>::infinity());
 
 private:
     struct GraphContract

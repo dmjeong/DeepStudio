@@ -425,3 +425,59 @@ Sam2Result Sam2Inference::Segment(const Sam2ImageContext& context, const Sam2Pro
     result.total_ms = std::chrono::duration<double, std::milli>(end - model_start).count();
     return result;
 }
+
+Sam2Result Sam2Inference::Automatic(const Sam2ImageContext& context, int grid_width,
+                                    int grid_height, float min_score)
+{
+    if (!m_ready) throw std::logic_error("SAM2 model is not initialized.");
+    if (context.owner != this || context.embeddings.size() != m_encoder_output_names.size())
+        throw std::invalid_argument("SAM2 image context does not belong to this encoder.");
+    if (grid_width < 1 || grid_height < 1 || grid_width > 32 || grid_height > 32)
+        throw std::invalid_argument("SAM2 automatic-mask grid must be between 1 and 32 per axis.");
+    if (std::isnan(min_score) || min_score > std::numeric_limits<float>::max())
+        throw std::invalid_argument("SAM2 automatic-mask score threshold must be finite or -infinity.");
+
+    const auto started = std::chrono::steady_clock::now();
+    cv::Mat union_mask;
+    Sam2Result best;
+    float best_score = -std::numeric_limits<float>::infinity();
+    double model_ms = 0.0;
+    for (int row = 0; row < grid_height; ++row) {
+        for (int column = 0; column < grid_width; ++column) {
+            Sam2Prompt prompt;
+            prompt.points.emplace_back(
+                (static_cast<float>(column) + 0.5f) * static_cast<float>(context.image_width) /
+                    static_cast<float>(grid_width),
+                (static_cast<float>(row) + 0.5f) * static_cast<float>(context.image_height) /
+                    static_cast<float>(grid_height));
+            prompt.labels.push_back(1);
+            auto candidate = Segment(context, prompt);
+            model_ms += candidate.model_ms;
+            const float score = candidate.scores.empty()
+                ? 0.0f
+                : candidate.scores[std::clamp(candidate.selected_mask, 0,
+                                              static_cast<int>(candidate.scores.size()) - 1)];
+            if (score > best_score) {
+                best_score = score;
+                best = candidate;
+            }
+            if (candidate.mask.empty() || score < min_score) continue;
+            if (union_mask.empty()) union_mask = cv::Mat::zeros(candidate.mask.size(), CV_8UC1);
+            if (union_mask.size() != candidate.mask.size())
+                throw std::runtime_error("SAM2 automatic-mask candidates have different shapes.");
+            cv::bitwise_or(union_mask, candidate.mask, union_mask);
+        }
+    }
+    if (union_mask.empty()) {
+        if (best.mask.empty()) throw std::runtime_error("SAM2 automatic-mask produced no masks.");
+        union_mask = best.mask.clone();
+    }
+    const auto finished = std::chrono::steady_clock::now();
+    best.mask = std::move(union_mask);
+    best.mask_count = 1;
+    best.selected_mask = 0;
+    best.total_ms = std::chrono::duration<double, std::milli>(finished - started).count();
+    best.model_ms = model_ms;
+    best.postprocess_ms = std::max(0.0, best.total_ms - best.model_ms);
+    return best;
+}

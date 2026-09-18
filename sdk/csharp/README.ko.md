@@ -8,6 +8,8 @@ reconstruction anomaly다. 고정 memory-bank를 포함해 export한 PatchCore�
 anomaly map을 anomaly 결과로 제공한다. SAM2는 `EncodeSam`으로 encoder 결과를 한 번 만들고
 `SegmentSam`에 점·박스·이전 mask prompt를 넘기는 다중 그래프 C ABI를 사용한다. 영상 state와
 실제 Hiera 변형의 Windows 검증 전에는 release-ready가 아니다.
+`AutomaticSam`은 지정한 격자(축마다 1~32)의 positive point를 반복해 선택 mask를 합치는
+이미지 자동 마스크 primitive다. upstream 영상 memory propagation API와는 별도다.
 
 ResNet, ConvNeXt V1, DeepLab V3+, U-Net의 `builtin` manifest도 동일한
 classification/segmentation API로 읽는다. 모델 가중치는 SDK에 포함하지 않는다.

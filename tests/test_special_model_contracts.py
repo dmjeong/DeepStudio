@@ -33,7 +33,8 @@ def _sam2():
                 "point_labels": "point_labels", "mask_input": "mask_input",
                 "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"},
                         "outputs": ["low_res_mask_logits", "iou_predictions"]},
-        }, "prompt_types": ["point", "box", "mask"], "video_state": True},
+        }, "prompt_types": ["point", "box", "mask"], "video_state": True,
+        "automatic_mask": {"mode": "positive_point_grid_union", "max_grid": 32}},
     }
 
 
@@ -63,6 +64,7 @@ def test_redetr_contract_rejects_incomplete_manifest(mutator):
     lambda item: item["contracts"]["graphs"].pop("decoder"),
     lambda item: item["contracts"]["graphs"]["decoder"]["inputs"].pop("point_labels"),
     lambda item: item["contracts"].update(video_state="yes"),
+    lambda item: item["contracts"]["automatic_mask"].update(max_grid=33),
 ])
 def test_sam2_contract_rejects_incomplete_manifest(mutator):
     item = _sam2()

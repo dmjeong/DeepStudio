@@ -76,6 +76,14 @@ def validate_sam2_manifest(manifest: Mapping) -> None:
         raise SpecialContractError("SAM2 prompt_types must contain point, box or mask")
     if not isinstance(contract.get("video_state"), bool):
         raise SpecialContractError("SAM2 video_state must be boolean")
+    automatic = contract.get("automatic_mask")
+    if automatic is not None:
+        automatic = _require_mapping(automatic, "contracts.automatic_mask")
+        if automatic.get("mode") != "positive_point_grid_union":
+            raise SpecialContractError("SAM2 automatic_mask mode is unsupported")
+        max_grid = automatic.get("max_grid")
+        if isinstance(max_grid, bool) or not isinstance(max_grid, int) or not 1 <= max_grid <= 32:
+            raise SpecialContractError("SAM2 automatic_mask max_grid must be between 1 and 32")
 
 
 def validate_special_manifest(manifest: Mapping) -> None:

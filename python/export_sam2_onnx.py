@@ -157,6 +157,7 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
                 "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"},
                 "outputs": ["low_res_mask_logits", "iou_predictions"]}},
             "prompt_types": ["point", "box", "mask"], "video_state": False,
+            "automatic_mask": {"mode": "positive_point_grid_union", "max_grid": 32},
             "mask_size": [int(mask_size[0]), int(mask_size[1])]},
     }
     config_file.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")

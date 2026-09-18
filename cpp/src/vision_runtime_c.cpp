@@ -548,6 +548,23 @@ dv_status dv_sam_segment(dv_session* session, const dv_image_context* context,
     } catch (...) { return classify_exception(session); }
 }
 
+dv_status dv_sam_auto_mask(dv_session* session, const dv_image_context* context,
+                           uint32_t grid_width, uint32_t grid_height, float min_score,
+                           dv_result** out_result) {
+    if (out_result) *out_result = nullptr;
+    if (!session || !context || !out_result) return DV_STATUS_INVALID_ARGUMENT;
+    std::lock_guard<std::mutex> lock(session->mutex);
+    clear_error(session);
+    try {
+        if (!session->sam2 || context->owner != session)
+            throw std::invalid_argument("SAM2 image context does not belong to this session.");
+        auto result = session->sam2->Automatic(context->value, static_cast<int>(grid_width),
+                                               static_cast<int>(grid_height), min_score);
+        *out_result = make_sam_result(result).release();
+        return DV_STATUS_OK;
+    } catch (...) { return classify_exception(session); }
+}
+
 const char* dv_last_error(const dv_session* session) {
     return session ? session->error.c_str() : g_last_create_error.c_str();
 }

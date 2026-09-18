@@ -266,6 +266,31 @@ public sealed class VisionSession : SafeHandle
         }
     }
 
+    public SegmentationResult AutomaticSam(SamImageContext context, int gridWidth = 8,
+                                           int gridHeight = 8, float minScore = float.NegativeInfinity)
+    {
+        ObjectDisposedException.ThrowIf(IsInvalid, this);
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Owner != this || context.IsInvalid)
+            throw new ArgumentException("The SAM2 image context belongs to another session.", nameof(context));
+        if (gridWidth is < 1 or > 32 || gridHeight is < 1 or > 32)
+            throw new ArgumentOutOfRangeException(nameof(gridWidth));
+        if (float.IsNaN(minScore) || float.IsPositiveInfinity(minScore))
+            throw new ArgumentOutOfRangeException(nameof(minScore));
+        var status = Native.dv_sam_auto_mask(handle, context.DangerousGetHandle(),
+                                             (uint)gridWidth, (uint)gridHeight, minScore, out var raw);
+        if (status != 0 || raw == IntPtr.Zero)
+            throw new InvalidOperationException($"SAM2 automatic mask failed ({StatusName(status)}): {LastError}");
+        try
+        {
+            var result = NativeResultCopy.From(raw);
+            if (result.Kind != VisionResultKind.Segmentation)
+                throw new InvalidOperationException("SAM2 automatic mask returned a non-segmentation result.");
+            return result.Segmentation!;
+        }
+        finally { Native.dv_release_result(raw); }
+    }
+
     private static IntPtr PinIfNonEmpty(Array value, ref GCHandle handle)
     {
         if (value.Length == 0) return IntPtr.Zero;
@@ -512,7 +537,12 @@ public sealed class VisionSession : SafeHandle
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int dv_sam_segment(IntPtr session, IntPtr context,
-            ref NativeSamPrompt prompt, out IntPtr result);
+                                                   ref NativeSamPrompt prompt, out IntPtr result);
+
+        [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int dv_sam_auto_mask(IntPtr session, IntPtr context,
+                                                     uint gridWidth, uint gridHeight,
+                                                     float minScore, out IntPtr result);
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr dv_last_error(IntPtr session);
