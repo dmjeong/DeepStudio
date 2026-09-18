@@ -179,9 +179,20 @@ def test_release_script_has_production_offline_wsl_payload_gate():
     assert 'runtime\\wsl\\wsl-offline.msi' in script
     assert 'runtime\\wsl\\owned-distro.tar' in script
     assert 'runtime\\wsl\\licenses\\manifest.json' in script
+    assert 'runtime\\wsl\\bootstrap_wsl.ps1' in script
     workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
     assert '-RequireOfflineWsl' in workflow
     assert 'DEEPVISION_WSL_PAYLOAD_ROOT' in workflow
+    assert 'bootstrap_wsl.ps1' in workflow
+
+
+def test_offline_wsl_bootstrap_is_shell_free_and_never_downloads():
+    script = (WINDOWS / "wsl" / "bootstrap_wsl.ps1").read_text(encoding="utf-8")
+    assert '"--import"' in script and '"--version"' in script
+    assert '"--web-download"' not in script
+    assert '"--" "docker" "info"' in script
+    assert 'owned-distro.json' in script
+    assert 'Start-Process -FilePath "msiexec.exe"' in script
 
 
 def test_windows_workflow_builds_real_gui_and_native_runtime():

@@ -55,7 +55,8 @@ if ($RequireOfflineWsl) {
     python $validator $root --manifest $manifest --require-offline-wsl `
         --require "runtime\wsl\wsl-offline.msi" `
         --require "runtime\wsl\owned-distro.tar" `
-        --require "runtime\wsl\licenses\manifest.json"
+        --require "runtime\wsl\licenses\manifest.json" `
+        --require "runtime\wsl\bootstrap_wsl.ps1"
     if ($LASTEXITCODE -ne 0) { throw "Offline WSL payload contract failed." }
 }
 
