@@ -121,7 +121,7 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         specs.append(ModelSpec(
             f"re_detr_v4_{variant}", "Re-DETR v4", variant.title(), "detect", ("container", "onnx"), common,
             (size, size), (3,), notes="requested family fixed by product requirement",
-            metadata={"contracts": {"onnx": {"input_name": "input_image", "boxes_name": "pred_boxes",
+            metadata={"contracts": {"onnx": {"file": "redetr.onnx", "input_name": "input_image", "boxes_name": "pred_boxes",
                                                 "logits_name": "pred_logits", "boxes_format": "normalized_cxcywh",
                                                 "score_activation": "sigmoid"}}}))
     specs.extend([

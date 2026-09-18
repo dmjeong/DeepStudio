@@ -14,7 +14,7 @@ def _redetr():
     return {
         "family": "Re-DETR v4", "variant": "Medium", "task": "detect",
         "runtimes": ["container", "onnx"],
-        "contracts": {"onnx": {"input_name": "input_image", "boxes_name": "pred_boxes",
+        "contracts": {"onnx": {"file": "redetr.onnx", "input_name": "input_image", "boxes_name": "pred_boxes",
                                  "logits_name": "pred_logits", "boxes_format": "normalized_cxcywh",
                                  "score_activation": "sigmoid"}},
     }

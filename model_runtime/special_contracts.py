@@ -39,7 +39,7 @@ def validate_re_detr_manifest(manifest: Mapping) -> None:
         raise SpecialContractError("Re-DETR manifest requires an ONNX runtime")
     contract = _require_mapping(manifest.get("contracts"), "contracts")
     onnx = _require_mapping(contract.get("onnx"), "contracts.onnx")
-    for key in ("input_name", "boxes_name", "logits_name", "boxes_format"):
+    for key in ("file", "input_name", "boxes_name", "logits_name", "boxes_format"):
         _require_text(onnx.get(key), f"contracts.onnx.{key}")
     if onnx["boxes_format"] not in {"normalized_cxcywh", "normalized_xyxy"}:
         raise SpecialContractError("Re-DETR boxes_format is unsupported")
@@ -91,6 +91,8 @@ def special_asset_paths(manifest: Mapping) -> tuple[str, ...]:
         contracts = manifest.get("contracts")
         onnx = contracts.get("onnx") if isinstance(contracts, Mapping) else None
         if isinstance(onnx, Mapping):
+            if isinstance(onnx.get("file"), str):
+                return (onnx["file"],) + tuple(path for path in onnx.get("files", ()) if isinstance(path, str))
             declared = onnx.get("files", ())
             if isinstance(declared, list):
                 return tuple(path for path in declared if isinstance(path, str))
