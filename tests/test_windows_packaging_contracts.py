@@ -193,6 +193,7 @@ def test_offline_wsl_bootstrap_is_shell_free_and_never_downloads():
     assert '"--" "docker" "info"' in script
     assert 'owned-distro.json' in script
     assert 'Start-Process -FilePath "msiexec.exe"' in script
+    assert script.index('Start-Process -FilePath "msiexec.exe"') < script.index('Get-Command "wsl.exe"')
 
 
 def test_windows_workflow_builds_real_gui_and_native_runtime():

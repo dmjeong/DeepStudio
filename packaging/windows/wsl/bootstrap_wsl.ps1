@@ -39,9 +39,6 @@ New-Item -ItemType Directory -Force -Path $state | Out-Null
 $marker = Join-Path $state "owned-distro.json"
 $installDir = Join-Path $state "distro"
 
-$wslCommand = Get-Command "wsl.exe" -ErrorAction SilentlyContinue
-if ($null -eq $wslCommand) { throw "wsl.exe is not available on this Windows host." }
-
 if ($InstallWslPackage) {
     $result = Start-Process -FilePath "msiexec.exe" -ArgumentList @(
         "/i", $wsl, "/qn", "/norestart"
@@ -50,6 +47,9 @@ if ($InstallWslPackage) {
         throw "Offline WSL package installation failed: $($result.ExitCode)"
     }
 }
+
+$wslCommand = Get-Command "wsl.exe" -ErrorAction SilentlyContinue
+if ($null -eq $wslCommand) { throw "wsl.exe is not available after offline WSL installation." }
 
 & $wslCommand.Source "--status" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "WSL status probe failed; enable WSL through the bundled installer first." }
