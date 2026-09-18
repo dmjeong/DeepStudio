@@ -17,7 +17,7 @@ import re
 from typing import Any, Iterable, Mapping
 import zipfile
 
-from model_runtime.special_contracts import validate_special_manifest
+from model_runtime.special_contracts import validate_special_assets, validate_special_manifest
 
 
 MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,79}$")
@@ -214,6 +214,10 @@ class ModelRegistry:
                 if "manifest.json" not in names:
                     raise ModelRegistryError("model pack manifest.json missing")
                 manifest = json.loads(archive.read("manifest.json"))
+                try:
+                    validate_special_assets(manifest, set(names))
+                except ValueError as exc:
+                    raise ModelRegistryError(str(exc)) from exc
         except (OSError, zipfile.BadZipFile, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ModelRegistryError(f"cannot read model pack: {pack}") from exc
         spec = _spec_from_mapping(manifest)

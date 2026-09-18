@@ -73,6 +73,23 @@ def test_registry_rejects_unknown_manifest_schema(tmp_path):
         ModelRegistry.builtin().load_pack(pack)
 
 
+def test_registry_requires_special_graph_assets(tmp_path):
+    manifest = {
+        "schema_version": 1, "model_id": "vendor.sam2", "family": "SAM2",
+        "variant": "Hiera Tiny", "task": "segment", "runtimes": ["onnx", "container"],
+        "capabilities": ["infer"], "input_size": [1024, 1024], "input_channels": [3],
+        "contracts": {"graphs": {
+            "encoder": {"file": "encoder.onnx", "outputs": ["image_embeddings"]},
+            "decoder": {"file": "decoder.onnx", "outputs": ["low_res_mask_logits"]},
+        }, "prompt_types": ["point"], "video_state": False},
+    }
+    pack = tmp_path / "sam2.dvmodel"
+    with zipfile.ZipFile(pack, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+    with pytest.raises(ModelRegistryError, match="missing"):
+        ModelRegistry.builtin().load_pack(pack)
+
+
 def test_worker_frame_roundtrip_and_limits():
     frame = Frame({"type": "infer", "request_id": "r1"}, b"\x00\x01")
     assert Frame.read(BytesIO(frame.encode())) == frame
