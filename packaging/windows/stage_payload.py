@@ -17,8 +17,10 @@ class PayloadStageError(ValueError):
 
 
 def _destination(value: str) -> PurePosixPath:
-    path = PurePosixPath(value.replace("\\", "/"))
-    if path.is_absolute() or not value or ".." in path.parts or any(part == "" for part in path.parts):
+    normalized = value.replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if (path.is_absolute() or not value or ":" in normalized or "//" in normalized or
+            ".." in path.parts or any(part == "" for part in path.parts)):
         raise PayloadStageError(f"unsafe payload destination: {value}")
     return path
 

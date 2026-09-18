@@ -12,7 +12,7 @@
     </Feature>
 
 <?if $(var.RequireOfflineWsl) = 1 ?>
-    <SetProperty Id="RunDeepVisionWslBootstrap"
+    <SetProperty Id="WixQuietExecCmdLine"
         Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]runtime\wsl\bootstrap_wsl.ps1&quot; -PayloadRoot &quot;[INSTALLFOLDER]runtime\wsl&quot; -DistroName &quot;DeepVisionStudio&quot; -StateRoot &quot;[LocalAppDataFolder]DeepVisionStudio\wsl&quot; -Version &quot;$(var.Version)&quot;"
         Before="RunDeepVisionWslBootstrap" Sequence="execute" />
     <CustomAction Id="RunDeepVisionWslBootstrap"

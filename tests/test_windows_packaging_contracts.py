@@ -25,6 +25,8 @@ def test_wix_sources_are_well_formed_and_use_payload_contract():
     assert "MsiPackage SourceFile=\"$(var.MsiPath)\"" in bundle
     assert "Condition=\"VersionNT64\"" in bundle
     assert "WixQuietExec" in msi
+    assert 'SetProperty Id="WixQuietExecCmdLine"' in msi
+    assert 'SetProperty Id="RunDeepVisionWslBootstrap"' not in msi
     assert "Wix4UtilCA_$(sys.BUILDARCHSHORT)" in msi
     assert "bootstrap_wsl.ps1" in msi
     assert "NOT REMOVE" in msi
@@ -162,6 +164,26 @@ def test_payload_stager_copies_artifacts_and_rejects_symlinks(tmp_path):
     source_link.symlink_to(source, target_is_directory=True)
     with pytest.raises(stager["PayloadStageError"], match="symlink"):
         stager["stage_payload"](tmp_path / "bad-root-link", [("workers", source_link)], notice=notice)
+
+
+def test_payload_paths_reject_drive_and_duplicate_separator_forms(tmp_path):
+    stager = runpy.run_path(str(WINDOWS / "stage_payload.py"))
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "worker.exe").write_bytes(b"worker")
+    with pytest.raises(stager["PayloadStageError"], match="unsafe"):
+        stager["stage_payload"](tmp_path / "bad-drive", [("C:/workers", source)])
+    with pytest.raises(stager["PayloadStageError"], match="unsafe"):
+        stager["stage_payload"](tmp_path / "bad-separator", [("workers//nested", source)])
+
+    manifest_api = runpy.run_path(str(WINDOWS / "payload_manifest.py"))
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    (payload / "worker.exe").write_bytes(b"worker")
+    manifest = manifest_api["collect_payload"](payload, version="1.0.0")
+    manifest["files"][0]["path"] = "C:/worker.exe"
+    with pytest.raises(ValueError, match="unsafe"):
+        manifest_api["verify_payload"](payload, manifest)
 
 
 def test_release_script_requires_app_catalog_and_csharp_sdk_payload_files():

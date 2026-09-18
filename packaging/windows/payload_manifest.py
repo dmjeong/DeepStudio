@@ -73,11 +73,12 @@ def verify_payload(root: str | Path, manifest: dict[str, Any], *, required_paths
         if not isinstance(item, dict) or not isinstance(item.get("path"), str):
             raise ValueError("invalid payload file entry")
         relative = item["path"].replace("\\", "/")
-        if (relative in seen or relative.startswith("/") or "//" in relative or
-                any(part in {"", ".", ".."} for part in Path(relative).parts)):
+        relative_path = PurePosixPath(relative)
+        if (relative in seen or ":" in relative or relative_path.is_absolute() or "//" in relative or
+                any(part in {"", ".", ".."} for part in relative_path.parts)):
             raise ValueError(f"unsafe or duplicate payload path: {relative}")
         seen.add(relative)
-        path = base / Path(*Path(relative).parts)
+        path = base / Path(*relative_path.parts)
         if not path.is_file() or path.is_symlink():
             raise ValueError(f"payload file missing: {relative}")
         actual_size = path.stat().st_size
