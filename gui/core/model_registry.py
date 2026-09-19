@@ -10,19 +10,21 @@ Windows worker와 나중에 추가할 Docker worker가 같은 모델 계약을 �
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 import json
 import os
-from pathlib import Path
-from pathlib import PurePosixPath
 import re
 import stat
-from typing import Any, Iterable, Mapping
 import zipfile
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass, field
+from pathlib import Path, PurePosixPath
+from typing import Any
 
-from model_runtime.special_contracts import (validate_container_entrypoint,
-                                              validate_special_assets, validate_special_manifest)
-
+from model_runtime.special_contracts import (
+    validate_container_entrypoint,
+    validate_special_assets,
+    validate_special_manifest,
+)
 
 MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,79}$")
 WINDOWS_RESERVED_MODEL_IDS = frozenset({
@@ -208,13 +210,32 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
                                                 "score_activation": "sigmoid"}}}))
     specs.extend([
         ModelSpec("libreyolo_detect_9t", "LibreYOLO", "9 Tiny", "detect", ("container", "onnx"), common, (640, 640), (3,)),
-        ModelSpec("sam2_hiera_tiny", "SAM2", "Hiera Tiny", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "automatic_mask", "video"}), (1024, 1024), (3,), notes="image/prompt/automatic-mask/video 계약은 별도 검증", metadata={"contracts": {"graphs": {"encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"}, "outputs": ["image_embeddings"]}, "decoder": {"file": "sam2_decoder.onnx", "inputs": {"image_embeddings": "image_embeddings", "point_coords": "point_coords", "point_labels": "point_labels", "mask_input": "mask_input", "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"}, "outputs": ["low_res_mask_logits", "iou_predictions"]}}, "prompt_types": ["point", "box", "mask"], "video_state": True, "prompt_coordinate_space": "resized_input", "automatic_mask": {"mode": "positive_point_grid_union", "max_grid": 32}}}),
-        ModelSpec("sam2_hiera_small", "SAM2", "Hiera Small", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "automatic_mask", "video"}), (1024, 1024), (3,), notes="image/prompt/automatic-mask/video 계약은 별도 검증", metadata={"contracts": {"graphs": {"encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"}, "outputs": ["image_embeddings"]}, "decoder": {"file": "sam2_decoder.onnx", "inputs": {"image_embeddings": "image_embeddings", "point_coords": "point_coords", "point_labels": "point_labels", "mask_input": "mask_input", "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"}, "outputs": ["low_res_mask_logits", "iou_predictions"]}}, "prompt_types": ["point", "box", "mask"], "video_state": True, "prompt_coordinate_space": "resized_input", "automatic_mask": {"mode": "positive_point_grid_union", "max_grid": 32}}}),
-        ModelSpec("sam2_hiera_base_plus", "SAM2", "Hiera Base+", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "automatic_mask", "video"}), (1024, 1024), (3,), notes="image/prompt/automatic-mask/video 계약은 별도 검증", metadata={"contracts": {"graphs": {"encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"}, "outputs": ["image_embeddings"]}, "decoder": {"file": "sam2_decoder.onnx", "inputs": {"image_embeddings": "image_embeddings", "point_coords": "point_coords", "point_labels": "point_labels", "mask_input": "mask_input", "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"}, "outputs": ["low_res_mask_logits", "iou_predictions"]}}, "prompt_types": ["point", "box", "mask"], "video_state": True, "prompt_coordinate_space": "resized_input", "automatic_mask": {"mode": "positive_point_grid_union", "max_grid": 32}}}),
-        ModelSpec("sam2_hiera_large", "SAM2", "Hiera Large", "segment", ("container", "onnx"), frozenset({"train", "infer", "export_onnx", "csharp", "cpp", "prompt", "automatic_mask", "video"}), (1024, 1024), (3,), notes="image/prompt/automatic-mask/video 계약은 별도 검증", metadata={"contracts": {"graphs": {"encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"}, "outputs": ["image_embeddings"]}, "decoder": {"file": "sam2_decoder.onnx", "inputs": {"image_embeddings": "image_embeddings", "point_coords": "point_coords", "point_labels": "point_labels", "mask_input": "mask_input", "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"}, "outputs": ["low_res_mask_logits", "iou_predictions"]}}, "prompt_types": ["point", "box", "mask"], "video_state": True, "prompt_coordinate_space": "resized_input", "automatic_mask": {"mode": "positive_point_grid_union", "max_grid": 32}}}),
         ModelSpec("deeplabv3plus_resnet34", "DeepLab V3+", "ResNet34", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", notes="weight-free native adapter"),
         ModelSpec("unet_resnet18", "U-Net", "ResNet18", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", notes="weight-free native adapter"),
     ])
+    sam2_contract = {"contracts": {"graphs": {
+        "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},
+                    "outputs": ["image_embeddings", "image_features_0", "image_features_1"]},
+        "decoder": {"file": "sam2_decoder.onnx", "inputs": {
+            "image_embeddings": "image_embeddings", "point_coords": "point_coords",
+            "image_features_0": "image_features_0", "image_features_1": "image_features_1",
+            "point_labels": "point_labels", "mask_input": "mask_input",
+            "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"},
+            "outputs": ["low_res_mask_logits", "iou_predictions"]}},
+        "prompt_types": ["point", "box", "mask"], "video_state": False,
+        "prompt_coordinate_space": "resized_input",
+        "automatic_mask": {"mode": "positive_point_grid_union", "max_grid": 32}}}
+    sam2_capabilities = common | {"prompt", "automatic_mask"}
+    for model_id, variant in (
+        ("sam2_hiera_tiny", "Hiera Tiny"), ("sam2_hiera_small", "Hiera Small"),
+        ("sam2_hiera_base_plus", "Hiera Base+"), ("sam2_hiera_large", "Hiera Large"),
+    ):
+        specs.append(ModelSpec(
+            model_id, "SAM2", variant, "segment", ("container", "onnx"),
+            sam2_capabilities, (1024, 1024), (3,),
+            notes="image/prompt/automatic-mask; video memory state 미지원",
+            metadata=sam2_contract,
+        ))
     return tuple(specs)
 
 
@@ -252,7 +273,7 @@ class ModelRegistry:
             self.register(spec)
 
     @classmethod
-    def builtin(cls) -> "ModelRegistry":
+    def builtin(cls) -> ModelRegistry:
         registry = cls(builtin_model_specs())
         registry._builtin_ids = set(registry._models)
         return registry
@@ -334,7 +355,9 @@ class ModelRegistry:
                     raise ModelRegistryError("model pack manifest must be an object")
                 try:
                     validate_special_assets(manifest, set(names))
-                    from model_runtime.special_contracts import validate_container_image_asset
+                    from model_runtime.special_contracts import (
+                        validate_container_image_asset,
+                    )
                     validate_container_image_asset(manifest, set(names))
                 except ValueError as exc:
                     raise ModelRegistryError(str(exc)) from exc
@@ -363,7 +386,7 @@ class ModelRegistry:
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if not isinstance(manifest, Mapping):
-                raise ValueError("manifest must be an object")
+                raise TypeError("manifest must be an object")
             files = set()
             for entry in root.rglob("*"):
                 if entry.is_symlink():
@@ -373,7 +396,7 @@ class ModelRegistry:
             validate_special_assets(manifest, files)
             from model_runtime.special_contracts import validate_container_image_asset
             validate_container_image_asset(manifest, files)
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
             raise ModelRegistryError("invalid installed model pack") from exc
         spec = _spec_from_mapping(manifest)
         self._register_installed(spec)

@@ -22,7 +22,8 @@
 - `export_onnx.py`는 Re-DETR v4 module checkpoint의 `pred_boxes`/`pred_logits` 두 출력을
   고정된 이름으로 내보내고 shape·수치·동적 batch를 ONNX Runtime에서 확인한다.
 - `export_sam2_onnx.py`는 checkpoint가 제공한 encoder/decoder를 다운로드 없이 두 ONNX 그래프와
-  schema 5 prompt manifest로 내보내며 point/box/mask 입력과 mask·quality 두 출력을 검증한다.
+  schema 5 prompt manifest로 내보낸다. `image_embeddings`와 선택적 `image_features_0/1`을 연결해
+  point/box/mask 입력과 mask·quality 출력을 검증한다. Video memory-state는 현재 구현 범위 밖이다.
 - 설치된 `.dvmodel`을 `pack_train`·`pack_infer`·`pack_export` 작업으로 호출하는 호스트 어댑터가
   추가됐다. 팩의 고정 digest 이미지와 `/data`·`/work` artifact 경계를 검사한 뒤 DVW1로 통신한다.
 - ResNet 18/50, ConvNeXt V1 Tiny, DeepLab V3+ ResNet34, U-Net ResNet18은 가중치를 포함하지 않는

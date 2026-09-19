@@ -1,17 +1,26 @@
 """기본 모델 카탈로그와 Docker worker 계약 회귀 검사."""
 
-from io import BytesIO
 import json
-from pathlib import Path
 import stat
 import zipfile
+from io import BytesIO
 
 import pytest
-
-from core.container_worker import ContainerCommand, ContainerWorker, Frame, ContainerWorkerError, build_container_command
-from core.model_registry import (ModelRegistry, ModelRegistryError,
-                                 ModelSpec, builtin_model_specs, installed_model_path,
-                                 registry_with_installed_packs)
+from core.container_worker import (
+    ContainerCommand,
+    ContainerWorker,
+    ContainerWorkerError,
+    Frame,
+    build_container_command,
+)
+from core.model_registry import (
+    ModelRegistry,
+    ModelRegistryError,
+    ModelSpec,
+    builtin_model_specs,
+    installed_model_path,
+    registry_with_installed_packs,
+)
 
 
 def test_requested_catalog_contains_every_product_family_and_redetr_sizes():
@@ -29,7 +38,10 @@ def test_catalog_keeps_unverified_models_out_of_release_ready_view():
     assert registry.list("detect", release_ready=True) == ()
     assert registry.available("detect") == ()
     assert registry.get("re_detr_v4_medium").release_status == "requested"
-    assert registry.get("sam2_hiera_large").capabilities >= {"prompt", "video"}
+    sam2 = registry.get("sam2_hiera_large")
+    assert sam2.capabilities >= {"prompt", "automatic_mask"}
+    assert "video" not in sam2.capabilities
+    assert sam2.metadata["contracts"]["video_state"] is False
     assert registry.get("patchcore_resnet18").release_status == "export_verified"
     assert registry.get("patchcore_wide_resnet50_2").release_status == "export_verified"
     assert registry.get("resnet18").release_status == "export_verified"
@@ -148,6 +160,14 @@ def test_registry_rejects_symlinked_installed_manifest(tmp_path):
     external.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
     (root / "manifest.json").symlink_to(external)
     with pytest.raises(ModelRegistryError, match="manifest"):
+        ModelRegistry.builtin().load_installed_pack(root)
+
+
+def test_registry_rejects_non_object_installed_manifest(tmp_path):
+    root = tmp_path / "installed" / "vendor.example" / "1.0.0"
+    root.mkdir(parents=True)
+    (root / "manifest.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(ModelRegistryError, match="invalid installed model pack"):
         ModelRegistry.builtin().load_installed_pack(root)
 
 

@@ -383,290 +383,6 @@
       "metadata": {}
     },
     {
-      "model_id": "sam2_hiera_tiny",
-      "family": "SAM2",
-      "variant": "Hiera Tiny",
-      "task": "segment",
-      "runtimes": [
-        "container",
-        "onnx"
-      ],
-      "capabilities": [
-        "automatic_mask",
-        "cpp",
-        "csharp",
-        "export_onnx",
-        "infer",
-        "prompt",
-        "train",
-        "video"
-      ],
-      "input_size": [
-        1024,
-        1024
-      ],
-      "input_channels": [
-        3
-      ],
-      "release_status": "requested",
-      "pretrained_asset": "",
-      "notes": "image/prompt/automatic-mask/video 계약은 별도 검증",
-      "metadata": {
-        "contracts": {
-          "graphs": {
-            "encoder": {
-              "file": "sam2_encoder.onnx",
-              "inputs": {
-                "image": "input_image"
-              },
-              "outputs": [
-                "image_embeddings"
-              ]
-            },
-            "decoder": {
-              "file": "sam2_decoder.onnx",
-              "inputs": {
-                "image_embeddings": "image_embeddings",
-                "point_coords": "point_coords",
-                "point_labels": "point_labels",
-                "mask_input": "mask_input",
-                "has_mask_input": "has_mask_input",
-                "orig_im_size": "orig_im_size"
-              },
-              "outputs": [
-                "low_res_mask_logits",
-                "iou_predictions"
-              ]
-            }
-          },
-          "prompt_types": [
-            "point",
-            "box",
-            "mask"
-          ],
-          "video_state": true,
-          "prompt_coordinate_space": "resized_input",
-          "automatic_mask": {
-            "mode": "positive_point_grid_union",
-            "max_grid": 32
-          }
-        }
-      }
-    },
-    {
-      "model_id": "sam2_hiera_small",
-      "family": "SAM2",
-      "variant": "Hiera Small",
-      "task": "segment",
-      "runtimes": [
-        "container",
-        "onnx"
-      ],
-      "capabilities": [
-        "automatic_mask",
-        "cpp",
-        "csharp",
-        "export_onnx",
-        "infer",
-        "prompt",
-        "train",
-        "video"
-      ],
-      "input_size": [
-        1024,
-        1024
-      ],
-      "input_channels": [
-        3
-      ],
-      "release_status": "requested",
-      "pretrained_asset": "",
-      "notes": "image/prompt/automatic-mask/video 계약은 별도 검증",
-      "metadata": {
-        "contracts": {
-          "graphs": {
-            "encoder": {
-              "file": "sam2_encoder.onnx",
-              "inputs": {
-                "image": "input_image"
-              },
-              "outputs": [
-                "image_embeddings"
-              ]
-            },
-            "decoder": {
-              "file": "sam2_decoder.onnx",
-              "inputs": {
-                "image_embeddings": "image_embeddings",
-                "point_coords": "point_coords",
-                "point_labels": "point_labels",
-                "mask_input": "mask_input",
-                "has_mask_input": "has_mask_input",
-                "orig_im_size": "orig_im_size"
-              },
-              "outputs": [
-                "low_res_mask_logits",
-                "iou_predictions"
-              ]
-            }
-          },
-          "prompt_types": [
-            "point",
-            "box",
-            "mask"
-          ],
-          "video_state": true,
-          "prompt_coordinate_space": "resized_input",
-          "automatic_mask": {
-            "mode": "positive_point_grid_union",
-            "max_grid": 32
-          }
-        }
-      }
-    },
-    {
-      "model_id": "sam2_hiera_base_plus",
-      "family": "SAM2",
-      "variant": "Hiera Base+",
-      "task": "segment",
-      "runtimes": [
-        "container",
-        "onnx"
-      ],
-      "capabilities": [
-        "automatic_mask",
-        "cpp",
-        "csharp",
-        "export_onnx",
-        "infer",
-        "prompt",
-        "train",
-        "video"
-      ],
-      "input_size": [
-        1024,
-        1024
-      ],
-      "input_channels": [
-        3
-      ],
-      "release_status": "requested",
-      "pretrained_asset": "",
-      "notes": "image/prompt/automatic-mask/video 계약은 별도 검증",
-      "metadata": {
-        "contracts": {
-          "graphs": {
-            "encoder": {
-              "file": "sam2_encoder.onnx",
-              "inputs": {
-                "image": "input_image"
-              },
-              "outputs": [
-                "image_embeddings"
-              ]
-            },
-            "decoder": {
-              "file": "sam2_decoder.onnx",
-              "inputs": {
-                "image_embeddings": "image_embeddings",
-                "point_coords": "point_coords",
-                "point_labels": "point_labels",
-                "mask_input": "mask_input",
-                "has_mask_input": "has_mask_input",
-                "orig_im_size": "orig_im_size"
-              },
-              "outputs": [
-                "low_res_mask_logits",
-                "iou_predictions"
-              ]
-            }
-          },
-          "prompt_types": [
-            "point",
-            "box",
-            "mask"
-          ],
-          "video_state": true,
-          "prompt_coordinate_space": "resized_input",
-          "automatic_mask": {
-            "mode": "positive_point_grid_union",
-            "max_grid": 32
-          }
-        }
-      }
-    },
-    {
-      "model_id": "sam2_hiera_large",
-      "family": "SAM2",
-      "variant": "Hiera Large",
-      "task": "segment",
-      "runtimes": [
-        "container",
-        "onnx"
-      ],
-      "capabilities": [
-        "automatic_mask",
-        "cpp",
-        "csharp",
-        "export_onnx",
-        "infer",
-        "prompt",
-        "train",
-        "video"
-      ],
-      "input_size": [
-        1024,
-        1024
-      ],
-      "input_channels": [
-        3
-      ],
-      "release_status": "requested",
-      "pretrained_asset": "",
-      "notes": "image/prompt/automatic-mask/video 계약은 별도 검증",
-      "metadata": {
-        "contracts": {
-          "graphs": {
-            "encoder": {
-              "file": "sam2_encoder.onnx",
-              "inputs": {
-                "image": "input_image"
-              },
-              "outputs": [
-                "image_embeddings"
-              ]
-            },
-            "decoder": {
-              "file": "sam2_decoder.onnx",
-              "inputs": {
-                "image_embeddings": "image_embeddings",
-                "point_coords": "point_coords",
-                "point_labels": "point_labels",
-                "mask_input": "mask_input",
-                "has_mask_input": "has_mask_input",
-                "orig_im_size": "orig_im_size"
-              },
-              "outputs": [
-                "low_res_mask_logits",
-                "iou_predictions"
-              ]
-            }
-          },
-          "prompt_types": [
-            "point",
-            "box",
-            "mask"
-          ],
-          "video_state": true,
-          "prompt_coordinate_space": "resized_input",
-          "automatic_mask": {
-            "mode": "positive_point_grid_union",
-            "max_grid": 32
-          }
-        }
-      }
-    },
-    {
       "model_id": "deeplabv3plus_resnet34",
       "family": "DeepLab V3+",
       "variant": "ResNet34",
@@ -721,6 +437,302 @@
       "pretrained_asset": "",
       "notes": "weight-free native adapter",
       "metadata": {}
+    },
+    {
+      "model_id": "sam2_hiera_tiny",
+      "family": "SAM2",
+      "variant": "Hiera Tiny",
+      "task": "segment",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "automatic_mask",
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "prompt",
+        "train"
+      ],
+      "input_size": [
+        1024,
+        1024
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "image/prompt/automatic-mask; video memory state 미지원",
+      "metadata": {
+        "contracts": {
+          "graphs": {
+            "encoder": {
+              "file": "sam2_encoder.onnx",
+              "inputs": {
+                "image": "input_image"
+              },
+              "outputs": [
+                "image_embeddings",
+                "image_features_0",
+                "image_features_1"
+              ]
+            },
+            "decoder": {
+              "file": "sam2_decoder.onnx",
+              "inputs": {
+                "image_embeddings": "image_embeddings",
+                "point_coords": "point_coords",
+                "image_features_0": "image_features_0",
+                "image_features_1": "image_features_1",
+                "point_labels": "point_labels",
+                "mask_input": "mask_input",
+                "has_mask_input": "has_mask_input",
+                "orig_im_size": "orig_im_size"
+              },
+              "outputs": [
+                "low_res_mask_logits",
+                "iou_predictions"
+              ]
+            }
+          },
+          "prompt_types": [
+            "point",
+            "box",
+            "mask"
+          ],
+          "video_state": false,
+          "prompt_coordinate_space": "resized_input",
+          "automatic_mask": {
+            "mode": "positive_point_grid_union",
+            "max_grid": 32
+          }
+        }
+      }
+    },
+    {
+      "model_id": "sam2_hiera_small",
+      "family": "SAM2",
+      "variant": "Hiera Small",
+      "task": "segment",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "automatic_mask",
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "prompt",
+        "train"
+      ],
+      "input_size": [
+        1024,
+        1024
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "image/prompt/automatic-mask; video memory state 미지원",
+      "metadata": {
+        "contracts": {
+          "graphs": {
+            "encoder": {
+              "file": "sam2_encoder.onnx",
+              "inputs": {
+                "image": "input_image"
+              },
+              "outputs": [
+                "image_embeddings",
+                "image_features_0",
+                "image_features_1"
+              ]
+            },
+            "decoder": {
+              "file": "sam2_decoder.onnx",
+              "inputs": {
+                "image_embeddings": "image_embeddings",
+                "point_coords": "point_coords",
+                "image_features_0": "image_features_0",
+                "image_features_1": "image_features_1",
+                "point_labels": "point_labels",
+                "mask_input": "mask_input",
+                "has_mask_input": "has_mask_input",
+                "orig_im_size": "orig_im_size"
+              },
+              "outputs": [
+                "low_res_mask_logits",
+                "iou_predictions"
+              ]
+            }
+          },
+          "prompt_types": [
+            "point",
+            "box",
+            "mask"
+          ],
+          "video_state": false,
+          "prompt_coordinate_space": "resized_input",
+          "automatic_mask": {
+            "mode": "positive_point_grid_union",
+            "max_grid": 32
+          }
+        }
+      }
+    },
+    {
+      "model_id": "sam2_hiera_base_plus",
+      "family": "SAM2",
+      "variant": "Hiera Base+",
+      "task": "segment",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "automatic_mask",
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "prompt",
+        "train"
+      ],
+      "input_size": [
+        1024,
+        1024
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "image/prompt/automatic-mask; video memory state 미지원",
+      "metadata": {
+        "contracts": {
+          "graphs": {
+            "encoder": {
+              "file": "sam2_encoder.onnx",
+              "inputs": {
+                "image": "input_image"
+              },
+              "outputs": [
+                "image_embeddings",
+                "image_features_0",
+                "image_features_1"
+              ]
+            },
+            "decoder": {
+              "file": "sam2_decoder.onnx",
+              "inputs": {
+                "image_embeddings": "image_embeddings",
+                "point_coords": "point_coords",
+                "image_features_0": "image_features_0",
+                "image_features_1": "image_features_1",
+                "point_labels": "point_labels",
+                "mask_input": "mask_input",
+                "has_mask_input": "has_mask_input",
+                "orig_im_size": "orig_im_size"
+              },
+              "outputs": [
+                "low_res_mask_logits",
+                "iou_predictions"
+              ]
+            }
+          },
+          "prompt_types": [
+            "point",
+            "box",
+            "mask"
+          ],
+          "video_state": false,
+          "prompt_coordinate_space": "resized_input",
+          "automatic_mask": {
+            "mode": "positive_point_grid_union",
+            "max_grid": 32
+          }
+        }
+      }
+    },
+    {
+      "model_id": "sam2_hiera_large",
+      "family": "SAM2",
+      "variant": "Hiera Large",
+      "task": "segment",
+      "runtimes": [
+        "container",
+        "onnx"
+      ],
+      "capabilities": [
+        "automatic_mask",
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "prompt",
+        "train"
+      ],
+      "input_size": [
+        1024,
+        1024
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "image/prompt/automatic-mask; video memory state 미지원",
+      "metadata": {
+        "contracts": {
+          "graphs": {
+            "encoder": {
+              "file": "sam2_encoder.onnx",
+              "inputs": {
+                "image": "input_image"
+              },
+              "outputs": [
+                "image_embeddings",
+                "image_features_0",
+                "image_features_1"
+              ]
+            },
+            "decoder": {
+              "file": "sam2_decoder.onnx",
+              "inputs": {
+                "image_embeddings": "image_embeddings",
+                "point_coords": "point_coords",
+                "image_features_0": "image_features_0",
+                "image_features_1": "image_features_1",
+                "point_labels": "point_labels",
+                "mask_input": "mask_input",
+                "has_mask_input": "has_mask_input",
+                "orig_im_size": "orig_im_size"
+              },
+              "outputs": [
+                "low_res_mask_logits",
+                "iou_predictions"
+              ]
+            }
+          },
+          "prompt_types": [
+            "point",
+            "box",
+            "mask"
+          ],
+          "video_state": false,
+          "prompt_coordinate_space": "resized_input",
+          "automatic_mask": {
+            "mode": "positive_point_grid_union",
+            "max_grid": 32
+          }
+        }
+      }
     }
   ]
 }

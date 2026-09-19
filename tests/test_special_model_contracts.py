@@ -4,10 +4,10 @@ import pytest
 
 from model_runtime.special_contracts import (
     SpecialContractError,
-    validate_re_detr_manifest,
     validate_container_entrypoint,
-    validate_special_assets,
+    validate_re_detr_manifest,
     validate_sam2_manifest,
+    validate_special_assets,
 )
 
 
@@ -79,6 +79,13 @@ def test_sam2_contract_requires_declared_graph_files():
     with pytest.raises(SpecialContractError, match="missing"):
         validate_special_assets(item, {"manifest.json"})
     validate_special_assets(item, {"sam2_encoder.onnx", "sam2_decoder.onnx"})
+
+
+def test_sam2_decoder_feature_inputs_must_reference_declared_encoder_outputs():
+    item = _sam2()
+    item["contracts"]["graphs"]["decoder"]["inputs"]["image_features_0"] = "missing_feature"
+    with pytest.raises(SpecialContractError, match="encoder output"):
+        validate_sam2_manifest(item)
 
 
 def test_container_entrypoint_is_validated_without_importing_plugin():

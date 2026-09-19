@@ -1,9 +1,9 @@
 """네트워크 다운로드 없이 C++ 규약 테스트용 작은 ONNX 그래프 생성."""
-import json
 import hashlib
-from pathlib import Path
+import json
 import shutil
 import sys
+from pathlib import Path
 
 import onnx
 from onnx import TensorProto, helper
@@ -87,20 +87,28 @@ redetr_softmax_config = json.loads(json.dumps(redetr_config))
 redetr_softmax_config["postprocessing"]["class_scores"] = "softmax"
 (root / "redetr_softmax.json").write_text(json.dumps(redetr_softmax_config, ensure_ascii=False), encoding="utf-8")
 
-# Minimal SAM2-style encoder/decoder graphs.  They keep every declared prompt
-# input in the graph contract while returning deterministic masks/scores, so
-# the C++/C ABI multi-graph lifecycle is tested without shipping weights.
+# Minimal SAM2-style encoder/decoder graphs. They keep both high-resolution
+# feature outputs and every prompt input in the graph contract while returning
+# deterministic masks/scores, so the C++/C ABI path is exercised without weights.
 sam_input = helper.make_tensor_value_info("input_image", TensorProto.FLOAT, [1, 3, 2, 3])
 sam_embedding = helper.make_tensor_value_info("image_embeddings", TensorProto.FLOAT, [1, 1, 1, 1])
+sam_feature0 = helper.make_tensor_value_info("image_features_0", TensorProto.FLOAT, [1, 3, 2, 3])
+sam_feature1 = helper.make_tensor_value_info("image_features_1", TensorProto.FLOAT, [1, 1, 1, 1])
 sam_encoder = helper.make_model(
-    helper.make_graph([helper.make_node("ReduceMean", ["input_image"], ["image_embeddings"],
-                                           axes=[1, 2, 3], keepdims=1)],
-                      "sam2_encoder", [sam_input], [sam_embedding]),
+    helper.make_graph([
+        helper.make_node("ReduceMean", ["input_image"], ["image_embeddings"],
+                         axes=[1, 2, 3], keepdims=1),
+        helper.make_node("Identity", ["input_image"], ["image_features_0"]),
+        helper.make_node("ReduceMean", ["input_image"], ["image_features_1"],
+                         axes=[1, 2, 3], keepdims=1),
+    ], "sam2_encoder", [sam_input], [sam_embedding, sam_feature0, sam_feature1]),
     opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
 onnx.checker.check_model(sam_encoder)
 onnx.save(sam_encoder, root / "sam2_encoder.onnx")
 decoder_inputs = [
     helper.make_tensor_value_info("image_embeddings", TensorProto.FLOAT, [1, 1, 1, 1]),
+    helper.make_tensor_value_info("image_features_0", TensorProto.FLOAT, [1, 3, 2, 3]),
+    helper.make_tensor_value_info("image_features_1", TensorProto.FLOAT, [1, 1, 1, 1]),
     helper.make_tensor_value_info("point_coords", TensorProto.FLOAT, [1, "points", 2]),
     helper.make_tensor_value_info("point_labels", TensorProto.INT64, [1, "points"]),
     helper.make_tensor_value_info("mask_input", TensorProto.FLOAT, [1, 1, 2, 2]),
@@ -110,11 +118,38 @@ decoder_inputs = [
 sam_logits_value = helper.make_tensor("sam_logits_value", TensorProto.FLOAT, [1, 2, 2, 2],
                                       [-1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0])
 sam_scores_value = helper.make_tensor("sam_scores_value", TensorProto.FLOAT, [1, 2], [0.1, 0.9])
+sam_decoder_nodes = [helper.make_node("Constant", [], ["base_mask_logits"], value=sam_logits_value),
+                     helper.make_node("Constant", [], ["iou_predictions"], value=sam_scores_value)]
+sam_bias_terms = []
+for index, input_info in enumerate(decoder_inputs):
+    input_name = input_info.name
+    reduction_input = input_name
+    if input_name == "point_labels":
+        reduction_input = "point_labels_float"
+        sam_decoder_nodes.append(helper.make_node(
+            "Cast", [input_name], [reduction_input], to=TensorProto.FLOAT))
+    rank = len(input_info.type.tensor_type.shape.dim)
+    reduced_name = f"sam_input_mean_{index}"
+    scaled_name = f"sam_input_scaled_{index}"
+    scale_name = f"sam_input_scale_{index}"
+    sam_decoder_nodes.extend([
+        helper.make_node("ReduceMean", [reduction_input], [reduced_name],
+                         axes=list(range(rank)), keepdims=0),
+        helper.make_node("Constant", [], [scale_name], value=helper.make_tensor(
+            scale_name + "_value", TensorProto.FLOAT, [], [1e-8])),
+        helper.make_node("Mul", [reduced_name, scale_name], [scaled_name]),
+    ])
+    if sam_bias_terms:
+        combined_name = f"sam_input_bias_{index}"
+        sam_decoder_nodes.append(helper.make_node(
+            "Add", [sam_bias_terms[-1], scaled_name], [combined_name]))
+        sam_bias_terms.append(combined_name)
+    else:
+        sam_bias_terms.append(scaled_name)
+sam_decoder_nodes.append(helper.make_node(
+    "Add", ["base_mask_logits", sam_bias_terms[-1]], ["low_res_mask_logits"]))
 sam_decoder = helper.make_model(
-    helper.make_graph([
-        helper.make_node("Constant", [], ["low_res_mask_logits"], value=sam_logits_value),
-        helper.make_node("Constant", [], ["iou_predictions"], value=sam_scores_value),
-    ], "sam2_decoder", decoder_inputs,
+    helper.make_graph(sam_decoder_nodes, "sam2_decoder", decoder_inputs,
        [helper.make_tensor_value_info("low_res_mask_logits", TensorProto.FLOAT, [1, 2, 2, 2]),
         helper.make_tensor_value_info("iou_predictions", TensorProto.FLOAT, [1, 2])]),
     opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
@@ -129,9 +164,11 @@ sam_config = {
         "resize": "bilinear", "interpolation": "INTER_LINEAR_EXACT", "antialias": False,
         "layout": "NCHW", "value_scale": 255., "color_order": "RGB"},
     "contracts": {"graphs": {
-        "encoder": {"file": "sam2_encoder.onnx", "outputs": ["image_embeddings"]},
+        "encoder": {"file": "sam2_encoder.onnx", "outputs": [
+            "image_embeddings", "image_features_0", "image_features_1"]},
         "decoder": {"file": "sam2_decoder.onnx", "inputs": {
-            "image_embeddings": "image_embeddings", "point_coords": "point_coords",
+            "image_embeddings": "image_embeddings", "image_features_0": "image_features_0",
+            "image_features_1": "image_features_1", "point_coords": "point_coords",
             "point_labels": "point_labels", "mask_input": "mask_input",
             "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"},
             "outputs": ["low_res_mask_logits", "iou_predictions"]}},

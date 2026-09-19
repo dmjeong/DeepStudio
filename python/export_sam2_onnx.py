@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import inspect
 import json
-from pathlib import Path
 import os
 import tempfile
+from collections.abc import Mapping
+from pathlib import Path
 
 import torch
 
@@ -21,6 +22,9 @@ from export_onnx import validate_outputs, verification_tolerances
 
 VERIFICATION_TOLERANCE = verification_tolerances("segment")
 SAM2_VARIANTS = frozenset({"Hiera Tiny", "Hiera Small", "Hiera Base+", "Hiera Large"})
+SAM2_ENCODER_OUTPUTS = ("image_embeddings", "image_features_0", "image_features_1")
+SAM2_PROMPT_INPUTS = ("point_coords", "point_labels", "mask_input", "has_mask_input", "orig_im_size")
+SAM2_DECODER_OUTPUTS = ("low_res_mask_logits", "iou_predictions")
 
 
 class Sam2ExportError(ValueError):
@@ -28,23 +32,130 @@ class Sam2ExportError(ValueError):
 
 
 def _module(checkpoint, key: str):
-    import torch.nn as nn
+    from torch import nn
     value = checkpoint.get(key)
     if not isinstance(value, nn.Module):
         raise Sam2ExportError(f"SAM2 checkpoint requires an nn.Module in {key}")
     return value.cpu().eval()
 
 
-def _outputs(value, name: str):
-    if isinstance(value, dict):
+def _encoder_outputs(value, checkpoint: dict) -> list[tuple[str, torch.Tensor]]:
+    """Name encoder tensors using the same semantics consumed by the C++ runtime."""
+    configured_names = checkpoint.get("encoder_output_names")
+    if isinstance(value, Mapping):
+        names = list(value.keys())
         values = list(value.values())
+        if configured_names is not None and list(configured_names) != names:
+            raise Sam2ExportError("encoder_output_names must match the encoder mapping keys and order")
     elif isinstance(value, (tuple, list)):
         values = list(value)
+        if configured_names is None:
+            if len(values) != 1:
+                raise Sam2ExportError(
+                    "SAM2 tuple/list encoder outputs require encoder_output_names"
+                )
+            names = ["image_embeddings"]
+        else:
+            names = list(configured_names)
     else:
         values = [value]
-    if not values or any(not isinstance(item, torch.Tensor) for item in values):
-        raise Sam2ExportError(f"SAM2 {name} returned no tensor outputs")
-    return values
+        names = ["image_embeddings"] if configured_names is None else list(configured_names)
+
+    if (not values or len(names) != len(values) or
+            any(not isinstance(name, str) or not name for name in names) or
+            len(set(names)) != len(names)):
+        raise Sam2ExportError("SAM2 encoder output names must be unique and match its tensor outputs")
+    if any(name not in SAM2_ENCODER_OUTPUTS for name in names) or "image_embeddings" not in names:
+        raise Sam2ExportError(
+            "SAM2 encoder outputs must use image_embeddings and optional image_features_0/image_features_1"
+        )
+    if any(not isinstance(item, torch.Tensor) for item in values):
+        raise Sam2ExportError("SAM2 encoder returned no tensor outputs")
+    return list(zip(names, values))
+
+
+def _decoder_contract(checkpoint: dict, encoder_names: list[str]):
+    semantic_names = [*encoder_names, *SAM2_PROMPT_INPUTS]
+    order = checkpoint.get("decoder_input_order", semantic_names)
+    if (not isinstance(order, (list, tuple)) or len(order) != len(semantic_names) or
+            any(not isinstance(name, str) for name in order) or
+            len(set(order)) != len(order) or set(order) != set(semantic_names)):
+        raise Sam2ExportError(
+            "decoder_input_order must list every encoder output and prompt input exactly once"
+        )
+    configured_names = checkpoint.get("decoder_input_names", {})
+    if not isinstance(configured_names, Mapping):
+        raise Sam2ExportError("decoder_input_names must map semantic input names to ONNX input names")
+    input_names = {semantic: configured_names.get(semantic, semantic) for semantic in semantic_names}
+    if (any(not isinstance(name, str) or not name for name in input_names.values()) or
+            len(set(input_names.values())) != len(input_names)):
+        raise Sam2ExportError("SAM2 decoder ONNX input names must be non-empty and unique")
+    if not set(configured_names).issubset(input_names):
+        raise Sam2ExportError("decoder_input_names contains an unknown semantic input")
+    if any(input_names[name] != name for name in encoder_names):
+        raise Sam2ExportError(
+            "SAM2 decoder embedding input names must match the corresponding encoder output names"
+        )
+    return list(order), input_names
+
+
+def _decoder_output_spec(value, checkpoint: dict):
+    configured_names = checkpoint.get("decoder_output_names")
+    if isinstance(value, Mapping):
+        if configured_names is None:
+            output_map = {name: name for name in value}
+        elif isinstance(configured_names, Mapping):
+            output_map = dict(configured_names)
+        else:
+            raise Sam2ExportError("mapping decoder outputs require decoder_output_names as a semantic-name map")
+        if (any(not isinstance(name, str) or name not in SAM2_DECODER_OUTPUTS for name in output_map) or
+                any(not isinstance(name, str) or not name for name in output_map.values()) or
+                len(set(output_map.values())) != len(output_map) or
+                not set(output_map.values()).issubset(value) or
+                "low_res_mask_logits" not in output_map):
+            raise Sam2ExportError("SAM2 decoder output mapping must identify mask logits and optional quality")
+        return "mapping", output_map
+
+    values = list(value) if isinstance(value, (tuple, list)) else [value]
+    if configured_names is None:
+        names = list(SAM2_DECODER_OUTPUTS[:len(values)])
+    elif isinstance(configured_names, (list, tuple)):
+        names = list(configured_names)
+    else:
+        raise Sam2ExportError("sequence decoder outputs require decoder_output_names as an ordered list")
+    if (not values or len(values) > len(SAM2_DECODER_OUTPUTS) or len(names) != len(values) or
+            any(not isinstance(name, str) or name not in SAM2_DECODER_OUTPUTS for name in names) or
+            len(set(names)) != len(names) or "low_res_mask_logits" not in names):
+        raise Sam2ExportError("SAM2 decoder must return mask logits and optional quality scores")
+    return "sequence", names
+
+
+def _normalize_decoder_outputs(value, output_spec):
+    kind, names = output_spec
+    if kind == "mapping":
+        values = {semantic: value[key] for semantic, key in names.items()}
+    else:
+        raw_values = list(value) if isinstance(value, (tuple, list)) else [value]
+        values = dict(zip(names, raw_values))
+    if any(not isinstance(item, torch.Tensor) for item in values.values()):
+        raise Sam2ExportError("SAM2 decoder returned non-tensor outputs")
+    return [values[name] for name in SAM2_DECODER_OUTPUTS if name in values]
+
+
+def _validate_onnx_contract(onnx, path: Path, input_names: list[str], output_names: list[str]):
+    graph = onnx.load(str(path))
+    onnx.checker.check_model(graph)
+    initializer_names = {item.name for item in graph.graph.initializer}
+    actual_inputs = [item.name for item in graph.graph.input if item.name not in initializer_names]
+    actual_outputs = [item.name for item in graph.graph.output]
+    if actual_inputs != input_names:
+        raise Sam2ExportError(
+            f"SAM2 ONNX inputs do not match the runtime contract: expected {input_names}, got {actual_inputs}"
+        )
+    if actual_outputs != output_names:
+        raise Sam2ExportError(
+            f"SAM2 ONNX outputs do not match the runtime contract: expected {output_names}, got {actual_outputs}"
+        )
 
 
 def _export(model, args, kwargs, output: Path, *, input_names, output_names, opset: int,
@@ -85,34 +196,48 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
     output.mkdir(parents=True, exist_ok=True)
     input_tensor = torch.randn(1, channels, int(size[0]), int(size[1]), generator=torch.Generator().manual_seed(42))
     with torch.inference_mode():
-        embedding_values = _outputs(encoder(input_tensor), "encoder")
-    if len(embedding_values) != 1:
-        raise Sam2ExportError("SAM2 encoder export currently requires one image_embeddings output")
-    embedding = embedding_values[0].detach().float()
+        named_embedding_values = _encoder_outputs(encoder(input_tensor), checkpoint)
+    encoder_names = [name for name, _ in named_embedding_values]
+    embedding_values = {name: value.detach().float() for name, value in named_embedding_values}
+    decoder_input_order, decoder_input_names = _decoder_contract(checkpoint, encoder_names)
     point_coords = torch.zeros((1, 1, 2), dtype=torch.float32)
     point_labels = torch.full((1, 1), -1, dtype=torch.int64)
     mask_input = torch.zeros((1, 1, int(mask_size[0]), int(mask_size[1])), dtype=torch.float32)
     has_mask_input = torch.zeros((1,), dtype=torch.float32)
     orig_im_size = torch.tensor([float(size[0]), float(size[1])], dtype=torch.float32)
-    decoder_args = (embedding, point_coords, point_labels, mask_input, has_mask_input, orig_im_size)
+    decoder_values_by_semantic = {
+        **embedding_values,
+        "point_coords": point_coords,
+        "point_labels": point_labels,
+        "mask_input": mask_input,
+        "has_mask_input": has_mask_input,
+        "orig_im_size": orig_im_size,
+    }
+    decoder_args = tuple(decoder_values_by_semantic[name] for name in decoder_input_order)
     with torch.inference_mode():
-        decoder_values = _outputs(decoder(*decoder_args), "decoder")
+        raw_decoder_values = decoder(*decoder_args)
+    decoder_output_spec = _decoder_output_spec(raw_decoder_values, checkpoint)
+    decoder_values = _normalize_decoder_outputs(raw_decoder_values, decoder_output_spec)
     if len(decoder_values) < 1 or len(decoder_values) > 2:
         raise Sam2ExportError("SAM2 decoder must return mask logits and optional quality scores")
     if decoder_values[0].ndim not in {2, 3, 4}:
         raise Sam2ExportError("SAM2 mask logits must have rank 2, 3 or 4")
+    class DecoderWithScore(torch.nn.Module):
+        def __init__(self, wrapped, output_spec, include_score):
+            super().__init__()
+            self.wrapped = wrapped
+            self.output_spec = output_spec
+            self.include_score = include_score
+        def forward(self, *values):
+            raw = self.wrapped(*values)
+            outputs = _normalize_decoder_outputs(raw, self.output_spec)
+            mask_logits = outputs[0]
+            scores = outputs[1] if self.include_score else torch.ones(
+                (mask_logits.shape[0], 1), device=mask_logits.device)
+            return mask_logits, scores
+    decoder_for_export = DecoderWithScore(decoder, decoder_output_spec, len(decoder_values) == 2).eval()
     if len(decoder_values) == 1:
         decoder_values.append(torch.ones((1, 1), dtype=torch.float32))
-        class DecoderWithScore(torch.nn.Module):
-            def __init__(self, wrapped):
-                super().__init__()
-                self.wrapped = wrapped
-            def forward(self, *values):
-                result = _outputs(self.wrapped(*values), "decoder")
-                return result[0], torch.ones((values[0].shape[0], 1), device=values[0].device)
-        decoder_for_export = DecoderWithScore(decoder).eval()
-    else:
-        decoder_for_export = decoder
 
     encoder_file = output / "sam2_encoder.onnx"
     decoder_file = output / "sam2_decoder.onnx"
@@ -122,23 +247,25 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
         staged_encoder, staged_decoder = stage / encoder_file.name, stage / decoder_file.name
         log(f"SAM2 encoder/decoder ONNX 생성: 입력={tuple(input_tensor.shape)}")
         _export(encoder, (input_tensor,), {}, staged_encoder,
-                input_names=["input_image"], output_names=["image_embeddings"], opset=opset)
+                input_names=["input_image"], output_names=encoder_names, opset=opset)
         _export(decoder_for_export, decoder_args, {}, staged_decoder,
-                input_names=["image_embeddings", "point_coords", "point_labels", "mask_input",
-                             "has_mask_input", "orig_im_size"],
-                output_names=["low_res_mask_logits", "iou_predictions"], opset=opset)
+                input_names=[decoder_input_names[name] for name in decoder_input_order],
+                output_names=list(SAM2_DECODER_OUTPUTS), opset=opset)
         import onnx
-        onnx.checker.check_model(str(staged_encoder))
-        onnx.checker.check_model(str(staged_decoder))
+        _validate_onnx_contract(onnx, staged_encoder, ["input_image"], encoder_names)
+        _validate_onnx_contract(
+            onnx, staged_decoder,
+            [decoder_input_names[name] for name in decoder_input_order], list(SAM2_DECODER_OUTPUTS),
+        )
         if verify:
             import onnxruntime as ort
             encoder_session = ort.InferenceSession(str(staged_encoder), providers=["CPUExecutionProvider"])
             decoder_session = ort.InferenceSession(str(staged_decoder), providers=["CPUExecutionProvider"])
             encoded = encoder_session.run(None, {"input_image": input_tensor.numpy()})
             decoded = decoder_session.run(None, {
-                "image_embeddings": encoded[0], "point_coords": point_coords.numpy(),
-                "point_labels": point_labels.numpy(), "mask_input": mask_input.numpy(),
-                "has_mask_input": has_mask_input.numpy(), "orig_im_size": orig_im_size.numpy(),
+                decoder_input_names[name]: encoded[encoder_names.index(name)]
+                if name in embedding_values else decoder_values_by_semantic[name].detach().cpu().numpy()
+                for name in decoder_input_order
             })
             for expected, actual in zip(decoder_values[:2], decoded):
                 # CPU graph fusion can reassociate FP32 arithmetic.  Keep a
@@ -168,12 +295,10 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
         "cpp_supported": True,
         "contracts": {"graphs": {
             "encoder": {"file": encoder_file.name, "inputs": {"image": "input_image"},
-                         "outputs": ["image_embeddings"]},
-            "decoder": {"file": decoder_file.name, "inputs": {
-                "image_embeddings": "image_embeddings", "point_coords": "point_coords",
-                "point_labels": "point_labels", "mask_input": "mask_input",
-                "has_mask_input": "has_mask_input", "orig_im_size": "orig_im_size"},
-                "outputs": ["low_res_mask_logits", "iou_predictions"]}},
+                         "outputs": encoder_names},
+            "decoder": {"file": decoder_file.name,
+                "inputs": {name: decoder_input_names[name] for name in decoder_input_order},
+                "outputs": list(SAM2_DECODER_OUTPUTS)}},
             "prompt_types": ["point", "box", "mask"], "video_state": False,
             "prompt_coordinate_space": "resized_input",
             "automatic_mask": {"mode": "positive_point_grid_union", "max_grid": 32},

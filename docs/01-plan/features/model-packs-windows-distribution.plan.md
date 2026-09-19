@@ -83,8 +83,9 @@ Docker를 통해 추론 속도가 자동 향상된다고 가정하지 않는다.
 
 - `Re-DETR v4`: 제품 카탈로그 변형은 Small/Medium/Large로 고정했다. 실제 upstream
   구현·checkpoint·ONNX 수치 검증은 각 변형별로 남아 있다.
-- SAM2: Hiera Tiny/Small/Base+/Large를 모두 카탈로그에 포함한다. 이미지·점·박스 prompt와
-  video capability를 계약에 표시했으며, 각 그래프와 영상 state의 Windows/ONNX 검증은 남아 있다.
+- SAM2: Hiera Tiny/Small/Base+/Large를 모두 카탈로그에 포함한다. 현재 exporter/SDK 계약은
+  이미지·점·박스·mask prompt와 자동 mask까지이며, video memory-state는 구현 전이라 등록 capability에서
+  비활성화했다. 사용자가 요구한 전체 동영상 지원과 Windows/ONNX 검증은 남아 있다.
 - 프리트레인드: 전체 모델 가중치인지 encoder 초기화 가중치인지 구분한다. 재배포 근거를 파일별로 확정한다.
 - Windows 최소사양: README에 설계 검증 기준을 먼저 기재하고 실제 모델별 실측 후 지원 최소값으로 확정한다.
 

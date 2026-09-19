@@ -62,6 +62,8 @@ def validate_sam2_manifest(manifest: Mapping) -> None:
         outputs = graph.get("outputs")
         if not isinstance(outputs, list) or not outputs or any(not isinstance(name, str) or not name for name in outputs):
             raise SpecialContractError(f"contracts.graphs.{graph_name}.outputs must be a string list")
+        if len(set(outputs)) != len(outputs):
+            raise SpecialContractError(f"contracts.graphs.{graph_name}.outputs must be unique")
         inputs = _require_mapping(graph.get("inputs"), f"contracts.graphs.{graph_name}.inputs")
         if any(not isinstance(name, str) or not name for name in inputs.values()):
             raise SpecialContractError(f"contracts.graphs.{graph_name}.inputs must map to tensor names")
@@ -71,6 +73,13 @@ def validate_sam2_manifest(manifest: Mapping) -> None:
         }
         if not required_inputs.issubset(inputs):
             raise SpecialContractError(f"contracts.graphs.{graph_name}.inputs is incomplete")
+        if graph_name == "decoder":
+            encoder_outputs = set(graphs["encoder"].get("outputs", ()))
+            for semantic in ("image_embeddings", "image_features_0", "image_features_1"):
+                if semantic in inputs and inputs[semantic] not in encoder_outputs:
+                    raise SpecialContractError(
+                        f"SAM2 decoder input {semantic} must reference an encoder output"
+                    )
     prompts = contract.get("prompt_types")
     if not isinstance(prompts, list) or not prompts or any(prompt not in {"point", "box", "mask"} for prompt in prompts):
         raise SpecialContractError("SAM2 prompt_types must contain point, box or mask")

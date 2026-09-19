@@ -16,7 +16,7 @@
 | 이상 탐지 / PatchCore | Wide-ResNet50-2, 경량 ResNet18 | pretrained backbone + 정상 특징 bank/coreset 생성 | bank·kNN·map·score까지 전체 ONNX, threshold 보존 |
 | 객체 탐지 / Re-DETR v4 | Small, Medium, Large | 세 변형을 고정된 제품 ID로 관리 | upstream·checkpoint·후처리별 ONNX 검증 필요 |
 | 객체 탐지 / LibreYOLO | LibreYOLO9 Tiny | 검토된 기본 체크포인트, 검출 head fine-tune | raw output decode·NMS·원본 좌표 복원 |
-| 분할 / SAM2 | SAM2.1 Hiera Tiny, Small, Base+, Large | 네 변형 모두 image/prompt/video 계약으로 관리 | image encoder + prompt decoder ONNX, 이미지 캐시·프롬프트·영상 state 계약 |
+| 분할 / SAM2 | SAM2.1 Hiera Tiny, Small, Base+, Large | 네 변형의 image/prompt 학습·추론 경로를 검증 | image encoder + prompt decoder ONNX, 이미지 캐시·프롬프트; video memory-state는 별도 구현 |
 | 분할 / DeepLab V3+ | SMP DeepLabV3Plus, ResNet34 encoder | encoder ImageNet 초기화 + segmentation head 신규 학습 | semantic logits, binary/multiclass 구분 |
 | 분할 / U-Net | SMP Unet, ResNet18 encoder | encoder ImageNet 초기화 + segmentation head 신규 학습 | semantic logits, ignore index·원본 크기 복원 |
 
@@ -101,6 +101,13 @@ DeepLab/U-Net의 클래스별 semantic mask와 혼동하지 않는다.
 자동 전체 mask 생성은 `positive_point_grid_union` 모드로 네이티브 SDK에 구현한다. 축마다 1~32
 grid prompt를 순회하고 quality threshold를 적용해 선택 mask를 union한다. upstream 영상
 memory/state와는 별도 계약으로 유지한다.
+
+현재 exporter는 encoder 출력을 `image_embeddings`, `image_features_0`, `image_features_1`로
+명시하고 decoder 입력에 연결한다. 단일 feature 모델도 허용하지만 여러 출력을 반환하는 tuple/list는
+`encoder_output_names`가 필요하다. 카탈로그의 네 변형은 요청 목록이며, 실제 checkpoint별 학습과 ONNX
+검증이 끝나기 전까지 `release_ready`로 취급하지 않는다. decoder가 mapping을 반환하면
+`decoder_output_names`를 semantic→checkpoint key 형식으로 지정한다. video memory-state는 현재
+capability에서 꺼져 있다.
 
 Meta는 Windows에서 WSL을 권장한다. 따라서 이 제품의 **Windows native 학습 worker**는
 P0 실증이 필요하다. 선택적 CUDA extension 미사용 시 빠지는 작은 구멍/점 제거 후처리를
