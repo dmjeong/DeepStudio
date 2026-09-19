@@ -164,7 +164,7 @@ sam_config = {
         "resize": "bilinear", "interpolation": "INTER_LINEAR_EXACT", "antialias": False,
         "layout": "NCHW", "value_scale": 255., "color_order": "RGB"},
     "contracts": {"graphs": {
-        "encoder": {"file": "sam2_encoder.onnx", "outputs": [
+        "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"}, "outputs": [
             "image_embeddings", "image_features_0", "image_features_1"]},
         "decoder": {"file": "sam2_decoder.onnx", "inputs": {
             "image_embeddings": "image_embeddings", "image_features_0": "image_features_0",

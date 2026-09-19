@@ -170,6 +170,17 @@ int main(int argc, char** argv)
         require(redetr_softmax.detections.size() == 1 && redetr_softmax.detections[0].class_id == 0 &&
                     redetr_softmax.detections[0].confidence > 0.99f,
                 "Re-DETR softmax decode mismatch.");
+        std::ifstream sam_config_file(root / "sam2.json");
+        auto invalid_sam_config = nlohmann::json::parse(sam_config_file);
+        invalid_sam_config["contracts"]["graphs"]["decoder"]["inputs"].erase("image_features_1");
+        const auto invalid_sam_path = root / "sam2_missing_decoder_input.json";
+        std::ofstream invalid_sam_file(invalid_sam_path);
+        invalid_sam_file << invalid_sam_config.dump();
+        invalid_sam_file.close();
+        Sam2Inference invalid_sam;
+        require(!invalid_sam.InitializeFromJson(invalid_sam_path.u8string(), "onnxruntime", 2) &&
+                    !invalid_sam.LastError().empty(),
+                "SAM2 must reject an incomplete decoder input contract during initialization.");
         Sam2Inference sam2;
         require(sam2.InitializeFromJson((root / "sam2.json").u8string(), "onnxruntime", 2),
                 "SAM2 encoder/decoder load failed.");

@@ -125,6 +125,10 @@ bool Sam2Inference::InitializeFromJson(const std::string& config_path,
         };
         m_encoder_contract = parse_graph("encoder");
         m_decoder_contract = parse_graph("decoder");
+        const auto encoder_image_input = m_encoder_contract.inputs.find("image");
+        if (m_encoder_contract.inputs.size() != 1 || encoder_image_input == m_encoder_contract.inputs.end() ||
+            encoder_image_input->second != m_input_name)
+            throw std::invalid_argument("SAM2 encoder image input does not match the graph contract.");
         if (contracts.contains("mask_size")) {
             const auto mask_size = contracts.at("mask_size");
             if (!mask_size.is_array() || mask_size.size() != 2 || !mask_size[0].is_number_integer() ||
@@ -175,16 +179,47 @@ bool Sam2Inference::InitializeFromJson(const std::string& config_path,
             if (output.get() != m_decoder_contract.outputs[index])
                 throw std::invalid_argument("SAM2 decoder output names do not match the contract.");
         }
-        if (!m_decoder_contract.inputs.empty()) {
-            for (const auto& item : m_decoder_contract.inputs) {
-                bool found = false;
-                for (size_t index = 0; index < m_decoder->GetInputCount(); ++index) {
-                    auto input = m_decoder->GetInputNameAllocated(index, m_allocator);
-                    if (input.get() == item.second) { found = true; break; }
-                }
-                if (!found) throw std::invalid_argument("SAM2 decoder input name does not match the contract.");
+        if (m_decoder_contract.inputs.size() != m_decoder->GetInputCount())
+            throw std::invalid_argument("SAM2 decoder input count does not match the contract.");
+        std::vector<std::string> mapped_decoder_inputs;
+        mapped_decoder_inputs.reserve(m_decoder_contract.inputs.size());
+        for (const auto& item : m_decoder_contract.inputs) {
+            if (std::find(mapped_decoder_inputs.begin(), mapped_decoder_inputs.end(), item.second) !=
+                mapped_decoder_inputs.end())
+                throw std::invalid_argument("SAM2 decoder contract maps multiple semantics to one input.");
+            mapped_decoder_inputs.push_back(item.second);
+            bool found = false;
+            for (size_t index = 0; index < m_decoder->GetInputCount(); ++index) {
+                auto input = m_decoder->GetInputNameAllocated(index, m_allocator);
+                if (input.get() == item.second) { found = true; break; }
+            }
+            if (!found) throw std::invalid_argument("SAM2 decoder input name does not match the contract.");
+        }
+        for (size_t index = 0; index < m_decoder->GetInputCount(); ++index) {
+            auto input = m_decoder->GetInputNameAllocated(index, m_allocator);
+            if (std::find(mapped_decoder_inputs.begin(), mapped_decoder_inputs.end(), input.get()) ==
+                mapped_decoder_inputs.end())
+                throw std::invalid_argument("SAM2 decoder has an input missing from the graph contract.");
+        }
+        const std::vector<std::string> supported_semantics{
+            "image_embeddings", "image_features_0", "image_features_1", "point_coords",
+            "point_labels", "mask_input", "has_mask_input", "orig_im_size"};
+        for (const auto& item : m_decoder_contract.inputs) {
+            if (std::find(supported_semantics.begin(), supported_semantics.end(), item.first) ==
+                supported_semantics.end())
+                throw std::invalid_argument("SAM2 decoder contract contains an unsupported semantic input.");
+            if (item.first == "image_embeddings" || item.first == "image_features_0" ||
+                item.first == "image_features_1") {
+                if (m_encoder_output_index.find(item.second) == m_encoder_output_index.end())
+                    throw std::invalid_argument("SAM2 decoder embedding is not an encoder output.");
             }
         }
+        const std::vector<std::string> required_semantics{
+            "image_embeddings", "point_coords", "point_labels", "mask_input",
+            "has_mask_input", "orig_im_size"};
+        for (const auto& semantic : required_semantics)
+            if (m_decoder_contract.inputs.find(semantic) == m_decoder_contract.inputs.end())
+                throw std::invalid_argument("SAM2 decoder graph contract is missing a required input.");
         m_ready = true;
         return true;
     } catch (const std::exception& error) {
