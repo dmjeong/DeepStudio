@@ -88,6 +88,19 @@ def test_sam2_decoder_feature_inputs_must_reference_declared_encoder_outputs():
         validate_sam2_manifest(item)
 
 
+@pytest.mark.parametrize("mutator, message", [
+    (lambda item: item["contracts"]["graphs"]["decoder"]["inputs"].update(
+        point_coords="image_embeddings"), "unique tensor names"),
+    (lambda item: item["contracts"]["graphs"]["decoder"]["inputs"].update(
+        video_state="frame"), "unsupported semantic name"),
+])
+def test_sam2_contract_rejects_ambiguous_or_unsupported_input_mappings(mutator, message):
+    item = _sam2()
+    mutator(item)
+    with pytest.raises(SpecialContractError, match=message):
+        validate_sam2_manifest(item)
+
+
 def test_container_entrypoint_is_validated_without_importing_plugin():
     validate_container_entrypoint({"worker_entrypoint": "plugin.worker:factory"})
     with pytest.raises(SpecialContractError, match="worker_entrypoint"):

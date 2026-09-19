@@ -67,6 +67,14 @@ def validate_sam2_manifest(manifest: Mapping) -> None:
         inputs = _require_mapping(graph.get("inputs"), f"contracts.graphs.{graph_name}.inputs")
         if any(not isinstance(name, str) or not name for name in inputs.values()):
             raise SpecialContractError(f"contracts.graphs.{graph_name}.inputs must map to tensor names")
+        if len(set(inputs.values())) != len(inputs):
+            raise SpecialContractError(f"contracts.graphs.{graph_name}.inputs must use unique tensor names")
+        allowed_inputs = {"image"} if graph_name == "encoder" else {
+            "image_embeddings", "image_features_0", "image_features_1", "point_coords",
+            "point_labels", "mask_input", "has_mask_input", "orig_im_size",
+        }
+        if not set(inputs).issubset(allowed_inputs):
+            raise SpecialContractError(f"contracts.graphs.{graph_name}.inputs contains an unsupported semantic name")
         required_inputs = {"image"} if graph_name == "encoder" else {
             "image_embeddings", "point_coords", "point_labels", "mask_input",
             "has_mask_input", "orig_im_size",
