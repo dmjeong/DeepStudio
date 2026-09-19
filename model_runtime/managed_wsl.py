@@ -88,7 +88,7 @@ class ManagedWsl:
         if self.marker.is_symlink() or not self.marker.is_file():
             return False
         try:
-            value = json.loads(self.marker.read_text(encoding="utf-8"))
+            value = json.loads(self.marker.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             return False
         return (isinstance(value, dict) and value.get("schema_version") == 1 and
@@ -191,8 +191,13 @@ def configured_docker_command(*, environ: Mapping[str, str] | None = None,
     env = os.environ if environ is None else environ
     configured_state = state_dir or env.get("DEEPVISION_WSL_STATE_DIR")
     if configured_state is None:
-        configured_state = Path(env.get("DEEP_STUDIO_STATE_DIR") or
-                                (Path.home() / ".deep-vision-studio-react")) / "wsl"
+        app_state = env.get("DEEP_STUDIO_STATE_DIR")
+        if app_state:
+            configured_state = Path(app_state) / "wsl"
+        elif env.get("LOCALAPPDATA"):
+            configured_state = Path(env["LOCALAPPDATA"]) / "DeepVisionStudio" / "wsl"
+        else:
+            configured_state = Path.home() / ".deep-vision-studio-react" / "wsl"
     configured_state = Path(configured_state).expanduser()
     distro = str(env.get("DEEPVISION_WSL_DISTRO", "")).strip()
     marker = configured_state / "owned-distro.json"
@@ -200,7 +205,7 @@ def configured_docker_command(*, environ: Mapping[str, str] | None = None,
         raise ManagedWslError("owned WSL distro marker cannot be a symlink")
     if not distro and marker.is_file():
         try:
-            marker_value = json.loads(marker.read_text(encoding="utf-8"))
+            marker_value = json.loads(marker.read_text(encoding="utf-8-sig"))
         except (OSError, UnicodeError, ValueError) as exc:
             raise ManagedWslError("owned WSL distro marker is invalid") from exc
         if (not isinstance(marker_value, dict) or marker_value.get("schema_version") != 1 or

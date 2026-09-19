@@ -25,6 +25,10 @@ def test_builtin_models_are_constructible_without_pretrained_download(model_id, 
     from builtin_models import build_builtin_model, get_builtin_spec, make_builtin_checkpoint
 
     model = build_builtin_model(model_id, 2, shape[1]).eval()
+    assert model.task == task
+    assert model.in_channels == shape[1]
+    assert model.num_classes == 2
+    assert isinstance(model.gradcam_target_layer, str)
     with torch.inference_mode():
         output = model(torch.zeros(shape))
     assert output.shape[:2] == (1, 2)
@@ -34,6 +38,26 @@ def test_builtin_models_are_constructible_without_pretrained_download(model_id, 
                                          input_size=shape[-1], class_names=["ok", "ng"])
     assert checkpoint["backend"] == "builtin"
     assert checkpoint["model_id"] == get_builtin_spec(model_id).model_id
+
+
+@pytest.mark.parametrize(
+    ("model_id", "target_layer"),
+    [
+        ("resnet18", "layer4"),
+        ("resnet50", "layer4"),
+        ("convnext_v1_tiny", "features.7"),
+        ("deeplabv3plus_resnet34", "layer4"),
+        ("unet_resnet18", "enc4"),
+    ],
+)
+def test_builtin_model_runtime_contract_supports_gradcam(model_id, target_layer):
+    from builtin_models import build_builtin_model
+
+    model = build_builtin_model(model_id, 2, 3).eval()
+    current = model
+    for component in target_layer.split("."):
+        current = getattr(current, component)
+    assert current is not None
 
 
 @pytest.mark.parametrize(
@@ -83,3 +107,74 @@ def test_builtin_training_checkpoint_roundtrips_for_export(tmp_path):
                             epoch=0, optimizer=optimizer, metric=0.5)
     result = export_checkpoint(checkpoint, tmp_path / "model.onnx", verify=True, log=lambda _: None)
     assert result["verification"] == "passed"
+
+
+def test_builtin_trainer_persists_applied_ui_settings(tmp_path):
+    from PIL import Image
+    import torch
+    from train_builtin import train_builtin
+
+    data = tmp_path / "data"
+    for split in ("train", "val"):
+        for class_name, value in (("ok", 32), ("ng", 224)):
+            folder = data / split / class_name
+            folder.mkdir(parents=True)
+            Image.new("RGB", (32, 32), (value, value, value)).save(folder / "sample.png")
+    output = tmp_path / "run"
+    best = train_builtin(
+        "resnet18", data, input_size=32, epochs=1, batch_size=2,
+        optimizer_name="sgd", scheduler_name="none", weight_decay=0.0123,
+        horizontal_flip=0.0, rotation=0.0, color_jitter=0.0,
+        freeze_backbone=True, output_dir=output,
+    )
+    state = json.loads((output / "training.json").read_text(encoding="utf-8"))
+    checkpoint = torch.load(best, map_location="cpu", weights_only=False)
+    assert state["completed_epochs"] == 1
+    assert state["best_epoch"] == 1
+    assert len(state["metrics_history"]) == 1
+    assert state["training_config"]["optimizer"] == "sgd"
+    assert state["training_config"]["weight_decay"] == 0.0123
+    assert state["training_config"]["augmentation"] == {
+        "horizontal_flip": 0.0, "rotation": 0.0, "color_jitter": 0.0,
+    }
+    assert checkpoint["training_config"] == state["training_config"]
+
+
+def test_builtin_resume_preserves_best_metric_from_history(tmp_path):
+    from PIL import Image
+    import torch
+    from train_builtin import train_builtin
+
+    data = tmp_path / "data"
+    for split in ("train", "val"):
+        for class_name, value in (("ok", 32), ("ng", 224)):
+            folder = data / split / class_name
+            folder.mkdir(parents=True)
+            Image.new("RGB", (32, 32), (value, value, value)).save(folder / "sample.png")
+    first = tmp_path / "first"
+    train_builtin(
+        "resnet18", data, input_size=32, epochs=1, batch_size=2,
+        scheduler_name="none", horizontal_flip=0.0, rotation=0.0,
+        color_jitter=0.0, freeze_backbone=True, output_dir=first,
+    )
+    resume = torch.load(first / "last.pt", map_location="cpu", weights_only=False)
+    resume["metric"] = -1.0
+    resume["metrics_history"] = [{
+        "epoch": 1, "train_loss": 1.0, "train_metric": 0.0,
+        "val_loss": 1.0, "val_metric": 2.0, "learning_rate": 1e-3,
+    }]
+    torch.save(resume, first / "last.pt")
+    previous_best = torch.load(first / "best.pt", map_location="cpu", weights_only=False)
+    previous_best["metric"] = 2.0
+    previous_best["epoch"] = 0
+    torch.save(previous_best, first / "best.pt")
+    second = tmp_path / "second"
+    train_builtin(
+        "resnet18", data, input_size=32, epochs=2, batch_size=2,
+        scheduler_name="none", horizontal_flip=0.0, rotation=0.0,
+        color_jitter=0.0, freeze_backbone=True, output_dir=second,
+        resume=first / "last.pt",
+    )
+    state = json.loads((second / "training.json").read_text(encoding="utf-8"))
+    assert state["best_metric"] == 2.0
+    assert state["best_epoch"] == 1

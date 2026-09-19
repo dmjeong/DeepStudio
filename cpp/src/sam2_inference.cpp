@@ -220,6 +220,8 @@ bool Sam2Inference::InitializeFromJson(const std::string& config_path,
         for (const auto& semantic : required_semantics)
             if (m_decoder_contract.inputs.find(semantic) == m_decoder_contract.inputs.end())
                 throw std::invalid_argument("SAM2 decoder graph contract is missing a required input.");
+        ++m_generation;
+        if (m_generation == 0) ++m_generation;
         m_ready = true;
         return true;
     } catch (const std::exception& error) {
@@ -259,6 +261,7 @@ std::vector<float> Sam2Inference::Preprocess(const cv::Mat& image) const
 Sam2ImageContext Sam2Inference::Encode(const cv::Mat& image)
 {
     if (!m_ready) throw std::logic_error("SAM2 model is not initialized.");
+    const auto started = std::chrono::steady_clock::now();
     const auto tensor_data = Preprocess(image);
     const std::vector<int64_t> shape{1, m_input_channels, m_input_height, m_input_width};
     auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
@@ -267,8 +270,10 @@ Sam2ImageContext Sam2Inference::Encode(const cv::Mat& image)
     const char* input_names[] = {m_input_name.c_str()};
     std::vector<const char*> output_names;
     for (const auto& name : m_encoder_output_names) output_names.push_back(name.c_str());
+    const auto model_started = std::chrono::steady_clock::now();
     auto outputs = m_encoder->Run(Ort::RunOptions{nullptr}, input_names, &input, 1,
                                   output_names.data(), output_names.size());
+    const auto model_finished = std::chrono::steady_clock::now();
     for (size_t index = 0; index < outputs.size(); ++index) {
         const auto info = outputs[index].GetTensorTypeAndShapeInfo();
         if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || info.GetShape().empty())
@@ -278,16 +283,23 @@ Sam2ImageContext Sam2Inference::Encode(const cv::Mat& image)
     }
     Sam2ImageContext context;
     context.owner = this;
+    context.generation = m_generation;
     context.image_width = image.cols;
     context.image_height = image.rows;
+    const auto finished = std::chrono::steady_clock::now();
+    context.total_ms = std::chrono::duration<double, std::milli>(finished - started).count();
+    context.preprocess_ms = std::chrono::duration<double, std::milli>(model_started - started).count();
+    context.model_ms = std::chrono::duration<double, std::milli>(model_finished - model_started).count();
     context.embeddings = std::move(outputs);
     return context;
 }
 
 Sam2Result Sam2Inference::Segment(const Sam2ImageContext& context, const Sam2Prompt& prompt)
 {
+    const auto started = std::chrono::steady_clock::now();
     if (!m_ready) throw std::logic_error("SAM2 model is not initialized.");
-    if (context.owner != this || context.embeddings.size() != m_encoder_output_names.size())
+    if (context.owner != this || context.generation != m_generation ||
+        context.embeddings.size() != m_encoder_output_names.size())
         throw std::invalid_argument("SAM2 image context does not belong to this encoder.");
     if (prompt.points.size() != prompt.labels.size())
         throw std::invalid_argument("SAM2 point and label counts differ.");
@@ -466,9 +478,10 @@ Sam2Result Sam2Inference::Segment(const Sam2ImageContext& context, const Sam2Pro
             destination[column] = result.mask_logits[selected_offset + static_cast<size_t>(row) * mask_width + column] > 0.0f ? 1 : 0;
     }
     const auto end = std::chrono::steady_clock::now();
+    result.preprocess_ms = std::chrono::duration<double, std::milli>(model_start - started).count();
     result.model_ms = std::chrono::duration<double, std::milli>(model_end - model_start).count();
     result.postprocess_ms = std::chrono::duration<double, std::milli>(end - model_end).count();
-    result.total_ms = std::chrono::duration<double, std::milli>(end - model_start).count();
+    result.total_ms = std::chrono::duration<double, std::milli>(end - started).count();
     return result;
 }
 
@@ -476,7 +489,8 @@ Sam2Result Sam2Inference::Automatic(const Sam2ImageContext& context, int grid_wi
                                     int grid_height, float min_score)
 {
     if (!m_ready) throw std::logic_error("SAM2 model is not initialized.");
-    if (context.owner != this || context.embeddings.size() != m_encoder_output_names.size())
+    if (context.owner != this || context.generation != m_generation ||
+        context.embeddings.size() != m_encoder_output_names.size())
         throw std::invalid_argument("SAM2 image context does not belong to this encoder.");
     if (grid_width < 1 || grid_height < 1 || grid_width > 32 || grid_height > 32)
         throw std::invalid_argument("SAM2 automatic-mask grid must be between 1 and 32 per axis.");
@@ -487,6 +501,7 @@ Sam2Result Sam2Inference::Automatic(const Sam2ImageContext& context, int grid_wi
     cv::Mat union_mask;
     Sam2Result best;
     float best_score = -std::numeric_limits<float>::infinity();
+    double preprocess_ms = 0.0;
     double model_ms = 0.0;
     for (int row = 0; row < grid_height; ++row) {
         for (int column = 0; column < grid_width; ++column) {
@@ -498,6 +513,7 @@ Sam2Result Sam2Inference::Automatic(const Sam2ImageContext& context, int grid_wi
                     static_cast<float>(grid_height));
             prompt.labels.push_back(1);
             auto candidate = Segment(context, prompt);
+            preprocess_ms += candidate.preprocess_ms;
             model_ms += candidate.model_ms;
             const float score = candidate.scores.empty()
                 ? 0.0f
@@ -516,14 +532,15 @@ Sam2Result Sam2Inference::Automatic(const Sam2ImageContext& context, int grid_wi
     }
     if (union_mask.empty()) {
         if (best.mask.empty()) throw std::runtime_error("SAM2 automatic-mask produced no masks.");
-        union_mask = best.mask.clone();
+        union_mask = cv::Mat::zeros(best.mask.size(), CV_8UC1);
     }
     const auto finished = std::chrono::steady_clock::now();
     best.mask = std::move(union_mask);
     best.mask_count = 1;
     best.selected_mask = 0;
     best.total_ms = std::chrono::duration<double, std::milli>(finished - started).count();
+    best.preprocess_ms = preprocess_ms;
     best.model_ms = model_ms;
-    best.postprocess_ms = std::max(0.0, best.total_ms - best.model_ms);
+    best.postprocess_ms = std::max(0.0, best.total_ms - best.preprocess_ms - best.model_ms);
     return best;
 }

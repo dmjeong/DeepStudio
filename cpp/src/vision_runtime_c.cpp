@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -180,8 +181,7 @@ std::unique_ptr<dv_result> make_sam_result(const Sam2Result& source) {
     result->total_ms = source.total_ms;
     result->model_ms = source.model_ms;
     result->postprocess_ms = source.postprocess_ms;
-    result->preprocess_ms = source.total_ms - source.model_ms - source.postprocess_ms;
-    if (result->preprocess_ms < 0.0) result->preprocess_ms = 0.0;
+    result->preprocess_ms = source.preprocess_ms;
     return result;
 }
 
@@ -485,9 +485,17 @@ dv_status dv_infer(dv_session* session, const dv_image_view* image, dv_result** 
         const auto pixels = view_to_mat(*image);
         std::unique_ptr<dv_result> result;
         if (session->sam2) {
+            const auto overall_started = std::chrono::steady_clock::now();
             auto context = session->sam2->Encode(pixels);
             Sam2Prompt prompt;
-            result = make_sam_result(session->sam2->Segment(context, prompt));
+            auto sam_result = session->sam2->Segment(context, prompt);
+            sam_result.preprocess_ms += context.preprocess_ms;
+            sam_result.model_ms += context.model_ms;
+            sam_result.total_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - overall_started).count();
+            sam_result.postprocess_ms = std::max(
+                0.0, sam_result.total_ms - sam_result.preprocess_ms - sam_result.model_ms);
+            result = make_sam_result(sam_result);
         } else if (!session->engine.IsReady()) throw std::logic_error("Session is not ready.");
         else if (session->engine.GetConfig().task == "classify")
             result = make_classification(session->engine.Classify(pixels));

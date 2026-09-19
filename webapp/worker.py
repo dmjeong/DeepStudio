@@ -101,9 +101,11 @@ def _train_builtin_project(context, project, device):
     run_dir = Path(project.project_dir) / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     context.emit("log_message", [f"기본 모델 학습: {model_id}"])
+    history = []
 
     def log(message):
         if isinstance(message, dict) and message.get("event") == "epoch_finished":
+            history.append(dict(message))
             epoch = int(message["epoch"])
             total = int(message["total_epochs"])
             metric = float(message["metric"])
@@ -114,12 +116,37 @@ def _train_builtin_project(context, project, device):
         else:
             context.emit("log_message", [str(message)])
 
-    best = train_builtin(model_id, data.root, num_classes=data.num_classes,
+    data_root = data.root
+    from center_crop import configured_center_crop
+    crop = configured_center_crop(cfg)
+    if crop:
+        from crop_dataset import prepare_crop_dataset
+        data_root = prepare_crop_dataset(
+            data.root, Path(project.project_dir) / "generated", project.task, crop,
+            num_classes=data.num_classes, should_stop=context.cancelled,
+            log=lambda message: context.emit("log_message", [message]),
+        )
+    weights = project.model.pretrained_weights or None
+    resume = weights if str(cfg.training_mode).endswith("_resume") else None
+    initial_weights = None if resume else weights
+    augmentation = cfg.augmentation
+    best = train_builtin(model_id, data_root, num_classes=data.num_classes,
                          input_size=cfg.input_size, in_channels=cfg.in_channels,
                          epochs=cfg.epochs, batch_size=cfg.batch_size,
-                         learning_rate=cfg.learning_rate, output_dir=run_dir,
+                         learning_rate=cfg.learning_rate, weight_decay=cfg.weight_decay,
+                         optimizer_name=cfg.optimizer, scheduler_name=cfg.scheduler,
+                         warmup_epochs=cfg.warmup_epochs,
+                         early_stop_patience=cfg.early_stop_patience,
+                         label_smoothing=(cfg.label_smoothing if project.task == "classify" else 0.0),
+                         horizontal_flip=augmentation.horizontal_flip,
+                         rotation=augmentation.rotation,
+                         color_jitter=augmentation.color_jitter,
+                         val_split=data.val_split,
+                         freeze_backbone=project.model.freeze_backbone,
+                         backbone_lr_mult=project.model.backbone_lr_mult,
+                         output_dir=run_dir,
                          device=str(device),
-                         resume=project.model.pretrained_weights or None,
+                         resume=resume, initial_weights=initial_weights,
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
@@ -129,18 +156,40 @@ def _train_builtin_project(context, project, device):
         return record
     import torch
     checkpoint = torch.load(best, map_location="cpu", weights_only=False)
+    training_state_path = run_dir / "training.json"
+    training_state = (json.loads(training_state_path.read_text(encoding="utf-8"))
+                      if training_state_path.is_file() else {})
     metric = float(checkpoint.get("metric") or 0.0)
-    epoch = int(checkpoint.get("epoch", 0)) + 1
+    best_epoch = int(training_state.get("best_epoch") or (int(checkpoint.get("epoch", 0)) + 1))
+    completed_epochs = int(training_state.get("completed_epochs") or best_epoch)
+    metric_name = "accuracy" if project.task == "classify" else "mIoU"
+    full_history = training_state.get("metrics_history") or checkpoint.get("metrics_history") or []
+    if full_history:
+        metric_history = [float(item["val_metric"]) for item in full_history]
+        train_loss_history = [float(item["train_loss"]) for item in full_history]
+        val_loss_history = [float(item["val_loss"]) for item in full_history]
+    else:
+        metric_history = [float(item["metric"]) for item in history]
+        train_loss_history = [float(item["train_loss"]) for item in history]
+        val_loss_history = [float(item["val_loss"]) for item in history]
+    metrics_history = {
+        "train_loss": train_loss_history,
+        "val_loss": val_loss_history,
+        metric_name: metric_history,
+    }
+    lr_history = [float(item["learning_rate"]) for item in full_history
+                  if "learning_rate" in item]
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status=(
                            "cancelled" if context.cancelled() else "completed"),
-                       epochs_done=epoch, best_metric=metric, best_epoch=epoch,
-                       best_metric_name="accuracy" if project.task == "classify" else "mIoU",
-                       checkpoint_path=str(best), metrics_history={
-                           ("accuracy" if project.task == "classify" else "mIoU"): [metric]}, config_snapshot={
-                           "engine": "builtin", "model_id": model_id})
+                       epochs_done=completed_epochs, best_metric=metric, best_epoch=best_epoch,
+                       best_metric_name=metric_name, checkpoint_path=str(best),
+                       metrics_history=metrics_history, lr_history=lr_history,
+                       config_snapshot={"engine": "builtin", "model_id": model_id,
+                                        "training": training_state.get("training_config", {}),
+                                        "center_crop": crop})
     project.runs.append(record)
-    context.emit("training_finished", [metric, epoch, str(best)])
+    context.emit("training_finished", [metric, best_epoch, str(best)])
     return record
 
 

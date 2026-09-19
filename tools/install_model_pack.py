@@ -19,11 +19,15 @@ def main(argv=None) -> int:
     parser.add_argument("pack", type=Path)
     parser.add_argument("--root", type=Path,
                         help="installed model root (default: per-user DeepVisionStudio directory)")
+    parser.add_argument("--trust-store", type=Path,
+                        help="absolute path to the versioned Ed25519 public-key trust store")
     parser.add_argument("--allow-unsigned", action="store_true", help="development-only unsigned pack")
     args = parser.parse_args(argv)
     try:
         root = args.root or default_installed_model_root()
-        installed = PackInstaller(root).install(args.pack, allow_unsigned=args.allow_unsigned)
+        installed = PackInstaller(root, trust_store=args.trust_store).install(
+            args.pack, allow_unsigned=args.allow_unsigned
+        )
     except PackInstallError as error:
         parser.error(str(error))
     print(json.dumps({"model_id": installed.model_id, "pack_version": installed.pack_version,

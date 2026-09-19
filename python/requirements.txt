@@ -24,6 +24,7 @@ Pillow>=9.0.0
 opencv-python>=4.7.0
 shapely==2.1.2
 numpy>=1.24.0
+cryptography>=44.0.0         # Ed25519 model-pack signature verification
 
 # ── 선택적 도구 ──
 # onnxsim>=0.4.0       # ONNX 모델 단순화 (선택)

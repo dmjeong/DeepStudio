@@ -287,7 +287,8 @@ class SegmentationDataset(Dataset):
                  input_size: Tuple[int, int] = (320, 320),
                  in_channels: int = 3,
                  is_train: bool = True,
-                 flip_prob: float = 0.5, num_classes: Optional[int] = None):
+                 flip_prob: float = 0.5, rotation: float = 0.0,
+                 color_jitter: float = 0.0, num_classes: Optional[int] = None):
         super().__init__()
         self.img_dir = img_dir
         self.mask_dir = mask_dir
@@ -295,6 +296,8 @@ class SegmentationDataset(Dataset):
         self.in_channels = in_channels
         self.is_train = is_train
         self.flip_prob = flip_prob
+        self.rotation = rotation
+        self.color_jitter = color_jitter
         self.num_classes = num_classes
 
         # 채널 수에 맞는 정규화 값 선택
@@ -347,6 +350,21 @@ class SegmentationDataset(Dataset):
             if random.random() < self.flip_prob:
                 image = image.transpose(Image.FLIP_LEFT_RIGHT)
                 mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
+            if self.rotation > 0:
+                angle = random.uniform(-self.rotation, self.rotation)
+                image = T.functional.rotate(
+                    image, angle, interpolation=T.InterpolationMode.BILINEAR, fill=0
+                )
+                mask = T.functional.rotate(
+                    mask, angle, interpolation=T.InterpolationMode.NEAREST, fill=255
+                )
+            if self.color_jitter > 0:
+                jitter = T.ColorJitter(
+                    brightness=self.color_jitter, contrast=self.color_jitter,
+                    saturation=0 if self.in_channels == 1 else self.color_jitter,
+                    hue=0 if self.in_channels == 1 else self.color_jitter / 2,
+                )
+                image = jitter(image)
 
         # 텐서 변환
         image = T.functional.to_tensor(image)  # (C, H, W), [0, 1]
@@ -676,6 +694,8 @@ def create_segmentation_loaders(
     num_workers: int = 0,
     in_channels: int = 3,
     flip_prob: float = 0.5,
+    rotation: float = 0.0,
+    color_jitter: float = 0.0,
     num_classes: Optional[int] = None,
 ) -> Tuple[DataLoader, DataLoader]:
     """
@@ -698,6 +718,8 @@ def create_segmentation_loaders(
         in_channels=in_channels,
         is_train=True,
         flip_prob=flip_prob,
+        rotation=rotation,
+        color_jitter=color_jitter,
         num_classes=num_classes,
     )
     val_dataset = SegmentationDataset(

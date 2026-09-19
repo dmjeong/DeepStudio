@@ -190,7 +190,10 @@ Docker 추가가 자동으로 더 빠른 추론을 뜻하지 않는다.
 `tools/build_model_pack.py SOURCE OUTPUT.dvmodel --allow-unsigned`는 로컬 개발용
 팩을 만들고 `tools/install_model_pack.py`는 경로 탈출·symlink·압축 폭탄·모든 SHA-256을
 검사한 뒤 staging 디렉터리에서 원자 활성화한다. `--allow-unsigned`는 개발용에서만 사용하며,
-출시 팩은 외부 서명/신뢰 키 검증을 통과한 manifest를 사용한다.
+출시 팩은 Ed25519 외부 서명과 신뢰 키 검증을 통과한 manifest를 사용한다. 신뢰 저장소는
+`{"schema_version":1,"keys":{"키ID":{"algorithm":"ed25519","public_key":"base64 공개키"}}}`
+형식이며 `tools/install_model_pack.py --trust-store <절대경로>` 또는
+`DEEPVISION_MODEL_PACK_TRUST_STORE`로 지정한다. 개인 서명 키는 앱과 설치파일에 넣지 않는다.
 
 Windows 빌드 이미지는 먼저 `stage_payload.py`로 UI·worker·SDK·팩·고지·SBOM을 하나의 payload
 루트에 모은다. `collect_payloads.py`와 `validate_payloads.py`가 모든 파일의 크기·SHA-256과
@@ -198,11 +201,12 @@ Windows 빌드 이미지는 먼저 `stage_payload.py`로 UI·worker·SDK·팩·�
 모델 허브 호출을 수행하지 않는다.
 
 일반 push 계약은 개발 중인 카탈로그(`requested`, `export_verified` 등)를 포함할 수 있다.
-정식 설치물을 만들 때는 `build_release.ps1 -RequireReleaseReadyModels`와
+정식 설치물을 만들 때는 `build_release.ps1 -RequireReleaseReadyModels
+-ModelPackTrustStore <절대경로>`와
 workflow_dispatch의 `require_release_ready_models=true`를 함께 사용한다. 이 게이트는
 `release_ready_only=true` 카탈로그, 모든 모델의 `release_ready` 상태, 그리고 각 모델의
 `metadata.payload`(또는 `payload`)에 선언된 staged 파일을 확인한다. `kind=pack` 항목은
-실제 `.dvmodel` 파일을 포함해야 한다. 따라서 카탈로그 JSON만 복사하거나 아직 검증되지 않은
+실제 `.dvmodel` 파일을 포함해야 하며 모든 파일의 SHA-256과 Ed25519 서명을 검증한다. 따라서 카탈로그 JSON만 복사하거나 아직 검증되지 않은
 Re-DETR/SAM2/LibreYOLO 팩을 넣은 상태로는 production Setup을 만들 수 없다.
 외부 모델 payload 루트는 `DEEPVISION_MODEL_PAYLOAD_ROOT`로 지정하고
 `default-model-catalog.json`을 루트에 둔다. 현재 저장소의 기본 카탈로그는 개발 검증 상태를

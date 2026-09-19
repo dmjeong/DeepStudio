@@ -199,7 +199,7 @@ public sealed class VisionSession : SafeHandle
         var view = PinImage(image, width, height, channels, strideBytes, out var pin);
         try
         {
-            var status = Native.dv_sam_encode(handle, ref view, out var raw);
+            var status = Native.dv_sam_encode(this, ref view, out var raw);
             if (status != 0 || raw == IntPtr.Zero)
                 throw new InvalidOperationException($"SAM2 encode failed ({StatusName(status)}): {LastError}");
             return new SamImageContext(this, raw);
@@ -245,7 +245,7 @@ public sealed class VisionSession : SafeHandle
                 MaskWidth = prompt.MaskInput is null ? 0u : (uint)prompt.MaskWidth,
                 MaskHeight = prompt.MaskInput is null ? 0u : (uint)prompt.MaskHeight,
             };
-            var status = Native.dv_sam_segment(handle, context.DangerousGetHandle(), ref nativePrompt, out var raw);
+            var status = Native.dv_sam_segment(this, context, ref nativePrompt, out var raw);
             if (status != 0 || raw == IntPtr.Zero)
                 throw new InvalidOperationException($"SAM2 prompt failed ({StatusName(status)}): {LastError}");
             try
@@ -277,7 +277,7 @@ public sealed class VisionSession : SafeHandle
             throw new ArgumentOutOfRangeException(nameof(gridWidth));
         if (float.IsNaN(minScore) || float.IsPositiveInfinity(minScore))
             throw new ArgumentOutOfRangeException(nameof(minScore));
-        var status = Native.dv_sam_auto_mask(handle, context.DangerousGetHandle(),
+        var status = Native.dv_sam_auto_mask(this, context,
                                              (uint)gridWidth, (uint)gridHeight, minScore, out var raw);
         if (status != 0 || raw == IntPtr.Zero)
             throw new InvalidOperationException($"SAM2 automatic mask failed ({StatusName(status)}): {LastError}");
@@ -344,7 +344,7 @@ public sealed class VisionSession : SafeHandle
                 Channels = channels,
                 StrideBytes = stride,
             };
-            var status = Native.dv_infer(handle, ref view, out var raw);
+            var status = Native.dv_infer(this, ref view, out var raw);
             if (status != 0 || raw == IntPtr.Zero)
                 throw new InvalidOperationException($"Vision inference failed ({StatusName(status)}): {LastError}");
             try { return NativeResultCopy.From(raw); }
@@ -353,7 +353,7 @@ public sealed class VisionSession : SafeHandle
         finally { pin.Free(); }
     }
 
-    public string LastError => Marshal.PtrToStringUTF8(Native.dv_last_error(handle)) ?? string.Empty;
+    public string LastError => Marshal.PtrToStringUTF8(Native.dv_last_error(this)) ?? string.Empty;
 
     private static string StatusName(int status) =>
         Marshal.PtrToStringUTF8(Native.dv_status_name(status)) ?? "unknown";
@@ -530,22 +530,22 @@ public sealed class VisionSession : SafeHandle
             ref NativeSessionOptions options, out IntPtr session);
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern int dv_infer(IntPtr session, ref NativeImageView image, out IntPtr result);
+        internal static extern int dv_infer(VisionSession session, ref NativeImageView image, out IntPtr result);
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern int dv_sam_encode(IntPtr session, ref NativeImageView image, out IntPtr context);
+        internal static extern int dv_sam_encode(VisionSession session, ref NativeImageView image, out IntPtr context);
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern int dv_sam_segment(IntPtr session, IntPtr context,
+        internal static extern int dv_sam_segment(VisionSession session, SamImageContext context,
                                                    ref NativeSamPrompt prompt, out IntPtr result);
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern int dv_sam_auto_mask(IntPtr session, IntPtr context,
+        internal static extern int dv_sam_auto_mask(VisionSession session, SamImageContext context,
                                                      uint gridWidth, uint gridHeight,
                                                      float minScore, out IntPtr result);
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr dv_last_error(IntPtr session);
+        internal static extern IntPtr dv_last_error(VisionSession session);
 
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr dv_status_name(int status);

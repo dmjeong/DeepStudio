@@ -19,6 +19,7 @@ from .pack_installer import (MODEL_ID_RE, PACK_VERSION_RE, WINDOWS_RESERVED_NAME
                               _validate_release_notices)
 from .special_contracts import (SpecialContractError, validate_container_image_asset,
                                 validate_special_assets, validate_special_manifest)
+from .pack_signing import verify_pack_signature
 
 
 class PackBuildError(ValueError):
@@ -41,7 +42,8 @@ def _required_text(manifest: Mapping[str, Any], key: str) -> str:
 
 
 def build_pack(source: str | Path, output: str | Path, *, manifest: str | Path | None = None,
-               allow_unsigned: bool = False) -> Path:
+               allow_unsigned: bool = False,
+               trusted_keys: Mapping[str, bytes | str] | None = None) -> Path:
     """Create a reproducible pack from a directory and return its output path."""
     source_path = Path(source).expanduser()
     if source_path.is_symlink():
@@ -76,8 +78,8 @@ def build_pack(source: str | Path, output: str | Path, *, manifest: str | Path |
     _required_text(definition, "model_id")
     _required_text(definition, "pack_version")
     signature = definition.get("signature")
-    signed = isinstance(signature, Mapping) and bool(signature.get("key_id")) and bool(signature.get("value"))
-    if not signed and not allow_unsigned:
+    signature_present = signature is not None
+    if not signature_present and not allow_unsigned:
         raise PackBuildError("unsigned output requires --allow-unsigned")
 
     files: list[tuple[str, Path]] = []
@@ -115,6 +117,11 @@ def build_pack(source: str | Path, output: str | Path, *, manifest: str | Path |
         raise PackBuildError(str(exc)) from exc
 
     checksums = {name: _sha256(path) for name, path in files}
+    if signature_present:
+        try:
+            verify_pack_signature(definition, checksums, dict(trusted_keys or {}))
+        except ValueError as exc:
+            raise PackBuildError(str(exc)) from exc
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
     os.close(fd)

@@ -47,6 +47,17 @@ def validate_training_options(project):
     cfg = project.training
     capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method)
     model_id = getattr(project.model, "model_id", "")
+    if project.task == "anomaly" and cfg.anomaly_method == "patchcore" and model_id:
+        expected_backbones = {
+            "patchcore_wide_resnet50_2": "wide_resnet50_2",
+            "patchcore_resnet18": "resnet18",
+        }
+        expected = expected_backbones.get(model_id)
+        if expected is not None and cfg.patchcore_backbone != expected:
+            raise ValueError(
+                f"선택한 PatchCore 모델 {model_id}의 백본은 {expected}이지만 "
+                f"학습 설정은 {cfg.patchcore_backbone}입니다. 모델과 백본을 동일하게 선택하세요."
+            )
     if model_id:
         # Built-in adapters are weight-free and keep their input/task contract
         # in one registry.  Container packs validate their own contract after

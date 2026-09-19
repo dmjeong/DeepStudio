@@ -199,6 +199,19 @@ int main(int argc, char** argv)
         const auto sam_box_result = sam2.Segment(image_context, sam_box_prompt);
         require(sam_box_result.mask.size() == cv::Size(2, 2) && cv::countNonZero(sam_box_result.mask) == 4,
                 "SAM2 box/mask prompt decode mismatch.");
+        const auto rejected_automatic = sam2.Automatic(image_context, 1, 1, 0.95f);
+        require(rejected_automatic.mask.size() == cv::Size(2, 2) &&
+                    cv::countNonZero(rejected_automatic.mask) == 0,
+                "SAM2 automatic mask returned a candidate below the score threshold.");
+        require(sam2.InitializeFromJson((root / "sam2.json").u8string(), "onnxruntime", 2),
+                "SAM2 reload failed.");
+        bool stale_context_rejected = false;
+        try { sam2.Segment(image_context, sam_prompt); }
+        catch (const std::invalid_argument&) { stale_context_rejected = true; }
+        require(stale_context_rejected, "SAM2 accepted an image context from an older session.");
+        const auto refreshed_context = sam2.Encode(bgr);
+        require(cv::countNonZero(sam2.Segment(refreshed_context, sam_prompt).mask) == 4,
+                "SAM2 refreshed image context failed.");
         require(engine.InitializeFromJson((root / "anomaly.json").u8string()), "Anomaly load failed.");
         const auto anomaly = engine.Anomaly(gray);
         require(anomaly.anomaly_map.type() == CV_32FC1 && anomaly.anomaly_map.size() == gray.size(),

@@ -94,7 +94,8 @@ try {
         version = $Version
         engine = "docker"
     }
-    $record | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $pendingMarker -Encoding UTF8
+    $recordJson = ($record | ConvertTo-Json -Depth 4) + [Environment]::NewLine
+    [IO.File]::WriteAllText($pendingMarker, $recordJson, (New-Object Text.UTF8Encoding($false)))
     Move-Item -LiteralPath $pendingMarker -Destination $marker -Force
     $bootstrapCommitted = $true
     Write-Output $marker

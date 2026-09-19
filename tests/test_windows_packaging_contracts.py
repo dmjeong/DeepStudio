@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import xml.etree.ElementTree as ET
+import base64
 import hashlib
 import json
 import os
@@ -26,8 +27,8 @@ def test_wix_sources_are_well_formed_and_use_payload_contract():
     assert "MsiPackage SourceFile=\"$(var.MsiPath)\"" in bundle
     assert "Condition=\"VersionNT64\"" in bundle
     assert "WixQuietExec" in msi
-    assert 'SetProperty Id="WixQuietExecCmdLine"' in msi
-    assert 'SetProperty Id="RunDeepVisionWslBootstrap"' not in msi
+    assert 'SetProperty Id="RunDeepVisionWslBootstrap"' in msi
+    assert 'SetProperty Id="WixQuietExecCmdLine"' not in msi
     assert "Wix4UtilCA_$(sys.BUILDARCHSHORT)" in msi
     assert "bootstrap_wsl.ps1" in msi
     assert "NOT REMOVE" in msi
@@ -49,6 +50,7 @@ def test_release_script_verifies_payload_before_wix_build():
     assert '$wix.Source --version' in script
     assert '$WixVersion -notmatch' in script
     assert 'WiX version mismatch' in script
+    assert '[string] $WixVersion = "7.0.0"' in script
 
 
 def test_third_party_notice_names_optional_model_sources():
@@ -79,6 +81,9 @@ def test_csharp_sdk_exposes_directory_bundle_open():
     assert '<RuntimeIdentifier>win-x64</RuntimeIdentifier>' in project
     assert '<SelfContained>true</SelfContained>' in project
     assert "VisionSession.OpenBundle" in program
+    assert "DangerousGetHandle" not in source
+    assert "dv_infer(VisionSession session" in source
+    assert "dv_sam_segment(VisionSession session, SamImageContext context" in source
 
 
 def test_offline_default_model_catalog_matches_registry():
@@ -128,7 +133,9 @@ def test_model_catalog_payload_gate_is_optional_for_development_and_strict_for_r
         "metadata": {"payload": {"kind": "builtin", "paths": ["app/DeepVisionStudio.exe"]}},
     }]
     catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
-    api["validate_model_catalog_payload"](root, require_release_ready=True)
+    api["validate_model_catalog_payload"](
+        root, require_release_ready=True, required_model_ids={"demo"}
+    )
 
     catalog["models"][0]["metadata"]["payload"] = {
         "kind": "pack", "paths": ["models/demo.bin"]
@@ -136,23 +143,75 @@ def test_model_catalog_payload_gate_is_optional_for_development_and_strict_for_r
     catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
     (root / "models" / "demo.bin").write_bytes(b"pack")
     with pytest.raises(api["ModelCatalogPayloadError"], match=".dvmodel"):
-        api["validate_model_catalog_payload"](root, require_release_ready=True)
+        api["validate_model_catalog_payload"](
+            root, require_release_ready=True, required_model_ids={"demo"}
+        )
 
     catalog["models"][0]["metadata"]["payload"] = {
         "kind": "pack", "paths": ["models/demo.dvmodel"]
     }
     catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
-    with zipfile.ZipFile(root / "models" / "demo.dvmodel", "w") as archive:
-        archive.writestr("manifest.json", json.dumps({
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from model_runtime.pack_signing import signature_payload
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    manifest = {
+            "schema_version": 1,
             "model_id": "demo",
+            "pack_version": "1.0.0",
             "release_status": "release_ready",
             "license": {"spdx": "MIT", "source": "https://example.invalid/model", "revision": "v1"},
-            "signature": {"key_id": "release-key", "value": "signed"},
-        }))
-        archive.writestr("checksums.json", json.dumps({"files": {}}))
-        archive.writestr("THIRD_PARTY_NOTICES.md", "notice")
-        archive.writestr("licenses/model.txt", "license")
-    api["validate_model_catalog_payload"](root, require_release_ready=True)
+        }
+    pack_files = {
+        "THIRD_PARTY_NOTICES.md": b"notice",
+        "licenses/model.txt": b"license",
+    }
+    signed_hashes = {name: hashlib.sha256(content).hexdigest()
+                     for name, content in pack_files.items()}
+    manifest["signature"] = {
+        "algorithm": "ed25519", "key_id": "release-key",
+        "value": base64.b64encode(
+            private_key.sign(signature_payload(manifest, signed_hashes))
+        ).decode("ascii"),
+    }
+    manifest_bytes = json.dumps(manifest).encode("utf-8")
+    checksums = {"manifest.json": hashlib.sha256(manifest_bytes).hexdigest(), **signed_hashes}
+    with zipfile.ZipFile(root / "models" / "demo.dvmodel", "w") as archive:
+        archive.writestr("manifest.json", manifest_bytes)
+        archive.writestr("checksums.json", json.dumps({"files": checksums}))
+        for name, content in pack_files.items():
+            archive.writestr(name, content)
+    api["validate_model_catalog_payload"](
+        root, require_release_ready=True, required_model_ids={"demo"},
+        trusted_keys={"release-key": public_key},
+    )
+
+
+def test_release_catalog_requires_every_builtin_model(tmp_path):
+    api = runpy.run_path(str(WINDOWS / "model_catalog_payload.py"))
+    root = tmp_path / "payload"
+    (root / "models").mkdir(parents=True)
+    (root / "app").mkdir()
+    (root / "app" / "DeepVisionStudio.exe").write_bytes(b"gui")
+    catalog = {
+        "schema_version": 1, "offline": True, "release_ready_only": True,
+        "redistribution_policy": {
+            "weights_included": False,
+            "require_third_party_notices": True,
+            "require_license_files_for_release_packs": True,
+        },
+        "models": [{
+            "model_id": "efficientnet_b0", "release_status": "release_ready",
+            "payload": {"kind": "builtin", "paths": ["app/DeepVisionStudio.exe"]},
+        }],
+    }
+    path = root / "models" / "default-model-catalog.json"
+    path.write_text(json.dumps(catalog), encoding="utf-8")
+    with pytest.raises(api["ModelCatalogPayloadError"], match="set mismatch"):
+        api["validate_model_catalog_payload"](root, require_release_ready=True)
 
 
 def test_pyinstaller_native_runtime_argument_is_opt_in_and_filters_library_files(tmp_path, monkeypatch):
@@ -279,6 +338,8 @@ def test_release_script_requires_app_catalog_and_csharp_sdk_payload_files():
     assert 'sdk\\native\\vision_runtime.dll' in script
     assert '[switch] $RequireReleaseReadyModels' in script
     assert '--require-release-ready-models' in script
+    assert '[string] $ModelPackTrustStore' in script
+    assert '--model-pack-trust-store $modelTrustStore' in script
 
 
 def test_release_script_has_optional_authenticode_sign_and_verify_gate():
@@ -328,7 +389,8 @@ def test_windows_workflow_keeps_release_ready_models_as_an_explicit_gate():
     assert 'type: boolean' in workflow
     assert 'DEEPVISION_MODEL_PAYLOAD_ROOT' in workflow
     assert '$requireModels = $env:REQUIRE_RELEASE_READY_MODELS -eq "true"' in workflow
-    assert 'if ($env:REQUIRE_RELEASE_READY_MODELS -eq "true") { $releaseArgs += "-RequireReleaseReadyModels" }' in workflow
+    assert '$releaseArgs += @("-RequireReleaseReadyModels", "-ModelPackTrustStore", $env:DEEPVISION_MODEL_PACK_TRUST_STORE)' in workflow
+    assert 'DEEPVISION_MODEL_PACK_TRUST_STORE must point to an Ed25519 public-key trust store' in workflow
 
 
 def test_offline_wsl_bootstrap_is_shell_free_and_never_downloads():

@@ -43,9 +43,6 @@ def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pyto
             raise ValueError("이상 점수 정의 불일치")
         require_saved_input_shape(input_size, (spec["input_height"], spec["input_width"]))
         model = load_custom_model(checkpoint, spec).to(device).eval()
-        if checkpoint.get("engine") == "efficientnet":
-            from efficientnet import prepare_for_inference
-            model = prepare_for_inference(model)
         preprocessing = spec["preprocessing"]
         mean = preprocessing.get("normalize_mean", preprocessing.get("mean"))
         std = preprocessing.get("normalize_std", preprocessing.get("std"))

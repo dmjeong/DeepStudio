@@ -1027,9 +1027,6 @@ class InferenceWidget(QWidget, InferenceOperations):
                         "score_definition", "reconstruction_mse_mean") != "reconstruction_mse_mean":
                     raise ValueError("이상 점수 정의 불일치")
                 candidate = load_custom_model(checkpoint, spec).to(device).eval()
-                if checkpoint.get("engine") == "efficientnet":
-                    from efficientnet import prepare_for_inference
-                    candidate = prepare_for_inference(candidate)
                 try:
                     cam = GradCAM(candidate)
                 except (ValueError, AttributeError):

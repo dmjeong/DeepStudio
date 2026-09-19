@@ -26,11 +26,14 @@ def main(argv=None) -> int:
                         help="catalog path relative to the staged payload")
     parser.add_argument("--require-release-ready-models", action="store_true",
                         help="require every catalog entry and its staged model payload")
+    parser.add_argument("--model-pack-trust-store", type=Path,
+                        help="absolute Ed25519 public-key trust store for release model packs")
     args = parser.parse_args(argv)
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     verify_payload(args.root, manifest, required_paths=args.require)
     validate_model_catalog_payload(args.root, args.model_catalog,
-                                   require_release_ready=args.require_release_ready_models)
+                                   require_release_ready=args.require_release_ready_models,
+                                   trust_store=args.model_pack_trust_store)
     if args.require_offline_wsl:
         verify_offline_wsl_payload(args.root, manifest)
     print("payload verified")

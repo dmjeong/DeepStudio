@@ -3,11 +3,12 @@ param(
     [Parameter(Mandatory = $true)] [string] $PayloadRoot,
     [Parameter(Mandatory = $true)] [string] $Version,
     [Parameter(Mandatory = $true)] [string] $OutputDirectory,
-    [string] $WixVersion = "4.0.5",
+    [string] $WixVersion = "7.0.0",
     [string] $CertificatePath = "",
     [string] $CertificatePassword = "",
     [string] $SignToolPath = "signtool.exe",
     [string] $TimestampUrl = "http://timestamp.digicert.com",
+    [string] $ModelPackTrustStore = "",
     [switch] $RequireSignature,
     [switch] $RequireOfflineWsl,
     [switch] $RequireReleaseReadyModels
@@ -19,6 +20,15 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "Version must be majo
 if ($WixVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw "WixVersion must be major.minor.patch." }
 if ($RequireSignature -and [string]::IsNullOrWhiteSpace($CertificatePath)) {
     throw "-RequireSignature requires -CertificatePath."
+}
+if ($RequireReleaseReadyModels -and [string]::IsNullOrWhiteSpace($ModelPackTrustStore)) {
+    throw "-RequireReleaseReadyModels requires -ModelPackTrustStore."
+}
+if (-not [string]::IsNullOrWhiteSpace($ModelPackTrustStore)) {
+    $modelTrustStore = (Resolve-Path $ModelPackTrustStore -ErrorAction Stop).Path
+    if (-not (Test-Path -LiteralPath $modelTrustStore -PathType Leaf)) {
+        throw "Model pack trust store does not exist: $ModelPackTrustStore"
+    }
 }
 if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
     $certificate = (Resolve-Path $CertificatePath -ErrorAction Stop).Path
@@ -53,7 +63,7 @@ trap {
     throw $failure
 }
 $wix = Get-Command wix -ErrorAction SilentlyContinue
-if (-not $wix) { throw "WiX v4 'wix' command is required on the locked Windows build image." }
+if (-not $wix) { throw "WiX 7 'wix' command is required on the locked Windows build image." }
 $wixVersionOutput = & $wix.Source --version 2>&1
 $wixExitCode = $LASTEXITCODE
 $wixVersionText = ($wixVersionOutput -join "`n").Trim()
@@ -76,7 +86,8 @@ if ($LASTEXITCODE -ne 0) { throw "Payload contract validation failed." }
 if ($RequireReleaseReadyModels) {
     python $validator $root --manifest $manifest `
         --require "models\default-model-catalog.json" `
-        --require-release-ready-models
+        --require-release-ready-models `
+        --model-pack-trust-store $modelTrustStore
     if ($LASTEXITCODE -ne 0) { throw "Release-ready model payload contract failed." }
 }
 if ($RequireOfflineWsl) {

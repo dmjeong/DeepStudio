@@ -33,6 +33,14 @@ BUILTIN_MODEL_SPECS = {
     "unet_resnet18": BuiltinModelSpec("unet_resnet18", "segment", (512, 512), (1, 3)),
 }
 
+_GRADCAM_TARGET_LAYERS = {
+    "resnet18": "layer4",
+    "resnet50": "layer4",
+    "convnext_v1_tiny": "features.7",
+    "deeplabv3plus_resnet34": "layer4",
+    "unet_resnet18": "enc4",
+}
+
 
 def get_builtin_spec(model_id: str) -> BuiltinModelSpec:
     try:
@@ -192,12 +200,21 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3) -
     if in_channels not in spec.input_channels:
         raise ValueError(f"{model_id} does not support {in_channels} input channels")
     if spec.task == "classify":
-        return _classification_model(model_id, int(num_classes), in_channels)
-    if model_id == "deeplabv3plus_resnet34":
-        return DeepLabV3PlusResNet34(int(num_classes), in_channels)
-    if model_id == "unet_resnet18":
-        return UNetResNet18(int(num_classes), in_channels)
-    raise ValueError(f"Unsupported segmentation adapter: {model_id}")
+        model = _classification_model(model_id, int(num_classes), in_channels)
+    elif model_id == "deeplabv3plus_resnet34":
+        model = DeepLabV3PlusResNet34(int(num_classes), in_channels)
+    elif model_id == "unet_resnet18":
+        model = UNetResNet18(int(num_classes), in_channels)
+    else:
+        raise ValueError(f"Unsupported segmentation adapter: {model_id}")
+
+    # The desktop inference path consumes these attributes for every model.
+    # Attach the same contract to fresh and checkpoint-loaded built-ins.
+    model.task = spec.task
+    model.in_channels = int(in_channels)
+    model.num_classes = int(num_classes)
+    model.gradcam_target_layer = _GRADCAM_TARGET_LAYERS[model_id]
+    return model
 
 
 def make_builtin_checkpoint(model_id: str, model: nn.Module, *, num_classes: int,

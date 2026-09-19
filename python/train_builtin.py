@@ -84,7 +84,9 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
                             num_classes: int, input_size: int | Iterable[int],
                             in_channels: int, class_names: Iterable[str], epoch: int,
                             optimizer: torch.optim.Optimizer | None = None,
-                            metric: float | None = None) -> None:
+                            scheduler=None, metric: float | None = None,
+                            training_config: dict | None = None,
+                            metrics_history: list[dict] | None = None) -> None:
     model.eval()
     state = make_builtin_checkpoint(model_id, model, num_classes=num_classes,
                                     input_size=input_size, in_channels=in_channels,
@@ -93,6 +95,10 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
     state["metric"] = None if metric is None else float(metric)
     if optimizer is not None:
         state["optimizer_state_dict"] = optimizer.state_dict()
+    if scheduler is not None:
+        state["scheduler_state_dict"] = scheduler.state_dict()
+    state["training_config"] = dict(training_config or {})
+    state["metrics_history"] = list(metrics_history or [])
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     torch.save(state, output)
@@ -101,12 +107,34 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
 def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   input_size: int | tuple[int, int] | None = None, in_channels: int = 3,
                   epochs: int = 1, batch_size: int = 4, learning_rate: float = 1e-3,
+                  weight_decay: float = 5e-4, optimizer_name: str = "adamw",
+                  scheduler_name: str = "cosine", warmup_epochs: int = 0,
+                  early_stop_patience: int = 0, label_smoothing: float = 0.0,
+                  horizontal_flip: float = 0.5, rotation: float = 15.0,
+                  color_jitter: float = 0.2, val_split: float = 0.2,
+                  num_workers: int = 0, freeze_backbone: bool = False,
+                  backbone_lr_mult: float = 0.1,
                   output_dir: str | Path = "runs/builtin", device: str = "cpu",
-                  resume: str | Path | None = None, log=print,
+                  resume: str | Path | None = None,
+                  initial_weights: str | Path | None = None, log=print,
                   should_stop=lambda: False) -> Path:
     spec = get_builtin_spec(model_id)
-    if epochs < 1 or batch_size < 1 or learning_rate <= 0:
+    if epochs < 1 or batch_size < 1 or learning_rate <= 0 or weight_decay < 0:
         raise ValueError("epochs, batch_size and learning_rate must be positive")
+    optimizer_name = optimizer_name.lower()
+    scheduler_name = scheduler_name.lower()
+    if optimizer_name not in {"adamw", "adam", "sgd"}:
+        raise ValueError("optimizer_name must be adamw, adam or sgd")
+    if scheduler_name not in {"cosine", "step", "none"}:
+        raise ValueError("scheduler_name must be cosine, step or none")
+    if not 0 <= horizontal_flip <= 1 or rotation < 0 or not 0 <= color_jitter <= 1:
+        raise ValueError("augmentation values are outside their supported ranges")
+    if not 0 < val_split < 1 or num_workers < 0 or not 0 <= label_smoothing < 1:
+        raise ValueError("validation, worker or label smoothing settings are invalid")
+    if warmup_epochs < 0 or early_stop_patience < 0 or not 0 < backbone_lr_mult <= 1:
+        raise ValueError("scheduler, early-stop or backbone LR settings are invalid")
+    if resume is not None and initial_weights is not None:
+        raise ValueError("resume and initial_weights are mutually exclusive")
     if input_size is None:
         input_size = spec.default_size
     if isinstance(input_size, int):
@@ -119,7 +147,9 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     target = torch.device(device)
     if spec.task == "classify":
         train_loader, val_loader, class_names = create_classification_loaders(
-            str(data_root), input_size=input_size, batch_size=batch_size, in_channels=in_channels)
+            str(data_root), input_size=input_size, batch_size=batch_size,
+            num_workers=num_workers, in_channels=in_channels, val_split=val_split,
+            flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
         num_classes = len(class_names) if num_classes == 0 else num_classes
         if num_classes != len(class_names):
             raise ValueError("num_classes does not match classification folders")
@@ -128,23 +158,104 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             raise ValueError("num_classes is required for segmentation")
         train_loader, val_loader = create_segmentation_loaders(
             str(data_root), input_size=input_size, batch_size=batch_size,
-            in_channels=in_channels, num_classes=num_classes)
+            num_workers=num_workers, in_channels=in_channels, num_classes=num_classes,
+            flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
         class_names = [str(index) for index in range(num_classes)]
     model = build_builtin_model(model_id, num_classes, in_channels).to(target)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-    criterion = nn.CrossEntropyLoss(ignore_index=255)
+    head_prefixes = {
+        "resnet18": ("fc.",), "resnet50": ("fc.",),
+        "convnext_v1_tiny": ("classifier.",),
+        "deeplabv3plus_resnet34": ("aspp.", "low_projection.", "decoder."),
+        "unet_resnet18": ("dec", "head."),
+    }[model_id]
+    head_parameters, backbone_parameters = [], []
+    for name, parameter in model.named_parameters():
+        is_head = any(name.startswith(prefix) for prefix in head_prefixes)
+        if freeze_backbone and not is_head:
+            parameter.requires_grad_(False)
+        (head_parameters if is_head else backbone_parameters).append(parameter)
+    parameter_groups = [{"params": head_parameters, "lr": learning_rate}]
+    trainable_backbone = [parameter for parameter in backbone_parameters if parameter.requires_grad]
+    if trainable_backbone:
+        parameter_groups.append({"params": trainable_backbone,
+                                 "lr": learning_rate * backbone_lr_mult})
+    optimizer_types = {"adamw": torch.optim.AdamW, "adam": torch.optim.Adam,
+                       "sgd": torch.optim.SGD}
+    optimizer_kwargs = {"lr": learning_rate, "weight_decay": weight_decay}
+    if optimizer_name == "sgd":
+        optimizer_kwargs["momentum"] = 0.9
+    optimizer = optimizer_types[optimizer_name](parameter_groups, **optimizer_kwargs)
+    if scheduler_name == "cosine":
+        main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max(1, epochs - warmup_epochs)
+        )
+    elif scheduler_name == "step":
+        main_scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=max(1, epochs // 3), gamma=0.1
+        )
+    else:
+        main_scheduler = None
+    if warmup_epochs > 0:
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=1.0 / max(2, warmup_epochs), total_iters=warmup_epochs
+        )
+        scheduler = (warmup if main_scheduler is None else
+                     torch.optim.lr_scheduler.SequentialLR(
+                         optimizer, [warmup, main_scheduler], milestones=[warmup_epochs]
+                     ))
+    else:
+        scheduler = main_scheduler
+    criterion = nn.CrossEntropyLoss(ignore_index=255, label_smoothing=label_smoothing)
+    training_config = {
+        "optimizer": optimizer_name, "scheduler": scheduler_name,
+        "learning_rate": learning_rate, "weight_decay": weight_decay,
+        "warmup_epochs": warmup_epochs, "early_stop_patience": early_stop_patience,
+        "label_smoothing": label_smoothing, "freeze_backbone": freeze_backbone,
+        "backbone_lr_mult": backbone_lr_mult, "val_split": val_split,
+        "num_workers": num_workers,
+        "augmentation": {"horizontal_flip": horizontal_flip, "rotation": rotation,
+                         "color_jitter": color_jitter},
+    }
     start_epoch = 0
+    history: list[dict] = []
+    best_metric = float("-inf")
+    best_epoch = 0
+    resume_best_checkpoint = None
+    if initial_weights is not None:
+        checkpoint = torch.load(initial_weights, map_location="cpu", weights_only=False)
+        if checkpoint.get("model_id") != model_id:
+            raise ValueError("initial checkpoint model_id does not match the requested adapter")
+        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     if resume is not None:
-        checkpoint = torch.load(resume, map_location="cpu", weights_only=False)
+        resume_path = Path(resume)
+        checkpoint = torch.load(resume_path, map_location="cpu", weights_only=False)
         if checkpoint.get("model_id") != model_id:
             raise ValueError("resume checkpoint model_id does not match the requested adapter")
         model.load_state_dict(checkpoint["model_state_dict"], strict=True)
         if checkpoint.get("optimizer_state_dict"):
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if scheduler is not None and checkpoint.get("scheduler_state_dict"):
+            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         start_epoch = int(checkpoint.get("epoch", -1)) + 1
+        history = list(checkpoint.get("metrics_history") or [])
+        previous_best_path = resume_path.parent / "best.pt"
+        if previous_best_path.is_file():
+            resume_best_checkpoint = torch.load(
+                previous_best_path, map_location="cpu", weights_only=False
+            )
+            if resume_best_checkpoint.get("model_id") != model_id:
+                raise ValueError("best checkpoint model_id does not match the resume adapter")
+        else:
+            resume_best_checkpoint = checkpoint
+        if resume_best_checkpoint.get("metric") is not None:
+            best_metric = float(resume_best_checkpoint["metric"])
+            best_epoch = int(resume_best_checkpoint.get("epoch", start_epoch - 1)) + 1
     destination = Path(output_dir)
-    best_metric = float("-inf")
+    destination.mkdir(parents=True, exist_ok=True)
+    if resume_best_checkpoint is not None:
+        torch.save(resume_best_checkpoint, destination / "best.pt")
     completed_epochs = start_epoch
+    epochs_without_improvement = max(0, start_epoch - best_epoch) if best_epoch else 0
     for epoch in range(start_epoch, epochs):
         if should_stop():
             break
@@ -161,22 +272,42 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         log({"event": "epoch_finished", "epoch": completed_epochs,
              "train_loss": train_loss, "val_loss": val_loss,
              "metric": val_metric, "total_epochs": epochs})
+        history.append({"epoch": completed_epochs, "train_loss": train_loss,
+                        "train_metric": train_metric, "val_loss": val_loss,
+                        "val_metric": val_metric,
+                        "learning_rate": float(optimizer.param_groups[0]["lr"])})
+        if scheduler is not None:
+            scheduler.step()
         save_builtin_checkpoint(destination / "last.pt", model, model_id=model_id,
                                 num_classes=num_classes, input_size=input_size,
                                 in_channels=in_channels, class_names=class_names,
-                                epoch=epoch, optimizer=optimizer, metric=val_metric)
+                                epoch=epoch, optimizer=optimizer, scheduler=scheduler,
+                                metric=val_metric, training_config=training_config,
+                                metrics_history=history)
         if val_metric > best_metric:
             best_metric = val_metric
+            best_epoch = completed_epochs
+            epochs_without_improvement = 0
             save_builtin_checkpoint(destination / "best.pt", model, model_id=model_id,
                                     num_classes=num_classes, input_size=input_size,
                                     in_channels=in_channels, class_names=class_names,
-                                    epoch=epoch, optimizer=optimizer, metric=val_metric)
+                                    epoch=epoch, optimizer=optimizer, scheduler=scheduler,
+                                    metric=val_metric, training_config=training_config,
+                                    metrics_history=history)
+        else:
+            epochs_without_improvement += 1
+        if early_stop_patience and epochs_without_improvement >= early_stop_patience:
+            log(f"early stopping at epoch {completed_epochs}")
+            break
     if completed_epochs == start_epoch and start_epoch >= epochs:
         raise ValueError("resume checkpoint already reached the requested epochs")
     (destination / "training.json").write_text(json.dumps({"model_id": model_id,
         "task": spec.task, "epochs": epochs, "input_size": list(input_size),
-        "in_channels": in_channels, "best_metric": best_metric,
-        "completed_epochs": completed_epochs}, ensure_ascii=False, indent=2), encoding="utf-8")
+        "in_channels": in_channels,
+        "best_metric": None if best_metric == float("-inf") else best_metric,
+        "best_epoch": best_epoch, "completed_epochs": completed_epochs,
+        "metrics_history": history, "training_config": training_config,
+        "cancelled": bool(should_stop())}, ensure_ascii=False, indent=2), encoding="utf-8")
     return destination / "best.pt"
 
 

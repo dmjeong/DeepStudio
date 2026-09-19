@@ -23,8 +23,12 @@ class Sam2Inference;
 struct Sam2ImageContext
 {
     const Sam2Inference* owner = nullptr;
+    std::uint64_t generation = 0;
     int image_width = 0;
     int image_height = 0;
+    double total_ms = 0.0;
+    double preprocess_ms = 0.0;
+    double model_ms = 0.0;
     std::vector<Ort::Value> embeddings;
 };
 
@@ -38,6 +42,7 @@ struct Sam2Result
     int mask_width = 0;
     int selected_mask = 0;
     double total_ms = 0.0;
+    double preprocess_ms = 0.0;
     double model_ms = 0.0;
     double postprocess_ms = 0.0;
 };
@@ -95,5 +100,6 @@ private:
     // space unless a pack explicitly declares original_pixels.
     std::string m_prompt_coordinate_space = "resized_input";
     bool m_ready = false;
+    std::uint64_t m_generation = 0;
     std::string m_error;
 };

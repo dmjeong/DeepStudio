@@ -266,6 +266,18 @@ def test_configured_docker_command_discovers_owned_marker_without_env(tmp_path: 
     )
 
 
+def test_configured_docker_command_uses_installer_localappdata_state(tmp_path: Path):
+    state = tmp_path / "DeepVisionStudio" / "wsl"
+    state.mkdir(parents=True)
+    (state / "owned-distro.json").write_text(
+        '\ufeff{"schema_version":1,"owned":true,"distro":"DeepVisionStudio"}',
+        encoding="utf-8",
+    )
+    assert configured_docker_command(environ={"LOCALAPPDATA": str(tmp_path)}) == (
+        "wsl.exe", "-d", "DeepVisionStudio", "--", "docker"
+    )
+
+
 def test_managed_wsl_rejects_symlinked_ownership_marker(tmp_path: Path):
     outside = tmp_path / "outside-marker.json"
     outside.write_text(

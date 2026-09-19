@@ -322,16 +322,33 @@ def test_container_command_validates_offline_image_archive(tmp_path):
                                work_dir=work, image_archive=linked)
 
 
-def test_container_command_supports_owned_wsl_docker_prefix(tmp_path):
+def test_container_command_supports_owned_wsl_docker_prefix(tmp_path, monkeypatch):
     model, data, work = (tmp_path / name for name in ("model", "data", "work"))
     for path in (model, data, work):
         path.mkdir()
     prefix = ("wsl.exe", "-d", "DeepVisionStudio", "--", "docker")
+    converted = iter(("/mnt/c/모델", "/mnt/c/data with spaces", "/mnt/c/work"))
+
+    def fake_run(argv, **kwargs):
+        assert tuple(argv[:4]) == prefix[:4]
+        assert argv[4:7] == ("wslpath", "-a", "-u")
+        return type("Completed", (), {
+            "returncode": 0, "stdout": next(converted) + "\n", "stderr": "",
+        })()
+
+    monkeypatch.setattr("core.container_worker.subprocess.run", fake_run)
     command = build_container_command("sha256:" + "a" * 64, model_dir=model,
                                      data_dir=data, work_dir=work,
                                      docker_command=prefix)
     assert command.docker_command == prefix
     assert command.argv[: len(prefix) + 1] == (*prefix, "run")
+    mounts = [command.argv[index + 1] for index, value in enumerate(command.argv)
+              if value == "--mount"]
+    assert mounts == [
+        "type=bind,src=/mnt/c/모델,dst=/models,readonly",
+        "type=bind,src=/mnt/c/data with spaces,dst=/data,readonly",
+        "type=bind,src=/mnt/c/work,dst=/work",
+    ]
 
 
 def test_container_worker_loads_and_verifies_offline_image_digest(tmp_path, monkeypatch):

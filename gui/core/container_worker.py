@@ -73,6 +73,26 @@ def _mount_path(value: str | Path, name: str, *, writable: bool = False) -> Path
     return path.resolve()
 
 
+def _is_wsl_docker_command(prefix: tuple[str, ...]) -> bool:
+    return (len(prefix) >= 5 and Path(prefix[0]).name.casefold() in {"wsl", "wsl.exe"}
+            and prefix[-1] == "docker" and "--" in prefix)
+
+
+def _runtime_path(path: Path, prefix: tuple[str, ...]) -> str:
+    """Translate a Windows host path for Docker running inside the owned WSL distro."""
+    if not _is_wsl_docker_command(prefix):
+        return str(path)
+    converted = subprocess.run(
+        (*prefix[:-1], "wslpath", "-a", "-u", str(path)), check=False,
+        capture_output=True, text=True,
+    )
+    value = (converted.stdout or "").strip()
+    if converted.returncode != 0 or not value.startswith("/") or "\x00" in value:
+        detail = (converted.stderr or converted.stdout or "wslpath failed").strip()
+        raise ContainerWorkerError(f"Windows path conversion for WSL failed: {detail}")
+    return value
+
+
 @dataclass(frozen=True)
 class ContainerCommand:
     image: str
@@ -119,6 +139,12 @@ def build_container_command(
                 not archive.is_file()):
             raise ContainerWorkerError("image_archive must be an existing absolute file")
         archive = archive.resolve()
+    runtime_model = _runtime_path(model, prefix)
+    runtime_data = _runtime_path(data, prefix)
+    runtime_work = _runtime_path(work, prefix)
+    runtime_archive = None if archive is None else _runtime_path(archive, prefix)
+    if any("," in value for value in (runtime_model, runtime_data, runtime_work)):
+        raise ContainerWorkerError("Docker bind mount paths cannot contain commas")
     container_name = name or f"deepvision-worker-{uuid.uuid4().hex[:12]}"
     if any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for char in container_name):
         raise ContainerWorkerError("invalid container name")
@@ -128,14 +154,14 @@ def build_container_command(
         "--label", label, "--network", "none", "--pull=never", "--read-only",
         "--cap-drop=ALL", "--security-opt=no-new-privileges", "--log-driver=none", "--init", "-i",
         "--cpus", str(cpus), "--memory", memory,
-        "--mount", f"type=bind,src={model},dst=/models,readonly",
-        "--mount", f"type=bind,src={data},dst=/data,readonly",
-        "--mount", f"type=bind,src={work},dst=/work",
+        "--mount", f"type=bind,src={runtime_model},dst=/models,readonly",
+        "--mount", f"type=bind,src={runtime_data},dst=/data,readonly",
+        "--mount", f"type=bind,src={runtime_work},dst=/work",
         image,
         "--worker-stdin-stdout", "--manifest", "/models/manifest.json",
     )
     return ContainerCommand(image, container_name, argv, label,
-                            None if archive is None else str(archive), prefix)
+                            runtime_archive, prefix)
 
 
 class ContainerWorker:

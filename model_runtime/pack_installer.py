@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -20,6 +21,7 @@ import zipfile
 
 from .special_contracts import (SpecialContractError, validate_container_image_asset,
                                 validate_special_assets, validate_special_manifest)
+from .pack_signing import load_trusted_keys, verify_pack_signature
 
 
 class PackInstallError(ValueError):
@@ -105,10 +107,20 @@ class PackInstaller:
     """Install a verified pack below an app-owned local directory."""
 
     def __init__(self, root: str | Path, *, max_entries: int = MAX_ENTRIES,
-                 max_uncompressed_bytes: int = MAX_UNCOMPRESSED_BYTES):
+                 max_uncompressed_bytes: int = MAX_UNCOMPRESSED_BYTES,
+                 trusted_keys: Mapping[str, bytes | str] | None = None,
+                 trust_store: str | Path | None = None):
         self.root = Path(root).expanduser()
         self.max_entries = max_entries
         self.max_uncompressed_bytes = max_uncompressed_bytes
+        configured_store = trust_store or os.environ.get("DEEPVISION_MODEL_PACK_TRUST_STORE")
+        if trusted_keys is not None and configured_store is not None:
+            raise PackInstallError("provide trusted_keys or a model pack trust store, not both")
+        try:
+            self.trusted_keys = (load_trusted_keys(configured_store) if configured_store is not None
+                                 else dict(trusted_keys or {}))
+        except ValueError as exc:
+            raise PackInstallError(str(exc)) from exc
         if self.max_entries < 1 or self.max_uncompressed_bytes < 1:
             raise ValueError("pack limits must be positive")
 
@@ -227,8 +239,8 @@ class PackInstaller:
             if not isinstance(checksums.get("files"), Mapping):
                 raise PackInstallError("checksums.json.files must be an object")
             signature = manifest.get("signature")
-            signed = isinstance(signature, Mapping) and bool(signature.get("key_id")) and bool(signature.get("value"))
-            if not signed and not allow_unsigned:
+            signature_present = signature is not None
+            if not signature_present and not allow_unsigned:
                 raise PackInstallError("unsigned development pack rejected")
             expected_files = {_safe_name(info.filename) for info in infos
                               if not info.is_dir() and _safe_name(info.filename) != "checksums.json"}
@@ -256,6 +268,13 @@ class PackInstaller:
             for name, expected in checksum_values.items():
                 if not isinstance(expected, str) or len(expected) != SHA256_HEX or any(c not in "0123456789abcdefABCDEF" for c in expected):
                     raise PackInstallError(f"invalid checksum for {name}")
+            signed = False
+            if signature_present:
+                try:
+                    verify_pack_signature(manifest, checksum_values, self.trusted_keys)
+                except ValueError as exc:
+                    raise PackInstallError(str(exc)) from exc
+                signed = True
             for info in infos:
                 name = _safe_name(info.filename)
                 if info.is_dir():

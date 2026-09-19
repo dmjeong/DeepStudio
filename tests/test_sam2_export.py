@@ -81,6 +81,7 @@ class Sam2ExportTests(unittest.TestCase):
             self.assertEqual(manifest["export"]["opset"], 17)
             self.assertEqual(manifest["export"]["verification_tolerance"],
                              {"atol": 1e-3, "rtol": 1e-3})
+            self.assertTrue(manifest["export"]["dynamic_prompt_points"])
             self.assertEqual(manifest["output_names"], ["low_res_mask_logits", "iou_predictions"])
             self.assertEqual(manifest["contracts"]["prompt_types"], ["point", "box", "mask"])
             self.assertEqual(manifest["contracts"]["prompt_coordinate_space"], "resized_input")
@@ -90,6 +91,12 @@ class Sam2ExportTests(unittest.TestCase):
             self.assertTrue(Path(result["encoder_path"]).is_file())
             self.assertTrue(Path(result["decoder_path"]).is_file())
             self.assertEqual(result["verification"], "passed")
+
+            import onnxruntime as ort
+            session = ort.InferenceSession(result["decoder_path"], providers=["CPUExecutionProvider"])
+            input_shapes = {item.name: item.shape for item in session.get_inputs()}
+            self.assertEqual(input_shapes["point_coords"][1], "num_points")
+            self.assertEqual(input_shapes["point_labels"][1], "num_points")
 
     def test_multi_feature_encoder_exports_contract_consumed_by_cpp_runtime(self):
         checkpoint = {

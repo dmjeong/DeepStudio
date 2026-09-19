@@ -147,7 +147,10 @@ class WebAppTests(unittest.TestCase):
             def cancelled(self):
                 return False
 
+        forwarded = {}
+
         def fake_train(*args, log, **kwargs):
+            forwarded.update(kwargs)
             log({"event": "epoch_finished", "epoch": 1, "total_epochs": 1,
                  "train_loss": 0.4, "val_loss": 0.3, "metric": 0.75})
             return best
@@ -157,7 +160,13 @@ class WebAppTests(unittest.TestCase):
             record = _train_builtin_project(Context(), project, "cpu")
 
         self.assertEqual(record.best_metric_name, "mIoU")
-        self.assertEqual(record.metrics_history, {"mIoU": [0.75]})
+        self.assertEqual(record.metrics_history, {
+            "train_loss": [0.4], "val_loss": [0.3], "mIoU": [0.75],
+        })
+        self.assertEqual(forwarded["optimizer_name"], project.training.optimizer)
+        self.assertEqual(forwarded["weight_decay"], project.training.weight_decay)
+        self.assertEqual(forwarded["horizontal_flip"],
+                         project.training.augmentation.horizontal_flip)
         epoch = next(args for event, args in events if event == "epoch_finished")
         self.assertEqual(epoch[3], {"mIoU": 0.75})
 
@@ -173,7 +182,6 @@ class WebAppTests(unittest.TestCase):
             "family": "Web Pack", "variant": "Small", "task": "classify",
             "runtimes": ["onnx"], "capabilities": ["infer", "export_onnx"],
             "input_size": [224, 224], "input_channels": [3], "release_status": "scoped",
-            "signature": {"key_id": "test", "value": "signed"},
         }).encode()
         files = {"manifest.json": manifest, "README.ko.md": b"offline"}
         checksums = {name: hashlib.sha256(value).hexdigest() for name, value in files.items()}
@@ -182,7 +190,9 @@ class WebAppTests(unittest.TestCase):
             for name, value in files.items():
                 archive.writestr(name, value)
             archive.writestr("checksums.json", json.dumps({"files": checksums}))
-        response = self.client.post("/api/models/install", json={"pack_path": str(pack)})
+        response = self.client.post("/api/models/install", json={
+            "pack_path": str(pack), "allow_unsigned": True,
+        })
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["model"]["model_id"], "vendor.web-pack")
         models = self.client.get("/api/models?task=classify").json()["models"]

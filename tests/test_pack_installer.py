@@ -1,6 +1,7 @@
 """Offline model pack extraction, checksums, and activation contracts."""
 
 import hashlib
+import base64
 import json
 from pathlib import Path
 import zipfile
@@ -10,20 +11,29 @@ import pytest
 from model_runtime.pack_installer import PackInstallError, PackInstaller
 
 
-def _write_pack(path: Path, *, signed=False, corrupt=False):
+def _write_pack(path: Path, *, private_key=None, corrupt=False):
     files = {
         "manifest.json": json.dumps({"schema_version": 1, "model_id": "vendor.example", "pack_version": "1.0.0"}).encode(),
         "README.ko.md": b"offline model",
         "assets/model.onnx": b"fixture",
     }
-    checksums = {name: hashlib.sha256(value).hexdigest() for name, value in files.items()}
-    if corrupt:
-        checksums["assets/model.onnx"] = "0" * 64
     manifest = json.loads(files["manifest.json"])
-    if signed:
-        manifest["signature"] = {"key_id": "test", "value": "development"}
+    content_hashes = {
+        name: hashlib.sha256(value).hexdigest()
+        for name, value in files.items() if name != "manifest.json"
+    }
+    if corrupt:
+        content_hashes["assets/model.onnx"] = "0" * 64
+    if private_key is not None:
+        from model_runtime.pack_signing import signature_payload
+        signature = private_key.sign(signature_payload(manifest, content_hashes))
+        manifest["signature"] = {
+            "algorithm": "ed25519", "key_id": "test",
+            "value": base64.b64encode(signature).decode("ascii"),
+        }
         files["manifest.json"] = json.dumps(manifest).encode()
-        checksums["manifest.json"] = hashlib.sha256(files["manifest.json"]).hexdigest()
+    checksums = {"manifest.json": hashlib.sha256(files["manifest.json"]).hexdigest(),
+                 **content_hashes}
     with zipfile.ZipFile(path, "w") as archive:
         for name, value in files.items():
             archive.writestr(name, value)
@@ -95,12 +105,84 @@ def test_installer_rejects_non_normalized_checksum_keys(tmp_path):
 
 
 def test_signed_pack_is_idempotent(tmp_path):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
     pack = tmp_path / "model.dvmodel"
-    _write_pack(pack, signed=True)
+    _write_pack(pack, private_key=private_key)
     root = tmp_path / "installed"
-    first = PackInstaller(root).install(pack)
-    second = PackInstaller(root).install(pack)
+    first = PackInstaller(root, trusted_keys={"test": public_key}).install(pack)
+    second = PackInstaller(root, trusted_keys={"test": public_key}).install(pack)
     assert first == second
+    assert first.signed is True
+
+
+def test_installer_loads_versioned_trust_store_from_environment(tmp_path, monkeypatch):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    trust_store = tmp_path / "model-pack-trust.json"
+    trust_store.write_text(json.dumps({
+        "schema_version": 1,
+        "keys": {"test": {
+            "algorithm": "ed25519",
+            "public_key": base64.b64encode(public_key).decode("ascii"),
+        }},
+    }), encoding="utf-8")
+    pack = tmp_path / "model.dvmodel"
+    _write_pack(pack, private_key=private_key)
+    monkeypatch.setenv("DEEPVISION_MODEL_PACK_TRUST_STORE", str(trust_store))
+    installed = PackInstaller(tmp_path / "installed").install(pack)
+    assert installed.signed is True
+
+
+@pytest.mark.parametrize("payload,error", [
+    ({"schema_version": 2, "keys": {}}, "schema_version"),
+    ({"schema_version": 1, "keys": {}}, "at least one"),
+    ({"schema_version": 1, "keys": {"bad": {
+        "algorithm": "rsa", "public_key": "ignored",
+    }}}, "Ed25519"),
+])
+def test_installer_rejects_invalid_trust_store(tmp_path, payload, error):
+    trust_store = tmp_path / "bad-trust.json"
+    trust_store.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(PackInstallError, match=error):
+        PackInstaller(tmp_path / "installed", trust_store=trust_store)
+
+
+def test_installer_rejects_fake_and_unknown_signatures(tmp_path):
+    pack = tmp_path / "fake.dvmodel"
+    manifest = {
+        "schema_version": 1, "model_id": "vendor.example", "pack_version": "1.0.0",
+        "signature": {"algorithm": "ed25519", "key_id": "not-a-real-key",
+                      "value": base64.b64encode(b"x" * 64).decode("ascii")},
+    }
+    files = {"manifest.json": json.dumps(manifest).encode(), "model.onnx": b"fixture"}
+    checksums = {name: hashlib.sha256(value).hexdigest() for name, value in files.items()}
+    with zipfile.ZipFile(pack, "w") as archive:
+        for name, value in files.items():
+            archive.writestr(name, value)
+        archive.writestr("checksums.json", json.dumps({"files": checksums}))
+    with pytest.raises(PackInstallError, match="unknown key"):
+        PackInstaller(tmp_path / "installed").install(pack)
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    public_key = Ed25519PrivateKey.generate().public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    with pytest.raises(PackInstallError, match="verification failed"):
+        PackInstaller(tmp_path / "installed", trusted_keys={
+            "not-a-real-key": public_key,
+        }).install(pack)
 
 
 def test_installer_rejects_release_ready_pack_without_redistribution_notices(tmp_path):

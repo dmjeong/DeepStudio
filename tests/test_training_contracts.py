@@ -190,6 +190,19 @@ class ContainerModelTrainingContracts(unittest.TestCase):
             validate_training_options(project)
 
 
+class PatchCoreSelectionContracts(unittest.TestCase):
+    def test_catalog_model_and_training_backbone_must_match(self):
+        project = ProjectData()
+        project.task = "anomaly"
+        project.model.model_id = "patchcore_resnet18"
+        project.training.anomaly_method = "patchcore"
+        project.training.patchcore_backbone = "wide_resnet50_2"
+        with self.assertRaisesRegex(ValueError, "백본"):
+            validate_training_options(project)
+        project.training.patchcore_backbone = "resnet18"
+        validate_training_options(project)
+
+
 class MetadataAndAdapters(unittest.TestCase):
     def test_gui_loader_receives_split_and_mask_class_count(self):
         import sys

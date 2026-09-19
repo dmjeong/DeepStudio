@@ -250,7 +250,11 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
                 input_names=["input_image"], output_names=encoder_names, opset=opset)
         _export(decoder_for_export, decoder_args, {}, staged_decoder,
                 input_names=[decoder_input_names[name] for name in decoder_input_order],
-                output_names=list(SAM2_DECODER_OUTPUTS), opset=opset)
+                output_names=list(SAM2_DECODER_OUTPUTS), opset=opset,
+                dynamic_axes={
+                    decoder_input_names["point_coords"]: {1: "num_points"},
+                    decoder_input_names["point_labels"]: {1: "num_points"},
+                })
         import onnx
         _validate_onnx_contract(onnx, staged_encoder, ["input_image"], encoder_names)
         _validate_onnx_contract(
@@ -262,20 +266,31 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
             encoder_session = ort.InferenceSession(str(staged_encoder), providers=["CPUExecutionProvider"])
             decoder_session = ort.InferenceSession(str(staged_decoder), providers=["CPUExecutionProvider"])
             encoded = encoder_session.run(None, {"input_image": input_tensor.numpy()})
-            decoded = decoder_session.run(None, {
-                decoder_input_names[name]: encoded[encoder_names.index(name)]
-                if name in embedding_values else decoder_values_by_semantic[name].detach().cpu().numpy()
-                for name in decoder_input_order
-            })
-            for expected, actual in zip(decoder_values[:2], decoded):
-                # CPU graph fusion can reassociate FP32 arithmetic.  Keep a
-                # bounded deployment tolerance instead of rejecting a valid
-                # graph for sub-millilogit drift.
-                try:
-                    validate_outputs(expected.detach().float().numpy(), actual,
-                                     **VERIFICATION_TOLERANCE)
-                except ValueError as exc:
-                    raise Sam2ExportError(str(exc)) from exc
+            for point_count in (1, 2, 3, 8):
+                case_values = dict(decoder_values_by_semantic)
+                if point_count > 1:
+                    case_values["point_coords"] = torch.linspace(
+                        0.0, float(max(size)), point_count * 2, dtype=torch.float32
+                    ).reshape(1, point_count, 2)
+                    case_values["point_labels"] = torch.ones(
+                        (1, point_count), dtype=torch.int64
+                    )
+                case_args = tuple(case_values[name] for name in decoder_input_order)
+                with torch.inference_mode():
+                    expected_values = decoder_for_export(*case_args)
+                decoded = decoder_session.run(None, {
+                    decoder_input_names[name]: encoded[encoder_names.index(name)]
+                    if name in embedding_values else case_values[name].detach().cpu().numpy()
+                    for name in decoder_input_order
+                })
+                for expected, actual in zip(expected_values, decoded):
+                    try:
+                        validate_outputs(expected.detach().float().numpy(), actual,
+                                         **VERIFICATION_TOLERANCE)
+                    except ValueError as exc:
+                        raise Sam2ExportError(
+                            f"SAM2 decoder verification failed for {point_count} prompt points: {exc}"
+                        ) from exc
         os.replace(staged_encoder, encoder_file)
         os.replace(staged_decoder, decoder_file)
     config = {
@@ -290,6 +305,7 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
             "antialias": False, "layout": "NCHW", "value_scale": 255., "color_order": "RGB"},
         "verification": "passed" if verify else "skipped",
         "export": {"opset": opset, "precision": "float32", "dynamic_batch": False,
+                   "dynamic_prompt_points": True,
                    "verification_tolerance": dict(VERIFICATION_TOLERANCE),
                    "verification_reference": "exported_pytorch_graph"},
         "cpp_supported": True,

@@ -122,6 +122,7 @@ class InferenceOperations:
                     prediction.details.update(runtime_version=onnx.version, runtime_threads=onnx.threads,
                                               runtime_setup_sec=onnx.setup_sec,
                                               runtime_optimization=onnx.optimization_level,
+                                              runtime_export_graph=onnx.export_graph,
                                               runtime_verification_tolerance=onnx.verification_tolerance,
                                               runtime_validation_attempts=onnx.validation_attempts)
 

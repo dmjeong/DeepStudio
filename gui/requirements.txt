@@ -35,6 +35,7 @@ certifi>=2024.2.2           # 공개 CA 인증서 목록
 Pillow>=9.0.0
 shapely==2.1.2             # Cropped instance polygon intersection
 numpy>=1.24.0
+cryptography>=44.0.0         # Ed25519 model-pack signature verification
 
 # ── 이미지 처리 (합성 불량 생성 등) ──
 opencv-python>=4.7.0        # cv2: 불량 생성, 이미지 전처리, 히트맵
