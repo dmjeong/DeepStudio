@@ -43,11 +43,20 @@ class PatchCoreDataTests(unittest.TestCase):
         self.assertEqual(dict(zip(files, labels)), {normal: 0, defect: 1})
         self.assertEqual(split, "test")
 
-    def test_nonempty_val_is_preferred_to_test(self):
+    def test_nonempty_val_is_preferred_when_no_split_has_both_classes(self):
         self.file("train/good/a.png")
         val = self.file("val/good/a.png")
         self.file("test/good/b.png")
         self.assertEqual(discover_data(self.root)[1:], ([val], [0], "val"))
+
+    def test_test_with_both_classes_beats_normal_only_val_for_calibration(self):
+        self.file("train/good/a.png")
+        self.file("val/good/a.png")
+        normal = self.file("test/good/b.png")
+        defect = self.file("test/defect/c.png")
+        _, files, labels, split = discover_data(self.root)
+        self.assertEqual(split, "test")
+        self.assertEqual(dict(zip(files, labels)), {normal: 0, defect: 1})
 
     def test_flat_normal_folder_and_known_normal_folder(self):
         image = self.file("direct/a.png")

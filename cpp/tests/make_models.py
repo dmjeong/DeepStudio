@@ -208,7 +208,10 @@ patch_config.update({"model_path": "patchcore.onnx", "backend": "patchcore",
                      "output_name": "anomaly_score", "output_names": ["anomaly_score", "anomaly_map"],
                      "postprocessing": {"score": "patchcore_smoothed_knn_max", "threshold": 0.5,
                                         "memory_bank_size": 4, "n_neighbors": 2},
-                     "cpp_supported": True})
+                     "cpp_supported": True,
+                     "preprocessing": {**patch_config["preprocessing"],
+                                       "value_range": "uint8_0_255_or_uint16_0_65535",
+                                       "implementation": "opencv_full_range_v2"}})
 (root / "patchcore.json").write_text(json.dumps(patch_config, ensure_ascii=False), encoding="utf-8")
 
 # Minimal retired-backend manifest: the loader must reject it without executing an unsupported model.

@@ -103,6 +103,7 @@ struct InferenceConfig
     float detection_iou_threshold = 0.5f;
     int detection_max_detections = 300;
     float anomaly_threshold = 0.0f;
+    std::string input_value_range = "uint8_0_255"; ///< uint8 or full-range uint8/uint16 input contract
 };
 
 

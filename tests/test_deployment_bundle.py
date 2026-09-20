@@ -82,6 +82,7 @@ def test_patchcore_export_can_emit_sdk_bundle(tmp_path):
     with torch.inference_mode():
         feature_channels = model._avg_pool(model.backbone(torch.zeros(1, 3, 32, 32))).shape[1]
     model.memory_bank = torch.randn(2, feature_channels)
+    model.anomaly_threshold = .5
     bundle = tmp_path / "patchcore.dvdeploy"
     result = export_patchcore_model(model, tmp_path / "patchcore.onnx", verify=True,
                                     log=lambda _: None, bundle_output=bundle)

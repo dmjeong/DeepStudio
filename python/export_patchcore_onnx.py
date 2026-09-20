@@ -18,6 +18,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from patchcore import LEGACY_SCORE_DEFINITION, STANDARD_SCORE_DEFINITION, SUPPORTED_SCORE_DEFINITIONS
+
 # CPU ONNX Runtime may reassociate FP32 arithmetic while preserving the
 # deployment result. Keep the same explicit parity profile as the generic
 # exporter and publish it in the manifest so every exporter is auditable.
@@ -34,14 +36,18 @@ class PatchCoreOnnxWrapper(nn.Module):
         bank = patchcore.memory_bank.detach().float().cpu()
         if bank.ndim != 2 or bank.shape[0] < 1 or bank.shape[0] > 4096:
             raise ValueError("PatchCore ONNX requires a memory bank with 1..4096 rows")
-        if patchcore.n_neighbors < 1 or patchcore.n_neighbors > bank.shape[0]:
-            raise ValueError("PatchCore neighbor count exceeds the memory bank")
+        if patchcore.n_neighbors < 1:
+            raise ValueError("PatchCore neighbor count must be positive")
         if sigma <= 0:
             raise ValueError("Gaussian sigma must be positive")
         self.backbone = patchcore.backbone.cpu().eval()
         self.avg_pool = patchcore._avg_pool.cpu().eval()
         self.register_buffer("memory_bank", bank)
         self.n_neighbors = int(patchcore.n_neighbors)
+        self.effective_neighbors = min(self.n_neighbors, bank.shape[0])
+        self.score_definition = getattr(patchcore, "score_definition", LEGACY_SCORE_DEFINITION)
+        if self.score_definition not in SUPPORTED_SCORE_DEFINITIONS:
+            raise ValueError("Unsupported PatchCore score definition")
         kernel_size = int(2 * torch.ceil(torch.tensor(3.0 * sigma)).item() + 1)
         coordinates = torch.arange(kernel_size, dtype=torch.float32) - kernel_size // 2
         kernel = torch.exp(-0.5 * (coordinates / sigma) ** 2)
@@ -58,14 +64,33 @@ class PatchCoreOnnxWrapper(nn.Module):
         bank = self.memory_bank.to(query.dtype)
         distances = (query.square().sum(1, keepdim=True) + bank.square().sum(1).unsqueeze(0)
                      - 2.0 * torch.matmul(query, bank.transpose(0, 1))).clamp_min(0.0).sqrt()
-        nearest = torch.topk(distances, k=self.n_neighbors, largest=False, dim=1).values.mean(dim=1)
+        if self.score_definition == LEGACY_SCORE_DEFINITION:
+            nearest = torch.topk(distances, k=self.effective_neighbors, largest=False, dim=1).values.mean(dim=1)
+            score = None
+        else:
+            nearest, locations = distances.min(dim=1)
+            patch_scores = nearest.reshape(batch, -1)
+            score, max_patches = patch_scores.max(dim=1)
+            if self.effective_neighbors > 1:
+                rows = torch.arange(batch, device=images.device)
+                feature_rows = query.reshape(batch, height * width, channels)
+                max_features = feature_rows[rows, max_patches]
+                nearest_bank = self.memory_bank[locations.reshape(batch, -1)[rows, max_patches]].to(query.dtype)
+                support_distances = (nearest_bank.square().sum(1, keepdim=True) + self.memory_bank.square().sum(1).unsqueeze(0)
+                                     - 2.0 * torch.matmul(nearest_bank, self.memory_bank.transpose(0, 1))).clamp_min(0.0).sqrt()
+                support_indices = torch.topk(support_distances, k=self.effective_neighbors, largest=False, dim=1).indices
+                supports = self.memory_bank[support_indices].to(query.dtype)
+                query_distances = (max_features.unsqueeze(1) - supports).square().sum(2).clamp_min(0.0).sqrt()
+                score = score * (1.0 - torch.softmax(query_distances, dim=1)[:, 0])
         distance_map = nearest.reshape(batch, 1, height, width)
         anomaly_map = F.interpolate(distance_map, size=(images.shape[2], images.shape[3]),
                                     mode="bilinear", align_corners=False)
         padding = self.kernel_horizontal.shape[-1] // 2
         anomaly_map = F.conv2d(anomaly_map, self.kernel_horizontal, padding=(0, padding))
         anomaly_map = F.conv2d(anomaly_map, self.kernel_vertical, padding=(padding, 0))
-        return anomaly_map.reshape(batch, images.shape[2], images.shape[3]).amax(dim=(1, 2)), anomaly_map
+        if score is None:
+            score = anomaly_map.reshape(batch, images.shape[2], images.shape[3]).amax(dim=(1, 2))
+        return score, anomaly_map
 
 
 def _export_graph(model, dummy, output: Path, opset: int):
@@ -85,16 +110,22 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
     if not 11 <= opset <= 17:
         raise ValueError("PatchCore exporter supports ONNX opset 11..17")
     output.parent.mkdir(parents=True, exist_ok=True)
-    model = PatchCoreOnnxWrapper(patchcore).eval()
     size = int(patchcore.input_size)
     threshold = patchcore.anomaly_threshold
-    threshold = 0.0 if threshold is None else float(threshold)
-    if not torch.isfinite(torch.tensor(threshold)):
-        raise ValueError("PatchCore anomaly threshold must be finite")
+    if threshold is None:
+        raise ValueError("PatchCore ONNX 배포 전 정상·불량 보정 데이터로 임계값을 설정해야 합니다. 미보정 모델은 C++에서 자동 OK/NG 판정을 할 수 없습니다.")
+    threshold = float(threshold)
+    if not torch.isfinite(torch.tensor(threshold)) or threshold <= 0:
+        raise ValueError("PatchCore anomaly threshold must be a positive finite value")
+    if getattr(patchcore, "preprocessing", "full_range_v1") != "opencv_full_range_v2":
+        raise ValueError("이 PatchCore 체크포인트는 이전 PIL 전처리 형식입니다. C++ ONNX 배포는 Python과 같은 OpenCV 전처리로 새로 구축·보정한 모델만 지원합니다.")
+    from center_crop import validate_center_crop
+    crop = validate_center_crop(getattr(patchcore, "center_crop", None))
+    model = PatchCoreOnnxWrapper(patchcore).eval()
     dummy = torch.randn(1, 3, size, size, generator=torch.Generator().manual_seed(42))
     with tempfile.TemporaryDirectory(prefix=".patchcore-onnx-", dir=output.parent) as directory:
         staged = Path(directory) / output.name
-        log(f"PatchCore ONNX 그래프 생성: bank={patchcore.memory_bank.shape[0]}, k={patchcore.n_neighbors}")
+        log(f"PatchCore ONNX 그래프 생성: bank={patchcore.memory_bank.shape[0]}, k={model.effective_neighbors}")
         _export_graph(model, dummy, staged, opset)
         import onnx
         onnx.checker.check_model(str(staged))
@@ -118,14 +149,15 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
         "class_names": [], "preprocessing": {"input_size": [size, size], "in_channels": 3,
             "resize_implementation": "opencv_linear_exact_v1", "interpolation": "INTER_LINEAR_EXACT",
             "antialias": False, "layout": "NCHW", "resize": "bilinear", "value_scale": 255.,
-        "color_order": "RGB"}, "verification": "passed" if verify else "skipped",
+        "value_range": "uint8_0_255_or_uint16_0_65535", "implementation": "opencv_full_range_v2", "color_order": "RGB",
+        "center_crop": crop}, "verification": "passed" if verify else "skipped",
         "export": {"opset": opset, "precision": "float32", "dynamic_batch": False,
                    "verification_tolerance": dict(VERIFICATION_TOLERANCE),
                    "verification_reference": "exported_pytorch_graph"},
         "cpp_supported": True,
-        "postprocessing": {"score": "patchcore_smoothed_knn_max", "threshold": threshold,
+        "postprocessing": {"score": model.score_definition, "threshold": threshold,
                             "memory_bank_size": int(patchcore.memory_bank.shape[0]),
-                            "n_neighbors": int(patchcore.n_neighbors)},
+                            "n_neighbors": int(model.effective_neighbors)},
     }
     config_path = output.with_suffix(".json")
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")

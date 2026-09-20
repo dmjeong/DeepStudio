@@ -13,7 +13,7 @@ inline void resize_normalize_into(const cv::Mat& source, int width, int height,
     const std::vector<float>& mean, const std::vector<float>& stddev,
     float* tensor, size_t count, cv::Mat& scratch) {
     const int channels = source.channels();
-    if (source.empty() || source.depth() != CV_8U || (channels != 1 && channels != 3) ||
+    if (source.empty() || (source.depth() != CV_8U && source.depth() != CV_16U) || (channels != 1 && channels != 3) ||
         width < 1 || height < 1 || mean.size() != static_cast<size_t>(channels) || stddev.size() != mean.size())
         throw std::invalid_argument("Invalid preprocessing dimensions.");
     const size_t plane = static_cast<size_t>(width) * height;
@@ -29,11 +29,13 @@ inline void resize_normalize_into(const cv::Mat& source, int width, int height,
         resized = &scratch;
     }
     for (int y = 0; y < height; ++y) {
-        const uint8_t* row = resized->ptr<uint8_t>(y);
+        const uint8_t* row8 = resized->depth() == CV_8U ? resized->ptr<uint8_t>(y) : nullptr;
+        const uint16_t* row16 = resized->depth() == CV_16U ? resized->ptr<uint16_t>(y) : nullptr;
         for (int x = 0; x < width; ++x)
             for (int c = 0; c < channels; ++c)
                 tensor[c * plane + static_cast<size_t>(y) * width + x] =
-                    (static_cast<float>(row[x * channels + c]) / 255.0f - mean[c]) / stddev[c];
+                    ((row8 ? static_cast<float>(row8[x * channels + c]) / 255.0f
+                           : static_cast<float>(row16[x * channels + c]) / 65535.0f) - mean[c]) / stddev[c];
     }
 }
 

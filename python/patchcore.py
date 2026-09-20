@@ -201,6 +201,11 @@ def greedy_coreset_sampling(
 #  PatchCore 메인 클래스
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+LEGACY_SCORE_DEFINITION = "patchcore_smoothed_knn_max"
+STANDARD_SCORE_DEFINITION = "patchcore_nn_reweighted_v2"
+SUPPORTED_SCORE_DEFINITIONS = {LEGACY_SCORE_DEFINITION, STANDARD_SCORE_DEFINITION}
+
+
 class PatchCore:
     """
     PatchCore 이상 탐지 엔진
@@ -236,15 +241,16 @@ class PatchCore:
         max_candidates: int = 20000,
         max_memory_bank: int = 4096,
         seed: int = 0,
-        preprocessing: str = "full_range_v1",
+        preprocessing: str = "opencv_full_range_v2",
         center_crop: dict | None = None,
+        score_definition: str = STANDARD_SCORE_DEFINITION,
     ):
         """
         Args:
             backbone_name: 특징 추출 백본 ("wide_resnet50_2" 또는 "resnet18")
             device: 연산 디바이스
             sampling_ratio: 코어셋 비율 (0.01 = 전체 패치의 1%)
-            n_neighbors: kNN의 k값 (거리 평균에 사용)
+            n_neighbors: 이미지 점수 재가중에 사용할 최근접 정상 특징 수
             input_size: 입력 이미지 크기 (정사각형)
         """
         if (not 0 < sampling_ratio <= 1 or n_neighbors < 1
@@ -254,6 +260,12 @@ class PatchCore:
         self.backbone_name = backbone_name
         self.sampling_ratio = sampling_ratio
         self.n_neighbors = int(n_neighbors)
+        if score_definition not in SUPPORTED_SCORE_DEFINITIONS:
+            raise ValueError("미지원 PatchCore 점수 정의")
+        # v2는 표준 PatchCore처럼 각 패치에는 가장 가까운 정상 특징 하나를
+        # 사용하고, n_neighbors는 이미지 점수 재가중에만 사용한다. 이전
+        # 체크포인트는 legacy 정의를 유지하여 재학습 전 판정이 바뀌지 않는다.
+        self.score_definition = score_definition
         self.input_size = int(input_size)
         self.anomaly_threshold = None
         self.score_normalization = None
@@ -261,7 +273,7 @@ class PatchCore:
 
         if min(int(max_candidates), int(max_memory_bank)) < 1 or int(seed) < 0:
             raise ValueError("PatchCore 후보/대표 패치 수와 시드 범위 오류")
-        if preprocessing not in ("full_range_v1", "legacy_pil_rgb"):
+        if preprocessing not in ("full_range_v1", "opencv_full_range_v2", "legacy_pil_rgb"):
             raise ValueError("PatchCore 미지원 전처리")
         self.max_candidates, self.max_memory_bank = int(max_candidates), int(max_memory_bank)
         self.seed, self.preprocessing = int(seed), preprocessing
@@ -399,11 +411,16 @@ class PatchCore:
         # (B*h*w, D)로 평탄화
         patch_features = feat.permute(0, 2, 3, 1).reshape(-1, D)
 
-        # kNN 거리 계산 (배치 단위로 처리하여 메모리 효율화)
-        distances = self._compute_knn_distances(patch_features)
-
-        # (B*h*w,) → (B, h, w)
-        distance_map = distances.reshape(B, h, w)
+        if self.score_definition == LEGACY_SCORE_DEFINITION:
+            # 저장된 v1 체크포인트의 점수/임계값 의미를 보존한다.
+            distances = self._compute_knn_distances(patch_features)
+            distance_map = distances.reshape(B, h, w)
+            score_map = None
+        else:
+            distances, locations = self._compute_nearest_neighbors(patch_features)
+            distance_map = distances.reshape(B, h, w)
+            score_map = self._standard_image_scores(
+                distances.reshape(B, -1), locations.reshape(B, -1), patch_features.reshape(B, h * w, D))
 
         # 원본 해상도로 업샘플
         H, W = images.shape[2], images.shape[3]
@@ -417,10 +434,57 @@ class PatchCore:
         # 가우시안 스무딩 (노이즈 감소)
         anomaly_maps = self._gaussian_smooth(anomaly_maps, sigma=4.0)
 
-        # 이미지 레벨 스코어 = 최대 이상 거리
-        scores = anomaly_maps.reshape(B, -1).max(dim=1)[0]
+        # v2의 이미지 점수는 smoothing 전 최근접 패치 거리와 표준 재가중으로
+        # 계산한다. 지도 평활화는 위치 표시만 위한 것이며 작은 결함의 이미지
+        # 점수를 낮추지 않는다.
+        scores = anomaly_maps.reshape(B, -1).max(dim=1)[0] if score_map is None else score_map
 
         return scores.cpu().numpy(), anomaly_maps.cpu().numpy()
+
+    def _compute_nearest_neighbors(self, query: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """정확한 1-NN 거리와 메모리 뱅크 위치를 제한된 메모리로 구한다."""
+        if self.memory_bank is None or self.memory_bank.shape[0] == 0:
+            raise ValueError("비어 있는 메모리 뱅크")
+        if query.ndim != 2 or query.shape[1] != self.memory_bank.shape[1]:
+            raise ValueError("질의와 메모리 뱅크 특징 차원 불일치")
+        values, indices = [], []
+        for start in range(0, query.shape[0], 256):
+            q = query[start:start + 256].float()
+            best_value, best_index = None, None
+            for bank_start in range(0, self.memory_bank.shape[0], 1024):
+                bank = self.memory_bank[bank_start:bank_start + 1024].to(q.device, dtype=torch.float32)
+                distance = (q.square().sum(1, keepdim=True) + bank.square().sum(1).unsqueeze(0)
+                            - 2 * (q @ bank.T)).clamp_min_(0).sqrt_()
+                local_value, local_index = distance.min(dim=1)
+                local_index = local_index + bank_start
+                if best_value is None:
+                    best_value, best_index = local_value, local_index
+                else:
+                    choose = local_value < best_value
+                    best_value = torch.where(choose, local_value, best_value)
+                    best_index = torch.where(choose, local_index, best_index)
+            values.append(best_value)
+            indices.append(best_index)
+        return torch.cat(values), torch.cat(indices)
+
+    def _standard_image_scores(self, patch_scores: torch.Tensor, locations: torch.Tensor,
+                               features: torch.Tensor) -> torch.Tensor:
+        """PatchCore 논문의 nearest-neighbour reweighting으로 이미지 점수를 만든다."""
+        score, max_patches = patch_scores.max(dim=1)
+        effective_neighbors = min(self.n_neighbors, self.memory_bank.shape[0])
+        if effective_neighbors == 1:
+            return score
+        rows = torch.arange(patch_scores.shape[0], device=patch_scores.device)
+        query = features[rows, max_patches]
+        nearest = self.memory_bank[locations[rows, max_patches]].to(query.device, dtype=torch.float32)
+        bank = self.memory_bank.to(query.device, dtype=torch.float32)
+        support_distance = (nearest.square().sum(1, keepdim=True) + bank.square().sum(1).unsqueeze(0)
+                            - 2 * (nearest @ bank.T)).clamp_min_(0).sqrt_()
+        support_index = support_distance.topk(effective_neighbors, largest=False, dim=1).indices
+        supports = bank[support_index]
+        distances = (query.unsqueeze(1) - supports).square().sum(dim=2).clamp_min_(0).sqrt_()
+        weight = 1 - F.softmax(distances, dim=1)[:, 0]
+        return weight * score
 
     def _compute_knn_distances(
         self,
@@ -535,7 +599,7 @@ class PatchCore:
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "type": "patchcore",
-            "schema_version": 4 if self.center_crop is not None else 3,
+            "schema_version": 5,
             "center_crop": self.center_crop,
             "preprocessing": self.preprocessing,
             "weight_source": self.weight_source,
@@ -545,7 +609,7 @@ class PatchCore:
             "backbone_state_dict": {k: v.detach().cpu() for k, v in self.backbone.state_dict().items()},
             "anomaly_threshold": self.anomaly_threshold,
             "threshold_comparator": ">=",
-            "score_definition": "patchcore_smoothed_knn_max",
+            "score_definition": self.score_definition,
             "score_normalization": self.get_score_normalization(),
             "calibration": self.calibration,
             "memory_bank": self.memory_bank.cpu(),
@@ -588,11 +652,14 @@ class PatchCore:
         data = torch.load(path, map_location="cpu", weights_only=False)
         if not isinstance(data, dict) or data.get("type") != "patchcore":
             raise ValueError("PatchCore 체크포인트 형식 오류")
-        if data.get("schema_version", 1) not in (1, 2, 3, 4):
+        schema_version = data.get("schema_version", 1)
+        if schema_version not in (1, 2, 3, 4, 5):
             raise ValueError("미지원 PatchCore 체크포인트 버전")
         from center_crop import validate_center_crop
+        if schema_version >= 5 and "center_crop" not in data:
+            raise ValueError("PatchCore 중앙 크롭 설정 누락")
         crop = validate_center_crop(data.get("center_crop"))
-        if data.get("schema_version", 1) == 4 and crop is None:
+        if schema_version == 4 and crop is None:
             raise ValueError("PatchCore 중앙 크롭 설정 누락")
         if data.get("schema_version", 1) >= 2 and "backbone_state_dict" not in data:
             raise ValueError("PatchCore 체크포인트 백본 가중치 누락")
@@ -601,7 +668,8 @@ class PatchCore:
             raise ValueError("PatchCore 임계값이 유한하지 않습니다")
         if data.get("threshold_comparator", ">=") != ">=":
             raise ValueError("미지원 PatchCore 임계값 비교 연산")
-        if data.get("score_definition", "patchcore_smoothed_knn_max") != "patchcore_smoothed_knn_max":
+        score_definition = data.get("score_definition", LEGACY_SCORE_DEFINITION)
+        if score_definition not in SUPPORTED_SCORE_DEFINITIONS:
             raise ValueError("PatchCore 점수 정의 불일치")
         from patchcore_scores import score_normalization, validate_normalization
         normalization = (validate_normalization(data["score_normalization"]) if "score_normalization" in data
@@ -618,6 +686,7 @@ class PatchCore:
             max_memory_bank=data.get("max_memory_bank", max(4096, data.get("memory_bank_size", 0))),
             seed=data.get("seed", 0), preprocessing=data.get("preprocessing", "legacy_pil_rgb"),
             center_crop=crop,
+            score_definition=score_definition,
         )
         if "backbone_state_dict" in data:
             state = data["backbone_state_dict"]

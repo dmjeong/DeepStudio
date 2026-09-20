@@ -1168,7 +1168,11 @@ class TrainingWidget(TrainingForm, QWidget):
         self._progress_start_epoch = None
         self.progress_bar.setRange(0, 100)
         self.eta_label.setText("ETA: —")
-        self.status_label.setText({"completed": "학습 완료", "cancelled": "학습 중단",
+        readiness = (new_runs[-1].config_snapshot.get("patchcore_readiness", {})
+                     if new_runs else {})
+        uncalibrated_patchcore = status == "completed" and readiness.get("state") == "uncalibrated"
+        self.status_label.setText("특징 뱅크 구축 완료 / 판정 미보정" if uncalibrated_patchcore else
+                                  {"completed": "학습 완료", "cancelled": "학습 중단",
                                    "failed": "학습 실패"}.get(status, "학습 종료"))
         try:
             self.compare_widget.update_comparison(original)
@@ -1198,9 +1202,15 @@ class TrainingWidget(TrainingForm, QWidget):
             epoch_text = str(best_epoch) if best_epoch > 0 else "N/A"
             if "Best Epoch" in self.metric_cards:
                 self.metric_cards["Best Epoch"].setText(epoch_text)
-            QMessageBox.information(self, "학습 완료",
-                f"학습 완료\n\n{metric_name}: {metric_text}\n"
-                f"Best Epoch: {epoch_text}\n체크포인트: {ckpt_path}")
+            if uncalibrated_patchcore:
+                QMessageBox.warning(self, "특징 뱅크 구축 완료 / 판정 미보정",
+                    "정상 특징 메모리 뱅크는 저장됐지만 자동 OK/NG 판정 임계값은 없습니다.\n"
+                    "정상·불량이 모두 있는 val 또는 test 데이터로 다시 학습해 보정한 뒤 ONNX로 내보내세요.\n\n"
+                    f"체크포인트: {ckpt_path}")
+            else:
+                QMessageBox.information(self, "학습 완료",
+                    f"학습 완료\n\n{metric_name}: {metric_text}\n"
+                    f"Best Epoch: {epoch_text}\n체크포인트: {ckpt_path}")
 
     def _display_finished_run(self, snapshot, run):
         """Render the completed record with the worker's class order and settings."""

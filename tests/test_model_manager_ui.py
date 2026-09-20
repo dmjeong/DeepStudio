@@ -72,6 +72,19 @@ def test_downloaded_sam2_weight_can_be_applied_to_the_current_segment_project(ma
     assert project.model.pretrained_weights == str(checkpoint.resolve())
 
 
+def test_sam2_variant_change_refreshes_without_treating_index_as_path(manager, qt_app):
+    errors = []
+    import sys
+    original = sys.excepthook
+    sys.excepthook = lambda kind, value, traceback: errors.append(str(value))
+    try:
+        manager.sam2_variant.setCurrentIndex(1)
+        qt_app.processEvents()
+    finally:
+        sys.excepthook = original
+    assert errors == []
+
+
 def test_settings_can_open_before_a_project_exists(qt_app, monkeypatch):
     monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
     window = MainWindow()

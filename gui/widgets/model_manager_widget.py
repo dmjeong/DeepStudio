@@ -97,7 +97,9 @@ class ModelManagerWidget(QWidget):
         self.sam2_variant.addItem("SAM2.1 Hiera Small", "sam2_hiera_small")
         self.sam2_variant.addItem("SAM2.1 Hiera Base+", "sam2_hiera_base_plus")
         self.sam2_variant.addItem("SAM2.1 Hiera Large", "sam2_hiera_large")
-        self.sam2_variant.currentIndexChanged.connect(self._update_sam2_apply_state)
+        # currentIndexChanged emits an int. Do not pass it as the optional
+        # downloaded-path argument used by the worker completion callback.
+        self.sam2_variant.currentIndexChanged.connect(lambda _index: self._update_sam2_apply_state())
         sam_buttons.addWidget(self.sam2_variant)
         self.sam2_download_button = QPushButton("사전학습 가중치 다운로드")
         self.sam2_download_button.clicked.connect(self._download_sam2)

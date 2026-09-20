@@ -154,6 +154,19 @@ class PatchCoreRuntimeTests(PatchCoreFixture):
         actual = pc._compute_knn_distances(query)
         torch.testing.assert_close(actual, expected, rtol=1e-4, atol=2e-3)
 
+    def test_standard_score_uses_nearest_patch_and_matches_onnx_wrapper(self):
+        from export_patchcore_onnx import PatchCoreOnnxWrapper
+        from patchcore import STANDARD_SCORE_DEFINITION
+
+        pc = self.model(n_neighbors=3)
+        pc.memory_bank = torch.randn(5, 384, generator=torch.Generator().manual_seed(41))
+        images = torch.rand(2, 3, 32, 32, generator=torch.Generator().manual_seed(42))
+        self.assertEqual(pc.score_definition, STANDARD_SCORE_DEFINITION)
+        expected_score, expected_map = pc.predict(images)
+        wrapper_score, wrapper_map = PatchCoreOnnxWrapper(pc)(images)
+        np.testing.assert_allclose(wrapper_score.detach().numpy(), expected_score, rtol=1e-5, atol=1e-5)
+        np.testing.assert_allclose(wrapper_map.detach().numpy()[:, 0], expected_map, rtol=1e-5, atol=1e-5)
+
     def test_bounded_sampling_is_deterministic_without_global_rng_changes(self):
         features = torch.arange(120 * 140, dtype=torch.float32).reshape(120, 140)
         state = torch.get_rng_state().clone()
@@ -278,7 +291,7 @@ class PatchCoreRuntimeTests(PatchCoreFixture):
         loaded = PatchCore.load(checkpoint)
         self.assertEqual(loaded.center_crop, crop)
         self.assertEqual(loaded.get_info()["center_crop"], crop)
-        self.assertEqual(torch.load(checkpoint, weights_only=False)["schema_version"], 4)
+        self.assertEqual(torch.load(checkpoint, weights_only=False)["schema_version"], 5)
         expected = loaded.predict(tensor.unsqueeze(0))
         for direct, from_path in zip(expected, loaded.predict_from_path(path)):
             np.testing.assert_array_equal(direct, from_path)

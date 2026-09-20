@@ -266,7 +266,7 @@ int main(int argc, char* argv[])
     {
         try
         {
-            cv::Mat image = cv::imread(path, cv::IMREAD_ANYCOLOR | cv::IMREAD_IGNORE_ORIENTATION);
+            cv::Mat image = cv::imread(path, cv::IMREAD_ANYCOLOR | cv::IMREAD_ANYDEPTH);
             if (image.empty()) throw std::runtime_error("Image load failed: " + path);
             const std::string filename = fs::path(path).filename().string();
             cv::Mat result_image;

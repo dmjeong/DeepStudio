@@ -145,6 +145,9 @@ void ValidateConfig(const InferenceConfig& config)
             config.detection_iou_threshold > 1.0f || config.detection_max_detections < 1)
             throw std::invalid_argument("Invalid detection thresholds or max detections.");
     }
+    if (config.input_value_range != "uint8_0_255" &&
+        config.input_value_range != "uint8_0_255_or_uint16_0_65535")
+        throw std::invalid_argument("Unsupported input value range.");
     if (config.task == "anomaly" && !std::isfinite(config.anomaly_threshold))
         throw std::invalid_argument("Invalid anomaly threshold.");
     if (config.model_path.empty() || config.input_name.empty() || config.output_name.empty())
@@ -476,6 +479,11 @@ bool VisionInference::InitializeFromJson(const std::string& config_path,
                 prep.value("color_order", config.input_channels == 1 ? std::string("GRAY") : std::string("RGB")) !=
                     (config.input_channels == 1 ? "GRAY" : "RGB"))
                 throw std::invalid_argument("Unsupported preprocessing contract.");
+            config.input_value_range = prep.value("value_range", std::string("uint8_0_255"));
+            if (config.backend == "patchcore" &&
+                (config.input_value_range != "uint8_0_255_or_uint16_0_65535" ||
+                 prep.value("implementation", std::string()) != "opencv_full_range_v2"))
+                throw std::invalid_argument("PatchCore deployment requires its full-range input contract.");
         }
         if (!doc.contains("preprocessing"))
             throw std::invalid_argument("Schema 5 requires preprocessing metadata.");
@@ -521,8 +529,10 @@ void VisionInference::PreprocessInto(const cv::Mat& source, float* data, size_t 
                                (source.rows-m_config.crop_height)/2,
                                m_config.crop_width, m_config.crop_height));
     }
-    if (image.empty() || image.depth() != CV_8U)
-        throw std::invalid_argument("Input must be a nonempty 8-bit image; map height data explicitly.");
+    if (image.empty() || (image.depth() != CV_8U && image.depth() != CV_16U))
+        throw std::invalid_argument("Input must be a nonempty 8-bit or uint16 image.");
+    if (image.depth() == CV_16U && m_config.input_value_range != "uint8_0_255_or_uint16_0_65535")
+        throw std::invalid_argument("Deployment input contract accepts 8-bit images only.");
     const int source_channels = image.channels();
     const int channels = m_config.input_channels;
     if (source_channels != 1 && source_channels != 3 && source_channels != 4)
@@ -1098,7 +1108,7 @@ AnomalyResult VisionInference::Anomaly(const cv::Mat& image)
 
 ClassifyResult VisionInference::ClassifyFile(const std::string& image_path)
 {
-    cv::Mat image = cv::imread(image_path, cv::IMREAD_ANYCOLOR | cv::IMREAD_IGNORE_ORIENTATION);
+    cv::Mat image = cv::imread(image_path, cv::IMREAD_ANYCOLOR | cv::IMREAD_ANYDEPTH);
     if (image.empty())
     {
         std::cerr << "[Vision] 이미지 로드 실패: " << image_path << std::endl;
@@ -1109,7 +1119,7 @@ ClassifyResult VisionInference::ClassifyFile(const std::string& image_path)
 
 SegmentResult VisionInference::SegmentFile(const std::string& image_path)
 {
-    cv::Mat image = cv::imread(image_path, cv::IMREAD_ANYCOLOR | cv::IMREAD_IGNORE_ORIENTATION);
+    cv::Mat image = cv::imread(image_path, cv::IMREAD_ANYCOLOR | cv::IMREAD_ANYDEPTH);
     if (image.empty())
     {
         std::cerr << "[Vision] 이미지 로드 실패: " << image_path << std::endl;
@@ -1120,14 +1130,14 @@ SegmentResult VisionInference::SegmentFile(const std::string& image_path)
 
 DetectResult VisionInference::DetectFile(const std::string& image_path)
 {
-    cv::Mat image = cv::imread(image_path, cv::IMREAD_ANYCOLOR | cv::IMREAD_IGNORE_ORIENTATION);
+    cv::Mat image = cv::imread(image_path, cv::IMREAD_ANYCOLOR | cv::IMREAD_ANYDEPTH);
     if (image.empty()) throw std::runtime_error("Image load failed: " + image_path);
     return Detect(image);
 }
 
 AnomalyResult VisionInference::AnomalyFile(const std::string& image_path)
 {
-    cv::Mat image = cv::imread(image_path, cv::IMREAD_ANYCOLOR | cv::IMREAD_IGNORE_ORIENTATION);
+    cv::Mat image = cv::imread(image_path, cv::IMREAD_ANYCOLOR | cv::IMREAD_ANYDEPTH);
     if (image.empty()) throw std::runtime_error("Image load failed: " + image_path);
     return Anomaly(image);
 }

@@ -99,7 +99,7 @@ class PatchCoreWorker(TrainingEngine):
                     raise ValueError(f"기존 대표 패치 {pc.memory_bank.shape[0]:,}개. 최대 대표 패치 수를 더 크게 설정 필요")
             else:
                 pc.memory_bank = None
-                pc.input_size, pc.preprocessing = int(cfg.input_size), "full_range_v1"
+                pc.input_size, pc.preprocessing = int(cfg.input_size), "opencv_full_range_v2"
                 pc.center_crop = crop
             pc.device = torch.device(device)
             pc.backbone.to(pc.device).eval()
@@ -180,7 +180,8 @@ class PatchCoreWorker(TrainingEngine):
         self._stage = "평가 및 임계값 보정"
         auroc = None
         evaluation = {"task": "anomaly", "method": "patchcore", "evaluable": False,
-                      "auroc": None, "optimal_threshold": None, "reason": "평가 데이터 없음"}
+                      "auroc": None, "optimal_threshold": None, "reason": "평가 데이터 없음",
+                      "split": ""}
         if val_loader is not None:
             auroc, evaluation = self._evaluate_patchcore(pc, val_loader, device)
         if self._stop_requested:
@@ -189,6 +190,12 @@ class PatchCoreWorker(TrainingEngine):
         pc.calibration = {"evaluable": evaluation.get("evaluable", False),
                           "reason": evaluation.get("reason", ""), "sample_count": evaluation.get("sample_count", 0),
                           "method": "validation_f1", "threshold_comparator": ">="}
+        readiness = "ready" if pc.anomaly_threshold is not None else "uncalibrated"
+        record.config_snapshot["patchcore_readiness"] = {
+            "state": readiness, "evaluation_split": evaluation.get("split", ""),
+            "reason": evaluation.get("reason", ""),
+            "sample_count": evaluation.get("sample_count", 0),
+        }
         self._stage = "체크포인트 및 CSV 저장"
         checkpoint = os.path.join(run_dir, "best.pt")
         pc.save(checkpoint)
@@ -212,7 +219,12 @@ class PatchCoreWorker(TrainingEngine):
         record.config_snapshot["best_selection"] = selection
         log_total_time(self.signals.log_message.emit, selection["total_seconds"])
         self.signals.training_finished.emit(auroc if auroc is not None else 0., 1, checkpoint)
-        self.signals.log_message.emit(f"PatchCore 완료: {checkpoint}")
+        if readiness == "ready":
+            self.signals.log_message.emit(f"PatchCore 완료 및 판정 보정: {checkpoint}")
+        else:
+            self.signals.log_message.emit(
+                f"PatchCore 특징 뱅크 구축 완료 — 판정 미보정: {checkpoint}\n"
+                "정상·불량이 모두 있는 val 또는 test 폴더로 다시 보정해야 C++ ONNX 배포와 OK/NG 판정이 가능합니다.")
 
     def _create_dataloaders(self, data_cfg, cfg, num_workers=0):
         from torch.utils.data import DataLoader
@@ -222,10 +234,11 @@ class PatchCoreWorker(TrainingEngine):
         if cfg.batch_size < 1 or cfg.input_size < 32:
             raise ValueError("배치 크기는 1 이상, 입력 크기는 32 이상 필요")
         training, validation, labels, split = discover_data(data_cfg.root)
+        self._patchcore_evaluation_split = split
         batch = min(cfg.batch_size, max(1, 1048576 // (cfg.input_size * cfg.input_size)))
         self.signals.log_message.emit(f"  정상 학습 {len(training)}장 | 실제 배치 {batch} (설정 {cfg.batch_size})")
-        self.signals.log_message.emit(f"  평가 {split}: {len(validation)}장" if validation else "  평가 이미지 없음: 정상 뱅크만 구축, AUROC/임계값은 평가 불가")
-        self.signals.log_message.emit("  RGB/회색조 공통 ImageNet 정규화, 16비트 회색조 전체 범위 보존")
+        self.signals.log_message.emit(f"  보정 평가 {split}: {len(validation)}장" if validation else "  평가 이미지 없음: 정상 뱅크만 구축, AUROC/임계값은 평가 불가")
+        self.signals.log_message.emit("  OpenCV 정확 리사이즈 + RGB/회색조 ImageNet 정규화, 16비트 전체 범위 보존")
         if crop:
             self.signals.log_message.emit(f"  원본 중앙 {crop['width']}×{crop['height']} px 크롭 → 입력 {cfg.input_size}×{cfg.input_size} px. 불량 평가 이미지는 크롭 내부에 불량이 있어야 합니다")
         # GUI QThread 안에서 Windows spawn 워커를 다시 만들지 않는다.
@@ -284,4 +297,5 @@ class PatchCoreWorker(TrainingEngine):
 
         results["task"] = "anomaly"
         results["method"] = "patchcore"
+        results["split"] = getattr(self, "_patchcore_evaluation_split", "")
         return auroc, results
