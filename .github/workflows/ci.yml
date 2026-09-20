@@ -212,12 +212,8 @@ jobs:
       - name: Package the launcher candidate
         working-directory: .
         run: python tools/package_web.py --output release
-      - name: Fetch the reported v8.0 package for batch diagnostics
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release download v8.0 --repo dmjeong/Vision --pattern Deep-Vision-Studio-React-v8.0.zip --dir baseline
-      - name: Diagnose v8.0 bytes and verify the packaged launcher
-        run: python tools/windows_release_smoke.py --release-dir release --baseline-dir baseline
+      - name: Verify the packaged standalone launcher
+        run: python tools/windows_release_smoke.py --release-dir release
 
   datagen-contract:
     runs-on: ubuntu-latest
