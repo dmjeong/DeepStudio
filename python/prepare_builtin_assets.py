@@ -14,7 +14,7 @@ import sys
 
 from builtin_assets import ASSET_FILES
 from efficientnet import VARIANTS
-from model_download import cached_imagenet_weights
+from model_download import cached_imagenet_weights, enable_requests_native_ca
 from sam2_assets import download_sam2_pretrained
 
 
@@ -38,6 +38,10 @@ def _sha256(path: Path) -> str:
 def _download_upstream(model_id: str, destination: Path) -> None:
     """Use the pinned LibreYOLO public downloader once, at build time."""
     from upstream_models import get_upstream_spec
+    # LibreYOLO uses requests internally. Apply the Windows native CA store
+    # before importing it so corporate TLS inspection certificates installed
+    # in Windows are trusted without disabling certificate verification.
+    enable_requests_native_ca()
     from libreyolo.utils.download import download_weights
     spec = get_upstream_spec(model_id)
     destination.parent.mkdir(parents=True, exist_ok=True)

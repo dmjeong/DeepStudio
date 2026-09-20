@@ -11,6 +11,9 @@ from urllib.parse import urlparse
 from urllib.request import build_opener, HTTPRedirectHandler, HTTPSHandler, Request
 
 
+_REQUESTS_NATIVE_CA_ENABLED = False
+
+
 def certificate_failure(exc):
     """urllib wraps TLS failures in URLError.reason; retain the original cause."""
     seen = set()
@@ -43,6 +46,35 @@ def download_context():
     context.verify_mode = ssl.CERT_REQUIRED
     context.check_hostname = True
     return context
+
+
+def enable_requests_native_ca() -> None:
+    """Make third-party ``requests`` downloaders trust the Windows CA store.
+
+    LibreYOLO downloads its pretrained files through ``requests`` rather than
+    this module's urllib opener.  ``truststore.SSLContext`` alone therefore
+    does not help that path.  Injecting truststore before importing that
+    downloader keeps certificate verification enabled while including an
+    organization's Windows-installed TLS inspection root certificate.
+    """
+    global _REQUESTS_NATIVE_CA_ENABLED
+    if _REQUESTS_NATIVE_CA_ENABLED:
+        return
+    try:
+        import truststore
+    except ImportError as exc:
+        raise RuntimeError(
+            "Windows 인증서 저장소를 사용하려면 truststore==0.10.4가 필요합니다. "
+            "gui 폴더에서 python -m pip install -r requirements.txt를 실행하세요."
+        ) from exc
+    try:
+        truststore.inject_into_ssl()
+    except Exception as exc:
+        raise RuntimeError(
+            "Windows 시스템 인증서를 LibreYOLO 다운로드기에 적용하지 못했습니다. "
+            "HTTPS 검증은 유지됩니다."
+        ) from exc
+    _REQUESTS_NATIVE_CA_ENABLED = True
 
 
 class _HTTPSRedirect(HTTPRedirectHandler):

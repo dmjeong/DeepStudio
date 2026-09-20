@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+import types
+from pathlib import Path
 
 
 def test_packaged_asset_requires_manifest_hash_and_never_downloads(tmp_path, monkeypatch):
@@ -33,3 +36,21 @@ def test_asset_manifest_covers_every_basic_pretrained_file():
 
     assert {"sam2_hiera_tiny", "sam2_hiera_small", "sam2_hiera_base_plus", "sam2_hiera_large"} <= set(ASSET_FILES)
     assert {"efficientnet_b0", "efficientnet_b1", "resnet18", "resnet50", "convnext_v1_tiny"} <= set(ASSET_FILES)
+
+
+def test_libreyolo_download_enables_windows_native_certificate_store(monkeypatch):
+    import model_download
+
+    calls = []
+    fake_truststore = types.SimpleNamespace(inject_into_ssl=lambda: calls.append("injected"))
+    monkeypatch.setitem(sys.modules, "truststore", fake_truststore)
+    monkeypatch.setattr(model_download, "_REQUESTS_NATIVE_CA_ENABLED", False)
+    model_download.enable_requests_native_ca()
+    model_download.enable_requests_native_ca()
+    assert calls == ["injected"]
+    source = (Path(__file__).resolve().parents[1] / "python" / "prepare_builtin_assets.py").read_text(
+        encoding="utf-8"
+    )
+    assert source.index("enable_requests_native_ca()") < source.index(
+        "from libreyolo.utils.download import download_weights"
+    )

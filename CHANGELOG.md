@@ -2,6 +2,11 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**5.86 — 사내 Windows 인증서의 LibreYOLO 가중치 다운로드**
+
+- LibreYOLO·Re-DETR v4 기본 가중치를 받을 때도 Windows 시스템 인증서를 적용한다. 사내 HTTPS 검사
+  프록시의 root CA가 Windows에 설치되어 있으면 Hugging Face CDN 다운로드가 인증 검증을 유지한 채 동작한다.
+
 **5.85 — 간단 Windows 설치파일**
 
 - `gui\\build.bat installer`가 실행 프로그램과 C++17/C# ONNX 예제만 담은 WiX Setup을 만든다.
