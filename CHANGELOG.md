@@ -2,6 +2,11 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**2.50 — Settings 모델 카탈로그 정리**
+
+- Settings의 태스크를 Classification, Object Detection, Segmentation, Anomaly Detection으로 통일했다.
+- 행 배경 강조와 내부 개발 상태 열을 제거했다. 기본 모델과 추가 Docker 모델의 구분, 태스크, 모델, 실행 방식만 표시한다.
+
 **2.40 — LibreYOLO `.pt` 추론 로드 수정**
 
 - 기본 제공 LibreYOLO9·Re-DETR v4·LibreMobileNetV4 체크포인트를 기존 DVS 전용 형식으로 오인해 거부하던 오류를 수정했다. 앱이 제공하는 공개 `LibreYOLO(path, device=...)` factory로 원본 `.pt`를 복원한다.

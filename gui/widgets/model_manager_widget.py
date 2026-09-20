@@ -12,16 +12,10 @@ from PySide6.QtWidgets import (
 
 
 _TASK_LABELS = {
-    "classify": "분류", "anomaly": "이상 탐지", "detect": "객체 탐지", "segment": "세그멘테이션",
-}
-_STATUS_LABELS = {
-    "requested": "실행 모듈 준비 필요",
-    "scoped": "설계됨",
-    "runtime_verified": "실행 검증됨",
-    "trained_verified": "학습 검증됨",
-    "export_verified": "ONNX 검증됨",
-    "sdk_verified": "SDK 검증됨",
-    "release_ready": "배포 준비됨",
+    "classify": "Classification",
+    "anomaly": "Anomaly Detection",
+    "detect": "Object Detection",
+    "segment": "Segmentation",
 }
 
 
@@ -56,10 +50,10 @@ class ModelManagerWidget(QWidget):
         catalog_group = QGroupBox("모델 카탈로그")
         catalog_layout = QVBoxLayout(catalog_group)
         self.catalog = QTreeWidget()
-        self.catalog.setColumnCount(5)
-        self.catalog.setHeaderLabels(["구분", "태스크", "모델", "실행 방식", "현재 상태"])
+        self.catalog.setColumnCount(4)
+        self.catalog.setHeaderLabels(["구분", "태스크", "모델", "실행 방식"])
         self.catalog.setRootIsDecorated(False)
-        self.catalog.setAlternatingRowColors(True)
+        self.catalog.setAlternatingRowColors(False)
         self.catalog.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.catalog.setWordWrap(True)
         self.catalog.setAccessibleName("모델 카탈로그")
@@ -108,10 +102,9 @@ class ModelManagerWidget(QWidget):
         for spec in registry.list():
             category = "기본 제공" if spec.model_id in builtins else "추가 Docker 모델"
             runtime = "내장" if "windows_native" in spec.runtimes else "Docker 팩"
-            status = _STATUS_LABELS.get(spec.release_status, spec.release_status)
             item = QTreeWidgetItem([
                 category, _TASK_LABELS.get(spec.task, spec.task), spec.display_name,
-                runtime, status,
+                runtime,
             ])
             item.setToolTip(2, f"{spec.model_id}\n{spec.notes}".strip())
             self.catalog.addTopLevelItem(item)

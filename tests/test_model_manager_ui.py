@@ -35,15 +35,18 @@ def _row_for(page, model_name):
     raise AssertionError(f"model row not found: {model_name}")
 
 
-def test_model_manager_separates_shipped_models_from_user_added_docker_models(manager):
+def test_model_manager_uses_plain_rows_and_english_task_names(manager):
+    assert manager.catalog.columnCount() == 4
+    assert not manager.catalog.alternatingRowColors()
     native = _row_for(manager, "DeepLab V3+ ResNet34")
     assert native.text(0) == "기본 제공"
+    assert native.text(1) == "Segmentation"
     assert native.text(3) == "내장"
 
     pending = _row_for(manager, "SAM2 Hiera Tiny")
     assert pending.text(0) == "기본 제공"
+    assert pending.text(1) == "Segmentation"
     assert pending.text(3) == "내장"
-    assert pending.text(4) == "실행 모듈 준비 필요"
 
 
 def test_settings_can_open_before_a_project_exists(qt_app, monkeypatch):
