@@ -47,6 +47,8 @@ def test_model_manager_uses_plain_rows_and_english_task_names(manager):
     assert pending.text(0) == "기본 제공"
     assert pending.text(1) == "Segmentation"
     assert pending.text(3) == "내장"
+    assert manager.sam2_variant.count() == 4
+    assert manager.sam2_download_button.text() == "사전학습 가중치 다운로드"
 
 
 def test_settings_can_open_before_a_project_exists(qt_app, monkeypatch):

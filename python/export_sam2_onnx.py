@@ -31,6 +31,102 @@ class Sam2ExportError(ValueError):
     pass
 
 
+class _OfficialSam2Encoder(torch.nn.Module):
+    """Expose the real SAM2 image encoder in the SDK's three-tensor contract."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_image):
+        features = self.model.forward_image(input_image)["backbone_fpn"]
+        # SAM2ImagePredictor injects this embedding for a static image before
+        # calling the prompt decoder. Preserve that exact image path in ONNX.
+        image_embeddings = features[2]
+        if self.model.directly_add_no_mem_embed:
+            image_embeddings = image_embeddings + self.model.no_mem_embed.reshape(1, -1, 1, 1)
+        return image_embeddings, features[0], features[1]
+
+
+class _OfficialSam2Decoder(torch.nn.Module):
+    """Prompt encoder + mask decoder wrapper for a real SAM2.1 image model."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, image_embeddings, image_features_0, image_features_1,
+                point_coords, point_labels, mask_input, has_mask_input, orig_im_size):
+        prompt_encoder = self.model.sam_prompt_encoder
+        # ``has_mask_input`` must remain a graph input. Calling the prompt
+        # encoder once for each allowed path and blending the dense embedding
+        # avoids tracing a Python boolean branch that would freeze this option.
+        sparse, empty_dense = prompt_encoder(
+            points=(point_coords, point_labels), boxes=None, masks=None)
+        _, mask_dense = prompt_encoder(
+            points=(point_coords, point_labels), boxes=None, masks=mask_input)
+        use_mask = has_mask_input.reshape(-1, 1, 1, 1)
+        dense = empty_dense * (1.0 - use_mask) + mask_dense * use_mask
+        masks, scores, _, _ = self.model.sam_mask_decoder(
+            image_embeddings=image_embeddings,
+            image_pe=prompt_encoder.get_dense_pe(),
+            sparse_prompt_embeddings=sparse,
+            dense_prompt_embeddings=dense,
+            multimask_output=True,
+            repeat_image=False,
+            high_res_features=[image_features_0, image_features_1],
+        )
+        # The native runtime supplies original image size as part of the common
+        # prompt ABI. Decoder output stays low-resolution by design, but retain
+        # the input in the graph so the ABI is validated, rather than silently
+        # dropping it during export.
+        return masks, scores + orig_im_size.sum() * 0.0
+
+
+def export_official_sam2_checkpoint(model_id: str, checkpoint_path, output_dir: str | Path,
+                                    *, verify: bool = True, opset: int = 17, log=print,
+                                    bundle_output: str | Path | None = None) -> dict:
+    """Export one downloaded official SAM2.1 Hiera image model to two ONNX graphs.
+
+    This is intentionally separate from ``export_sam2_checkpoint``: the latter
+    accepts a Studio checkpoint that already supplies adapter modules, whereas
+    this path uses Meta's public SAM2.1 checkpoint format and official builder.
+    """
+    try:
+        from sam2_assets import get_sam2_asset, load_sam2_pretrained
+        asset = get_sam2_asset(model_id)
+        model = load_sam2_pretrained(model_id, device="cpu", checkpoint_path=checkpoint_path)
+    except (ValueError, RuntimeError, FileNotFoundError) as exc:
+        raise Sam2ExportError(str(exc)) from exc
+    input_size = int(getattr(model, "image_size", 0))
+    mask_size = getattr(model.sam_prompt_encoder, "mask_input_size", ())
+    if input_size <= 0 or not isinstance(mask_size, tuple) or len(mask_size) != 2:
+        raise Sam2ExportError("공식 SAM2 모델의 image/mask 입력 규격을 읽을 수 없습니다.")
+    checkpoint = {
+        "type": "sam2", "backend": "sam2", "task": "segment", "variant": asset.variant,
+        "input_size": [input_size, input_size], "mask_size": list(mask_size), "in_channels": 3,
+        "encoder": _OfficialSam2Encoder(model).eval(),
+        "decoder": _OfficialSam2Decoder(model).eval(),
+        "encoder_output_names": list(SAM2_ENCODER_OUTPUTS),
+        "decoder_input_order": [*SAM2_ENCODER_OUTPUTS, *SAM2_PROMPT_INPUTS],
+    }
+    result = export_sam2_model(checkpoint, output_dir, verify=verify, opset=opset,
+                               log=log, bundle_output=bundle_output)
+    output = Path(output_dir).expanduser().resolve()
+    result.update({
+        "model_id": model_id,
+        "checkpoint_path": str(Path(checkpoint_path).expanduser().resolve()),
+        "verification_reference": "official_sam2.1_pytorch_image_predictor_path",
+        # Keep the generic export-widget result shape while making it clear
+        # that SAM2 deployment consists of the encoder, decoder, and JSON.
+        "output_path": str(output / "sam2_encoder.onnx"),
+        "file_size_mb": sum(path.stat().st_size for path in (
+            output / "sam2_encoder.onnx", output / "sam2_decoder.onnx"
+        )) / (1024 * 1024),
+    })
+    return result
+
+
 def _module(checkpoint, key: str):
     from torch import nn
     value = checkpoint.get(key)

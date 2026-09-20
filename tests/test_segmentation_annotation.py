@@ -84,6 +84,27 @@ def test_polygon_vertex_brush_eraser_undo_save_and_reopen(editor):
     np.testing.assert_array_equal(restored.render(), expected)
 
 
+def test_brush_shortcuts_adjust_size_and_shift_temporarily_erases(editor):
+    app, dialog, _ = editor
+    dialog.mode_buttons["brush"].click()
+    before = dialog.brush_size.value()
+    QTest.keyClick(dialog.view, Qt.Key.Key_BracketRight)
+    assert dialog.brush_size.value() == before + 2
+    QTest.keyClick(dialog.view, Qt.Key.Key_BracketLeft)
+    assert dialog.brush_size.value() == before
+    dialog.brush_size.setValue(20)
+    drag(dialog, (200, 200), (260, 200))
+    assert dialog.document.render()[200, 230] == 1
+    view = dialog.view
+    point = view.mapFromScene(QPointF(230, 200))
+    QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton,
+                    Qt.KeyboardModifier.ShiftModifier, point)
+    QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton,
+                      Qt.KeyboardModifier.ShiftModifier, point)
+    app.processEvents()
+    assert dialog.document.render()[200, 230] == 0
+
+
 def test_failed_save_and_incomplete_polygon_cannot_navigate(editor):
     app, dialog, saved = editor
     click(dialog, 200, 100)

@@ -238,7 +238,8 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         specs.append(ModelSpec(
             model_id, "SAM2", variant, "segment", ("windows_native", "onnx"),
             sam2_capabilities, (1024, 1024), (3,),
-            notes="image/prompt/automatic-mask; video memory state 미지원",
+            pretrained_asset=f"facebook/sam2.1-hiera-{model_id.removeprefix('sam2_hiera_').replace('_plus', '-plus')}",
+            notes="공식 SAM2.1 사전학습 가중치 다운로드 지원; image/prompt/automatic-mask; video memory state 미지원",
             metadata=sam2_contract,
         ))
     return tuple(specs)

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QTreeWidget, QTreeWidgetItem, QFileDialog, QMessageBox, QGroupBox,
+    QTreeWidget, QTreeWidgetItem, QFileDialog, QMessageBox, QGroupBox, QComboBox,
 )
 
 
@@ -17,6 +17,24 @@ _TASK_LABELS = {
     "detect": "Object Detection",
     "segment": "Segmentation",
 }
+
+
+class _Sam2DownloadWorker(QThread):
+    """Keep large official checkpoint downloads off the Qt event thread."""
+
+    downloaded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, model_id: str, cache_dir: Path, parent=None):
+        super().__init__(parent)
+        self.model_id, self.cache_dir = model_id, cache_dir
+
+    def run(self):
+        try:
+            from sam2_assets import download_sam2_pretrained
+            self.downloaded.emit(str(download_sam2_pretrained(self.model_id, self.cache_dir)))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class ModelManagerWidget(QWidget):
@@ -63,6 +81,32 @@ class ModelManagerWidget(QWidget):
         self.catalog_notice.setObjectName("text_tertiary")
         catalog_layout.addWidget(self.catalog_notice)
         layout.addWidget(catalog_group, stretch=1)
+
+        sam_group = QGroupBox("SAM2.1 사전학습 가중치")
+        sam_layout = QVBoxLayout(sam_group)
+        sam_note = QLabel(
+            "SAM2는 Meta가 공개한 SAM2.1 Hiera 가중치를 사용합니다. 아래에서 선택한 한 변형만 "
+            "공식 저장소에서 내려받아 사용자 모델 캐시에 저장합니다. 다운로드는 백그라운드에서 실행됩니다."
+        )
+        sam_note.setWordWrap(True)
+        sam_layout.addWidget(sam_note)
+        sam_buttons = QHBoxLayout()
+        self.sam2_variant = QComboBox()
+        self.sam2_variant.addItem("SAM2.1 Hiera Tiny", "sam2_hiera_tiny")
+        self.sam2_variant.addItem("SAM2.1 Hiera Small", "sam2_hiera_small")
+        self.sam2_variant.addItem("SAM2.1 Hiera Base+", "sam2_hiera_base_plus")
+        self.sam2_variant.addItem("SAM2.1 Hiera Large", "sam2_hiera_large")
+        sam_buttons.addWidget(self.sam2_variant)
+        self.sam2_download_button = QPushButton("사전학습 가중치 다운로드")
+        self.sam2_download_button.clicked.connect(self._download_sam2)
+        sam_buttons.addWidget(self.sam2_download_button)
+        sam_buttons.addStretch()
+        sam_layout.addLayout(sam_buttons)
+        self.sam2_status = QLabel("다운로드한 가중치는 선택한 프로젝트의 로컬 가중치로 사용할 수 있습니다.")
+        self.sam2_status.setObjectName("text_tertiary")
+        self.sam2_status.setWordWrap(True)
+        sam_layout.addWidget(self.sam2_status)
+        layout.addWidget(sam_group)
 
         add_group = QGroupBox("추가 Docker 모델")
         add_layout = QVBoxLayout(add_group)
@@ -137,3 +181,28 @@ class ModelManagerWidget(QWidget):
             f"{installed.model_id} {installed.pack_version}을 설치했습니다.\n"
             "학습 화면의 모델 카탈로그에서 선택하세요.",
         )
+
+    def _download_sam2(self):
+        if getattr(self, "_sam2_worker", None) is not None:
+            return
+        from core.model_registry import default_installed_model_root
+        model_id = self.sam2_variant.currentData()
+        cache_dir = default_installed_model_root() / "_builtin_assets" / "sam2"
+        self.sam2_download_button.setEnabled(False)
+        self.sam2_status.setText(f"{self.sam2_variant.currentText()} 공식 가중치 다운로드 중…")
+        worker = _Sam2DownloadWorker(model_id, cache_dir, self)
+        self._sam2_worker = worker
+        worker.downloaded.connect(self._sam2_downloaded)
+        worker.failed.connect(self._sam2_download_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _sam2_downloaded(self, path: str):
+        self.sam2_status.setText(f"다운로드 완료: {path}")
+        self.sam2_download_button.setEnabled(True)
+        self._sam2_worker = None
+
+    def _sam2_download_failed(self, message: str):
+        self.sam2_status.setText("다운로드 실패: " + message)
+        self.sam2_download_button.setEnabled(True)
+        self._sam2_worker = None

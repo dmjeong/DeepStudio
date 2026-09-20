@@ -17,6 +17,7 @@ class SegmentationCanvas(DetectionCanvas):
         super().__init__(pixmap, parent)
         self.mode = "polygon"
         self.class_id, self.brush_size = 1, 20
+        self.stroke_erase = False
         self.points, self.stroke, self.preview_shape = [], [], None
         self.document = None
         self.overlay = self.scene().addPixmap(QPixmap())
@@ -50,7 +51,7 @@ class SegmentationCanvas(DetectionCanvas):
 
     def cancel_gesture(self):
         super().cancel_gesture()
-        self.points, self.stroke, self.preview_shape = [], [], None
+        self.points, self.stroke, self.preview_shape, self.stroke_erase = [], [], None, False
         if self.document is not None:
             self._set_overlay_pixels(self.document.render())
         self.pending_changed.emit(False)
@@ -127,6 +128,10 @@ class SegmentationCanvas(DetectionCanvas):
             elif self.mode in {"brush", "erase"}:
                 self.gesture = "stroke"
                 self.stroke = self._normalized(point)
+                # Shift temporarily turns the brush into an eraser. It lets
+                # the user correct a contour without selecting another tool.
+                self.stroke_erase = self.mode == "erase" or bool(
+                    event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
                 self.pending_changed.emit(True)
             elif self.mode == "rectangle":
                 self.gesture = "rectangle"
@@ -158,7 +163,7 @@ class SegmentationCanvas(DetectionCanvas):
             normalized = self._normalized(point)
             if normalized != self.stroke[-2:]:
                 self.stroke.extend(normalized)
-            if self.mode == "erase":
+            if self.stroke_erase:
                 self._set_overlay_pixels(self.document.render({
                     "kind": "stroke", "class_id": 0, "operation": "erase",
                     "points": list(self.stroke), "width": self.brush_size,
@@ -192,9 +197,9 @@ class SegmentationCanvas(DetectionCanvas):
         self.gesture = None
         shape = self.preview_shape
         if gesture == "stroke":
-            shape = {"kind": "stroke", "class_id": 0 if self.mode == "erase" else self.class_id,
+            shape = {"kind": "stroke", "class_id": 0 if self.stroke_erase else self.class_id,
                      "points": list(self.stroke), "width": self.brush_size}
-            if self.mode == "erase":
+            if self.stroke_erase:
                 shape["operation"] = "erase"
         if shape is not None:
             try:
@@ -208,8 +213,9 @@ class SegmentationCanvas(DetectionCanvas):
             except ValueError as exc:
                 self.status_changed.emit(str(exc))
         self.stroke, self.preview_shape = [], None
-        if gesture == "stroke" and self.mode == "erase":
+        if gesture == "stroke" and self.stroke_erase:
             self._set_overlay_pixels(self.document.render())
+        self.stroke_erase = False
         self.pending_changed.emit(bool(self.points))
         self.viewport().update()
         event.accept()
@@ -242,6 +248,8 @@ class SegmentationCanvas(DetectionCanvas):
             self.points = self.points[:-2]
             self.pending_changed.emit(bool(self.points))
             self.viewport().update()
+        elif key in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight):
+            self.command.emit("brush_shrink" if key == Qt.Key.Key_BracketLeft else "brush_grow")
         elif not (event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)) and key in (
                 Qt.Key.Key_P, Qt.Key.Key_B, Qt.Key.Key_E, Qt.Key.Key_R, Qt.Key.Key_V, Qt.Key.Key_D, Qt.Key.Key_F):
             self.command.emit({Qt.Key.Key_P: "polygon", Qt.Key.Key_B: "brush", Qt.Key.Key_E: "erase",
@@ -280,7 +288,7 @@ class SegmentationCanvas(DetectionCanvas):
             painter.drawPolygon(self._polygon(self.preview_shape["points"]))
         if self.stroke:
             polygon = self._polygon(self.stroke)
-            color = QColor("#ffffff") if self.mode == "erase" else QColor.fromHsv((self.class_id*67+205) % 360, 180, 255)
+            color = QColor("#ffffff") if self.stroke_erase else QColor.fromHsv((self.class_id*67+205) % 360, 180, 255)
             color.setAlpha(130)
             brush_pen = QPen(color, self.brush_size, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
             painter.setPen(brush_pen)

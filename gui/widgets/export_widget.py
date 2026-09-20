@@ -39,17 +39,30 @@ class ExportWorker(QThread):
     error = Signal(str)
 
     def __init__(self, checkpoint_path, output_path, opset_version,
-                 dynamic_batch, simplify, verify, parent=None):
+                 dynamic_batch, simplify, verify, parent=None, *, sam2_model_id=""):
         super().__init__(parent)
         self.checkpoint_path = checkpoint_path
         self.output_path = output_path
         self.options = dict(opset_version=opset_version, dynamic_batch=dynamic_batch,
                             simplify=simplify, verify=verify)
+        self.sam2_model_id = sam2_model_id
 
     def run(self):
         try:
-            result = export_checkpoint(self.checkpoint_path, self.output_path,
-                                       log=self.log.emit, **self.options)
+            if self.sam2_model_id:
+                from export_sam2_onnx import export_official_sam2_checkpoint
+                # SAM2 deployment contains encoder+decoder graphs, so use the
+                # chosen ONNX file's directory as the bundle directory.
+                if self.options["dynamic_batch"] or self.options["simplify"]:
+                    self.log.emit("SAM2는 고정 1-image encoder와 dynamic prompt point 계약을 사용합니다. 선택한 동적 배치/단순화 옵션은 적용하지 않습니다.")
+                result = export_official_sam2_checkpoint(
+                    self.sam2_model_id, self.checkpoint_path,
+                    os.path.dirname(os.path.abspath(self.output_path)),
+                    verify=self.options["verify"], opset=self.options["opset_version"],
+                    log=self.log.emit)
+            else:
+                result = export_checkpoint(self.checkpoint_path, self.output_path,
+                                           log=self.log.emit, **self.options)
             self.completed.emit(result)
         except Exception as exc:
             self.error.emit(str(exc))
@@ -234,6 +247,9 @@ class ExportWidget(QWidget):
             dynamic_batch=self.dynamic_check.isChecked(),
             simplify=self.simplify_check.isChecked(),
             verify=self.verify_check.isChecked(), parent=self,
+            sam2_model_id=(getattr(self.project.model, "model_id", "")
+                           if self.project is not None and self.project.task == "segment" and
+                           str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_") else ""),
         )
         self.worker.log.connect(self._on_log)
         self.worker.completed.connect(self._on_finished)
@@ -291,6 +307,8 @@ class ExportWidget(QWidget):
                 f"모델: {result['output_path']}\n"
                 f"설정: {result['config_path']}\n"
                 f"크기: {result['file_size_mb']:.1f} MB")
+        if result.get("backend") == "sam2":
+            text += "\nSAM2는 encoder ONNX, decoder ONNX, sam2.json 세 파일을 함께 배포합니다."
         if result.get("cpp_supported"):
             text += "\n제공된 C++ 추론기에서 ONNX와 JSON을 함께 로드할 수 있습니다."
         if result.get("runtime_settings"):

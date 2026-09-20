@@ -28,7 +28,7 @@ class SegmentationAnnotationDialog(AnnotationNavigation, QDialog):
         if pixmap.isNull():
             raise ValueError("이미지를 열 수 없습니다.")
         layout = QVBoxLayout(self)
-        hint = QLabel("P 다각형 · Enter/첫 점 클릭 완료 · B 브러시 · E 지우개 · V 선택/꼭짓점 이동 · Space 이동 · 휠 확대 · Ctrl+Z 실행 취소")
+        hint = QLabel("P 다각형 · Enter/첫 점 클릭 완료 · B 브러시 · E 지우개 · Shift+브러시 임시 지우개 · [ ] 브러시 크기 · V 선택/꼭짓점 이동 · Space 이동 · 휠 확대 · Ctrl+Z/Y 실행 취소/다시 실행")
         hint.setWordWrap(True)
         layout.addWidget(hint)
         toolbar = QHBoxLayout()
@@ -86,7 +86,7 @@ class SegmentationAnnotationDialog(AnnotationNavigation, QDialog):
         side = QWidget()
         side_layout = QVBoxLayout(side)
         background = self.names[0] if self.names else "먼저 배경 클래스를 추가하세요"
-        info = QLabel(f"그리지 않은 곳과 지우개: 클래스 0 ({background})\n숫자 1~9: 클래스 선택\nF: 마스크 표시/숨김\n브러시·다각형은 목록의 아래 항목이 위에 그려집니다.")
+        info = QLabel(f"그리지 않은 곳과 지우개: 클래스 0 ({background})\n숫자 1~9: 클래스 선택 · [ ]: 브러시 크기\nShift를 누른 채 브러시를 그리면 임시 지우개입니다.\nF: 마스크 표시/숨김\n브러시·다각형은 목록의 아래 항목이 위에 그려집니다.")
         info.setWordWrap(True)
         side_layout.addWidget(info)
         self.table = QTableWidget(0, 2)
@@ -232,6 +232,10 @@ class SegmentationAnnotationDialog(AnnotationNavigation, QDialog):
             self._set_mode(command)
         elif command in {"undo", "redo", "fit", "delete"}:
             {"undo": self._undo, "redo": self._redo, "fit": self._fit, "delete": self._remove}[command]()
+        elif command == "brush_grow":
+            self.brush_size.setValue(min(self.brush_size.maximum(), self.brush_size.value() + 2))
+        elif command == "brush_shrink":
+            self.brush_size.setValue(max(self.brush_size.minimum(), self.brush_size.value() - 2))
         elif command == "overlay":
             self.view.toggle_overlay()
         elif command == "save" and self.save_button.isEnabled():

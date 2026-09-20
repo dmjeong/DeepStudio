@@ -465,8 +465,8 @@
         3
       ],
       "release_status": "requested",
-      "pretrained_asset": "",
-      "notes": "image/prompt/automatic-mask; video memory state 미지원",
+      "pretrained_asset": "facebook/sam2.1-hiera-tiny",
+      "notes": "공식 SAM2.1 사전학습 가중치 다운로드 지원; image/prompt/automatic-mask; video memory state 미지원",
       "metadata": {
         "contracts": {
           "graphs": {
@@ -539,8 +539,8 @@
         3
       ],
       "release_status": "requested",
-      "pretrained_asset": "",
-      "notes": "image/prompt/automatic-mask; video memory state 미지원",
+      "pretrained_asset": "facebook/sam2.1-hiera-small",
+      "notes": "공식 SAM2.1 사전학습 가중치 다운로드 지원; image/prompt/automatic-mask; video memory state 미지원",
       "metadata": {
         "contracts": {
           "graphs": {
@@ -613,8 +613,8 @@
         3
       ],
       "release_status": "requested",
-      "pretrained_asset": "",
-      "notes": "image/prompt/automatic-mask; video memory state 미지원",
+      "pretrained_asset": "facebook/sam2.1-hiera-base-plus",
+      "notes": "공식 SAM2.1 사전학습 가중치 다운로드 지원; image/prompt/automatic-mask; video memory state 미지원",
       "metadata": {
         "contracts": {
           "graphs": {
@@ -687,8 +687,8 @@
         3
       ],
       "release_status": "requested",
-      "pretrained_asset": "",
-      "notes": "image/prompt/automatic-mask; video memory state 미지원",
+      "pretrained_asset": "facebook/sam2.1-hiera-large",
+      "notes": "공식 SAM2.1 사전학습 가중치 다운로드 지원; image/prompt/automatic-mask; video memory state 미지원",
       "metadata": {
         "contracts": {
           "graphs": {

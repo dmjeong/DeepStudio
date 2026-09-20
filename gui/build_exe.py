@@ -72,6 +72,8 @@ REQUIRED_RUNTIME_MODULES = {
     "psutil": "psutil",
     "OpenCV": "cv2",
     "cryptography": "cryptography",
+    "SAM2": "sam2",
+    "Hugging Face Hub": "huggingface_hub",
 }
 
 
@@ -168,6 +170,11 @@ def build():
         # Collect their package and package data so the installed EXE does not
         # fail only when a user selects LibreYOLO/RT-DETRv4.
         "--collect-all", "libreyolo",
+        "--collect-all", "sam2",
+        "--collect-all", "hydra",
+        "--collect-all", "omegaconf",
+        "--collect-all", "iopath",
+        "--hidden-import", "huggingface_hub",
         "--hidden-import", "matplotlib",
         "--hidden-import", "matplotlib.backends.backend_qtagg",
         "--hidden-import", "PIL",

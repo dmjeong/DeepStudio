@@ -41,6 +41,9 @@ if errorlevel 1 (
 )
 
 echo Installing/verifying desktop build dependencies...
+REM SAM2's optional CUDA extension needs a locally installed matching nvcc.
+REM The PyTorch implementation remains functional without it.
+set SAM2_BUILD_CUDA=0
 python -m pip install -r requirements.txt
 if errorlevel 1 (
     echo DEPENDENCY INSTALL FAILED!

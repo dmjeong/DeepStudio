@@ -55,7 +55,7 @@ def test_release_script_verifies_payload_before_wix_build():
 
 def test_third_party_notice_names_optional_model_sources():
     notice = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
-    for component in ("LibreYOLO", "RT-DETRv4", "SAM2 upstream", "ONNX Runtime"):
+    for component in ("LibreYOLO", "RT-DETRv4", "SAM2 1.0", "ONNX Runtime"):
         assert component in notice
     assert "weights are separate" in notice.lower()
 
@@ -73,11 +73,14 @@ def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk()
     assert '"--collect-all", "PySide6"' in script
     assert '"--collect-all", "shiboken6"' in script
     assert '"--collect-all", "libreyolo"' in script
+    assert '"--collect-all", "sam2"' in script
+    assert '"--hidden-import", "huggingface_hub"' in script
 
 
 def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():
     script = (ROOT / "gui" / "build.bat").read_text(encoding="utf-8")
     assert "python -m pip install -r requirements.txt" in script
+    assert "SAM2_BUILD_CUDA=0" in script
     assert "pip show pyinstaller" not in script
 
 

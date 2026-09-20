@@ -11,7 +11,7 @@ from pathlib import Path
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
-from export_sam2_onnx import export_sam2_model
+from export_sam2_onnx import export_sam2_model, export_official_sam2_checkpoint
 
 
 class TinySamEncoder(torch.nn.Module):
@@ -64,6 +64,38 @@ class NamedSamDecoder(MultiFeatureSamDecoder):
 
 
 class Sam2ExportTests(unittest.TestCase):
+    def test_official_checkpoint_path_uses_the_actual_sam2_adapter_contract(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        fake_model = SimpleNamespace(
+            image_size=1024,
+            sam_prompt_encoder=SimpleNamespace(mask_input_size=(256, 256)),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "sam2.1_hiera_tiny.pt"
+            checkpoint.write_bytes(b"official")
+
+            def export_adapter(value, output, **kwargs):
+                self.assertEqual(value["variant"], "Hiera Tiny")
+                self.assertEqual(value["input_size"], [1024, 1024])
+                self.assertEqual(value["mask_size"], [256, 256])
+                self.assertEqual(value["encoder_output_names"], [
+                    "image_embeddings", "image_features_0", "image_features_1",
+                ])
+                Path(output).mkdir(parents=True, exist_ok=True)
+                (Path(output) / "sam2_encoder.onnx").write_bytes(b"encoder")
+                (Path(output) / "sam2_decoder.onnx").write_bytes(b"decoder")
+                return {"backend": "sam2", "verification": "passed", "config_path": str(Path(output) / "sam2.json")}
+
+            with patch("sam2_assets.load_sam2_pretrained", return_value=fake_model), \
+                 patch("export_sam2_onnx.export_sam2_model", side_effect=export_adapter):
+                result = export_official_sam2_checkpoint("sam2_hiera_tiny", checkpoint, root, log=lambda _: None)
+        self.assertEqual(result["model_id"], "sam2_hiera_tiny")
+        self.assertEqual(result["verification_reference"], "official_sam2.1_pytorch_image_predictor_path")
+        self.assertEqual(result["file_size_mb"], 14 / (1024 * 1024))
+
     def test_encoder_decoder_graphs_and_schema_manifest(self):
         checkpoint = {
             "type": "sam2", "backend": "sam2", "task": "segment",

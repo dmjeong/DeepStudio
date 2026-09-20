@@ -2,6 +2,12 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**3.51 — SAM2.1 사전학습·실모델 ONNX 및 라벨 편집 개선**
+
+- Settings에서 공식 SAM2.1 Hiera Tiny/Small/Base+/Large 가중치를 선택해 백그라운드로 내려받는다. Windows 설치본은 고정한 공식 SAM-2 runtime을 포함한다.
+- 실제 공식 Hiera Tiny checkpoint의 encoder/prompt decoder를 두 ONNX 그래프로 export하고, 1·2·3·8개 point 입력에서 ONNX Runtime 출력 비교를 통과했다. C++ 실모델 검증과 나머지 변형 실기 검증은 아직 완료로 표시하지 않는다.
+- 분할 라벨 편집기에서 Shift+브러시 임시 지우개와 `[`, `]` 크기 단축키를 추가했다.
+
 **2.51 — LibreYOLO ONNX 내보내기 수정**
 
 - LibreYOLO MobileNetV4 Small, LibreYOLO9 Tiny, Re-DETR v4 학습 체크포인트가 ONNX 내보내기에서 미지원 포맷으로 거부되던 오류를 수정했다.
