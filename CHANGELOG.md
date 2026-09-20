@@ -2,6 +2,11 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**2.39 — native 학습 대시보드 이벤트 수정**
+
+- LibreYOLO/RT-DETRv4 native 학습이 시작 즉시 진행률과 준비 로그를 표시하고, 매 에폭의 train loss·validation loss·선택 지표·학습률·Best·에폭/누적 시간을 대시보드에 전달한다.
+- native 전이·재개 모드의 가중치 경로를 프로젝트를 다시 열어도 학습 화면에 복원한다.
+
 **2.38 — 기본 제공 native 모델 worker**
 
 - LibreMobileNetV4 Small, LibreYOLO9 Tiny, Re-DETR v4 Small/Medium/Large의 native 학습 worker를 연결했다. 모델 선택 후 사전학습·전이·재개·스크래치 초기화를 선택할 수 있다.

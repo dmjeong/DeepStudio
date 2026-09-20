@@ -224,15 +224,29 @@ def _train_upstream_project(context, project, device):
     history = []
 
     def progress(event):
+        if event.get("event") == "training_started":
+            context.emit("progress_updated", [max(0, int(event["epoch"]) - 1), int(event["total_epochs"])])
+            context.emit("log_message", [f"native worker 준비 완료: {event['family']}/{event['size']} | {event['total_epochs']} epochs"])
+            return
+        if event.get("event") == "training_exception":
+            context.emit("log_message", ["native worker 오류: " + event["message"]])
+            return
         if event.get("event") != "epoch_finished":
             return
         history.append(dict(event))
         metrics = dict(event.get("metrics", {}))
         metrics.setdefault(event.get("metric_name", "metric"), event["metric"])
         metrics["epoch_time_sec"] = event.get("epoch_time_sec", 0.0)
+        metrics["elapsed_time_sec"] = event.get("elapsed_time_sec", 0.0)
         context.emit("epoch_finished", [int(event["epoch"]), float(event["train_loss"]),
                                         float(event["val_loss"]), metrics])
+        if event.get("learning_rate") is not None:
+            context.emit("lr_updated", [int(event["epoch"]), float(event["learning_rate"])])
+        if event.get("is_best"):
+            context.emit("best_epoch_updated", [int(event.get("best_epoch") or event["epoch"]),
+                                                 float(event["train_loss"]), float(event["val_loss"]), metrics])
         context.emit("progress_updated", [int(event["epoch"]), int(event["total_epochs"])])
+        context.emit("log_message", [f"Epoch {event['epoch']}/{event['total_epochs']} | train={event['train_loss']:.5f} | val={event['val_loss']:.5f} | {event['metric_name']}={event['metric']:.5f} | {event['epoch_time_sec']:.1f}s"])
 
     spec = get_upstream_spec(model_id)
     mode = str(cfg.training_mode)
@@ -255,7 +269,11 @@ def _train_upstream_project(context, project, device):
     metrics_history = {"train_loss": [float(item["train_loss"]) for item in history],
                        "val_loss": [float(item["val_loss"]) for item in history],
                        metric_name: [float(item["metric"]) for item in history],
-                       "epoch_time_sec": [float(item.get("epoch_time_sec", 0.0)) for item in history]}
+                       "epoch_time_sec": [float(item.get("epoch_time_sec", 0.0)) for item in history],
+                       "elapsed_time_sec": [float(item.get("elapsed_time_sec", 0.0)) for item in history]}
+    metric_keys = set.intersection(*(set(item.get("metrics", {})) for item in history)) if history else set()
+    for name in sorted(metric_keys - {"epoch_time_sec", "elapsed_time_sec", metric_name}):
+        metrics_history[name] = [float(item["metrics"][name]) for item in history]
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status="completed",
                        epochs_done=len(history), best_metric=best_metric, best_epoch=best_epoch,

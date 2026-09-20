@@ -117,6 +117,13 @@ def write_detection_dataset_yaml(root: str | Path, class_names: list[str], outpu
 class _ProgressCallback:
     def __init__(self, emit: Callable[[dict], None]):
         self.emit = emit
+        self.elapsed_seconds = 0.0
+
+    def on_train_start(self, event) -> None:
+        self.emit({"event": "training_started", "epoch": int(event.start_epoch),
+                   "total_epochs": int(event.total_epochs), "family": str(event.model_family),
+                   "size": event.model_size, "task": str(event.task),
+                   "save_dir": str(event.save_dir)})
 
     def on_train_epoch_end(self, event) -> None:
         metrics = dict(getattr(event, "val_metrics", {}) or {})
@@ -134,13 +141,24 @@ class _ProgressCallback:
             raise RuntimeError("upstream validator가 val_loss를 보고하지 않았습니다")
         if metric is None:
             raise RuntimeError("upstream validator가 선택 검증 지표를 보고하지 않았습니다")
+        epoch_seconds = float(event.epoch_seconds)
+        self.elapsed_seconds += epoch_seconds
+        metrics["epoch_time_sec"] = epoch_seconds
+        metrics["elapsed_time_sec"] = self.elapsed_seconds
         self.emit({"event": "epoch_finished", "epoch": int(event.epoch),
                    "total_epochs": int(event.total_epochs),
                    "train_loss": float(event.train_loss),
                    "val_loss": float(val_loss),
                    "metric": float(metric),
                    "metric_name": metric_name, "metrics": metrics,
-                   "epoch_time_sec": float(event.epoch_seconds)})
+                   "epoch_time_sec": epoch_seconds, "elapsed_time_sec": self.elapsed_seconds,
+                   "learning_rate": min((float(value) for value in event.lr.values()), default=0.0),
+                   "is_best": bool(event.is_best),
+                   "best_metric": float(event.best_metric) if event.best_metric is not None else None,
+                   "best_epoch": int(event.best_epoch) if event.best_epoch is not None else None})
+
+    def on_train_exception(self, event) -> None:
+        self.emit({"event": "training_exception", "message": str(event.exception_message)})
 
 
 def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: list[str],

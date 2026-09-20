@@ -595,7 +595,8 @@ class TrainingWidget(TrainingForm, QWidget):
         # 이어학습 경로 복원
         self.resume_edit.setText(
             (getattr(mcfg, "pretrained_weights", "") or "")
-            if mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer"}
+            if mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+                        "upstream_resume", "upstream_transfer"}
             else ""
         )
 
@@ -836,7 +837,8 @@ class TrainingWidget(TrainingForm, QWidget):
             if not path or not os.path.isfile(path):
                 QMessageBox.warning(self, "가중치 파일 확인", f"전이학습 가중치 파일이 없습니다:\n{path}")
                 return
-        if not is_anomaly and mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer"}:
+        if not is_anomaly and mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+                                       "upstream_resume", "upstream_transfer"}:
             resume_path = self.project.model.pretrained_weights
             if not resume_path:
                 QMessageBox.warning(
@@ -909,6 +911,10 @@ class TrainingWidget(TrainingForm, QWidget):
             "builtin_finetune": f"{self.model_id_combo.currentText()} 사전학습",
             "builtin_transfer": f"{self.model_id_combo.currentText()} 추가 학습",
             "builtin_scratch": f"{self.model_id_combo.currentText()} 처음부터 학습",
+            "upstream_finetune": f"{self.model_id_combo.currentText()} 사전학습",
+            "upstream_transfer": f"{self.model_id_combo.currentText()} 추가 학습",
+            "upstream_resume": f"{self.model_id_combo.currentText()} 학습 재개",
+            "upstream_scratch": f"{self.model_id_combo.currentText()} 처음부터 학습",
             "custom": "커스텀",
         }
         mode_label = mode_labels.get(mode, "학습")
