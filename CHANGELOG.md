@@ -8,6 +8,11 @@
 - semantic class-index mask의 전경 클래스를 이진 객체 마스크와 양성 point prompt로 변환한다. Hiera image encoder는 고정해 GPU 메모리 사용량을 줄인다.
 - `best.pt`/`last.pt`는 변경된 SAM2 모듈만 저장한다. 같은 Hiera 기본 가중치와 결합해 재학습과 ONNX encoder/decoder export에 사용하며, 다른 변형 체크포인트는 거부한다.
 
+**5.75 — Best 가중치 이름에 검증 기준 기록**
+
+- Custom CSP, EfficientNet, 기본 제공 ResNet/ConvNeXt/DeepLab/U-Net, LibreYOLO, Re-DETR v4, SAM2, PatchCore가 최종 Best를 `best_<metric>_<value>_epoch_<n>.pt` 형식으로 저장한다.
+- 결과 표, 자동 추론 선택, ONNX Export는 새 이름의 실제 Best 파일을 사용한다. 학습 중 임시 `best.pt`는 최종 평가 후 제거하고 `last.pt`는 재개용으로 유지한다.
+
 **3.65 — PatchCore 보정·ONNX 배포 계약 수정**
 
 - 미보정 PatchCore 모델은 C++ ONNX 배포를 시작하지 않도록 막았다. 정상·불량 보정 데이터로 만든 양수 임계값이 있어야 내보낼 수 있다.

@@ -47,8 +47,9 @@ def publish_best(checkpoint, run_dir, history, *, epoch, metric, value,
                  direction, engine, task, policy, version="", timing=None, formula=""):
     """점수를 다시 비교하지 않고 엔진이 실제 저장한 Best만 내보낸다.
 
-    best.pt는 학습 재개 호환용으로 유지한다. 최종 평가/strip 완료 뒤 복사하여
-    이름이 있는 가중치도 같은 내용을 갖는다. 학습 이력에서 결과 CSV를 생성한다.
+    학습 중에는 ``best.pt``를 임시 고정 이름으로 써서 평가·재개 로직을 단순하게
+    유지한다. 최종 평가가 끝나면 그 파일을 선택 지표가 들어간 배포용 이름으로
+    원자적으로 바꾸며, 평범한 ``best.pt``는 남기지 않는다.
     """
     checkpoint, run_dir = Path(checkpoint), Path(run_dir)
     if not checkpoint.is_file():
@@ -65,6 +66,10 @@ def publish_best(checkpoint, run_dir, history, *, epoch, metric, value,
     try:
         shutil.copyfile(checkpoint, temporary)
         os.replace(temporary, named)
+        # Named artifact is now durable.  Keep ``last.pt`` for resumable
+        # workers when it had to be used as a cancellation fallback.
+        if checkpoint.name == "best.pt":
+            os.unlink(checkpoint)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)

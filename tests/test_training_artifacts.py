@@ -34,7 +34,8 @@ class TrainingArtifactsTests(unittest.TestCase):
     def test_named_copy_and_csv_use_saved_epoch_not_minimum_loss(self):
         named, details = self.publish()
         self.assertEqual(Path(named).name, "best_accuracy_0.812346_epoch_2.pt")
-        self.assertEqual(Path(named).read_bytes(), self.checkpoint.read_bytes())
+        self.assertEqual(Path(named).read_bytes(), b"actual-best-model")
+        self.assertFalse(self.checkpoint.exists())
         rows = self.rows("results.csv")
         self.assertEqual([row["is_best"] for row in rows], ["0", "1", "0"])
         best = self.rows("best_result.csv")[0]
@@ -47,6 +48,7 @@ class TrainingArtifactsTests(unittest.TestCase):
 
     def test_zero_score_and_unavailable_patchcore_are_distinct(self):
         zero, _ = self.publish(value=0)
+        self.checkpoint.write_bytes(b"actual-best-model")
         unavailable, _ = self.publish(metric="unavailable", value=None, direction="single_fit", engine="patchcore")
         self.assertIn("0.000000", zero)
         self.assertIn("unavailable_NA", unavailable)
@@ -63,13 +65,13 @@ class TrainingArtifactsTests(unittest.TestCase):
         self.assertFalse((self.root / "best_result.csv").exists())
 
     def test_failed_copy_preserves_canonical_and_existing_named_checkpoint(self):
-        named, _ = self.publish()
-        before = Path(named).read_bytes()
+        named = self.root / "best_accuracy_0.812346_epoch_2.pt"
+        named.write_bytes(b"previous-best-model")
         with patch("core.training_artifacts.shutil.copyfile", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 self.publish()
-        self.assertEqual(Path(named).read_bytes(), before)
-        self.assertEqual(self.checkpoint.read_bytes(), before)
+        self.assertEqual(named.read_bytes(), b"previous-best-model")
+        self.assertEqual(self.checkpoint.read_bytes(), b"actual-best-model")
         self.assertFalse(list(self.root.glob(".best-*")))
 
 

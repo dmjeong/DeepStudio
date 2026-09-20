@@ -87,6 +87,7 @@ def _container_model_spec(project):
 def _train_builtin_project(context, project, device):
     """Train a registered adapter with the selected weight source."""
     from core.project import ProjectManager, RunRecord
+    from core.training_artifacts import publish_best
     from train_builtin import train_builtin
 
     model_id = project.model.model_id
@@ -196,17 +197,22 @@ def _train_builtin_project(context, project, device):
             metrics_history[name] = [item.get(name) for item in records]
     lr_history = [float(item["learning_rate"]) for item in full_history
                   if "learning_rate" in item]
+    policy = selection_policy(cfg, "builtin", project.task)
+    named_checkpoint, selection = publish_best(
+        best, run_dir, metrics_history, epoch=best_epoch, metric=metric_name, value=metric,
+        direction=policy.direction, engine="builtin", task=project.task,
+        policy="native_adapter_strict_improvement", formula=policy.formula)
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status=(
                            "cancelled" if context.cancelled() else "completed"),
                        epochs_done=completed_epochs, best_metric=metric, best_epoch=best_epoch,
-                       best_metric_name=metric_name, checkpoint_path=str(best),
+                       best_metric_name=metric_name, checkpoint_path=named_checkpoint,
                        metrics_history=metrics_history, lr_history=lr_history,
                        config_snapshot={"engine": "builtin", "model_id": model_id,
                                         "training": training_state.get("training_config", {}),
-                                        "center_crop": crop})
+                                        "center_crop": crop, "best_selection": selection})
     project.runs.append(record)
-    context.emit("training_finished", [metric, best_epoch, str(best)])
+    context.emit("training_finished", [metric, best_epoch, named_checkpoint])
     return record
 
 
@@ -217,6 +223,7 @@ def _train_upstream_project(context, project, device):
     if model_id not in upstream_model_ids():
         return None
     from core.project import ProjectManager, RunRecord
+    from core.training_artifacts import publish_best
     cfg, data = project.training, project.data
     run_id = ProjectManager.new_run_id(task=project.task, model_name=model_id,
                                        input_size=cfg.input_size, project_dir=project.project_dir)
@@ -272,22 +279,28 @@ def _train_upstream_project(context, project, device):
     metric_keys = set.intersection(*(set(item.get("metrics", {})) for item in history)) if history else set()
     for name in sorted(metric_keys - {"epoch_time_sec", "elapsed_time_sec", metric_name}):
         metrics_history[name] = [float(item["metrics"][name]) for item in history]
+    direction = "min" if "loss" in metric_name.lower() else "max"
+    named_checkpoint, selection = publish_best(
+        checkpoint, run_dir, metrics_history, epoch=best_epoch, metric=metric_name, value=best_metric,
+        direction=direction, engine="upstream", task=project.task,
+        policy="upstream_native_is_best", formula=metric_name)
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status="completed",
                        epochs_done=len(history), best_metric=best_metric, best_epoch=best_epoch,
-                       best_metric_name=metric_name, checkpoint_path=str(checkpoint),
+                       best_metric_name=metric_name, checkpoint_path=named_checkpoint,
                        metrics_history=metrics_history,
                        config_snapshot={"engine": "upstream", "model_id": model_id,
                                         "upstream_family": spec.family, "upstream_size": spec.size,
-                                        "upstream_result": result})
+                                        "upstream_result": result, "best_selection": selection})
     project.runs.append(record)
-    context.emit("training_finished", [best_metric, best_epoch, str(checkpoint)])
+    context.emit("training_finished", [best_metric, best_epoch, named_checkpoint])
     return record
 
 
 def _train_sam2_project(context, project, device):
     """Run the shipped SAM2 prompt-mask adapter instead of Custom CSP."""
     from core.training_modes import SAM2_ADAPTER_IDS
+    from core.training_artifacts import publish_best
     model_id = project.model.model_id
     if model_id not in SAM2_ADAPTER_IDS:
         return None
@@ -348,19 +361,23 @@ def _train_sam2_project(context, project, device):
         "epoch_time_sec": [float(item.get("epoch_time_sec", 0.0)) for item in history],
         "elapsed_time_sec": [float(item.get("elapsed_time_sec", 0.0)) for item in history],
     }
+    named_checkpoint, selection = publish_best(
+        checkpoint, run_dir, metrics_history, epoch=int(result.get("best_epoch") or 0),
+        metric=metric_name, value=float(result.get("best_metric") or 0.0), direction="max",
+        engine="sam2", task="segment", policy="prompt_dice_strict_improvement", formula="Prompt Dice")
     record = RunRecord(
         run_id=run_id, started_at=datetime.now().isoformat(), finished_at=datetime.now().isoformat(),
         status="cancelled" if result.get("cancelled") else "completed", epochs_done=len(history),
         best_metric=float(result.get("best_metric") or 0.0), best_epoch=int(result.get("best_epoch") or 0),
-        best_metric_name=metric_name, checkpoint_path=str(checkpoint), metrics_history=metrics_history,
+        best_metric_name=metric_name, checkpoint_path=named_checkpoint, metrics_history=metrics_history,
         config_snapshot={
             "engine": "sam2", "model_id": model_id, "input_size": 1024,
             "training_contract": "semantic-mask-to-positive-point-object-mask-v1",
-            "frozen_modules": ["image_encoder"], "sam2_result": result,
+            "frozen_modules": ["image_encoder"], "sam2_result": result, "best_selection": selection,
         },
     )
     project.runs.append(record)
-    context.emit("training_finished", [record.best_metric, record.best_epoch, str(checkpoint)])
+    context.emit("training_finished", [record.best_metric, record.best_epoch, named_checkpoint])
     return record
 
 
