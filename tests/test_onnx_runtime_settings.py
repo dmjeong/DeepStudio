@@ -29,13 +29,13 @@ def test_deployment_uses_disabled_optimization_with_real_fp32_cancellation(tmp_p
     with patch.object(sys, "argv", [str(script), str(tmp_path)]):
         runpy.run_path(str(script), run_name="__main__")
     path = tmp_path / "runtime_optimization.json"
-    config = json.loads(path.read_text())
+    config = json.loads(path.read_text(encoding="utf-8"))
     config.update(backend="efficientnet", postprocessing={"output": "logits"})
-    path.write_text(json.dumps(config))
+    path.write_text(json.dumps(config), encoding="utf-8")
     sample = np.ones((1, 1, 2, 3), dtype=np.float32)
     disabled = OnnxClassifier(path).logits(sample)
     np.testing.assert_allclose(disabled, [[1., -1.]], atol=1e-6, rtol=0)
     config["onnxruntime"]["graph_optimization_level"] = "all"
-    path.write_text(json.dumps(config))
+    path.write_text(json.dumps(config), encoding="utf-8")
     optimized = OnnxClassifier(path).logits(sample)
     assert np.max(np.abs(disabled - optimized)) > 0.1

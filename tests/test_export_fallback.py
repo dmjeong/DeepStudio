@@ -53,7 +53,7 @@ def test_retry_verifies_original_graph_or_preserves_existing_files(tmp_path, rej
         else:
             result = export_onnx.export_checkpoint(source, output, dynamic_batch=True)
             assert result["verification"] == "passed"
-            metadata = json.loads(output.with_suffix(".json").read_text())
+            metadata = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
             assert metadata["export"]["optimization"]["fallback"] == "unfused_fp32"
             assert attempts[1:] == [0, 0, 0]
     assert attempts[0] > 0 and attempts[1] == 0
@@ -101,7 +101,7 @@ def test_runtime_fallback_is_verified_saved_and_used_by_deployment(tmp_path, pas
         result = export_onnx.export_checkpoint(source, output, dynamic_batch=True,
                                                bundle_output=tmp_path / "model.dvdeploy", log=lambda _: None)
         assert result["verification"] == "passed"
-        config = json.loads(output.with_suffix(".json").read_text())
+        config = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
         assert config["schema_version"] == 6
         assert config["onnxruntime"]["graph_optimization_level"] == passing_level
         assert config["num_threads"] == 1
@@ -139,5 +139,5 @@ def test_one_passing_probe_does_not_publish_fallback(tmp_path):
             export_onnx.export_checkpoint(source, output, log=lambda _: None)
     assert output.read_bytes() == b"previous onnx"
     assert output.with_suffix(".json").read_bytes() == b"previous config"
-    report = json.loads(output.with_suffix(".export-error.json").read_text())
+    report = json.loads(output.with_suffix(".export-error.json").read_text(encoding="utf-8"))
     assert report["numerical_diagnostic"]["probe"] == "zero"
