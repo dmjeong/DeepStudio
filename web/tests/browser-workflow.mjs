@@ -4,6 +4,7 @@ import { mkdtemp, readFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import assert from "node:assert/strict";
+import { verifyTeaching } from "./teaching-workflow.mjs";
 const root = resolve(process.env.STUDIO_PACKAGE_ROOT || "..");
 const temp = await mkdtemp(join(tmpdir(), "studio-browser-"));
 const output = resolve("browser-results");
@@ -199,6 +200,8 @@ try {
   await page.setViewportSize({ width: 768, height: 1024 });
   await page.screenshot({ path: join(output, "inference-review-tablet.png"), fullPage: true });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2), "tablet layout has no horizontal overflow");
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await verifyTeaching(page, { temp, fixture, output });
   for (const cropTask of ["classify", "detect", "segment", "anomaly", "obb"]) {
   const cropProject = await page.request.post("http://127.0.0.1:8766/api/projects", {
     headers: {"X-Studio-Request":"1"},

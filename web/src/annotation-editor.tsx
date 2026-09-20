@@ -3,9 +3,14 @@ import { obbFromThreePoints } from "./obb";
 import { api, type Project } from "./api";
 import { Field } from "./components";
 import { classColor, DatasetDialog, type DatasetImage } from "./pages/Dataset";
+import { TeachingEditor, type MaskPayload } from "./teaching-editor";
 export interface Annotation { class_id: number; coordinates: number[] }
 interface AnnotationView { width: number; height: number; has_mask: boolean; annotations: Annotation[] }
-export function AnnotationEditor({ item, project, busy, saveError, onSave, onClose }: { item: DatasetImage; project: Project; busy: boolean; saveError?: string; onSave: (rows: Annotation[]) => void; onClose: () => void }) {
+export interface AnnotationEditorProps { item: DatasetImage; project: Project; busy: boolean; saveError?: string; onSave: (rows: Annotation[] | MaskPayload, next?: number) => void; onClose: () => void; navigation?: { index: number; count: number } }
+export function AnnotationEditor(props: AnnotationEditorProps) {
+  return props.project.task === "obb" ? <LegacyAnnotationEditor {...props} /> : <TeachingEditor {...props} />;
+}
+function LegacyAnnotationEditor({ item, project, busy, saveError, onSave, onClose }: AnnotationEditorProps) {
   const [data, setData] = useState<AnnotationView | null>(null);
   const [rows, setRows] = useState<Annotation[]>([]);
   const [classId, setClassId] = useState(0);

@@ -111,8 +111,11 @@ def _train_builtin_project(context, project, device):
             metric = float(message["metric"])
             metric_name = "accuracy" if project.task == "classify" else "mIoU"
             context.emit("epoch_finished", [epoch, float(message["train_loss"]),
-                                              float(message["val_loss"]), {metric_name: metric}])
+                                              float(message["val_loss"]), message.get("metrics", {metric_name: metric})])
             context.emit("progress_updated", [epoch, total])
+        elif isinstance(message, dict) and message.get("event") == "best_epoch_updated":
+            context.emit("best_epoch_updated", [message["epoch"], message["train_loss"],
+                                               message["val_loss"], message["metrics"]])
         else:
             context.emit("log_message", [str(message)])
 
@@ -148,6 +151,7 @@ def _train_builtin_project(context, project, device):
                          device=str(device),
                          resume=resume, initial_weights=initial_weights,
                          pretrained=cfg.training_mode == "builtin_finetune",
+                         selection_metric=cfg.selection_metric,
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
@@ -163,14 +167,15 @@ def _train_builtin_project(context, project, device):
     metric = float(checkpoint.get("metric") or 0.0)
     best_epoch = int(training_state.get("best_epoch") or (int(checkpoint.get("epoch", 0)) + 1))
     completed_epochs = int(training_state.get("completed_epochs") or best_epoch)
-    metric_name = "accuracy" if project.task == "classify" else "mIoU"
+    from core.model_selection import selection_policy
+    metric_name = selection_policy(cfg, "builtin", project.task).metric
     full_history = training_state.get("metrics_history") or checkpoint.get("metrics_history") or []
     if full_history:
-        metric_history = [float(item["val_metric"]) for item in full_history]
+        metric_history = [float(item.get("selected_value", item["val_metric"])) for item in full_history]
         train_loss_history = [float(item["train_loss"]) for item in full_history]
         val_loss_history = [float(item["val_loss"]) for item in full_history]
     else:
-        metric_history = [float(item["metric"]) for item in history]
+        metric_history = [float(item.get("selected_value", item["metric"])) for item in history]
         train_loss_history = [float(item["train_loss"]) for item in history]
         val_loss_history = [float(item["val_loss"]) for item in history]
     metrics_history = {
@@ -178,6 +183,10 @@ def _train_builtin_project(context, project, device):
         "val_loss": val_loss_history,
         metric_name: metric_history,
     }
+    records = full_history or history
+    metric_keys = set.intersection(*(set(item.get("metrics", {})) for item in records)) if records else set()
+    for name in sorted(metric_keys - {"train_loss", "val_loss", metric_name}):
+        metrics_history[name] = [float(item["metrics"][name]) for item in records]
     lr_history = [float(item["learning_rate"]) for item in full_history
                   if "learning_rate" in item]
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),

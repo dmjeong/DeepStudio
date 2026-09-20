@@ -24,7 +24,12 @@ ResNet 18/50, ConvNeXt V1 Tiny는 `ImageNet 가중치로 시작` 또는 `로컬 
 선택할 수 있다. DeepLab V3+와 U-Net은 ImageNet 백본을 사용하며 분할 헤드는 새로 학습한다.
 공식 파일은 최초 1회 다운로드 후 캐시로 사용한다. 가중치를 설치 파일에 새로 포함하지는 않는다.
 SAM2·Re-DETR v4·LibreYOLO는 각각 구현과 가중치가 포함된 `.dvmodel` 팩이 필요하다.
-세부 변경은 [0.07 릴리스](docs/RELEASE_0.07.md)를 참고한다.
+**현재 저장소에는 LibreYOLO 완성 팩이 없으며 개발 템플릿만 있다.**
+[팩 구성·추가 방법](docs/LIBREYOLO_MODEL_PACKS.ko.md)을 먼저 확인한다.
+
+데이터셋 이미지를 열면 검출 박스와 분할 마스크를 직접 그릴 수 있다. Qt에서는
+이미지 선택 후 **데이터 티칭 / 정답 그리기**, 브라우저에서는 이미지 클릭으로 연다.
+[드로잉 도구 사용법](docs/DATASET_TEACHING.ko.md)과 [1.07 릴리스](docs/RELEASE_1.07.md)를 참고한다.
 
 Python 3.11 환경에서 이 폴더로 이동합니다.
 

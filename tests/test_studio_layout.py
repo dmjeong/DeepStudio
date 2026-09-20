@@ -17,7 +17,8 @@ from core.training_modes import MODE_LABELS, training_capabilities, training_eng
 ])
 def test_supported_task_engine_contract(task, mode, engine):
     assert training_capabilities(task, mode)["engine"] == engine
-    assert set(MODE_LABELS) == {"custom", "efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume"}
+    assert set(MODE_LABELS) == {"custom", "efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume",
+                                "builtin_finetune", "builtin_transfer"}
     assert {key for key in asdict(TrainingConfig()) if key.endswith("_model")} == {"efficientnet_model"}
 
 

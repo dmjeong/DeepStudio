@@ -37,7 +37,7 @@ def change_mode(page, mode):
     ("classify", "efficientnet_finetune", "val_loss", "custom"),
     ("classify", "efficientnet_resume", "val_loss", "custom"),
 ])
-def test_model_switch_replaces_incompatible_selection(page, task, source, metric, target):
+def test_model_switch_preserves_supported_val_loss_selection(page, task, source, metric, target):
     project = page.project
     project.task = task
     project.training.training_mode = source
@@ -45,7 +45,7 @@ def test_model_switch_replaces_incompatible_selection(page, task, source, metric
     page.set_project(project)
     assert page.selection_combo.currentData() == metric
     change_mode(page, target)
-    assert page.selection_combo.currentData() == "engine_default"
+    assert page.selection_combo.currentData() == metric
     assert page.selection_info.text()
     assert page.epochs_spin.isEnabled() == (target != "efficientnet_resume")
 

@@ -69,6 +69,9 @@ class TrainingForm:
         if hasattr(self, "_install_model_pack"):
             self.model_pack_install_button.clicked.connect(self._install_model_pack)
         model_layout.addWidget(self.model_pack_install_button)
+        self.model_pack_help_button = QPushButton("모델 팩 추가 방법 / LibreYOLO 제공 상태")
+        self.model_pack_help_button.clicked.connect(self._show_model_pack_help)
+        model_layout.addWidget(self.model_pack_help_button)
         pack_actions = QHBoxLayout()
         self.model_pack_train_button = QPushButton("팩 학습")
         self.model_pack_infer_button = QPushButton("팩 추론")

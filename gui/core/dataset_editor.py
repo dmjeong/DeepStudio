@@ -216,7 +216,7 @@ def annotation_view(project, path, split):
 def edit_dataset(project, action, paths=(), split="train", target_split="train", class_name="",
                  source_class="", new_name="", annotations=None, cancelled=lambda: False):
     """이미지 묶음 편집. 오류/취소는 전체 묶음 복구, 원본 삭제는 백업 후 수행."""
-    if action not in {"import", "move", "reclass", "delete", "rename_class", "annotations"}:
+    if action not in {"import", "move", "reclass", "delete", "rename_class", "annotations", "mask_annotations"}:
         raise ValueError("데이터 편집 작업 오류")
     root, target_root = split_root(project, split), split_root(project, target_split)
     names = project.data.class_names
@@ -239,6 +239,13 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
         raise ValueError("변경할 원래 클래스 선택 필요")
     if action == "annotations" and (len(sources) != 1 or project.task not in {"detect", "segment", "obb"}):
         raise ValueError("탐지/분할 이미지 한 장 선택 필요")
+    mask_document = None
+    if action == "mask_annotations":
+        if len(sources) != 1 or project.task != "segment":
+            raise ValueError("분할 이미지 한 장 선택 필요")
+        from core.mask_annotations import MaskDocument
+        with Image.open(sources[0]) as image:
+            mask_document = MaskDocument.from_payload(annotations, *image.size, len(names))
     tx = EditTransaction(project, action)
     changed = 0
     try:
@@ -313,6 +320,15 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
                             stream = io.BytesIO()
                             out.save(stream, format=mask.format)
                             tx.write(label, stream.getvalue())
+            elif action == "mask_annotations":
+                base = root.parent.parent if root.parent.name == "images" else Path(project.data.root)
+                mask_path = base / "masks" / split / path.relative_to(root).with_suffix(".png")
+                tx.write(mask_path, mask_document.encode())
+                # One authoritative target per image. The transaction retains
+                # prior raster/vector files for recovery if any save step fails.
+                for kind, label in related:
+                    if label != mask_path:
+                        tx.remove(label)
             elif action == "annotations":
                 if any(kind == "masks" for kind, _ in related):
                     raise ValueError("픽셀 마스크는 클래스 변경으로 편집. 박스/폴리곤과 혼합 저장 불가")

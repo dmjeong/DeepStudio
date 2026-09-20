@@ -436,7 +436,7 @@ class DatasetWidget(QWidget):
         self.annotation_row = QWidget()
         annotation_layout = QHBoxLayout(self.annotation_row)
         annotation_layout.setContentsMargins(0, 0, 0, 0)
-        self.annotate_btn = QPushButton("박스와 클래스 편집")
+        self.annotate_btn = QPushButton("데이터 티칭 / 정답 그리기")
         self.annotate_btn.clicked.connect(self._edit_selected_annotation)
         annotation_layout.addWidget(self.annotate_btn)
         annotation_hint = QLabel("이미지 선택 후 편집하거나 더블클릭하세요. 클래스는 이미지 전체가 아닌 객체마다 지정합니다.")
@@ -584,7 +584,7 @@ class DatasetWidget(QWidget):
             self._class_filter = "전체"
         self._filter_project_key = project_key
         self.project = project
-        self.annotation_row.setVisible(project.task in ("detect", "obb"))
+        self.annotation_row.setVisible(project.task in ("detect", "segment", "obb"))
         available = ["good", "defect"] if project.task == "anomaly" else project.data.class_names
         if self._class_filter != "전체" and self._class_filter not in available:
             self._class_filter = "전체"
@@ -1013,7 +1013,7 @@ class DatasetWidget(QWidget):
 
     def _edit_selected_annotation(self):
         if len(self._selected_paths) != 1:
-            QMessageBox.information(self, "박스와 클래스 편집", "편집할 이미지를 한 장 선택하세요.")
+            QMessageBox.information(self, "데이터 티칭", "편집할 이미지를 한 장 선택하세요.")
             return
         self._open_image_preview(next(iter(self._selected_paths)))
 
@@ -1022,27 +1022,47 @@ class DatasetWidget(QWidget):
         if not os.path.isfile(image_path):
             QMessageBox.warning(self, "이미지 보기", "이미지 파일을 찾을 수 없습니다.")
             return
-        if self.project and self.project.task in ("detect", "obb"):
+        if self.project and self.project.task in ("detect", "segment", "obb"):
             if not self._ensure_idle():
                 return
             from pathlib import Path
             from core.dataset_editor import edit_dataset, read_annotations, sidecars, split_root
             from widgets.obb_annotation import OBBAnnotationDialog
+            from widgets.segmentation_annotation import SegmentationAnnotationDialog
+            from core.mask_annotations import load_mask_document
             try:
                 project = self.project
                 split = next(sp for sp in SPLITS if Path(image_path).is_relative_to(split_root(project, sp)))
-                labels = sidecars(project, image_path, split)
-                rows = [row for kind, label in labels if kind == "labels"
-                        for row in read_annotations(label, project.task, len(project.data.class_names))]
+                records = (getattr(self, "_dataset_index", None) or {}).get("images", [])
+                paths = [row["path"] for row in records if row["split"] == split and os.path.isfile(row["path"])]
+                if image_path not in paths:
+                    paths = [image_path]
+                index = paths.index(image_path)
                 def add_class(name):
                     self.about_to_change.emit()
                     ClassManager.add(project, name)
                     return project.data.class_names
 
-                dialog = OBBAnnotationDialog(image_path, project.data.class_names, rows,
-                    lambda values: edit_dataset(project, "annotations", [image_path], split=split, annotations=values), self,
-                    task=project.task, add_class=add_class)
-                dialog.exec()
+                while True:
+                    image_path = paths[index]
+                    if project.task == "segment":
+                        document = load_mask_document(project, image_path, split)
+                        dialog = SegmentationAnnotationDialog(image_path, project.data.class_names, document,
+                            lambda values, path=image_path: edit_dataset(project, "mask_annotations", [path], split=split, annotations=values), self,
+                            add_class=add_class, navigation=(index, len(paths)))
+                    else:
+                        labels = sidecars(project, image_path, split)
+                        rows = [row for kind, label in labels if kind == "labels"
+                                for row in read_annotations(label, project.task, len(project.data.class_names))]
+                        dialog = OBBAnnotationDialog(image_path, project.data.class_names, rows,
+                            lambda values, path=image_path: edit_dataset(project, "annotations", [path], split=split, annotations=values), self,
+                            task=project.task, add_class=add_class, navigation=(index, len(paths)))
+                    dialog.exec()
+                    delta = getattr(dialog, "navigation_delta", 0)
+                    dialog.deleteLater()
+                    if type(delta) is not int or not delta or not 0 <= index + delta < len(paths):
+                        break
+                    index += delta
                 self.set_project(project)
                 self.project_changed.emit(project)
             except (OSError, ValueError, StopIteration) as exc:
@@ -1251,8 +1271,8 @@ class DatasetWidget(QWidget):
         header.setEnabled(False)
         menu.addSeparator()
 
-        if task in ("detect", "obb"):
-            edit_action = menu.addAction("박스와 클래스 편집")
+        if task in ("detect", "segment", "obb"):
+            edit_action = menu.addAction("데이터 티칭 / 정답 그리기")
             edit_action.triggered.connect(lambda: self._open_image_preview(thumb.image_path))
             menu.addSeparator()
 

@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 from typing import Iterable
 
 import torch
@@ -20,12 +22,13 @@ from builtin_models import build_builtin_model, get_builtin_spec, make_builtin_c
 from dataset import create_classification_loaders, create_segmentation_loaders
 
 
-def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"):
+def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None):
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
     correct = 0
     samples = 0
+    confusion = None
     context = torch.enable_grad() if training else torch.inference_mode()
     with context:
         for images, labels in loader:
@@ -38,13 +41,25 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
                 optimizer.step()
             total_loss += float(loss.detach()) * labels.shape[0]
             correct += int(logits.argmax(dim=1).eq(labels).sum())
+            if metrics_out is not None:
+                classes = logits.shape[1]
+                counts = torch.bincount((labels * classes + logits.argmax(1)).detach().cpu(),
+                                        minlength=classes * classes).reshape(classes, classes)
+                confusion = counts if confusion is None else confusion + counts
             samples += labels.shape[0]
     if samples == 0:
         raise ValueError("classification loader contains no samples")
+    if metrics_out is not None:
+        counts = confusion.double()
+        tp = counts.diag()
+        recall = tp / counts.sum(1).clamp(min=1)
+        f1 = 2 * tp / (counts.sum(0) + counts.sum(1)).clamp(min=1)
+        metrics_out.update(accuracy=correct / samples, recall_macro=float(recall.mean()),
+                           f1_macro=float(f1.mean()), val_loss=total_loss / samples)
     return total_loss / samples, correct / samples
 
 
-def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu"):
+def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None):
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
@@ -77,6 +92,10 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu"):
     if samples == 0 or intersection is None:
         raise ValueError("segmentation loader contains no samples")
     iou = torch.where(union > 0, intersection / union, torch.ones_like(union))
+    if metrics_out is not None:
+        dice_denominator = union + intersection
+        dice = torch.where(dice_denominator > 0, 2 * intersection / dice_denominator, torch.ones_like(union))
+        metrics_out.update(mIoU=float(iou.mean()), dice_score=float(dice.mean()), val_loss=total_loss / samples)
     return total_loss / samples, float(iou.mean())
 
 
@@ -117,8 +136,14 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   output_dir: str | Path = "runs/builtin", device: str = "cpu",
                   resume: str | Path | None = None,
                   initial_weights: str | Path | None = None, pretrained: bool = False, log=print,
+                  selection_metric: str = "engine_default",
                   should_stop=lambda: False) -> Path:
     spec = get_builtin_spec(model_id)
+    gui_path = str(Path(__file__).resolve().parents[1] / "gui")
+    if gui_path not in sys.path:
+        sys.path.insert(0, gui_path)
+    from core.model_selection import selection_policy
+    policy = selection_policy(SimpleNamespace(selection_metric=selection_metric), "builtin", spec.task)
     if epochs < 1 or batch_size < 1 or learning_rate <= 0 or weight_decay < 0:
         raise ValueError("epochs, batch_size and learning_rate must be positive")
     optimizer_name = optimizer_name.lower()
@@ -243,12 +268,13 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         "backbone_lr_mult": backbone_lr_mult, "val_split": val_split,
         "num_workers": num_workers,
         "pretrained": pretrained, "weight_provenance": model.weight_provenance,
+        "selection_metric": policy.metric, "selection_direction": policy.direction,
         "augmentation": {"horizontal_flip": horizontal_flip, "rotation": rotation,
                          "color_jitter": color_jitter},
     }
     start_epoch = 0
     history: list[dict] = []
-    best_metric = float("-inf")
+    best_metric = float("inf") if policy.direction == "min" else float("-inf")
     best_epoch = 0
     resume_best_checkpoint = None
     if resume is not None:
@@ -256,8 +282,13 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         checkpoint = torch.load(resume_path, map_location="cpu", weights_only=False)
         if checkpoint.get("model_id") != model_id:
             raise ValueError("resume checkpoint model_id does not match the requested adapter")
+        saved_metric = checkpoint.get("training_config", {}).get("selection_metric", "engine_default")
+        saved_policy = selection_policy(SimpleNamespace(selection_metric=saved_metric), "builtin", spec.task)
+        if saved_policy.metric != policy.metric:
+            raise ValueError("resume Best 기준이 다릅니다. 같은 기준으로 재개하거나 로컬 가중치로 새 학습을 시작하세요.")
         model.load_state_dict(checkpoint["model_state_dict"], strict=True)
         model.weight_provenance = dict(checkpoint.get("weight_provenance", {}))
+        training_config["weight_provenance"] = model.weight_provenance
         if checkpoint.get("optimizer_state_dict"):
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         if scheduler is not None and checkpoint.get("scheduler_state_dict"):
@@ -285,22 +316,26 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     for epoch in range(start_epoch, epochs):
         if should_stop():
             break
+        validation_metrics = {}
         if spec.task == "classify":
             train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target)
-            val_loss, val_metric = _classification_epoch(model, val_loader, criterion, None, target)
+            val_loss, val_metric = _classification_epoch(model, val_loader, criterion, None, target, validation_metrics)
         else:
             train_loss, train_metric = _segmentation_epoch(model, train_loader, criterion, optimizer, target)
-            val_loss, val_metric = _segmentation_epoch(model, val_loader, criterion, None, target)
+            val_loss, val_metric = _segmentation_epoch(model, val_loader, criterion, None, target, validation_metrics)
+        selected_value = policy.value(validation_metrics)
         if not all(torch.isfinite(torch.tensor(value)) for value in (train_loss, train_metric, val_loss, val_metric)):
             raise ValueError("training produced a non-finite metric")
         log(f"epoch {epoch + 1}/{epochs}: train_loss={train_loss:.6f} val_loss={val_loss:.6f} metric={val_metric:.6f}")
         completed_epochs = epoch + 1
         log({"event": "epoch_finished", "epoch": completed_epochs,
              "train_loss": train_loss, "val_loss": val_loss,
-             "metric": val_metric, "total_epochs": epochs})
+             "metric": val_metric, "total_epochs": epochs, "metrics": validation_metrics,
+             "selected_metric": policy.metric, "selected_value": selected_value})
         history.append({"epoch": completed_epochs, "train_loss": train_loss,
                         "train_metric": train_metric, "val_loss": val_loss,
                         "val_metric": val_metric,
+                        "metrics": validation_metrics, "selected_value": selected_value,
                         "learning_rate": float(optimizer.param_groups[0]["lr"])})
         if scheduler is not None:
             scheduler.step()
@@ -308,18 +343,21 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                 num_classes=num_classes, input_size=input_size,
                                 in_channels=in_channels, class_names=class_names,
                                 epoch=epoch, optimizer=optimizer, scheduler=scheduler,
-                                metric=val_metric, training_config=training_config,
+                                metric=selected_value, training_config=training_config,
                                 metrics_history=history)
-        if val_metric > best_metric:
-            best_metric = val_metric
+        improved = selected_value < best_metric if policy.direction == "min" else selected_value > best_metric
+        if improved:
+            best_metric = selected_value
             best_epoch = completed_epochs
             epochs_without_improvement = 0
             save_builtin_checkpoint(destination / "best.pt", model, model_id=model_id,
                                     num_classes=num_classes, input_size=input_size,
                                     in_channels=in_channels, class_names=class_names,
                                     epoch=epoch, optimizer=optimizer, scheduler=scheduler,
-                                    metric=val_metric, training_config=training_config,
+                                    metric=selected_value, training_config=training_config,
                                     metrics_history=history)
+            log({"event": "best_epoch_updated", "epoch": completed_epochs,
+                 "train_loss": train_loss, "val_loss": val_loss, "metrics": validation_metrics})
         else:
             epochs_without_improvement += 1
         if early_stop_patience and epochs_without_improvement >= early_stop_patience:
@@ -330,7 +368,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     (destination / "training.json").write_text(json.dumps({"model_id": model_id,
         "task": spec.task, "epochs": epochs, "input_size": list(input_size),
         "in_channels": in_channels,
-        "best_metric": None if best_metric == float("-inf") else best_metric,
+        "best_metric": best_metric if torch.isfinite(torch.tensor(best_metric)) else None,
+        "best_metric_name": policy.metric,
         "best_epoch": best_epoch, "completed_epochs": completed_epochs,
         "metrics_history": history, "training_config": training_config,
         "cancelled": bool(should_stop())}, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -354,13 +393,14 @@ def main() -> None:
     parser.add_argument("--resume")
     parser.add_argument("--pretrained", action="store_true", help="Load the selected ImageNet backbone")
     parser.add_argument("--initial_weights", help="Local torchvision backbone or matching Studio checkpoint")
+    parser.add_argument("--selection_metric", default="engine_default")
     args = parser.parse_args()
     train_builtin(args.model, args.data_root, num_classes=args.num_classes,
                   input_size=args.input_size or None, in_channels=args.in_channels,
                   epochs=args.epochs, batch_size=args.batch_size,
                   learning_rate=args.learning_rate, output_dir=args.output_dir,
                   device=args.device, resume=args.resume, pretrained=args.pretrained,
-                  initial_weights=args.initial_weights)
+                  initial_weights=args.initial_weights, selection_metric=args.selection_metric)
 
 
 if __name__ == "__main__":

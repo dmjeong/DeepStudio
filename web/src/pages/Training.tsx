@@ -194,6 +194,11 @@ export function Training({
               />
             )}
             {unsupported && <p className="learning-mode-help">선택 모델에 맞는 학습 모드를 다시 선택하세요.</p>}
+            {modelId.startsWith("libreyolo_") && <p className="learning-mode-help">
+              LibreYOLO 완성 .dvmodel 팩은 현재 기본 설치본과 저장소에 포함되지 않습니다. 모델 이름만으로 학습할 수 있는 상태는 아닙니다.
+              .pt의 확장자를 바꾸는 방식이 아니라 학습 코드·가중치·Docker 이미지를 묶은 팩이 필요합니다.
+              {" "}<a href="https://github.com/dmjeong/DeepStudio/blob/main/docs/LIBREYOLO_MODEL_PACKS.ko.md" target="_blank" rel="noreferrer">팩 구성·설치 방법</a>
+            </p>}
             {builtin && <p className="learning-mode-help">{modelName}: ImageNet 가중치는 최초 1회 다운로드하며 캐시 또는 로컬 .pth로 오프라인 학습할 수 있습니다.
               {project.task === "segment" && " 분할 모델은 백본만 사전학습되며 분할 헤드는 새로 학습합니다."}</p>}
             {efficientnet && <p className="learning-mode-help">{resume

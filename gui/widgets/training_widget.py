@@ -66,6 +66,9 @@ class TrainingWidget(TrainingForm, QWidget):
             help_text = "선택한 모델을 무작위 초기화합니다. 가중치를 지정하면 같은 모델의 가중치에서 학습합니다."
         if self._selected_container_spec()[0] is not None:
             help_text = "선택한 모델의 .dvmodel 팩에 포함된 학습 코드와 가중치를 사용합니다. 먼저 해당 팩을 설치하세요."
+            if not self._selected_container_spec()[1]:
+                help_text = ("선택한 모델 팩이 설치되지 않았습니다. 카탈로그에 이름이 있어도 바로 학습할 수 있는 상태는 아닙니다. "
+                             "'모델 팩 추가 방법 / LibreYOLO 제공 상태'에서 필요한 구성과 설치 절차를 확인하세요.")
         self.mode_help.setText(help_text)
         self.hp_group.setEnabled(True)
         self.aug_group.setEnabled(mode not in {"efficientnet_resume"})
@@ -129,6 +132,22 @@ class TrainingWidget(TrainingForm, QWidget):
             self.model_id_combo.setCurrentIndex(max(0, index))
         finally:
             self.model_id_combo.blockSignals(False)
+
+    def _show_model_pack_help(self):
+        message = QMessageBox(self)
+        message.setWindowTitle("모델 팩 추가 방법")
+        message.setText(
+            "<b>LibreYOLO 완성 모델 팩은 현재 저장소와 기본 설치본에 포함되지 않습니다.</b><br><br>"
+            ".dvmodel은 가중치 파일이 아니라 학습·추론 코드, 가중치, Docker 이미지와 실행 명세를 묶은 설치 파일입니다. "
+            ".pt의 확장자를 바꾸어 사용할 수 없습니다.<br><br>"
+            "1. 모델 팩 제작자로부터 해당 모델의 완성된 .dvmodel과 공개키 설정을 받습니다.<br>"
+            "2. 공개키 신뢰 저장소를 설정한 뒤 '모델 팩 가져오기'에서 파일을 선택합니다.<br>"
+            "3. 컨테이너 실행 환경을 확인하고 '팩 학습 / 팩 추론 / 팩 ONNX export'로 실행합니다.<br><br>"
+            "현재 템플릿은 실행 규약 예시이며 LibreYOLO 학습 구현이 아닙니다. "
+            "팩 없이 곧바로 학습할 수 있다고 안내한 부분을 바로잡았습니다.<br><br>"
+            '<a href="https://github.com/dmjeong/DeepStudio/blob/main/docs/LIBREYOLO_MODEL_PACKS.ko.md">구성물·Windows 설치 명령·팩 개발 절차</a>'
+        )
+        message.exec()
 
     def _install_model_pack(self):
         """Import and validate one offline Docker model pack from the GUI."""

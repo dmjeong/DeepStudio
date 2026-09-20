@@ -67,6 +67,31 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/projects", json={"name": "검사 프로젝트", "task": "classify",
                             "parent": str(self.root), "class_names": ["NG"]}).status_code, 409)
 
+    def test_mask_teaching_api_saves_real_training_png_and_restores_editable_shapes(self):
+        project = self.project(task="segment")
+        path = Path(project["data"]["train_dir"]) / "part.png"
+        Image.new("RGB", (100, 80), "gray").save(path)
+        endpoint = "/api/dataset/mask-annotations"
+        response = self.client.get(endpoint, params={"path": str(path), "split": "train"})
+        self.assertEqual(response.status_code, 200, response.text)
+        document = response.json()
+        self.assertFalse(document.pop("persisted"))
+        document["shapes"] = [{"kind": "polygon", "class_id": 1,
+                                "points": [.2, .2, .8, .2, .8, .8, .2, .8]}]
+        response = self.client.post("/api/dataset/edit", json={"action": "mask_annotations",
+            "paths": [str(path)], "split": "train", "annotations": document})
+        self.assertEqual(response.status_code, 200, response.text)
+        result = self.wait_job(response.json()["id"])
+        self.assertEqual(result["job"]["status"], "completed", result)
+        reopened = self.client.get(endpoint, params={"path": str(path), "split": "train"}).json()
+        self.assertTrue(reopened["persisted"])
+        self.assertEqual(reopened["shapes"], document["shapes"])
+        with Image.open(Path(project["data"]["root"]) / "masks/train/part.png") as mask:
+            self.assertEqual(np.array(mask)[40, 50], 1)
+        outside = self.root / "outside.png"
+        Image.new("RGB", (100, 80)).save(outside)
+        self.assertEqual(self.client.get(endpoint, params={"path": str(outside), "split": "train"}).status_code, 400)
+
     def test_non_anomaly_project_requires_an_initial_class(self):
         for task in ("classify", "detect", "segment", "obb"):
             with self.subTest(task=task):
@@ -186,6 +211,25 @@ class WebAppTests(unittest.TestCase):
                          project.training.augmentation.horizontal_flip)
         epoch = next(args for event, args in events if event == "epoch_finished")
         self.assertEqual(epoch[3], {"mIoU": 0.75})
+
+        project.training.selection_metric = "val_loss"
+
+        def fake_loss_train(*args, log, **kwargs):
+            self.assertEqual(kwargs["selection_metric"], "val_loss")
+            log({"event": "epoch_finished", "epoch": 1, "total_epochs": 1,
+                 "train_loss": .4, "val_loss": .3, "metric": .75,
+                 "selected_value": .3, "metrics": {"mIoU": .75, "val_loss": .3}})
+            log({"event": "best_epoch_updated", "epoch": 1, "train_loss": .4,
+                 "val_loss": .3, "metrics": {"mIoU": .75, "val_loss": .3}})
+            return best
+
+        with patch("train_builtin.train_builtin", side_effect=fake_loss_train), \
+                patch("torch.load", return_value={"metric": .3, "epoch": 0}):
+            record = _train_builtin_project(Context(), project, "cpu")
+        self.assertEqual(record.best_metric_name, "val_loss")
+        self.assertEqual(record.best_metric, .3)
+        self.assertEqual(record.metrics_history, {"train_loss": [.4], "val_loss": [.3], "mIoU": [.75]})
+        self.assertEqual(next(args for event, args in events if event == "best_epoch_updated")[3]["val_loss"], .3)
 
     def test_builtin_options_use_selected_model_and_hide_layer_debug(self):
         response = self.client.get("/api/options?task=classify&engine=builtin&mode=builtin_finetune&model_id=resnet18")

@@ -31,14 +31,16 @@ export function Dataset({ project, state, act, refresh, busy }: PageProps & { pr
   const [opened, setOpened] = useState<DatasetImage | null>(null);
   const [annotationJob, setAnnotationJob] = useState<string | null>(null);
   const [annotationError, setAnnotationError] = useState("");
+  const annotationNext = useRef<DatasetImage | null>(null);
   const upload = useRef<HTMLInputElement>(null);
   const { view } = useJob(job);
   const done = terminal(view?.job);
   useEffect(() => {
     if (!annotationJob || view?.job.id !== annotationJob || !terminal(view.job)) return;
-    if (view.job.status === "completed") setOpened(null);
+    if (view.job.status === "completed") setOpened(annotationNext.current);
     else setAnnotationError(view.job.error || "정답 저장이 완료되지 않았습니다. 다시 저장해 주세요.");
     setAnnotationJob(null);
+    annotationNext.current = null;
   }, [annotationJob, view?.job.id, view?.job.status]);
   useEffect(() => { if (done) { setRevision(v => v + 1); void refresh(); } }, [done]);
   useEffect(() => {
@@ -126,7 +128,14 @@ export function Dataset({ project, state, act, refresh, busy }: PageProps & { pr
       </> : dialog === "rename" ? <><Field label={`${filter}의 새 이름`}><input value={name} onChange={e => setName(e.target.value)} /></Field><button className="primary" disabled={busy || !name || name === filter} onClick={() => act(async () => { await edit("rename_class", { paths: [], source_class: filter, new_name: name }); setFilter(""); })}>이름 변경</button></> : <><p>선택한 이미지 {selected.length}장과 연결된 정답을 백업한 뒤 데이터셋에서 삭제합니다.</p><button className="danger" disabled={busy} onClick={() => act(() => edit("delete"))}>백업 후 삭제</button></>}
     </DatasetDialog>}
     {preview && <DatasetDialog title={`${preview.class_name} 클래스 삭제`} onClose={() => setPreview(null)}><p>이미지 {preview.image_count}장, 제거할 정답 {preview.removed_annotations}개, 재번호화할 정답 {preview.remapped_annotations}개, 제거할 마스크 픽셀 {preview.removed_pixels}개</p><p>백업 후 데이터를 변경합니다. 기존 모델의 클래스 목록은 유지됩니다.</p><button className="danger" disabled={busy} onClick={() => act(async () => { const j = await api<Job>("/classes/delete", "POST", { name: preview.class_name, preview_digest: preview.preview_digest }); setJob(j.id); setPreview(null); setFilter(""); await refresh(); })}>백업 후 클래스 삭제</button></DatasetDialog>}
-    {opened && (["detect", "segment", "obb"].includes(project.task) ? <AnnotationEditor key={opened.path} item={opened} project={project} busy={busy || !!annotationJob} saveError={annotationError} onClose={() => { if (!annotationJob) setOpened(null); }} onSave={rows => act(async () => { setAnnotationError(""); setAnnotationJob(await edit("annotations", { paths: [opened.path], split: opened.split, annotations: rows })); })} /> : <DatasetImageViewer item={opened} onClose={() => setOpened(null)} />)}
+    {opened && (["detect", "segment", "obb"].includes(project.task) ? <AnnotationEditor key={opened.path} item={opened} project={project} busy={busy || !!annotationJob} saveError={annotationError}
+      navigation={{ index: images.images.findIndex(image => image.path === opened.path), count: images.images.length }}
+      onClose={() => { if (!annotationJob) setOpened(null); }} onSave={(rows, next = 0) => act(async () => {
+        setAnnotationError("");
+        annotationNext.current = next ? images.images[images.images.findIndex(image => image.path === opened.path) + next] || null : null;
+        try { setAnnotationJob(await edit(project.task === "segment" ? "mask_annotations" : "annotations", { paths: [opened.path], split: opened.split, annotations: rows })); }
+        catch (error) { annotationNext.current = null; setAnnotationError(error instanceof Error ? error.message : String(error)); throw error; }
+      })} /> : <DatasetImageViewer item={opened} onClose={() => setOpened(null)} />)}
   </>;
 }
 export const classColor = (index: number) => ["#1428a0", "#007e88", "#c65316", "#7542ad", "#b72d66", "#586522"][index % 6];
@@ -144,8 +153,8 @@ function DatasetImageViewer({ item, onClose }: { item: DatasetImage; onClose: ()
   </DatasetDialog>;
 }
 
-export function DatasetDialog({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+export function DatasetDialog({ title, children, onClose, className = "" }: { title: string; children: React.ReactNode; onClose: () => void; className?: string }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { ref.current?.showModal(); }, []);
-  return <dialog ref={ref} className="dataset-dialog" onCancel={event => { event.preventDefault(); onClose(); }}><div className="panel-head"><h2>{title}</h2><button aria-label="닫기" onClick={onClose}>닫기</button></div>{children}</dialog>;
+  return <dialog ref={ref} className={`dataset-dialog ${className}`} onCancel={event => { event.preventDefault(); onClose(); }}><div className="panel-head"><h2>{title}</h2><button aria-label="닫기" onClick={onClose}>닫기</button></div>{children}</dialog>;
 }

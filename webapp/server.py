@@ -129,7 +129,7 @@ class DatasetEdit(Body):
     class_name: str = ""
     source_class: str = ""
     new_name: str = ""
-    annotations: list[dict] | None = None
+    annotations: list[dict] | dict | None = None
 
 
 class JobSelection(Body):
@@ -458,6 +458,15 @@ def create_app(state_dir=None):
     def dataset_annotations(path: str, split: str):
         from core.dataset_editor import annotation_view
         return annotation_view(project_required(), path, split)
+
+    @app.get("/api/dataset/mask-annotations")
+    def dataset_mask_annotations(path: str, split: str):
+        from core.mask_annotations import load_mask_document
+        project = project_required()
+        if project.task != "segment":
+            raise ValueError("분할 프로젝트에서만 마스크를 편집할 수 있습니다.")
+        document = load_mask_document(project, path, split)
+        return {**document.payload(), "persisted": document.persisted}
 
     @app.post("/api/dataset/edit")
     def dataset_edit(body: DatasetEdit):

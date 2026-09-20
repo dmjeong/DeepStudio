@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 from core.paths import ensure_python_path
 from widgets.common import NoWheelComboBox
+from widgets.annotation_navigation import AnnotationNavigation
 
 ensure_python_path()
 from obb import rectangle_from_three_points
@@ -39,8 +40,8 @@ class _SaveLabels(QThread):
             self.error = str(exc)
 
 
-class OBBAnnotationDialog(QDialog):
-    def __init__(self, image_path, class_names, rows, save, parent=None, *, task="obb", add_class=None):
+class OBBAnnotationDialog(AnnotationNavigation, QDialog):
+    def __init__(self, image_path, class_names, rows, save, parent=None, *, task="obb", add_class=None, navigation=None):
         super().__init__(parent)
         self.selected = -1
         self.undo_stack, self.redo_stack = [], []
@@ -50,6 +51,7 @@ class OBBAnnotationDialog(QDialog):
         self.resize(1080, 800)
         self.rows, self.names = copy.deepcopy(rows), list(class_names)
         self.points, self.dirty, self.worker = [], False, None
+        self.save_empty = task == "detect" and not rows
         self._save_callback = save
         self.pixmap = QPixmap(image_path)
         if self.pixmap.isNull():
@@ -59,7 +61,7 @@ class OBBAnnotationDialog(QDialog):
         help_text = QLabel("첫 두 번 클릭으로 한 변을 정하고, 세 번째 클릭으로 폭을 정하세요. "
                            "확대 후 가로와 세로 스크롤로 이동할 수 있습니다.")
         if task == "detect":
-            help_text.setText("B 박스 그리기  |  D 선택과 이동  |  Space 화면 이동  |  Ctrl+휠 확대  |  Delete 삭제  |  Ctrl+Z 실행 취소")
+            help_text.setText("B 박스 그리기 · V 선택/이동 · Space 화면 이동 · 휠 확대 · Delete 삭제 · Ctrl+Z 실행 취소 · Ctrl+D 복제 · 숫자 1~9 클래스")
         help_text.setWordWrap(True)
         layout.addWidget(help_text)
         toolbar = QHBoxLayout()
@@ -124,6 +126,12 @@ class OBBAnnotationDialog(QDialog):
             self.redo_button = QPushButton("다시 실행")
             self.redo_button.clicked.connect(self._redo)
             controls.addWidget(self.redo_button)
+            duplicate = QPushButton("선택 박스 복제")
+            duplicate.clicked.connect(self._duplicate)
+            controls.addWidget(duplicate)
+            remove = QPushButton("선택 박스 삭제")
+            remove.clicked.connect(lambda: self._command("delete"))
+            controls.addWidget(remove)
             fit = QPushButton("화면 맞춤  0")
             fit.clicked.connect(self._fit)
             controls.addWidget(fit)
@@ -151,6 +159,7 @@ class OBBAnnotationDialog(QDialog):
         self.save_button = QPushButton("정답 저장")
         self.save_button.clicked.connect(self._save)
         layout.addWidget(self.save_button)
+        self._add_navigation(layout, navigation)
         self.zoom.valueChanged.connect(self._zoom)
         self._render()
         QTimer.singleShot(0, self._fit)
@@ -185,6 +194,7 @@ class OBBAnnotationDialog(QDialog):
         self.view.set_mode(mode)
         for key, button in self.mode_buttons.items():
             button.setChecked(key == mode)
+            button.setStyleSheet("background: #294b80; border: 1px solid #5590f0;" if key == mode else "")
         self.view.setFocus()
 
     def _command(self, command):
@@ -200,6 +210,26 @@ class OBBAnnotationDialog(QDialog):
             self._fit()
         elif command == "save" and self.save_button.isEnabled():
             self._save()
+        elif command == "duplicate":
+            self._duplicate()
+        elif command.startswith("class:"):
+            class_id = int(command.split(":")[1])
+            if class_id < len(self.names):
+                self.class_combo.setCurrentIndex(class_id)
+        elif command in {"previous", "next"}:
+            self._navigate(-1 if command == "previous" else 1)
+
+    def _duplicate(self):
+        if self.worker or not 0 <= self.selected < len(self.rows) or self.task != "detect":
+            return
+        self._checkpoint()
+        row = copy.deepcopy(self.rows[self.selected])
+        x, y, width, height = row["coordinates"]
+        row["coordinates"] = [max(width/2, min(1-width/2, x+.02)),
+                              max(height/2, min(1-height/2, y+.02)), width, height]
+        self.rows.append(row)
+        self.selected, self.dirty = len(self.rows)-1, True
+        self._render()
 
     def _select_box(self, index):
         self.selected = index
@@ -343,7 +373,7 @@ class OBBAnnotationDialog(QDialog):
             self.scene.addEllipse(x-3, y-3, 6, 6, pen)
             if i:
                 self.scene.addLine(self.points[i-2] * self.width_px, self.points[i-1] * self.height_px, x, y, pen)
-        self.save_button.setEnabled(self.dirty and not self.points and self.worker is None)
+        self.save_button.setEnabled((self.dirty or self.save_empty) and not self.points and self.worker is None)
         self.cancel_draw.setEnabled(bool(self.points))
 
     def _render_detection(self):
@@ -368,7 +398,7 @@ class OBBAnnotationDialog(QDialog):
             self.table.selectRow(self.selected)
         self.undo_button.setEnabled(bool(self.undo_stack) and self.worker is None)
         self.redo_button.setEnabled(bool(self.redo_stack) and self.worker is None)
-        self.save_button.setEnabled(self.dirty and not self.points and self.worker is None)
+        self.save_button.setEnabled((self.dirty or self.save_empty) and not self.points and self.worker is None)
         self.cancel_draw.setEnabled(bool(self.points))
 
     def _save(self):
@@ -383,6 +413,7 @@ class OBBAnnotationDialog(QDialog):
         error = worker.error
         worker.deleteLater()
         if error:
+            self.navigation_delta = 0
             self.status.setText(error)
             self._render()
         else:

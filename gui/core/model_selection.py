@@ -20,11 +20,11 @@ LABELS = {
 
 def available_metrics(engine, task):
     if task == "classify":
-        return ["engine_default", "accuracy", "f1_macro", "recall_macro"] + (["val_loss"] if engine == "efficientnet" else [])
+        return ["engine_default", "accuracy", "f1_macro", "recall_macro", "val_loss"]
     if task in ("detect", "obb"):
-        return ["engine_default", "mAP_50_95", "mAP_50"]
+        return ["engine_default", "mAP_50_95", "mAP_50", "val_loss"]
     if task == "segment":
-        return ["engine_default", "mIoU", "dice_score"]
+        return ["engine_default", "mIoU", "dice_score", "val_loss"]
     return ["engine_default"]
 
 

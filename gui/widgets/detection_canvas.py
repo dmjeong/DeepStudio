@@ -183,11 +183,8 @@ class DetectionCanvas(QGraphicsView):
         event.accept()
 
     def wheelEvent(self, event):
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            self.zoom_requested.emit(1 if event.angleDelta().y() > 0 else -1)
-            event.accept()
-        else:
-            super().wheelEvent(event)
+        self.zoom_requested.emit(1 if event.angleDelta().y() > 0 else -1)
+        event.accept()
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -198,6 +195,14 @@ class DetectionCanvas(QGraphicsView):
             self.command.emit('redo' if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 'undo')
         elif event.modifiers() & Qt.KeyboardModifier.ControlModifier and key == Qt.Key.Key_S:
             self.command.emit('save')
+        elif event.modifiers() & Qt.KeyboardModifier.ControlModifier and key == Qt.Key.Key_D:
+            self.command.emit('duplicate')
+        elif key == Qt.Key.Key_V:
+            self.command.emit('select')
+        elif key in (Qt.Key.Key_J, Qt.Key.Key_K):
+            self.command.emit('previous' if key == Qt.Key.Key_J else 'next')
+        elif Qt.Key.Key_1 <= key <= Qt.Key.Key_9:
+            self.command.emit(f'class:{key-Qt.Key.Key_1}')
         elif key in (Qt.Key.Key_B, Qt.Key.Key_D, Qt.Key.Key_H):
             self.command.emit({Qt.Key.Key_B:'draw', Qt.Key.Key_D:'select', Qt.Key.Key_H:'pan'}[key])
         elif key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
