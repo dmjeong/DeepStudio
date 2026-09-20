@@ -341,7 +341,7 @@ def create_app(state_dir=None):
         capabilities = training_capabilities(task, mode or (engine + "_finetune" if engine != "custom" else "custom"), anomaly_method, model_id=model_id)
         if capabilities["engine"] != engine:
             raise ValueError("학습 모드와 엔진 불일치")
-        if task not in {"classify", "detect", "segment", "anomaly", "obb"} or engine not in {"custom", "efficientnet", "builtin"}:
+        if task not in {"classify", "detect", "segment", "anomaly", "obb"} or engine not in {"custom", "efficientnet", "builtin", "upstream"}:
             raise ValueError("태스크 또는 학습 엔진 오류")
         if task == "obb":
             raise ValueError("OBB 학습 엔진은 제공하지 않습니다")

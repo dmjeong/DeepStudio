@@ -12,7 +12,7 @@ from PySide6.QtGui import QTextCursor
 from core.project import ProjectData, ProjectManager
 from core.qt_training import TrainWorker, PatchCoreWorker
 from core.training_modes import (training_engine_name, training_capabilities, MODE_LABELS,
-                                 BUILTIN_ADAPTER_IDS, PENDING_NATIVE_MODEL_IDS)
+                                 BUILTIN_ADAPTER_IDS, UPSTREAM_ADAPTER_IDS, PENDING_NATIVE_MODEL_IDS)
 from core.training_progress import remaining_seconds, run_description
 from core.training_time import format_hms
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
@@ -61,7 +61,8 @@ class TrainingWidget(TrainingForm, QWidget):
         self.efficientnet_frame.setVisible(str(mode).startswith("efficientnet") and mode != "efficientnet_resume")
         self.efficientnet_model_combo.setEnabled(mode != "efficientnet_resume")
         # 이전 모델 경로: 이어학습에서만
-        self.resume_frame.setVisible(mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer"})
+        self.resume_frame.setVisible(mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+                                              "upstream_resume", "upstream_transfer"})
         from core.training_modes import MODE_HELP
         help_text = MODE_HELP.get(mode, "지원하지 않는 학습 모드입니다. 현재 엔진을 선택하세요.")
         if mode == "custom" and self.model_id_combo.currentData() in BUILTIN_ADAPTER_IDS:
@@ -78,7 +79,8 @@ class TrainingWidget(TrainingForm, QWidget):
         self.tl_group.setVisible(mode == "custom")
         # EfficientNet 학습 전략 (freeze 등): 파인튜닝·이어학습에서만
         self.finetune_frame.setVisible(
-            mode in ("efficientnet_finetune", "efficientnet_transfer", "builtin_finetune", "builtin_transfer")
+            mode in ("efficientnet_finetune", "efficientnet_transfer", "builtin_finetune", "builtin_transfer",
+                     "upstream_finetune", "upstream_transfer")
         )
         self._update_selection_options()
         # Refresh the metric list before settings callbacks validate its value.
@@ -99,6 +101,10 @@ class TrainingWidget(TrainingForm, QWidget):
             choices = [(key, MODE_LABELS[key]) for key in
                        ("efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume", "efficientnet_scratch")]
             self.mode_desc.setText(f"선택 모델: {name or 'EfficientNet'}\nImageNet 가중치 또는 로컬 체크포인트를 사용합니다.")
+        elif model_id in UPSTREAM_ADAPTER_IDS:
+            choices = [(key, MODE_LABELS[key]) for key in
+                       ("upstream_finetune", "upstream_transfer", "upstream_resume", "upstream_scratch")]
+            self.mode_desc.setText(f"선택 모델: {name}\n같은 native 모델 구조로 직접 학습합니다.")
         elif self._selected_container_spec()[0] is not None:
             choices = [("custom", "모델 팩에서 학습" if model_id and not model_id.startswith("patchcore") else "Custom CSP")]
             self.mode_desc.setText(f"선택 모델: {name}\n해당 모델의 구현과 가중치가 포함된 .dvmodel 모델 팩이 필요합니다.")
@@ -709,13 +715,15 @@ class TrainingWidget(TrainingForm, QWidget):
             mcfg.model_id = selected_model
         if mcfg.model_id not in {"efficientnet_b0", "efficientnet_b1"} and cfg.training_mode.startswith("efficientnet"):
             cfg.training_mode = "custom"
-        if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer"}:
+        if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+                                 "upstream_resume", "upstream_transfer"}:
             # 이어학습: resume_edit → pretrained_weights
             mcfg.pretrained_weights = self.resume_edit.text().strip()
         elif cfg.training_mode == "custom":
             # 커스텀: weights_edit → pretrained_weights
             mcfg.pretrained_weights = self.weights_edit.text().strip()
-        elif cfg.training_mode in {"efficientnet_finetune", "builtin_finetune", "efficientnet_scratch", "builtin_scratch"}:
+        elif cfg.training_mode in {"efficientnet_finetune", "builtin_finetune", "efficientnet_scratch", "builtin_scratch",
+                                   "upstream_finetune", "upstream_scratch"}:
             # 파인튜닝: 프리트레인드 모델이 소스이므로 경로 불필요
             mcfg.pretrained_weights = ""
 
@@ -723,10 +731,11 @@ class TrainingWidget(TrainingForm, QWidget):
         # ┌──────────────────────┬──────────────────────────────┐
         # │ custom 모드          │ freeze_check (커스텀 TL)      │
         # └──────────────────────┴──────────────────────────────┘
-        if cfg.training_mode in {"efficientnet_scratch", "builtin_scratch"}:
+        if cfg.training_mode in {"efficientnet_scratch", "builtin_scratch", "upstream_scratch"}:
             # Freezing random features is never a useful scratch-training mode.
             mcfg.freeze_backbone = False
-        elif cfg.training_mode in ("efficientnet_finetune", "efficientnet_transfer", "builtin_finetune", "builtin_transfer"):
+        elif cfg.training_mode in ("efficientnet_finetune", "efficientnet_transfer", "builtin_finetune", "builtin_transfer",
+                                   "upstream_finetune", "upstream_transfer"):
             mcfg.freeze_backbone = self.finetune_freeze_check.isChecked()
         else:
             mcfg.freeze_backbone = self.freeze_check.isChecked()

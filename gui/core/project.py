@@ -347,14 +347,18 @@ class ProjectManager:
             project_dir=project_dir,
             model=ModelConfig(model_id=default_model),
             training=TrainingConfig(
-                input_size=info["default_input_size"],
+                # The shipped RT-DETRv4 variants have a fixed native 640px
+                # canvas.  Creating a detect project must not start it at the
+                # legacy Custom-CSP default of 416px.
+                input_size=640 if task == "detect" else info["default_input_size"],
                 batch_size=info["default_batch_size"],
                 # The EfficientNet classification profile intentionally keeps
                 # its grayscale default.  Detection, segmentation, and
                 # PatchCore adapters use RGB unless a model explicitly opts
                 # into a one-channel contract.
                 in_channels=1 if task == "classify" else 3,
-                training_mode="efficientnet_finetune" if task == "classify" else "custom",
+                training_mode=("efficientnet_finetune" if task == "classify" else
+                               "upstream_finetune" if task == "detect" else "custom"),
             ),
         )
 

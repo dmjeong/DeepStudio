@@ -242,6 +242,13 @@ class WebAppTests(unittest.TestCase):
         mismatch = self.client.get("/api/options?task=classify&engine=builtin&mode=builtin_finetune&model_id=efficientnet_b0")
         self.assertEqual(mismatch.status_code, 400)
 
+    def test_upstream_options_require_the_selected_native_model_id(self):
+        response = self.client.get("/api/options?task=detect&engine=upstream&mode=upstream_scratch&model_id=re_detr_v4_small")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["capabilities"]["engine"], "upstream")
+        mismatch = self.client.get("/api/options?task=detect&engine=upstream&mode=upstream_scratch&model_id=efficientnet_b0")
+        self.assertEqual(mismatch.status_code, 400)
+
     def test_model_pack_job_endpoint_keeps_operation_allowlist(self):
         body = {"pack_dir": str(self.root), "data_dir": str(self.root),
                 "work_dir": str(self.root), "request": {}}

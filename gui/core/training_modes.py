@@ -10,6 +10,10 @@ MODE_LABELS = {
     "builtin_finetune": "선택 모델의 ImageNet 가중치로 시작",
     "builtin_transfer": "선택 모델의 로컬 가중치로 시작",
     "builtin_scratch": "선택 모델을 무작위 초기화로 시작",
+    "upstream_finetune": "선택 모델의 사전학습 가중치로 시작",
+    "upstream_transfer": "선택 모델의 로컬 가중치로 시작",
+    "upstream_resume": "선택 모델의 중단한 학습 재개",
+    "upstream_scratch": "선택 모델을 무작위 초기화로 시작",
     "custom": "Custom CSP",
 }
 MODE_HELP = {
@@ -20,6 +24,10 @@ MODE_HELP = {
     "builtin_finetune": "선택한 모델의 ImageNet 가중치를 검증 후 로드합니다. 최초 1회 다운로드하며 캐시가 있으면 오프라인으로 사용합니다. 분할 모델은 백본만 사전학습되어 있고 분할 헤드는 새로 학습합니다.",
     "builtin_transfer": "같은 모델의 Deep Vision Studio 체크포인트 또는 해당 torchvision 백본의 .pth를 선택하세요. 새 데이터의 클래스로 학습을 시작합니다.",
     "builtin_scratch": "선택한 기본 모델 구조를 무작위 초기화하고 처음부터 학습합니다.",
+    "upstream_finetune": "선택한 기본 제공 모델의 공식 사전학습 가중치로 시작합니다.",
+    "upstream_transfer": "같은 모델군의 로컬 checkpoint를 사용해 새 데이터로 학습합니다.",
+    "upstream_resume": "같은 모델군의 last.pt를 복원해 학습을 이어갑니다.",
+    "upstream_scratch": "선택한 모델의 동일한 upstream 구조를 무작위 초기화하고 처음부터 학습합니다.",
     "custom": "자체 CSP 구조. 초기 가중치가 없으면 무작위 초기화합니다.",
 }
 
@@ -28,13 +36,16 @@ BUILTIN_ADAPTER_IDS = frozenset({
     "deeplabv3plus_resnet34", "unet_resnet18",
 })
 
+UPSTREAM_ADAPTER_IDS = frozenset({
+    "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",
+    "re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large",
+})
+
 # These IDs belong to the shipped catalog, not to Docker extensions.  Their
 # upstream-native training workers are deliberately not connected yet; keeping
 # the list explicit prevents a selected product ID from silently training the
 # unrelated Custom CSP fallback.
 PENDING_NATIVE_MODEL_IDS = frozenset({
-    "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",
-    "re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large",
     "sam2_hiera_tiny", "sam2_hiera_small", "sam2_hiera_base_plus",
     "sam2_hiera_large",
 })
@@ -45,7 +56,9 @@ def training_engine_name(mode):
         raise ValueError("지원하지 않는 학습 모드입니다. 현재 엔진을 선택하세요.")
     if str(mode).startswith("efficientnet"):
         return "efficientnet"
-    return "builtin" if str(mode).startswith("builtin") else "custom"
+    if str(mode).startswith("builtin"):
+        return "builtin"
+    return "upstream" if str(mode).startswith("upstream") else "custom"
 
 
 def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""):
@@ -56,11 +69,13 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
     engine = "custom" if task == "anomaly" else training_engine_name(mode)
     if engine == "builtin" and model_id not in BUILTIN_ADAPTER_IDS:
         raise ValueError("선택한 모델은 기본 모델의 사전학습 모드를 지원하지 않습니다.")
+    if engine == "upstream" and model_id not in UPSTREAM_ADAPTER_IDS:
+        raise ValueError("선택한 모델은 upstream native 학습 모드를 지원하지 않습니다.")
     if engine == "efficientnet" and task != "classify":
         raise ValueError("EfficientNet은 분류 태스크만 지원")
     patchcore = task == "anomaly" and anomaly_method == "patchcore"
     # These adapters run train_builtin, which does not install observation hooks.
-    separate_adapter = model_id in BUILTIN_ADAPTER_IDS
+    separate_adapter = model_id in BUILTIN_ADAPTER_IDS | UPSTREAM_ADAPTER_IDS
     return {
         "engine": engine,
         "models": ["efficientnet_b0", "efficientnet_b1"] if engine == "efficientnet" else [],
@@ -90,7 +105,7 @@ def validate_training_options(project, *, require_runnable=True):
         capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method,
                                              model_id=getattr(project.model, "model_id", ""))
     model_id = getattr(project.model, "model_id", "")
-    if cfg.training_mode == "builtin_transfer" and require_runnable:
+    if cfg.training_mode in {"builtin_transfer", "upstream_transfer", "upstream_resume"} and require_runnable:
         source = getattr(project.model, "pretrained_weights", "")
         if not source or not Path(source).is_file():
             raise ValueError("선택 모델의 로컬 가중치 파일(.pt/.pth)이 필요합니다.")

@@ -12,17 +12,16 @@ not a substitute for a release-specific SBOM.
 | ONNX Runtime | Python and C++ CPU inference | MIT; https://github.com/microsoft/onnxruntime/blob/main/LICENSE |
 | nlohmann/json | C++ manifest parsing | MIT; https://github.com/nlohmann/json/blob/develop/LICENSE.MIT |
 | WiX Toolset | Windows MSI/Burn build tool | MIT; https://github.com/wixtoolset/wix/blob/main/LICENSE |
-| LibreYOLO | 기본 LibreMobileNetV4 / LibreYOLO9 소스 후보 | MIT for the library; https://github.com/LibreYOLO/libreyolo/blob/release/LICENSE and the bundled third-party list at https://github.com/LibreYOLO/libreyolo/blob/release/NOTICE |
+| LibreYOLO 1.5.0 | 기본 LibreMobileNetV4 / LibreYOLO9 / Re-DETR v4 native runtime | MIT for the library; https://github.com/LibreYOLO/libreyolo/blob/release/LICENSE and the bundled third-party list at https://github.com/LibreYOLO/libreyolo/blob/release/NOTICE |
 | RT-DETRv4 upstream (제품 표기 Re-DETR v4) | 기본 Re-DETR v4 소스 후보 | Apache-2.0; https://github.com/RT-DETRs/RT-DETRv4/blob/main/LICENSE |
 | SAM2 upstream | 기본 SAM2 소스 후보 | Apache-2.0; https://github.com/facebookresearch/sam2/blob/main/LICENSE |
 
-The LibreYOLO, Re-DETRv4 and SAM2 rows are the source candidates for the
-shipped basic-model implementations. Until source revision, license/NOTICE,
-Windows worker and ONNX acceptance tests are all present, the production
-installer gate keeps their catalog status below `release_ready`. LibreYOLO's
-NOTICE lists additional vendored components and their individual terms; a
-release that bundles those components must copy the applicable notices and
-licenses. A user-added `.dvmodel` must carry its own `license` object, source
+The LibreYOLO 1.5.0 runtime is a shipped dependency of the Windows build.
+Its distribution LICENSE and applicable NOTICE entries must be copied into the
+installer payload with this notice. Re-DETRv4 and SAM2 remain source candidates
+until their source revision, license/NOTICE, Windows worker and ONNX acceptance
+tests are all present; the production installer gate keeps their catalog status
+below `release_ready`. A user-added `.dvmodel` must carry its own `license` object, source
 revision, asset hashes, and required notices before release signing.
 Pretrained weights are separate assets and require review against the exact
 model card before redistribution.

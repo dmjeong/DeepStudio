@@ -210,6 +210,65 @@ def _train_builtin_project(context, project, device):
     return record
 
 
+def _train_upstream_project(context, project, device):
+    """Train the shipped LibreYOLO/RT-DETRv4 family without a CSP fallback."""
+    from upstream_models import train_upstream_model, upstream_model_ids, get_upstream_spec
+    model_id = project.model.model_id
+    if model_id not in upstream_model_ids():
+        return None
+    from core.project import ProjectManager, RunRecord
+    cfg, data = project.training, project.data
+    run_id = ProjectManager.new_run_id(task=project.task, model_name=model_id,
+                                       input_size=cfg.input_size, project_dir=project.project_dir)
+    run_dir = Path(project.project_dir) / "runs" / run_id
+    history = []
+
+    def progress(event):
+        if event.get("event") != "epoch_finished":
+            return
+        history.append(dict(event))
+        metrics = dict(event.get("metrics", {}))
+        metrics.setdefault(event.get("metric_name", "metric"), event["metric"])
+        metrics["epoch_time_sec"] = event.get("epoch_time_sec", 0.0)
+        context.emit("epoch_finished", [int(event["epoch"]), float(event["train_loss"]),
+                                        float(event["val_loss"]), metrics])
+        context.emit("progress_updated", [int(event["epoch"]), int(event["total_epochs"])])
+
+    spec = get_upstream_spec(model_id)
+    mode = str(cfg.training_mode)
+    source = project.model.pretrained_weights or None
+    if mode == "upstream_finetune":
+        source = spec.pretrained_name
+    context.emit("log_message", [f"기본 native 모델 학습: {spec.family}/{spec.size}"])
+    result = train_upstream_model(
+        model_id, data_root=data.root, class_names=list(data.class_names), output_dir=run_dir,
+        epochs=cfg.epochs, batch_size=cfg.batch_size, learning_rate=cfg.learning_rate,
+        device=str(device), weights=source, resume=mode == "upstream_resume",
+        use_amp=cfg.use_amp, patience=cfg.early_stop_patience, emit=progress)
+    checkpoint = result.get("best_checkpoint") or result.get("last_checkpoint")
+    if not checkpoint or not Path(checkpoint).is_file():
+        raise RuntimeError("upstream 학습이 best.pt 또는 last.pt를 만들지 않았습니다")
+    metric_name = (history[-1].get("metric_name", "metric") if history else "metric")
+    best_metric = float(result.get("best_metric") if result.get("best_metric") is not None
+                        else (history[-1]["metric"] if history else 0.0))
+    best_epoch = int(result.get("best_epoch") or (history[-1]["epoch"] if history else 0))
+    metrics_history = {"train_loss": [float(item["train_loss"]) for item in history],
+                       "val_loss": [float(item["val_loss"]) for item in history],
+                       metric_name: [float(item["metric"]) for item in history],
+                       "epoch_time_sec": [float(item.get("epoch_time_sec", 0.0)) for item in history]}
+    record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
+                       finished_at=datetime.now().isoformat(), status="completed",
+                       epochs_done=len(history), best_metric=best_metric, best_epoch=best_epoch,
+                       best_metric_name=metric_name, checkpoint_path=str(checkpoint),
+                       metrics_history=metrics_history,
+                       config_snapshot={"engine": "upstream", "model_id": model_id,
+                                        "upstream_family": spec.family, "upstream_size": spec.size,
+                                        "upstream_result": result})
+    project.runs.append(record)
+    context.emit("training_finished", [best_metric, best_epoch, str(checkpoint)])
+    return record
+
+
 def train(context, payload):
     from core.project import ProjectManager
     from core.training_engine import TrainingEvents
@@ -241,7 +300,8 @@ def train(context, payload):
     before = len(project.runs)
     config = {key: payload["project"][key] for key in ("task", "data", "model", "training")}
     builtin_record = _train_builtin_project(context, project, device)
-    if builtin_record is not None:
+    upstream_record = None if builtin_record is not None else _train_upstream_project(context, project, device)
+    if builtin_record is not None or upstream_record is not None:
         engine = None
     elif project.task == "anomaly" and project.training.anomaly_method == "patchcore":
         engine_class = PatchCoreWorker
@@ -250,10 +310,10 @@ def train(context, payload):
         engine_class = EfficientNetTrainWorker
     else:
         engine_class = TrainWorker
-    if builtin_record is None:
+    if builtin_record is None and upstream_record is None:
         engine = engine_class(project, signals=TrainingEvents(context.emit), should_stop=context.cancelled)
         engine.run()
-    if builtin_record is not None or getattr(engine, "engine_name", None) == "efficientnet":
+    if builtin_record is not None or upstream_record is not None or getattr(engine, "engine_name", None) == "efficientnet":
         config.update(training=asdict(project.training), model=asdict(project.model), data=asdict(project.data))
     for record in project.runs[before:]:
         record.config_snapshot = {**config, **record.config_snapshot, "runtime": runtime,

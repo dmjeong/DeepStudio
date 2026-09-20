@@ -164,6 +164,10 @@ def build():
         # 함께 수집한다. Windows EXE가 시작 시 PySide6를 못 찾는 회귀를 막는다.
         "--collect-all", "PySide6",
         "--collect-all", "shiboken6",
+        # Shipped native model families are imported lazily from the worker.
+        # Collect their package and package data so the installed EXE does not
+        # fail only when a user selects LibreYOLO/RT-DETRv4.
+        "--collect-all", "libreyolo",
         "--hidden-import", "matplotlib",
         "--hidden-import", "matplotlib.backends.backend_qtagg",
         "--hidden-import", "PIL",

@@ -1,0 +1,4 @@
+# Shipped native model runtime.  The source is MIT; the installer copies its
+# LICENSE, NOTICE and THIRD_PARTY_NOTICES.txt into the release notice folder.
+# Do not replace this pin without running the native-model acceptance suite.
+libreyolo==1.5.0

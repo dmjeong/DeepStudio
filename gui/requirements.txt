@@ -50,6 +50,10 @@ psutil>=5.9.0               # CPU/RAM 정보 표시
 # ── EXE 빌드 ──
 pyinstaller>=6.0.0          # Windows EXE 빌드
 
+# 기본 제공 LibreYOLO/RT-DETRv4 native workers (pinned separately so the
+# release builder can copy the matching third-party notices).
+-r requirements-upstream-models.txt
+
 # ── 선택적 ──
 # onnxsim>=0.4.0            # ONNX 모델 단순화
 # onnxscript>=0.1.0         # torch.onnx.export 지원

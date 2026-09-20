@@ -72,6 +72,7 @@ def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk()
     assert "check_runtime_dependencies" in script
     assert '"--collect-all", "PySide6"' in script
     assert '"--collect-all", "shiboken6"' in script
+    assert '"--collect-all", "libreyolo"' in script
 
 
 def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():

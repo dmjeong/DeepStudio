@@ -184,7 +184,7 @@ class DataContracts(unittest.TestCase):
             self.assertFalse(set(train.dataset.indices) & set(val.dataset.indices))
 
 
-class PendingNativeModelTrainingContracts(unittest.TestCase):
+class NativeUpstreamModelTrainingContracts(unittest.TestCase):
     def _project(self):
         project = ProjectData()
         project.task = "detect"
@@ -193,14 +193,20 @@ class PendingNativeModelTrainingContracts(unittest.TestCase):
         project.training.in_channels = 3
         return project
 
-    def test_pending_native_catalog_model_cannot_fall_back_to_custom_csp(self):
-        with self.assertRaisesRegex(ValueError, "Windows native 학습 worker"):
-            validate_training_options(self._project())
+    def test_native_catalog_model_remains_runnable_without_a_docker_pack(self):
+        # The worker routes the selected shipped ID to its native adapter even
+        # for a legacy project saved with Custom CSP mode.
+        self.assertEqual(validate_training_options(self._project())["engine"], "custom")
 
-    def test_pending_native_catalog_settings_can_be_saved_before_native_worker_is_ready(self):
+    def test_native_catalog_model_exposes_its_own_training_engine(self):
+        project = self._project()
+        project.training.training_mode = "upstream_scratch"
+        self.assertEqual(validate_training_options(project)["engine"], "upstream")
+
+    def test_native_catalog_settings_can_be_saved(self):
         validate_training_options(self._project(), require_runnable=False)
 
-    def test_pending_native_catalog_model_is_not_unblocked_by_a_docker_pack_path(self):
+    def test_native_catalog_model_does_not_depend_on_a_docker_pack_path(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "manifest.json").write_text(json.dumps({
@@ -209,8 +215,7 @@ class PendingNativeModelTrainingContracts(unittest.TestCase):
             }), encoding="utf-8")
             project = self._project()
             project.model.pack_path = str(root)
-            with self.assertRaisesRegex(ValueError, "Windows native 학습 worker"):
-                validate_training_options(project)
+            self.assertEqual(validate_training_options(project)["engine"], "custom")
 
 
 class PatchCoreSelectionContracts(unittest.TestCase):

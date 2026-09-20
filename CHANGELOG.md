@@ -2,6 +2,12 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**2.38 — 기본 제공 native 모델 worker**
+
+- LibreMobileNetV4 Small, LibreYOLO9 Tiny, Re-DETR v4 Small/Medium/Large의 native 학습 worker를 연결했다. 모델 선택 후 사전학습·전이·재개·스크래치 초기화를 선택할 수 있다.
+- 기존 검출 데이터셋을 upstream YOLO descriptor로 변환하고, epoch 지표와 시간을 앱 실행 기록으로 수집한다.
+- Re-DETR v4의 세 크기는 upstream 640×640 고정 입력 계약으로 통일했다.
+
 **1.38 — 모델 선택·ONNX 내보내기·라벨 삭제 수정**
 
 - EfficientNet B0/B1과 ResNet·ConvNeXt·DeepLab V3+·U-Net의 스크래치 학습을 전용 모드로 분리했다. 선택한 모델이 Custom CSP로 바뀌지 않는다.

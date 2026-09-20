@@ -26,6 +26,9 @@ shapely==2.1.2
 numpy>=1.24.0
 cryptography>=44.0.0         # Ed25519 model-pack signature verification
 
+# Built-in MobileNetV4 / YOLO9 / RT-DETRv4 worker runtime.
+libreyolo==1.5.0
+
 # ── 선택적 도구 ──
 # onnxsim>=0.4.0       # ONNX 모델 단순화 (선택)
 # matplotlib>=3.7.0    # 학습 그래프 시각화 (선택)

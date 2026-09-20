@@ -127,9 +127,8 @@ def test_all_native_training_events_show_epoch_timing_without_polluting_metrics_
     assert "elapsed_time_sec" not in page.metric_chart.metrics_history
 
 
-@pytest.mark.parametrize("task,model_id", [("segment", "sam2_hiera_tiny"), ("detect", "re_detr_v4_small"),
-                                         ("classify", "libreyolo_classify_mobilenetv4_small")])
-def test_shipped_models_do_not_require_a_docker_pack(page, task, model_id):
+@pytest.mark.parametrize("task,model_id", [("segment", "sam2_hiera_tiny")])
+def test_pending_shipped_models_do_not_require_a_docker_pack(page, task, model_id):
     project = copy.deepcopy(page.project)
     project.task = task
     project.model.model_id = model_id
@@ -139,6 +138,19 @@ def test_shipped_models_do_not_require_a_docker_pack(page, task, model_id):
     assert "기본 제공 Windows worker" in page.mode_desc.text()
     assert "모델 팩" not in page.mode_desc.text()
     assert "EfficientNet" not in page.mode_combo.currentText()
+
+
+@pytest.mark.parametrize("task,model_id", [("detect", "re_detr_v4_small"),
+                                         ("classify", "libreyolo_classify_mobilenetv4_small")])
+def test_upstream_shipped_models_offer_native_initialization_modes(page, task, model_id):
+    project = copy.deepcopy(page.project)
+    project.task = task
+    project.model.model_id = model_id
+    project.training.training_mode = "upstream_scratch"
+    page.set_project(project)
+    choices = {page.mode_combo.itemData(index) for index in range(page.mode_combo.count())}
+    assert choices == {"upstream_finetune", "upstream_transfer", "upstream_resume", "upstream_scratch"}
+    assert "Custom CSP" not in page.mode_desc.text()
 
 
 def test_confusion_matrix_clear_removes_previous_color_scale(page):

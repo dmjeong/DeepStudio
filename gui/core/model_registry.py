@@ -202,7 +202,11 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         ModelSpec("patchcore_wide_resnet50_2", "PatchCore", "Wide-ResNet50-2", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
         ModelSpec("patchcore_resnet18", "PatchCore", "ResNet18", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
     ]
-    for variant, size in (("small", 640), ("medium", 800), ("large", 1024)):
+    # RT-DETRv4 S/M/L differ in network width/depth, not in the native
+    # deployment canvas.  Keeping all three at the upstream's 640 profile
+    # prevents a Medium/Large project from training at one shape and exporting
+    # a different fixed-shape graph.
+    for variant, size in (("small", 640), ("medium", 640), ("large", 640)):
         specs.append(ModelSpec(
             f"re_detr_v4_{variant}", "Re-DETR v4", variant.title(), "detect", ("windows_native", "onnx"), common,
             (size, size), (3,), notes="requested family fixed by product requirement",
