@@ -69,6 +69,66 @@ def test_project_switch_clears_previous_weights_and_monitor(page):
     assert page.log_text.toPlainText() == ""
 
 
+@pytest.mark.parametrize("task,model_id", [
+    ("classify", "resnet18"), ("classify", "resnet50"), ("classify", "convnext_v1_tiny"),
+    ("segment", "deeplabv3plus_resnet34"), ("segment", "unet_resnet18"),
+])
+def test_builtin_model_picker_uses_its_own_weights_and_roundtrips(page, task, model_id):
+    project = copy.deepcopy(page.project)
+    project.task = task
+    project.model.model_id = model_id
+    project.training.training_mode = "builtin_finetune"
+    page.set_project(project)
+    assert page.mode_combo.currentData() == "builtin_finetune"
+    assert all("EfficientNet" not in page.mode_combo.itemText(i) for i in range(page.mode_combo.count()))
+    assert page.efficientnet_frame.isHidden()
+    page.collect_config()
+    assert project.model.model_id == model_id
+    assert project.model.pretrained_weights == ""
+    change_mode(page, "builtin_transfer")
+    page.resume_edit.setText("C:/weights/local.pth")
+    page.collect_config()
+    assert project.model.pretrained_weights == "C:/weights/local.pth"
+    page.set_project(copy.deepcopy(project))
+    assert page.mode_combo.currentData() == "builtin_transfer"
+    assert page.resume_edit.text() == "C:/weights/local.pth"
+
+
+def test_catalog_and_efficientnet_variant_stay_in_sync(page):
+    page.model_id_combo.setCurrentIndex(page.model_id_combo.findData("efficientnet_b1"))
+    page.collect_config()
+    assert page.project.model.model_id == "efficientnet_b1"
+    assert page.project.training.efficientnet_model == "efficientnet_b1"
+    assert page.input_size_spin.value() == 240
+    page.efficientnet_model_combo.setCurrentIndex(page.efficientnet_model_combo.findData("efficientnet_b0"))
+    page.collect_config()
+    assert page.project.model.model_id == "efficientnet_b0"
+    assert page.project.training.efficientnet_model == "efficientnet_b0"
+    page.resume_edit.setText("previous-efficientnet.pt")
+    page.model_id_combo.setCurrentIndex(page.model_id_combo.findData("resnet18"))
+    assert page.mode_combo.currentData() == "builtin_finetune"
+    assert page.resume_edit.text() == ""
+
+
+def test_builtin_run_description_uses_the_recorded_model_id():
+    from core.training_progress import run_description
+    run = RunRecord(run_id="resnet-run", config_snapshot={"engine": "builtin", "model_id": "resnet50"})
+    assert "모델: resnet50" in run_description(run)
+
+
+@pytest.mark.parametrize("task,model_id", [("segment", "sam2_hiera_tiny"), ("detect", "re_detr_v4_small"),
+                                         ("classify", "libreyolo_classify_mobilenetv4_small")])
+def test_container_models_do_not_offer_efficientnet_weights(page, task, model_id):
+    project = copy.deepcopy(page.project)
+    project.task = task
+    project.model.model_id = model_id
+    project.training.training_mode = "custom"
+    page.set_project(project)
+    assert page.mode_combo.count() == 1
+    assert "모델 팩" in page.mode_desc.text()
+    assert "EfficientNet" not in page.mode_combo.currentText()
+
+
 def test_confusion_matrix_clear_removes_previous_color_scale(page):
     import numpy as np
     chart = page.cm_chart

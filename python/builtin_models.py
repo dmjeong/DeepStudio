@@ -1,15 +1,13 @@
-"""Built-in model adapters with weight-free, reproducible architectures.
+"""Built-in architectures with explicit ImageNet/local initialization.
 
-The product catalog names the model family and variant; this module is the
-single Python construction point used by training/export code.  No pretrained
-weights are downloaded here.  Callers may load a separately licensed
-``state_dict`` after constructing an adapter and must keep its source metadata
-in the checkpoint.
+Construction stays weight-free by default, including checkpoint restoration
+and ONNX export. Only an explicit pretrained request may fetch weights.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
 import torch
@@ -32,6 +30,48 @@ BUILTIN_MODEL_SPECS = {
     "deeplabv3plus_resnet34": BuiltinModelSpec("deeplabv3plus_resnet34", "segment", (512, 512), (3,)),
     "unet_resnet18": BuiltinModelSpec("unet_resnet18", "segment", (512, 512), (1, 3)),
 }
+
+# Pin a concrete revision rather than torchvision's mutable DEFAULT alias.
+IMAGENET_WEIGHTS = {
+    "resnet18": ("ResNet18_Weights", "IMAGENET1K_V1"),
+    "resnet34": ("ResNet34_Weights", "IMAGENET1K_V1"),
+    "resnet50": ("ResNet50_Weights", "IMAGENET1K_V2"),
+    "convnext_tiny": ("ConvNeXt_Tiny_Weights", "IMAGENET1K_V1"),
+}
+
+
+def _torchvision_base(name, *, pretrained=False, weights_path=None):
+    from torchvision import models
+    from model_download import cached_imagenet_weights
+
+    if pretrained and weights_path:
+        raise ValueError("ImageNet과 로컬 가중치를 동시에 지정할 수 없습니다")
+    source = None
+    provenance = {"source": "random", "backbone": name}
+    if pretrained:
+        enum, revision = IMAGENET_WEIGHTS[name]
+        weights = getattr(getattr(models, enum), revision)
+        try:
+            source = cached_imagenet_weights(weights.url, Path(torch.hub.get_dir()) / "checkpoints")
+        except Exception as exc:
+            raise RuntimeError(
+                f"{name} ImageNet 가중치 로드 실패: {exc}\n"
+                f"공식 파일: {weights.url}\n같은 파일을 다운로드한 뒤 '로컬 가중치'에서 선택할 수 있습니다."
+            ) from exc
+        provenance.update(source="imagenet", weights=f"{enum}.{revision}", url=weights.url)
+    elif weights_path:
+        source = Path(weights_path)
+        provenance.update(source="local_backbone", file=source.name)
+    base = getattr(models, name)(weights=None)
+    if source is not None:
+        payload = torch.load(source, map_location="cpu", weights_only=True)
+        state = payload.get("state_dict", payload) if isinstance(payload, dict) else payload
+        try:
+            base.load_state_dict(state, strict=True)
+        except (RuntimeError, TypeError) as exc:
+            raise ValueError(f"{name} 백본과 가중치 구조가 일치하지 않습니다: {source}") from exc
+    base.weight_provenance = provenance
+    return base
 
 _GRADCAM_TARGET_LAYERS = {
     "resnet18": "layer4",
@@ -56,27 +96,30 @@ def _replace_conv_in_channels(conv: nn.Conv2d, in_channels: int) -> nn.Conv2d:
                             conv.stride, conv.padding, dilation=conv.dilation,
                             groups=conv.groups, bias=conv.bias is not None,
                             padding_mode=conv.padding_mode)
-    nn.init.kaiming_normal_(replacement.weight, mode="fan_out", nonlinearity="relu")
-    if replacement.bias is not None:
-        nn.init.zeros_(replacement.bias)
+    with torch.no_grad():
+        if in_channels == 1 and conv.in_channels == 3:
+            # Preserve the response to a gray image replicated across RGB.
+            replacement.weight.copy_(conv.weight.sum(dim=1, keepdim=True))
+        else:
+            nn.init.kaiming_normal_(replacement.weight, mode="fan_out", nonlinearity="relu")
+        if replacement.bias is not None:
+            replacement.bias.copy_(conv.bias)
     return replacement
 
 
-def _classification_model(model_id: str, num_classes: int, in_channels: int) -> nn.Module:
-    from torchvision import models
-
+def _classification_model(model_id: str, num_classes: int, in_channels: int, **weights) -> nn.Module:
     if model_id == "resnet18":
-        model = models.resnet18(weights=None)
+        model = _torchvision_base("resnet18", **weights)
         model.conv1 = _replace_conv_in_channels(model.conv1, in_channels)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
         return model
     if model_id == "resnet50":
-        model = models.resnet50(weights=None)
+        model = _torchvision_base("resnet50", **weights)
         model.conv1 = _replace_conv_in_channels(model.conv1, in_channels)
         model.fc = nn.Linear(model.fc.in_features, num_classes)
         return model
     if model_id == "convnext_v1_tiny":
-        model = models.convnext_tiny(weights=None)
+        model = _torchvision_base("convnext_tiny", **weights)
         first = model.features[0][0]
         model.features[0][0] = _replace_conv_in_channels(first, in_channels)
         model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
@@ -123,11 +166,10 @@ class _ASPP(nn.Module):
 class DeepLabV3PlusResNet34(nn.Module):
     """A torchvision ResNet-34 encoder with an explicit V3+ ASPP decoder."""
 
-    def __init__(self, num_classes: int, in_channels: int = 3):
+    def __init__(self, num_classes: int, in_channels: int = 3, **weights):
         super().__init__()
-        from torchvision import models
-
-        base = models.resnet34(weights=None)
+        base = _torchvision_base("resnet34", **weights)
+        self.weight_provenance = base.weight_provenance
         base.conv1 = _replace_conv_in_channels(base.conv1, in_channels)
         self.stem = nn.Sequential(base.conv1, base.bn1, base.relu, base.maxpool)
         self.layer1, self.layer2 = base.layer1, base.layer2
@@ -158,11 +200,10 @@ class DeepLabV3PlusResNet34(nn.Module):
 class UNetResNet18(nn.Module):
     """U-Net decoder using the four spatial stages of a ResNet-18 encoder."""
 
-    def __init__(self, num_classes: int, in_channels: int = 3):
+    def __init__(self, num_classes: int, in_channels: int = 3, **weights):
         super().__init__()
-        from torchvision import models
-
-        base = models.resnet18(weights=None)
+        base = _torchvision_base("resnet18", **weights)
+        self.weight_provenance = base.weight_provenance
         base.conv1 = _replace_conv_in_channels(base.conv1, in_channels)
         self.stem = nn.Sequential(base.conv1, base.bn1, base.relu)
         self.pool = base.maxpool
@@ -192,19 +233,23 @@ class UNetResNet18(nn.Module):
         return self.head(F.interpolate(y, size=original_size, mode="bilinear", align_corners=False))
 
 
-def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3) -> nn.Module:
-    """Construct a model without fetching or embedding pretrained weights."""
+def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *,
+                        pretrained: bool = False, backbone_weights=None) -> nn.Module:
+    """Construct the adapter; pretrained/local loading must be requested explicitly."""
     spec = get_builtin_spec(model_id)
     if isinstance(num_classes, bool) or int(num_classes) != num_classes or num_classes < 1:
         raise ValueError("num_classes must be a positive integer")
     if in_channels not in spec.input_channels:
         raise ValueError(f"{model_id} does not support {in_channels} input channels")
     if spec.task == "classify":
-        model = _classification_model(model_id, int(num_classes), in_channels)
+        model = _classification_model(model_id, int(num_classes), in_channels,
+                                      pretrained=pretrained, weights_path=backbone_weights)
     elif model_id == "deeplabv3plus_resnet34":
-        model = DeepLabV3PlusResNet34(int(num_classes), in_channels)
+        model = DeepLabV3PlusResNet34(int(num_classes), in_channels,
+                                    pretrained=pretrained, weights_path=backbone_weights)
     elif model_id == "unet_resnet18":
-        model = UNetResNet18(int(num_classes), in_channels)
+        model = UNetResNet18(int(num_classes), in_channels,
+                            pretrained=pretrained, weights_path=backbone_weights)
     else:
         raise ValueError(f"Unsupported segmentation adapter: {model_id}")
 
@@ -237,6 +282,7 @@ def make_builtin_checkpoint(model_id: str, model: nn.Module, *, num_classes: int
         "input_size": [int(size[0]), int(size[1])], "class_names": class_names,
         "model_state_dict": model.state_dict(),
         "model_config": {"model_id": model_id},
+        "weight_provenance": dict(getattr(model, "weight_provenance", {})),
         "preprocessing": {"input_size": [int(size[0]), int(size[1])],
                            "in_channels": int(in_channels), "mean": [0.449] if in_channels == 1 else [0.485, 0.456, 0.406],
                            "std": [0.226] if in_channels == 1 else [0.229, 0.224, 0.225],
@@ -253,4 +299,5 @@ def load_builtin_checkpoint(checkpoint: dict) -> nn.Module:
         raise ValueError("builtin checkpoint model_id is required")
     model = build_builtin_model(model_id, int(checkpoint["num_classes"]), int(checkpoint["in_channels"]))
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+    model.weight_provenance = dict(checkpoint.get("weight_provenance", {}))
     return model.cpu().eval()

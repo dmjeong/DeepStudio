@@ -260,6 +260,11 @@ jobs:
         run: python -m unittest tests.test_cpp_preprocessing -v
       - name: Test C++ inference contracts
         run: ctest --test-dir build --output-on-failure
+      - name: Build and execute the public C++17 example
+        run: |
+          cmake -S example/cpp -B example/build -DCMAKE_BUILD_TYPE=Release -DONNXRUNTIME_ROOT="$RUNNER_TEMP/onnxruntime-linux-x64-1.29.0"
+          cmake --build example/build --target onnx_cpp_example --parallel 2
+          ctest --test-dir example/build --output-on-failure
 
   tag-release:
     needs: [result-contracts, model-comparison, lint, test, cpp, frontend, windows-launcher, datagen-contract]

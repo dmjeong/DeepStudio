@@ -11,7 +11,7 @@ from PySide6.QtGui import QTextCursor
 
 from core.project import ProjectData, ProjectManager
 from core.qt_training import TrainWorker, PatchCoreWorker
-from core.training_modes import training_engine_name, training_capabilities, MODE_LABELS
+from core.training_modes import training_engine_name, training_capabilities, MODE_LABELS, BUILTIN_ADAPTER_IDS
 from core.training_progress import remaining_seconds, run_description
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
 
@@ -59,9 +59,14 @@ class TrainingWidget(TrainingForm, QWidget):
         self.efficientnet_frame.setVisible(str(mode).startswith("efficientnet") and mode != "efficientnet_resume")
         self.efficientnet_model_combo.setEnabled(mode != "efficientnet_resume")
         # 이전 모델 경로: 이어학습에서만
-        self.resume_frame.setVisible(mode in {"efficientnet_resume", "efficientnet_transfer"})
+        self.resume_frame.setVisible(mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer"})
         from core.training_modes import MODE_HELP
-        self.mode_help.setText(MODE_HELP.get(mode, "지원하지 않는 학습 모드입니다. 현재 엔진을 선택하세요."))
+        help_text = MODE_HELP.get(mode, "지원하지 않는 학습 모드입니다. 현재 엔진을 선택하세요.")
+        if mode == "custom" and self.model_id_combo.currentData() in BUILTIN_ADAPTER_IDS:
+            help_text = "선택한 모델을 무작위 초기화합니다. 가중치를 지정하면 같은 모델의 가중치에서 학습합니다."
+        if self._selected_container_spec()[0] is not None:
+            help_text = "선택한 모델의 .dvmodel 팩에 포함된 학습 코드와 가중치를 사용합니다. 먼저 해당 팩을 설치하세요."
+        self.mode_help.setText(help_text)
         self.hp_group.setEnabled(True)
         self.aug_group.setEnabled(mode not in {"efficientnet_resume"})
         self.resume_edit.setPlaceholderText("중단 시 last.pt" if str(mode).endswith("_resume") else "추가 학습할 best.pt")
@@ -69,12 +74,41 @@ class TrainingWidget(TrainingForm, QWidget):
         self.tl_group.setVisible(mode == "custom")
         # EfficientNet 학습 전략 (freeze 등): 파인튜닝·이어학습에서만
         self.finetune_frame.setVisible(
-            mode in ("efficientnet_finetune", "efficientnet_transfer")
+            mode in ("efficientnet_finetune", "efficientnet_transfer", "builtin_finetune", "builtin_transfer")
         )
         self._update_selection_options()
         # Refresh the metric list before settings callbacks validate its value.
         self._on_patchcore_settings_changed()
         self._update_pack_controls()
+
+    def _populate_training_modes(self, preferred=None):
+        """Only offer initialization paths that belong to the selected model."""
+        model_id = self.model_id_combo.currentData() or ""
+        name = self.model_id_combo.currentText()
+        if model_id in BUILTIN_ADAPTER_IDS:
+            choices = [("builtin_finetune", f"{name} ImageNet 가중치로 시작"),
+                       ("builtin_transfer", f"{name} 로컬 가중치로 시작"),
+                       ("custom", f"{name} 처음부터 학습")]
+            scope = "분류 모델" if self.project.task == "classify" else "백본 (분할 헤드는 새로 학습)"
+            self.mode_desc.setText(f"선택 모델: {name}\n사전학습 범위: {scope}")
+        elif model_id.startswith("efficientnet_") or (not model_id and self.project.task == "classify"):
+            choices = [(key, MODE_LABELS[key]) for key in
+                       ("efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume", "custom")]
+            self.mode_desc.setText(f"선택 모델: {name or 'EfficientNet'}\nImageNet 가중치 또는 로컬 체크포인트를 사용합니다.")
+        else:
+            choices = [("custom", "모델 팩에서 학습" if model_id and not model_id.startswith("patchcore") else "Custom CSP")]
+            self.mode_desc.setText(f"선택 모델: {name}\n해당 모델의 구현과 가중치가 포함된 .dvmodel 모델 팩이 필요합니다.")
+        if preferred and preferred not in MODE_LABELS:
+            choices.append((preferred, "지원하지 않는 저장된 학습 모드 — 다시 선택하세요"))
+        self.mode_combo.blockSignals(True)
+        try:
+            self.mode_combo.clear()
+            for key, label in choices:
+                self.mode_combo.addItem(label, key)
+            self.mode_combo.setCurrentIndex(max(0, self.mode_combo.findData(preferred)))
+        finally:
+            self.mode_combo.blockSignals(False)
+        self.mode_combo.setEnabled(self.project.task not in {"anomaly", "obb"} and len(choices) > 1)
 
     def _set_model_options(self, project):
         """Filter the shared catalog to the current task and restore model_id."""
@@ -120,7 +154,7 @@ class TrainingWidget(TrainingForm, QWidget):
                 self.project.model.pack_path = str(installed.path)
                 ProjectManager.save(self.project)
                 self._set_model_options(self.project)
-                self._update_pack_controls()
+                self._on_model_id_changed()
             QMessageBox.information(
                 self, "모델 팩 설치 완료",
                 f"{installed.model_id} {installed.pack_version} 팩을 설치했습니다.\n{installed.path}"
@@ -128,11 +162,23 @@ class TrainingWidget(TrainingForm, QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "모델 팩 설치 실패", str(exc))
 
-    def _on_model_id_changed(self, *_):
+    def _on_model_id_changed(self, *_, keep_mode=False):
         """Keep the legacy mode selector consistent with a catalog adapter."""
         if self.project is None or not hasattr(self, "model_id_combo"):
             return
         model_id = self.model_id_combo.currentData() or ""
+        previous = getattr(self, "_displayed_model_id", None)
+        if not keep_mode:
+            preserve = self.mode_combo.currentData() if previous == model_id else None
+            if previous in {"efficientnet_b0", "efficientnet_b1"} and model_id in {"efficientnet_b0", "efficientnet_b1"}:
+                preserve = self.mode_combo.currentData()
+            self._populate_training_modes(preserve)
+            if previous != model_id:
+                self.resume_edit.clear()
+                self.weights_edit.clear()
+        self._displayed_model_id = model_id
+        # The selected catalog ID is the source of truth for the worker too.
+        self.project.model.model_id = model_id
         try:
             from core.model_registry import installed_model_path, registry_with_installed_packs
             registry, _ = registry_with_installed_packs()
@@ -148,14 +194,16 @@ class TrainingWidget(TrainingForm, QWidget):
                 self.project.model.pack_path = ""
         except ValueError:
             spec = None
-        if model_id not in {"efficientnet_b0", "efficientnet_b1"}:
-            current = self.mode_combo.currentData()
-            if current in {"efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume"}:
-                custom = self.mode_combo.findData("custom")
-                if custom >= 0:
-                    self.mode_combo.setCurrentIndex(custom)
         if model_id in {"efficientnet_b0", "efficientnet_b1"}:
-            self._on_efficientnet_model_changed()
+            self.efficientnet_model_combo.blockSignals(True)
+            self.efficientnet_model_combo.setCurrentIndex(self.efficientnet_model_combo.findData(model_id))
+            self.efficientnet_model_combo.blockSignals(False)
+            self.project.training.efficientnet_model = model_id
+            if not keep_mode:
+                self._on_efficientnet_model_changed()
+        if model_id.startswith("patchcore_") and not keep_mode:
+            self.pc_backbone_combo.setCurrentIndex(self.pc_backbone_combo.findData(model_id.removeprefix("patchcore_")))
+        self._on_mode_changed(self.mode_combo.currentIndex())
         self._on_patchcore_settings_changed()
         self._update_pack_controls()
 
@@ -330,6 +378,11 @@ class TrainingWidget(TrainingForm, QWidget):
         self.debug_table.setToolTip(f"Run {snapshot.get('run_id', '')}, epoch {snapshot.get('epoch', '')}, batch {snapshot.get('batch', '')}. Gradient는 AMP 배율 제거 후 통계입니다.")
 
     def _on_efficientnet_model_changed(self, *_):
+        selected = self.efficientnet_model_combo.currentData()
+        if self.project and self.model_id_combo.currentData() in {"efficientnet_b0", "efficientnet_b1"}:
+            if self.model_id_combo.currentData() != selected:
+                self.model_id_combo.setCurrentIndex(self.model_id_combo.findData(selected))
+                return
         if hasattr(self, "input_size_spin"):
             self.input_size_spin.setValue(240 if self.efficientnet_model_combo.currentData() == "efficientnet_b1" else 224)
 
@@ -374,7 +427,8 @@ class TrainingWidget(TrainingForm, QWidget):
                              ("color_jitter", self.color_jitter_spin)):
             control.setEnabled(not resume and key in capabilities["augmentation"])
         self.amp_check.setEnabled(not is_pc and not resume and self._device_manager.cuda_available)
-        self.tl_group.setVisible(not is_pc and (is_anomaly or self.mode_combo.currentData() == "custom"))
+        self.tl_group.setVisible(not is_pc and self._selected_container_spec()[0] is None and
+                                 (is_anomaly or self.mode_combo.currentData() == "custom"))
 
     def _update_selection_options(self):
         if not hasattr(self, "selection_combo") or not self.project:
@@ -443,20 +497,9 @@ class TrainingWidget(TrainingForm, QWidget):
 
         # ── 학습 모드 복원 ──
         mode = "custom" if project.task == "anomaly" else getattr(cfg, "training_mode", "efficientnet_finetune")
-        for i in range(self.mode_combo.count() - 1, -1, -1):
-            if self.mode_combo.itemData(i) not in MODE_LABELS:
-                self.mode_combo.removeItem(i)
-        if mode not in MODE_LABELS:
-            self.mode_combo.addItem("지원하지 않는 학습 모드 - 현재 엔진 선택 필요", mode)
-            self.mode_combo.model().item(self.mode_combo.count() - 1).setEnabled(False)
-        self.mode_combo.model().item(self.mode_combo.findData("custom")).setEnabled(project.task != "obb")
-        for efficientnet_mode in ("efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume"):
-            self.mode_combo.model().item(self.mode_combo.findData(efficientnet_mode)).setEnabled(project.task == "classify")
-        self.mode_combo.setCurrentIndex(self.mode_combo.findData(mode))
-        self.mode_combo.setEnabled(project.task != "anomaly")
-        self._on_mode_changed(self.mode_combo.currentIndex())
+        self._populate_training_modes(mode)
         if hasattr(self, "_on_model_id_changed"):
-            self._on_model_id_changed()
+            self._on_model_id_changed(keep_mode=True)
 
         self.efficientnet_model_combo.setCurrentIndex(max(0, self.efficientnet_model_combo.findData(cfg.efficientnet_model)))
 
@@ -511,7 +554,7 @@ class TrainingWidget(TrainingForm, QWidget):
         # 이어학습 경로 복원
         self.resume_edit.setText(
             (getattr(mcfg, "pretrained_weights", "") or "")
-            if mode in {"efficientnet_resume", "efficientnet_transfer"}
+            if mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer"}
             else ""
         )
 
@@ -631,13 +674,13 @@ class TrainingWidget(TrainingForm, QWidget):
             mcfg.model_id = selected_model
         if mcfg.model_id not in {"efficientnet_b0", "efficientnet_b1"} and cfg.training_mode.startswith("efficientnet"):
             cfg.training_mode = "custom"
-        if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer"}:
+        if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer"}:
             # 이어학습: resume_edit → pretrained_weights
             mcfg.pretrained_weights = self.resume_edit.text().strip()
         elif cfg.training_mode == "custom":
             # 커스텀: weights_edit → pretrained_weights
             mcfg.pretrained_weights = self.weights_edit.text().strip()
-        elif cfg.training_mode == "efficientnet_finetune":
+        elif cfg.training_mode in {"efficientnet_finetune", "builtin_finetune"}:
             # 파인튜닝: 프리트레인드 모델이 소스이므로 경로 불필요
             mcfg.pretrained_weights = ""
 
@@ -645,7 +688,7 @@ class TrainingWidget(TrainingForm, QWidget):
         # ┌──────────────────────┬──────────────────────────────┐
         # │ custom 모드          │ freeze_check (커스텀 TL)      │
         # └──────────────────────┴──────────────────────────────┘
-        if cfg.training_mode in ("efficientnet_finetune", "efficientnet_transfer"):
+        if cfg.training_mode in ("efficientnet_finetune", "efficientnet_transfer", "builtin_finetune", "builtin_transfer"):
             mcfg.freeze_backbone = self.finetune_freeze_check.isChecked()
         else:
             mcfg.freeze_backbone = self.freeze_check.isChecked()
@@ -746,7 +789,7 @@ class TrainingWidget(TrainingForm, QWidget):
             if not path or not os.path.isfile(path):
                 QMessageBox.warning(self, "가중치 파일 확인", f"전이학습 가중치 파일이 없습니다:\n{path}")
                 return
-        if not is_anomaly and mode in {"efficientnet_resume", "efficientnet_transfer"}:
+        if not is_anomaly and mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer"}:
             resume_path = self.project.model.pretrained_weights
             if not resume_path:
                 QMessageBox.warning(
@@ -815,6 +858,8 @@ class TrainingWidget(TrainingForm, QWidget):
             "efficientnet_finetune": "EfficientNet 사전학습",
             "efficientnet_transfer": "EfficientNet 추가 학습",
             "efficientnet_resume": "EfficientNet 학습 재개",
+            "builtin_finetune": f"{self.model_id_combo.currentText()} 사전학습",
+            "builtin_transfer": f"{self.model_id_combo.currentText()} 추가 학습",
             "custom": "커스텀",
         }
         mode_label = mode_labels.get(mode, "학습")

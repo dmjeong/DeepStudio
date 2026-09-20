@@ -1,4 +1,4 @@
-"""Train the weight-free built-in adapters and write deployable checkpoints.
+"""Train built-in adapters and write deployable checkpoints.
 
 This is deliberately a small, dependency-stable worker entry point.  It uses
 the repository's existing image/mask loaders and emits the same metadata that
@@ -116,7 +116,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   backbone_lr_mult: float = 0.1,
                   output_dir: str | Path = "runs/builtin", device: str = "cpu",
                   resume: str | Path | None = None,
-                  initial_weights: str | Path | None = None, log=print,
+                  initial_weights: str | Path | None = None, pretrained: bool = False, log=print,
                   should_stop=lambda: False) -> Path:
     spec = get_builtin_spec(model_id)
     if epochs < 1 or batch_size < 1 or learning_rate <= 0 or weight_decay < 0:
@@ -135,6 +135,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         raise ValueError("scheduler, early-stop or backbone LR settings are invalid")
     if resume is not None and initial_weights is not None:
         raise ValueError("resume and initial_weights are mutually exclusive")
+    if pretrained and (resume is not None or initial_weights is not None):
+        raise ValueError("ImageNet, resume and initial_weights are mutually exclusive")
     if input_size is None:
         input_size = spec.default_size
     if isinstance(input_size, int):
@@ -161,7 +163,34 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             num_workers=num_workers, in_channels=in_channels, num_classes=num_classes,
             flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
         class_names = [str(index) for index in range(num_classes)]
-    model = build_builtin_model(model_id, num_classes, in_channels).to(target)
+    initial_checkpoint = None
+    backbone_weights = None
+    if initial_weights is not None:
+        payload = torch.load(initial_weights, map_location="cpu", weights_only=True)
+        if isinstance(payload, dict) and "model_state_dict" in payload:
+            if payload.get("model_id") != model_id:
+                raise ValueError("initial checkpoint model_id does not match the requested adapter")
+            initial_checkpoint = payload
+        else:
+            backbone_weights = initial_weights
+    model = build_builtin_model(model_id, num_classes, in_channels,
+                                pretrained=pretrained, backbone_weights=backbone_weights)
+    if initial_checkpoint is not None:
+        # Class order matters even when the number of classes is unchanged.
+        source = dict(initial_checkpoint["model_state_dict"])
+        head = {"resnet18": "fc.", "resnet50": "fc.",
+                "convnext_v1_tiny": "classifier.2.",
+                "deeplabv3plus_resnet34": "decoder.6.", "unet_resnet18": "head."}[model_id]
+        if list(initial_checkpoint.get("class_names", [])) != class_names:
+            source = {key: value for key, value in source.items() if not key.startswith(head)}
+            missing, unexpected = model.load_state_dict(source, strict=False)
+            if unexpected or any(not key.startswith(head) for key in missing):
+                raise ValueError("initial checkpoint backbone does not match the requested adapter")
+        else:
+            model.load_state_dict(source, strict=True)
+        model.weight_provenance = {"source": "local_checkpoint", "file": Path(initial_weights).name}
+    model = model.to(target)
+    log(f"가중치 로드 완료: {model_id} / {model.weight_provenance}")
     head_prefixes = {
         "resnet18": ("fc.",), "resnet50": ("fc.",),
         "convnext_v1_tiny": ("classifier.",),
@@ -213,6 +242,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         "label_smoothing": label_smoothing, "freeze_backbone": freeze_backbone,
         "backbone_lr_mult": backbone_lr_mult, "val_split": val_split,
         "num_workers": num_workers,
+        "pretrained": pretrained, "weight_provenance": model.weight_provenance,
         "augmentation": {"horizontal_flip": horizontal_flip, "rotation": rotation,
                          "color_jitter": color_jitter},
     }
@@ -221,17 +251,13 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     best_metric = float("-inf")
     best_epoch = 0
     resume_best_checkpoint = None
-    if initial_weights is not None:
-        checkpoint = torch.load(initial_weights, map_location="cpu", weights_only=False)
-        if checkpoint.get("model_id") != model_id:
-            raise ValueError("initial checkpoint model_id does not match the requested adapter")
-        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     if resume is not None:
         resume_path = Path(resume)
         checkpoint = torch.load(resume_path, map_location="cpu", weights_only=False)
         if checkpoint.get("model_id") != model_id:
             raise ValueError("resume checkpoint model_id does not match the requested adapter")
         model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+        model.weight_provenance = dict(checkpoint.get("weight_provenance", {}))
         if checkpoint.get("optimizer_state_dict"):
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         if scheduler is not None and checkpoint.get("scheduler_state_dict"):
@@ -326,12 +352,15 @@ def main() -> None:
     parser.add_argument("--output_dir", default="runs/builtin")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--resume")
+    parser.add_argument("--pretrained", action="store_true", help="Load the selected ImageNet backbone")
+    parser.add_argument("--initial_weights", help="Local torchvision backbone or matching Studio checkpoint")
     args = parser.parse_args()
     train_builtin(args.model, args.data_root, num_classes=args.num_classes,
                   input_size=args.input_size or None, in_channels=args.in_channels,
                   epochs=args.epochs, batch_size=args.batch_size,
                   learning_rate=args.learning_rate, output_dir=args.output_dir,
-                  device=args.device, resume=args.resume)
+                  device=args.device, resume=args.resume, pretrained=args.pretrained,
+                  initial_weights=args.initial_weights)
 
 
 if __name__ == "__main__":

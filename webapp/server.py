@@ -336,12 +336,12 @@ def create_app(state_dir=None):
             return project_view(project)
 
     @app.get("/api/options")
-    def options(task: str = "classify", engine: str = "efficientnet", mode: str = "", anomaly_method: str = "patchcore"):
+    def options(task: str = "classify", engine: str = "efficientnet", mode: str = "", anomaly_method: str = "patchcore", model_id: str = ""):
         from core.training_modes import training_capabilities
-        capabilities = training_capabilities(task, mode or (engine + "_finetune" if engine != "custom" else "custom"), anomaly_method)
+        capabilities = training_capabilities(task, mode or (engine + "_finetune" if engine != "custom" else "custom"), anomaly_method, model_id=model_id)
         if capabilities["engine"] != engine:
             raise ValueError("학습 모드와 엔진 불일치")
-        if task not in {"classify", "detect", "segment", "anomaly", "obb"} or engine not in {"custom", "efficientnet"}:
+        if task not in {"classify", "detect", "segment", "anomaly", "obb"} or engine not in {"custom", "efficientnet", "builtin"}:
             raise ValueError("태스크 또는 학습 엔진 오류")
         if task == "obb":
             raise ValueError("OBB 학습 엔진은 제공하지 않습니다")
@@ -557,7 +557,7 @@ def create_app(state_dir=None):
             jobs.require_idle()
             if project.task == "obb":
                 raise ValueError("OBB 학습 엔진은 제공하지 않습니다")
-            if project.training.training_mode in {"efficientnet_transfer", "efficientnet_resume"} and not project.model.pretrained_weights:
+            if project.training.training_mode in {"efficientnet_transfer", "efficientnet_resume", "builtin_transfer"} and not project.model.pretrained_weights:
                 raise ValueError("이어학습 체크포인트 경로 필요")
             if project.training.training_mode.startswith("efficientnet") and project.task != "classify":
                 raise ValueError("EfficientNet은 분류 태스크만 지원")

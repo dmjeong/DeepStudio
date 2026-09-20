@@ -101,11 +101,8 @@ class TrainingForm:
         mode_layout.setSpacing(6)
 
         # 모드 설명 라벨
-        mode_desc = QLabel(
-            "분류 기본 모델: EfficientNet B0/B1, ImageNet 사전학습 가중치.\n"
-            ""
-            "기존 Custom CSP 분할은 클래스 인덱스 마스크를 사용합니다."
-        )
+        mode_desc = QLabel("모델 카탈로그에서 학습할 모델을 선택하세요.")
+        self.mode_desc = mode_desc
         mode_desc.setObjectName("text_tertiary")
         mode_desc.setWordWrap(True)
         mode_layout.addWidget(mode_desc)

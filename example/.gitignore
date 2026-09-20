@@ -1,0 +1,5 @@
+build/
+dotnet-build/
+bin/
+obj/
+publish/

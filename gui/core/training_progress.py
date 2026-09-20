@@ -33,7 +33,9 @@ def run_description(run):
     config = run.config_snapshot
     training = config.get("training", {})
     mode = str(training.get("training_mode", ""))
-    if mode.startswith("efficientnet"):
+    if config.get("engine") == "builtin" or mode.startswith("builtin"):
+        model = config.get("model_id") or config.get("model", {}).get("model_id") or "기본 모델"
+    elif mode.startswith("efficientnet"):
         model = training.get("efficientnet_model", "EfficientNet")
     elif run.config_snapshot.get("task") == "anomaly" and training.get("anomaly_method") == "patchcore":
         model = "PatchCore / " + training.get("patchcore_backbone", "")

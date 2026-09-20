@@ -15,6 +15,10 @@ const events: Event[] = [
 ];
 const job: Job = { id: "job-new", kind: "train", status: "completed", created_at: "", finished_at: "", error: "", output: {} };
 
+test("기본 모델 실행 기록은 저장된 모델 ID를 표시한다", () => {
+  assert.equal(runModel({ ...saved, config_snapshot: { engine: "builtin", model_id: "resnet50" } }), "resnet50");
+});
+
 test("과거 기록 선택 시 진행 중인 학습 이벤트가 그래프와 Best를 바꾸지 않는다", () => {
   const view = trainingView([saved], 0, true, events);
   assert.deepEqual(view.train, [0.4, 0.3]);

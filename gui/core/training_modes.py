@@ -6,20 +6,31 @@ MODE_LABELS = {
     "efficientnet_finetune": "EfficientNet 사전학습 모델로 시작",
     "efficientnet_transfer": "EfficientNet 내 가중치로 추가 학습",
     "efficientnet_resume": "EfficientNet 중단한 학습 재개",
+    "builtin_finetune": "선택 모델의 ImageNet 가중치로 시작",
+    "builtin_transfer": "선택 모델의 로컬 가중치로 시작",
     "custom": "Custom CSP",
 }
 MODE_HELP = {
     "efficientnet_finetune": "B0/B1에 ImageNet 가중치를 검증 후 로드하고 내 클래스 분류기를 학습합니다.",
     "efficientnet_transfer": "로컬 가중치에서 새 학습을 시작합니다. 클래스가 다르면 분류기를 교체합니다.",
     "efficientnet_resume": "중단한 학습의 모델, optimizer, 스케줄러와 난수 상태를 복원합니다.",
+    "builtin_finetune": "선택한 모델의 ImageNet 가중치를 검증 후 로드합니다. 최초 1회 다운로드하며 캐시가 있으면 오프라인으로 사용합니다. 분할 모델은 백본만 사전학습되어 있고 분할 헤드는 새로 학습합니다.",
+    "builtin_transfer": "같은 모델의 Deep Vision Studio 체크포인트 또는 해당 torchvision 백본의 .pth를 선택하세요. 새 데이터의 클래스로 학습을 시작합니다.",
     "custom": "자체 CSP 구조. 초기 가중치가 없으면 무작위 초기화합니다.",
 }
+
+BUILTIN_ADAPTER_IDS = frozenset({
+    "resnet18", "resnet50", "convnext_v1_tiny",
+    "deeplabv3plus_resnet34", "unet_resnet18",
+})
 
 
 def training_engine_name(mode):
     if mode not in MODE_LABELS:
         raise ValueError("지원하지 않는 학습 모드입니다. 현재 엔진을 선택하세요.")
-    return "efficientnet" if str(mode).startswith("efficientnet") else "custom"
+    if str(mode).startswith("efficientnet"):
+        return "efficientnet"
+    return "builtin" if str(mode).startswith("builtin") else "custom"
 
 
 def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""):
@@ -28,14 +39,13 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
     if task not in {"classify", "segment", "detect", "anomaly"}:
         raise ValueError("태스크 오류")
     engine = "custom" if task == "anomaly" else training_engine_name(mode)
+    if engine == "builtin" and model_id not in BUILTIN_ADAPTER_IDS:
+        raise ValueError("선택한 모델은 기본 모델의 사전학습 모드를 지원하지 않습니다.")
     if engine == "efficientnet" and task != "classify":
         raise ValueError("EfficientNet은 분류 태스크만 지원")
     patchcore = task == "anomaly" and anomaly_method == "patchcore"
     # These adapters run train_builtin, which does not install observation hooks.
-    separate_adapter = model_id in {
-        "resnet18", "resnet50", "convnext_v1_tiny",
-        "deeplabv3plus_resnet34", "unet_resnet18",
-    }
+    separate_adapter = model_id in BUILTIN_ADAPTER_IDS
     return {
         "engine": engine,
         "models": ["efficientnet_b0", "efficientnet_b1"] if engine == "efficientnet" else [],
@@ -65,6 +75,10 @@ def validate_training_options(project, *, require_runnable=True):
         capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method,
                                              model_id=getattr(project.model, "model_id", ""))
     model_id = getattr(project.model, "model_id", "")
+    if cfg.training_mode == "builtin_transfer" and require_runnable:
+        source = getattr(project.model, "pretrained_weights", "")
+        if not source or not Path(source).is_file():
+            raise ValueError("선택 모델의 로컬 가중치 파일(.pt/.pth)이 필요합니다.")
     if project.task == "anomaly" and cfg.anomaly_method == "patchcore" and model_id:
         expected_backbones = {
             "patchcore_wide_resnet50_2": "wide_resnet50_2",
@@ -77,7 +91,7 @@ def validate_training_options(project, *, require_runnable=True):
                 f"학습 설정은 {cfg.patchcore_backbone}입니다. 모델과 백본을 동일하게 선택하세요."
             )
     if model_id:
-        # Built-in adapters are weight-free and keep their input/task contract
+        # Built-in adapters keep their input/task contract
         # in one registry.  Container packs validate their own contract after
         # installation, so an unknown legacy/pack id remains loadable here.
         try:

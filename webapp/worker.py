@@ -85,7 +85,7 @@ def _container_model_spec(project):
 
 
 def _train_builtin_project(context, project, device):
-    """Train a registered weight-free adapter through the normal job path."""
+    """Train a registered adapter with the selected weight source."""
     from core.project import ProjectManager, RunRecord
     from train_builtin import train_builtin
 
@@ -147,6 +147,7 @@ def _train_builtin_project(context, project, device):
                          output_dir=run_dir,
                          device=str(device),
                          resume=resume, initial_weights=initial_weights,
+                         pretrained=cfg.training_mode == "builtin_finetune",
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),

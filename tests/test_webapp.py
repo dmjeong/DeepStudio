@@ -151,6 +151,7 @@ class WebAppTests(unittest.TestCase):
         project.training.input_size = 64
         project.training.epochs = 1
         project.training.batch_size = 1
+        project.training.training_mode = "builtin_finetune"
         best = Path(project.project_dir) / "fake-best.pt"
         best.write_bytes(b"checkpoint")
         events = []
@@ -179,11 +180,20 @@ class WebAppTests(unittest.TestCase):
             "train_loss": [0.4], "val_loss": [0.3], "mIoU": [0.75],
         })
         self.assertEqual(forwarded["optimizer_name"], project.training.optimizer)
+        self.assertTrue(forwarded["pretrained"])
         self.assertEqual(forwarded["weight_decay"], project.training.weight_decay)
         self.assertEqual(forwarded["horizontal_flip"],
                          project.training.augmentation.horizontal_flip)
         epoch = next(args for event, args in events if event == "epoch_finished")
         self.assertEqual(epoch[3], {"mIoU": 0.75})
+
+    def test_builtin_options_use_selected_model_and_hide_layer_debug(self):
+        response = self.client.get("/api/options?task=classify&engine=builtin&mode=builtin_finetune&model_id=resnet18")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["capabilities"]["engine"], "builtin")
+        self.assertFalse(response.json()["capabilities"]["layer_debug"])
+        mismatch = self.client.get("/api/options?task=classify&engine=builtin&mode=builtin_finetune&model_id=efficientnet_b0")
+        self.assertEqual(mismatch.status_code, 400)
 
     def test_model_pack_job_endpoint_keeps_operation_allowlist(self):
         body = {"pack_dir": str(self.root), "data_dir": str(self.root),

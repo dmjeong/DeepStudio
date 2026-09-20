@@ -194,9 +194,9 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
     specs: list[ModelSpec] = [
         ModelSpec("efficientnet_b0", "EfficientNet", "B0", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "sdk_verified"),
         ModelSpec("efficientnet_b1", "EfficientNet", "B1", "classify", ("windows_native", "onnx"), common, (240, 240), (1, 3), "sdk_verified", notes="224x224는 별도 학습 프로필"),
-        ModelSpec("resnet18", "ResNet", "18", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", notes="weight-free native adapter"),
-        ModelSpec("resnet50", "ResNet", "50", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", notes="weight-free native adapter"),
-        ModelSpec("convnext_v1_tiny", "ConvNeXt V1", "Tiny", "classify", ("windows_native", "onnx"), common, (224, 224), (3,), "export_verified", notes="weight-free native adapter"),
+        ModelSpec("resnet18", "ResNet", "18", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", pretrained_asset="ResNet18_Weights.IMAGENET1K_V1", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
+        ModelSpec("resnet50", "ResNet", "50", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", pretrained_asset="ResNet50_Weights.IMAGENET1K_V2", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
+        ModelSpec("convnext_v1_tiny", "ConvNeXt V1", "Tiny", "classify", ("windows_native", "onnx"), common, (224, 224), (3,), "export_verified", pretrained_asset="ConvNeXt_Tiny_Weights.IMAGENET1K_V1", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
         ModelSpec("libreyolo_classify_mobilenetv4_small", "LibreYOLO", "MobileNetV4 Small", "classify", ("container", "onnx"), common, (224, 224), (3,)),
         ModelSpec("patchcore_wide_resnet50_2", "PatchCore", "Wide-ResNet50-2", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
         ModelSpec("patchcore_resnet18", "PatchCore", "ResNet18", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
@@ -210,8 +210,8 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
                                                 "score_activation": "sigmoid"}}}))
     specs.extend([
         ModelSpec("libreyolo_detect_9t", "LibreYOLO", "9 Tiny", "detect", ("container", "onnx"), common, (640, 640), (3,)),
-        ModelSpec("deeplabv3plus_resnet34", "DeepLab V3+", "ResNet34", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", notes="weight-free native adapter"),
-        ModelSpec("unet_resnet18", "U-Net", "ResNet18", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", notes="weight-free native adapter"),
+        ModelSpec("deeplabv3plus_resnet34", "DeepLab V3+", "ResNet34", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", pretrained_asset="ResNet34_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
+        ModelSpec("unet_resnet18", "U-Net", "ResNet18", "segment", ("windows_native", "onnx"), common, (512, 512), (1, 3), "export_verified", pretrained_asset="ResNet18_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
     ])
     sam2_contract = {"contracts": {"graphs": {
         "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},

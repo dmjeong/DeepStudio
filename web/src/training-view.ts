@@ -38,6 +38,8 @@ export function trainingView(
 export function runModel(run: Run) {
   const config = run.config_snapshot;
   const training = config.training || {};
+  if (config.engine === "builtin" || String(training.training_mode).startsWith("builtin"))
+    return config.model_id || config.model?.model_id || "기본 모델";
   if (String(training.training_mode).startsWith("efficientnet")) return training.efficientnet_model || "EfficientNet";
   if (config.task === "anomaly" && training.anomaly_method === "patchcore") return `PatchCore / ${training.patchcore_backbone || ""}`;
   return training.training_mode === "custom" || config.task === "anomaly" ? "Custom CSP" : "모델 미기록";

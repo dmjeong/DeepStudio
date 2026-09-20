@@ -5,6 +5,9 @@ import { api, number, terminal, type Config, type Project } from "../api";
 import { Check, Empty, Field, JobMonitor, LossChart, Panel, PathField, Stat, useJob } from "../components";
 import type { PageProps } from "../page-context";
 import { CURRENT_RUN, initialRunIndex, runModel, trainingView } from "../training-view";
+import { builtinAdapters, modelModes } from "../model-options";
+
+type CatalogModel = { model_id: string; family: string; variant: string; input_size: number[]; input_channels: number[] };
 
 export function Training({
   state,
@@ -19,6 +22,7 @@ export function Training({
   const [dirty, setDirty] = useDraft(project.filepath, "training-dirty", false);
   const [optionError, setOptionError] = useState("");
   const [options, setOptions] = useState<Config>({ metrics: [], models: [], capabilities: {} });
+  const [catalog, setCatalog] = useState<CatalogModel[]>([]);
   const [jobId, setJobId] = useState<string | null>(
     () =>
       state.jobs.find(
@@ -33,7 +37,12 @@ export function Training({
   );
   const patch =
     project.task === "anomaly" && cfg.anomaly_method === "patchcore";
-  const unsupported = project.task !== "anomaly" && !["custom", "efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume"].includes(cfg.training_mode);
+  const modelId = model.model_id || "";
+  const selectedModel = catalog.find(item => item.model_id === modelId);
+  const modelName = selectedModel ? `${selectedModel.family} ${selectedModel.variant}` : modelId;
+  const modes = modelModes(project.task, modelId, modelName);
+  const builtin = builtinAdapters.has(modelId);
+  const unsupported = project.task !== "anomaly" && !modes.some(([value]) => value === cfg.training_mode);
   const efficientnet = project.task === "classify" && cfg.training_mode.startsWith("efficientnet");
   const resume = cfg.training_mode === "efficientnet_resume";
   const set = (key: keyof TrainingConfig, value: unknown) => {
@@ -46,17 +55,25 @@ export function Training({
   };
   useEffect(() => {
     let active = true;
+    setCatalog([]);
+    if (project.task !== "obb") api(`/models?task=${project.task}`)
+      .then(data => active && setCatalog(data.models))
+      .catch(error => active && setOptionError(error.message));
+    return () => { active = false; };
+  }, [project.task]);
+  useEffect(() => {
+    let active = true;
     setOptionError("");
     setOptions({ metrics: [], models: [], capabilities: {} });
     api(
-      `/options?task=${project.task}&engine=${efficientnet ? "efficientnet" : "custom"}&mode=${project.task === "anomaly" ? "custom" : cfg.training_mode}&anomaly_method=${cfg.anomaly_method}`,
+      `/options?task=${project.task}&engine=${efficientnet ? "efficientnet" : cfg.training_mode.startsWith("builtin") ? "builtin" : "custom"}&mode=${project.task === "anomaly" ? "custom" : cfg.training_mode}&anomaly_method=${cfg.anomaly_method}&model_id=${encodeURIComponent(modelId)}`,
     )
       .then((d) => active && setOptions(d))
       .catch((e) => active && setOptionError(e.message));
     return () => {
       active = false;
     };
-  }, [project.task, unsupported, efficientnet, cfg.training_mode, cfg.anomaly_method]);
+  }, [project.task, unsupported, efficientnet, cfg.training_mode, cfg.anomaly_method, modelId]);
   const save = async () => {
     await api("/project", "PUT", { training: cfg, model });
     setDirty(false);
@@ -95,6 +112,24 @@ export function Training({
         >
           {optionError && <p className="error">{optionError}</p>}
           <fieldset disabled={busy}>
+            {project.task !== "obb" && <Field label="모델 카탈로그">
+              <select value={modelId} onChange={event => {
+                const id = event.target.value;
+                const item = catalog.find(value => value.model_id === id);
+                setModel({ ...model, model_id: id, pack_path: "", pretrained_weights: "" });
+                setCfg({ ...cfg, training_mode: id ? modelModes(project.task, id, id)[0][0] : "custom",
+                  efficientnet_model: id.startsWith("efficientnet_") ? id : cfg.efficientnet_model,
+                  patchcore_backbone: id.startsWith("patchcore_") ? id.slice(10) : cfg.patchcore_backbone,
+                  input_size: item?.input_size[0] ?? cfg.input_size,
+                  in_channels: item && !item.input_channels.includes(cfg.in_channels) ? item.input_channels[0] : cfg.in_channels,
+                  layer_debug_enabled: false, selection_metric: "engine_default" });
+                setDirty(true);
+              }}>
+                <option value="">Custom CSP / 구형 프로젝트</option>
+                {modelId && !selectedModel && <option value={modelId}>{modelId}</option>}
+                {catalog.map(item => <option key={item.model_id} value={item.model_id}>{item.family} {item.variant}</option>)}
+              </select>
+            </Field>}
             <div className="form-grid">
               {project.task === "anomaly" ? (
                 <Field label="이상 탐지 모델">
@@ -117,17 +152,12 @@ export function Training({
                         layer_debug_enabled: false,
                         selection_metric: "engine_default",
                       });
-                      if (["efficientnet_finetune"].includes(e.target.value)) setModel({ ...model, pretrained_weights: "" });
+                      if (["efficientnet_finetune", "builtin_finetune"].includes(e.target.value)) setModel({ ...model, pretrained_weights: "" });
                       setDirty(true);
                     }}
                   >
                     {unsupported && <option value={cfg.training_mode} disabled>지원하지 않는 학습 모드 - 현재 엔진 선택 필요</option>}
-                    {project.task !== "obb" && <option value="custom">Custom CSP</option>}
-                    {project.task === "classify" && <>
-                      <option value="efficientnet_finetune">EfficientNet 사전학습 모델로 시작</option>
-                      <option value="efficientnet_transfer">EfficientNet 내 가중치로 추가 학습</option>
-                      <option value="efficientnet_resume">EfficientNet 중단한 학습 재개</option>
-                    </>}
+                    {project.task !== "obb" && modes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </Field>
               )}
@@ -145,24 +175,27 @@ export function Training({
             {efficientnet && !resume && <Field label="분류 모델" hint="B0 기본 224 px, B1 기본 240 px. 입력 크기는 아래에서 조정할 수 있습니다.">
               <select disabled={resume} value={cfg.efficientnet_model || "efficientnet_b0"}
                 onChange={(e) => { setCfg({ ...cfg, efficientnet_model: e.target.value,
-                  input_size: e.target.value === "efficientnet_b1" ? 240 : 224 }); setDirty(true); }}>
+                  input_size: e.target.value === "efficientnet_b1" ? 240 : 224 });
+                  setModel({ ...model, model_id: e.target.value, pretrained_weights: "" }); setDirty(true); }}>
                 <option value="efficientnet_b0">EfficientNet B0</option>
                 <option value="efficientnet_b1">EfficientNet B1</option>
               </select>
             </Field>}
-            {!patch && !unsupported && cfg.training_mode !== "efficientnet_finetune" && (
+            {!patch && !unsupported && !["efficientnet_finetune", "builtin_finetune"].includes(cfg.training_mode) && (
               <PathField
                 label={
                   resume
                     ? "중단 시 저장된 last.pt (필수)"
-                    : efficientnet ? "추가 학습할 가중치 (필수)" : "초기 가중치 (선택)"
+                    : efficientnet || cfg.training_mode === "builtin_transfer" ? "추가 학습할 가중치 (필수)" : "초기 가중치 (선택)"
                 }
                 value={model.pretrained_weights}
                 onChange={(v) => setM("pretrained_weights", v)}
                 home={state.home}
               />
             )}
-            {unsupported && <p className="learning-mode-help">지원하지 않는 모델 형식입니다. 분류는 EfficientNet을 선택해 새로 학습하세요.</p>}
+            {unsupported && <p className="learning-mode-help">선택 모델에 맞는 학습 모드를 다시 선택하세요.</p>}
+            {builtin && <p className="learning-mode-help">{modelName}: ImageNet 가중치는 최초 1회 다운로드하며 캐시 또는 로컬 .pth로 오프라인 학습할 수 있습니다.
+              {project.task === "segment" && " 분할 모델은 백본만 사전학습되며 분할 헤드는 새로 학습합니다."}</p>}
             {efficientnet && <p className="learning-mode-help">{resume
               ? "last.pt에서 모델과 optimizer, 스케줄러, 난수 상태, 학습 설정을 복원합니다. 데이터가 바뀌면 추가 학습을 선택하세요."
               : cfg.training_mode === "efficientnet_transfer"

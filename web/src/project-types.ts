@@ -10,6 +10,8 @@ export interface DataConfig {
   image_count: number;
 }
 export interface ModelConfig {
+  model_id?: string;
+  pack_path?: string;
   backbone_channels: number[];
   csp_depth: number[];
   dropout: number;
