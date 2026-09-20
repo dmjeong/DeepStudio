@@ -142,7 +142,11 @@ class TrainWorker(TrainingEngine):
             task, data_cfg, cfg, num_workers=num_workers
         )
         if train_loader is None or len(train_loader) == 0:
-            raise ValueError("학습 가능한 데이터 배치 없음")
+            detail = getattr(self, "_dataloader_error", "")
+            message = "학습 가능한 데이터 배치 없음"
+            if detail:
+                message += f"\n데이터 로딩 원인: {detail}"
+            raise ValueError(message)
         if val_loader is None or len(val_loader) == 0:
             raise ValueError("모델 선택을 위한 검증 데이터 필요")
         model = self._build_model().to(device)
@@ -726,6 +730,7 @@ class TrainWorker(TrainingEngine):
 
         GPU 사용 시 num_workers > 0으로 데이터 로딩 병렬화
         """
+        self._dataloader_error = ""
         try:
             from center_crop import configured_center_crop
             from crop_dataset import prepare_crop_dataset
@@ -845,7 +850,8 @@ class TrainWorker(TrainingEngine):
                 )
 
         except Exception as e:
-            self.signals.log_message.emit(f"데이터 로딩 오류: {e}")
+            self._dataloader_error = f"{type(e).__name__}: {e}"
+            self.signals.log_message.emit(f"데이터 로딩 오류: {self._dataloader_error}")
             import traceback
             self.signals.log_message.emit(traceback.format_exc())
             return None, None

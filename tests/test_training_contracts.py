@@ -79,7 +79,8 @@ def dataset_namespace():
     torch = SimpleNamespace(Generator=Generator, from_numpy=np.asarray,
                             utils=SimpleNamespace(data=SimpleNamespace(random_split=split, Subset=Subset)))
     names = {"ClassificationDataset", "SegmentationDataset", "AnomalyDataset",
-             "_TransformOverrideSubset", "create_classification_loaders", "create_anomaly_loaders"}
+             "_TransformOverrideSubset", "_has_classification_images",
+             "create_classification_loaders", "create_anomaly_loaders"}
     from opencv_preprocess import read_image, resize
     return source_objects("python/dataset.py", names, {
         "read_image": read_image, "resize": resize,
@@ -123,6 +124,24 @@ class DataContracts(unittest.TestCase):
             self.assertEqual(len(first[0]), 1)
             self.assertEqual(len(first[1]), 1)
             self.assertEqual(first[0].dataset.indices, second[0].dataset.indices)
+
+    def test_empty_scaffolded_validation_directory_uses_automatic_split(self):
+        ns = dataset_namespace()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            # ProjectManager creates these empty folders before the Dataset
+            # page imports images into TRAIN.
+            for name in ("good", "defect"):
+                (root / "val" / name).mkdir(parents=True)
+                for index in range(3):
+                    write_image(root / "train" / name / f"{index}.png")
+            train, val, names = ns["create_classification_loaders"](
+                str(root), batch_size=16, val_split=.25
+            )
+            self.assertEqual(names, ["defect", "good"])
+            self.assertGreater(len(train), 0)
+            self.assertGreater(len(val), 0)
+            self.assertEqual(len(train.dataset) + len(val.dataset), 6)
 
     def test_palette_mask_preserves_ids_and_rectangular_shape(self):
         ns = dataset_namespace()

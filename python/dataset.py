@@ -586,6 +586,24 @@ class DetectionDataset(Dataset):
 #  데이터 로더 팩토리
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+def _has_classification_images(root: str, extensions: set) -> bool:
+    """Return whether an ImageFolder-style split contains at least one image.
+
+    New projects create empty ``train`` and ``val`` class directories up front.
+    An empty val directory must not disable the automatic train/validation split.
+    """
+    if not os.path.isdir(root):
+        return False
+    for class_name in os.listdir(root):
+        class_dir = os.path.join(root, class_name)
+        if not os.path.isdir(class_dir):
+            continue
+        if any(os.path.isfile(os.path.join(class_dir, filename))
+               and os.path.splitext(filename)[1].lower() in extensions
+               for filename in os.listdir(class_dir)):
+            return True
+    return False
+
 def create_classification_loaders(
     data_root: str,
     input_size: Tuple[int, int] = (224, 224),
@@ -612,8 +630,12 @@ def create_classification_loaders(
     train_dir = os.path.join(data_root, "train")
     val_dir = os.path.join(data_root, "val")
 
-    if os.path.isdir(train_dir) and os.path.isdir(val_dir):
-        # train/val 폴더가 이미 분리되어 있는 경우
+    use_explicit_validation = (
+        os.path.isdir(train_dir)
+        and _has_classification_images(val_dir, ClassificationDataset.SUPPORTED_EXT)
+    )
+    if use_explicit_validation:
+        # val에 이미지가 있는 경우에만 사용자가 명시적으로 분리한 세트다.
         train_transform = get_classification_transforms(
             input_size, is_train=True, in_channels=in_channels, **aug_kwargs
         )
@@ -629,7 +651,7 @@ def create_classification_loaders(
         )
     else:
         # ┌──────────────────────────────────────────────────────────┐
-        # │ 전체 데이터를 train/val 분할하는 경우                      │
+        # │ 전체 데이터 또는 빈 val을 train/val 분할하는 경우           │
         # │                                                          │
         # │ random_split은 Subset을 반환하므로 transform을 직접       │
         # │ 바꿀 수 없다. val에 학습 증강(flip, rotation, jitter)이   │
