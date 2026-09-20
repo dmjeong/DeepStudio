@@ -535,12 +535,15 @@ def inspect_model(context, payload):
     from core.inference_loading import load_inference_engine
     device = get_device_manager().get_device(payload.get("device", "cpu"))
     engine = load_inference_engine(payload["weights"], device=device, gradcam=False)
-    task = "anomaly" if engine._patchcore_model is not None else getattr(engine.model, "task", "classify")
+    task = ("anomaly" if engine._patchcore_model is not None else
+            engine._upstream_task if getattr(engine, "_upstream_model", None) is not None else
+            getattr(engine.model, "task", "classify"))
     return {"status": "completed", "output": {"class_names": list(engine.class_names or []),
         "input_size": engine._input_size, "task": task, "weights": payload["weights"],
         "center_crop": engine._center_crop,
         "device": str(engine._infer_device), "anomaly_threshold": engine._anomaly_threshold,
         "patchcore": engine._patchcore_model.get_info() if engine._patchcore_model is not None else None,
+        "upstream": getattr(engine, "_upstream_model", None) is not None,
         "weights_sha256": digest(payload["weights"])}}
 
 

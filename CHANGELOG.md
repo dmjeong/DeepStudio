@@ -2,6 +2,11 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**2.40 — LibreYOLO `.pt` 추론 로드 수정**
+
+- 기본 제공 LibreYOLO9·Re-DETR v4·LibreMobileNetV4 체크포인트를 기존 DVS 전용 형식으로 오인해 거부하던 오류를 수정했다. 앱이 제공하는 공개 `LibreYOLO(path, device=...)` factory로 원본 `.pt`를 복원한다.
+- native 분류 확률과 검출 정규화 박스를 기존 추론 결과 화면 형식으로 변환한다. 모델 검사 화면은 native PyTorch 런타임을 표시하고, 지원하지 않는 Grad-CAM 선택을 막는다.
+
 **2.39 — native 학습 대시보드 이벤트 수정**
 
 - LibreYOLO/RT-DETRv4 native 학습이 시작 즉시 진행률과 준비 로그를 표시하고, 매 에폭의 train loss·validation loss·선택 지표·학습률·Best·에폭/누적 시간을 대시보드에 전달한다.

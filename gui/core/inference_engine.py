@@ -13,6 +13,65 @@ from center_crop import center_crop_box, restore_detections, paste_crop_preview
 
 
 class InferenceOperations:
+    def _run_upstream_inference(self, image_path: str):
+        """Adapt public LibreYOLO Results to Deep Vision Studio's result contract."""
+        from PIL import Image
+        from core.image_display import display_rgb
+        from core.spatial_preview import draw_detection_boxes
+
+        def as_numpy(value):
+            value = value.detach().cpu().numpy() if hasattr(value, "detach") else value
+            return np.asarray(value)
+
+        model = self._upstream_model
+        task = self._upstream_task
+        with self._measure_inference_stage("inference"):
+            result = model.predict(image_path, imgsz=int(self._input_size[0]),
+                                   conf=float(getattr(self, "detection_confidence", .25)),
+                                   iou=float(getattr(self, "detection_iou", .5)),
+                                   device=str(self._infer_device))
+        if isinstance(result, (list, tuple)):
+            if len(result) != 1:
+                raise ValueError("LibreYOLO 단일 이미지 추론 결과 형식 오류")
+            result = result[0]
+        with Image.open(image_path) as source:
+            original = display_rgb(np.asarray(source.convert("RGB")))
+        if task == "classify":
+            probs = as_numpy(result.probs.data).reshape(-1).astype(np.float64)
+            if not len(probs) or not np.isfinite(probs).all():
+                raise ValueError("LibreYOLO 분류 확률 출력 오류")
+            top = int(np.argmax(probs))
+            names = self.class_names or [f"Class {index}" for index in range(len(probs))]
+            if top >= len(names):
+                raise ValueError("LibreYOLO 분류 클래스 목록 불일치")
+            prediction = InferenceResult(image_path, "ok", task, f"{names[top]} {probs[top]:.1%}",
+                                         details={"class_names": list(names), "probabilities": probs.tolist(),
+                                                  "runtime": "libreyolo-pytorch", "device": str(self._infer_device)})
+            self._current_preview_rgb = original
+        elif task == "detect":
+            if result.boxes is None:
+                boxes = np.empty((0, 4), dtype=np.float32)
+                scores = classes = np.empty(0, dtype=np.float32)
+            else:
+                boxes = as_numpy(result.boxes.xyxyn).reshape(-1, 4)
+                scores = as_numpy(result.boxes.conf).reshape(-1)
+                classes = as_numpy(result.boxes.cls).reshape(-1)
+            if not (len(boxes) == len(scores) == len(classes)):
+                raise ValueError("LibreYOLO 검출 출력 길이 불일치")
+            detections = [{"class_id": int(cls), "confidence": float(score),
+                           "bbox": np.clip(box, 0, 1).astype(float).tolist()}
+                          for box, score, cls in zip(boxes, scores, classes)]
+            prediction = InferenceResult(image_path, "ok", task, f"{len(detections)}개 탐지",
+                                         details={"num_detections": len(detections), "detections": detections,
+                                                  "class_names": list(self.class_names),
+                                                  "runtime": "libreyolo-pytorch", "device": str(self._infer_device)})
+            self._current_preview_rgb = draw_detection_boxes(original, detections)
+        else:
+            raise ValueError(f"LibreYOLO 태스크 미지원: {task}")
+        self._heatmap_cache = None
+        self.info = "LibreYOLO native PyTorch 추론 | Grad-CAM 미지원"
+        return prediction
+
     def _run_custom_inference(self, image_path: str):
         from torchvision import transforms
         from opencv_preprocess import OpenCVResize, read_image
@@ -232,7 +291,7 @@ class InferenceOperations:
 
 class InferenceEngine(InferenceOperations):
     """한 워커가 모델과 훅을 단독 사용하고 결과만 화면에 전달한다."""
-    STATE_FIELDS = ("model", "_patchcore_model", "_gradcam",
+    STATE_FIELDS = ("model", "_patchcore_model", "_upstream_model", "_upstream_task", "_gradcam",
                     "_infer_device", "_input_size", "_normalization", "class_names",
                     "_anomaly_threshold", "_active_checkpoint", "_center_crop", "_onnx_runtime")
 
@@ -322,6 +381,8 @@ class InferenceEngine(InferenceOperations):
             self.prepare()
             if self._patchcore_model is not None:
                 result = self._run_patchcore_inference(image_path)
+            elif self._upstream_model is not None:
+                result = self._run_upstream_inference(image_path)
             elif self.model is not None:
                 result = self._run_custom_inference(image_path)
             else:

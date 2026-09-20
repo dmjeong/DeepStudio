@@ -937,6 +937,7 @@ class InferenceWidget(QWidget, InferenceOperations):
                       self._device_manager.get_device(self.infer_device_combo.currentData()))
             device_label = self._device_manager.get_device_label(device)
             patchcore_info = result.get("patchcore")
+            upstream = bool(result.get("upstream"))
             if patchcore_info is not None:
                 count = int(patchcore_info["memory_bank_size"])
                 if count < 1:
@@ -945,7 +946,8 @@ class InferenceWidget(QWidget, InferenceOperations):
                         f"백본: {patchcore_info['backbone']} | 디바이스: {device_label}")
             else:
                 labels = f" | {len(names)}개 클래스" if names else ""
-                info = f"준비 완료 | {task}{labels} | 디바이스: {device_label} | 독립 프로세스 추론"
+                runtime_name = "LibreYOLO native PyTorch" if upstream else "독립 프로세스 추론"
+                info = f"준비 완료 | {task}{labels} | 디바이스: {device_label} | {runtime_name}"
         except (KeyError, TypeError, ValueError, RuntimeError) as exc:
             self._model_inspection_failed(str(exc))
             return
@@ -954,9 +956,11 @@ class InferenceWidget(QWidget, InferenceOperations):
                              center_crop=(result.get("center_crop") if patchcore_info is None else
                                           patchcore_info.get("center_crop")),
                              score_normalized=patchcore_info is not None)
-        self.gradcam_checkbox.setEnabled(patchcore_info is None)
-        if patchcore_info is None:
+        self.gradcam_checkbox.setEnabled(patchcore_info is None and not upstream)
+        if patchcore_info is None and not upstream:
             self.gradcam_checkbox.setToolTip("추론 프로세스에서 지원하는 모델의 Grad-CAM을 계산합니다.")
+        elif upstream:
+            self.gradcam_checkbox.setToolTip("LibreYOLO native .pt 추론의 Grad-CAM은 현재 지원하지 않습니다.")
 
     def _model_inspection_failed(self, message):
         active = f"\n기존 모델 유지: {self._active_checkpoint}" if self._active_checkpoint else ""

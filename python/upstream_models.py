@@ -52,6 +52,29 @@ def upstream_model_ids() -> frozenset[str]:
     return frozenset(UPSTREAM_MODELS)
 
 
+def is_upstream_checkpoint(checkpoint: object) -> bool:
+    """Return whether a trusted checkpoint uses one of the shipped APIs."""
+    return (isinstance(checkpoint, dict) and
+            checkpoint.get("model_family") in {"mobilenetv4", "yolo9", "rtdetrv4"} and
+            checkpoint.get("task") in {"classify", "detect"})
+
+
+def load_upstream_checkpoint(path: str | Path, *, device: str):
+    """Load an app-produced LibreYOLO checkpoint through its public factory."""
+    try:
+        from libreyolo import LibreYOLO
+    except ImportError as exc:
+        raise RuntimeError(
+            "기본 제공 모델 런타임이 없습니다. 설치본을 다시 설치하거나 "
+            "python -m pip install -r gui/requirements-upstream-models.txt 를 실행하세요."
+        ) from exc
+    model = LibreYOLO(str(path), device=device)
+    family = str(getattr(model, "FAMILY", getattr(model, "family", ""))).lower()
+    if family not in {"mobilenetv4", "yolo9", "rtdetrv4"}:
+        raise ValueError(f"Deep Vision Studio 기본 LibreYOLO 모델이 아닙니다: {family or 'unknown'}")
+    return model
+
+
 def _api():
     """Import only when the selected model needs the optional native runtime."""
     try:
