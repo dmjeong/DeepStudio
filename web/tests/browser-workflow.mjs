@@ -303,9 +303,10 @@ try {
   await page.getByRole("button", {name:"닫기",exact:true}).click();
   await page.getByRole("button", {name:"프로젝트",exact:true}).click();
   await page.getByLabel("프로젝트 이름", {exact:true}).fill("class-required-check");
-  await page.getByRole("radio", {name:/회전 객체 탐지/}).check();
+  assert.equal(await page.getByRole("radio", {name:/회전 객체 탐지/}).count(), 0, "OBB project creation is not advertised without a training engine");
+  await page.getByRole("radio", {name:/객체 탐지/}).check();
   const createProject = page.getByRole("button", {name:"프로젝트 만들기",exact:true});
-  assert.equal(await createProject.isDisabled(),true,"OBB project requires an initial class");
+  assert.equal(await createProject.isDisabled(),true,"detection project requires an initial class");
   await page.getByLabel("클래스 이름", {exact:true}).fill("part, mark");
   assert.equal(await createProject.isEnabled(),true);
   await page.getByRole("radio", {name:/이상 탐지/}).check();
