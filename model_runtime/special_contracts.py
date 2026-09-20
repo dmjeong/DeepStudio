@@ -1,8 +1,8 @@
 """Manifest-level contracts for model families with multiple ONNX graphs.
 
-These checks do not claim that an upstream checkpoint is present.  They make
-an added Re-DETR or SAM2 model explicit enough for a Docker worker and prevent
-the generic one-output runtime from silently opening a special graph.
+These checks do not claim that an upstream checkpoint is present. They make
+the built-in Re-DETR and SAM2 ONNX contracts explicit and prevent the generic
+one-output runtime from silently opening a special graph.
 """
 
 from __future__ import annotations
@@ -52,8 +52,9 @@ def validate_sam2_manifest(manifest: Mapping) -> None:
         raise SpecialContractError("SAM2 manifest must use family SAM2 and segment task")
     if manifest.get("variant") not in SAM2_VARIANTS:
         raise SpecialContractError("SAM2 variant is unsupported")
-    if not {"onnx", "container"}.issubset(set(manifest.get("runtimes", ()) )):
-        raise SpecialContractError("SAM2 requires ONNX and container runtimes")
+    runtimes = set(manifest.get("runtimes", ()))
+    if "onnx" not in runtimes or not ({"windows_native", "container"} & runtimes):
+        raise SpecialContractError("SAM2 requires ONNX and a native or container runtime")
     contract = _require_mapping(manifest.get("contracts"), "contracts")
     graphs = _require_mapping(contract.get("graphs"), "contracts.graphs")
     for graph_name in ("encoder", "decoder"):

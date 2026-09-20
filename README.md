@@ -8,8 +8,8 @@
 | 태스크 | 학습·추론 엔진 | 데이터 |
 |---|---|---|
 | 분류 | EfficientNet B0/B1, ResNet 18/50, ConvNeXt V1 Tiny, Custom CSP | 클래스별 이미지 폴더 |
-| 시맨틱 분할 | SAM2 Hiera Tiny/Small/Base+/Large (설치된 모델 팩), DeepLab V3+ ResNet34, U-Net ResNet18, Custom CSP | 이미지와 클래스 인덱스 마스크 |
-| 박스 탐지 | Re-DETR v4 Small/Medium/Large (설치된 모델 팩), LibreYOLO9 Tiny (설치된 모델 팩), Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
+| 시맨틱 분할 | SAM2 Hiera Tiny/Small/Base+/Large, DeepLab V3+ ResNet34, U-Net ResNet18, Custom CSP | 이미지와 클래스 인덱스 마스크 |
+| 박스 탐지 | Re-DETR v4 Small/Medium/Large, LibreYOLO9 Tiny, Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
 | 이상 탐지 | PatchCore 또는 Custom CSP 재구성 | 정상 이미지, 선택적 평가용 불량 이미지 |
 | 회전 박스 | 데이터 편집·크롭만 지원 | 클래스와 네 꼭짓점의 정규화 좌표 |
 
@@ -23,13 +23,14 @@
 ResNet 18/50, ConvNeXt V1 Tiny는 `ImageNet 가중치로 시작` 또는 `로컬 가중치로 시작`을
 선택할 수 있다. DeepLab V3+와 U-Net은 ImageNet 백본을 사용하며 분할 헤드는 새로 학습한다.
 공식 파일은 최초 1회 다운로드 후 캐시로 사용한다. 가중치를 설치 파일에 새로 포함하지는 않는다.
-SAM2·Re-DETR v4·LibreYOLO는 각각 구현과 가중치가 포함된 `.dvmodel` 팩이 필요하다.
-**현재 저장소에는 LibreYOLO 완성 팩이 없으며 개발 템플릿만 있다.**
-[팩 구성·추가 방법](docs/LIBREYOLO_MODEL_PACKS.ko.md)을 먼저 확인한다.
+SAM2·Re-DETR v4·LibreYOLO도 설치본 기본 모델이다. Docker `.dvmodel`은 이 목록 밖에
+추가하는 사용자 모델 전용이다. 이 세 모델의 Windows 학습 worker와 각 변형의 ONNX 인수는
+현재 구현·검증 중이므로 `requested` 상태로 표시되며, production installer 검증은 이를
+실행 가능한 기본 모델로 잘못 출고하지 않도록 막는다.
 
 데이터셋 이미지를 열면 검출 박스와 분할 마스크를 직접 그릴 수 있다. Qt에서는
 이미지 선택 후 **데이터 티칭 / 정답 그리기**, 브라우저에서는 이미지 클릭으로 연다.
-[드로잉 도구 사용법](docs/DATASET_TEACHING.ko.md)과 [1.17 릴리스](docs/RELEASE_1.17.md)를 참고한다.
+[드로잉 도구 사용법](docs/DATASET_TEACHING.ko.md)과 [1.28 릴리스](docs/RELEASE_1.28.md)를 참고한다.
 
 Python 3.11 환경에서 이 폴더로 이동합니다.
 
@@ -91,9 +92,9 @@ python tools/cpu_benchmark.py --weights model.pt --images images --runtime auto 
 이 스크립트는 기존 이미지·마스크 loader를 사용하고 `builtin` backend checkpoint를 저장한다.
 가중치 다운로드는 수행하지 않는다.
 
-Re-DETR v4, SAM2, LibreYOLO처럼 `container` 전용으로 등록된 모델은 설치된 `.dvmodel`의
-검증된 경로를 프로젝트에 저장한 뒤 `pack_train`·`pack_infer`·`pack_export` DVW1 작업으로 실행한다.
-일반 Custom CSP 학습기로 자동 대체하지 않으며, 팩이 없거나 manifest의 모델 ID가 다르면 작업을 거부한다.
+Settings에서 사용자가 추가한 Docker 모델은 설치된 `.dvmodel`의 검증된 경로를 프로젝트에
+저장한 뒤 `pack_train`·`pack_infer`·`pack_export` DVW1 작업으로 실행한다. 기본 제공 모델은
+이 경로를 쓰지 않으며, 일반 Custom CSP 학습기로 다른 모델 ID를 자동 대체하지 않는다.
 
 새 컨테이너 모델은 [Docker 모델 팩 템플릿](packaging/model-pack-template/README.ko.md)을 복사해
 `manifest.json`의 digest와 입출력 계약을 고정하고, worker의 `prepare`·`train`·`infer`·`export`를
@@ -128,12 +129,12 @@ npm run build
 
 ## 다음 배포판 설계
 
-기본 모델 카탈로그, Docker 모델 팩, C++17/C# ONNX SDK와 단일 Windows 설치 EXE의 설계 및 기반 계약을 구현 중입니다.
+기본 모델 카탈로그, Docker 확장 모델, C++17/C# ONNX SDK와 단일 Windows 설치 EXE의 설계 및 기반 계약을 구현 중입니다.
 현재 SDK는 EfficientNet B0/B1 분류와 Custom 분류·탐지·재구성 anomaly·semantic 배포 경로를 검증하고,
 고정 memory-bank를 포함해 export한 PatchCore anomaly의 score/map도 C ABI로 읽습니다. Re-DETR v4는
 `pred_boxes`/`pred_logits` 두 출력 계약과 C++17/C ABI 디코더를 검증했으며, 실제 Small/Medium/Large
 checkpoint의 ONNX 수치·Windows 인수 검증은 남아 있습니다. SAM2의 encoder/decoder prompt·video 경로와
-실제 Windows 모델 팩도 별도 그래프·실기 검증 대상으로 관리합니다.
+기본 제공 대상인 Re-DETR v4·SAM2·LibreYOLO는 native worker·그래프·실기 검증 대상으로 관리합니다.
 아래 문서는 구현 목표이며 위의 현재 지원 기능과 구분합니다.
 
 - [기본 모델 목록과 지원 판정](docs/01-plan/features/model-catalog.md)

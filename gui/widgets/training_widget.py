@@ -11,7 +11,8 @@ from PySide6.QtGui import QTextCursor
 
 from core.project import ProjectData, ProjectManager
 from core.qt_training import TrainWorker, PatchCoreWorker
-from core.training_modes import training_engine_name, training_capabilities, MODE_LABELS, BUILTIN_ADAPTER_IDS
+from core.training_modes import (training_engine_name, training_capabilities, MODE_LABELS,
+                                 BUILTIN_ADAPTER_IDS, PENDING_NATIVE_MODEL_IDS)
 from core.training_progress import remaining_seconds, run_description
 from core.training_time import format_hms
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
@@ -66,10 +67,9 @@ class TrainingWidget(TrainingForm, QWidget):
         if mode == "custom" and self.model_id_combo.currentData() in BUILTIN_ADAPTER_IDS:
             help_text = "선택한 모델을 무작위 초기화합니다. 가중치를 지정하면 같은 모델의 가중치에서 학습합니다."
         if self._selected_container_spec()[0] is not None:
-            help_text = "선택한 모델의 .dvmodel 팩에 포함된 학습 코드와 가중치를 사용합니다. 먼저 해당 팩을 설치하세요."
+            help_text = "Settings에서 추가한 모델의 .dvmodel 팩에 포함된 학습 코드와 가중치를 사용합니다."
             if not self._selected_container_spec()[1]:
-                help_text = ("선택한 모델 팩이 설치되지 않았습니다. 카탈로그에 이름이 있어도 바로 학습할 수 있는 상태는 아닙니다. "
-                             "'모델 팩 추가 방법 / LibreYOLO 제공 상태'에서 필요한 구성과 설치 절차를 확인하세요.")
+                help_text = "선택한 추가 모델 팩이 설치되지 않았습니다. Settings에서 .dvmodel을 설치하세요."
         self.mode_help.setText(help_text)
         self.hp_group.setEnabled(True)
         self.aug_group.setEnabled(mode not in {"efficientnet_resume"})
@@ -99,9 +99,18 @@ class TrainingWidget(TrainingForm, QWidget):
             choices = [(key, MODE_LABELS[key]) for key in
                        ("efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume", "custom")]
             self.mode_desc.setText(f"선택 모델: {name or 'EfficientNet'}\nImageNet 가중치 또는 로컬 체크포인트를 사용합니다.")
-        else:
+        elif self._selected_container_spec()[0] is not None:
             choices = [("custom", "모델 팩에서 학습" if model_id and not model_id.startswith("patchcore") else "Custom CSP")]
             self.mode_desc.setText(f"선택 모델: {name}\n해당 모델의 구현과 가중치가 포함된 .dvmodel 모델 팩이 필요합니다.")
+        elif model_id in PENDING_NATIVE_MODEL_IDS:
+            choices = [("custom", "기본 모델 준비 중")]
+            self.mode_desc.setText(
+                f"선택 모델: {name}\n기본 제공 Windows worker와 ONNX 인수를 구현·검증 중입니다. "
+                "다른 모델로 대체 학습하지 않습니다."
+            )
+        else:
+            choices = [("custom", "기본 내장 모델 학습")]
+            self.mode_desc.setText(f"선택 모델: {name}\n설치본의 기본 내장 실행 경로를 사용합니다.")
         if preferred and preferred not in MODE_LABELS:
             choices.append((preferred, "지원하지 않는 저장된 학습 모드 — 다시 선택하세요"))
         self.mode_combo.blockSignals(True)
@@ -134,18 +143,24 @@ class TrainingWidget(TrainingForm, QWidget):
         finally:
             self.model_id_combo.blockSignals(False)
 
+    def refresh_model_catalog(self):
+        """Settings에서 설치한 추가 모델을 현재 프로젝트 선택 목록에 반영한다."""
+        if self.project is None:
+            return
+        self._set_model_options(self.project)
+        self._on_model_id_changed(keep_mode=True)
+
     def _show_model_pack_help(self):
         message = QMessageBox(self)
-        message.setWindowTitle("모델 팩 추가 방법")
+        message.setWindowTitle("추가 모델 팩 방법")
         message.setText(
-            "<b>LibreYOLO 완성 모델 팩은 현재 저장소와 기본 설치본에 포함되지 않습니다.</b><br><br>"
-            ".dvmodel은 가중치 파일이 아니라 학습·추론 코드, 가중치, Docker 이미지와 실행 명세를 묶은 설치 파일입니다. "
+            "<b>기본 제공 모델은 모델 팩을 설치하지 않습니다.</b><br><br>"
+            ".dvmodel은 사용자가 추가하는 모델의 학습·추론 코드, 가중치, Docker 이미지와 실행 명세를 묶은 설치 파일입니다. "
             ".pt의 확장자를 바꾸어 사용할 수 없습니다.<br><br>"
             "1. 모델 팩 제작자로부터 해당 모델의 완성된 .dvmodel과 공개키 설정을 받습니다.<br>"
-            "2. 공개키 신뢰 저장소를 설정한 뒤 '모델 팩 가져오기'에서 파일을 선택합니다.<br>"
+            "2. Settings의 '모델 추가 (.dvmodel)'에서 파일을 선택합니다.<br>"
             "3. 컨테이너 실행 환경을 확인하고 '팩 학습 / 팩 추론 / 팩 ONNX export'로 실행합니다.<br><br>"
-            "현재 템플릿은 실행 규약 예시이며 LibreYOLO 학습 구현이 아닙니다. "
-            "팩 없이 곧바로 학습할 수 있다고 안내한 부분을 바로잡았습니다.<br><br>"
+            "기본 제공 모델을 Docker 팩으로 설치하라고 안내하지 않습니다.<br><br>"
             '<a href="https://github.com/dmjeong/DeepStudio/blob/main/docs/LIBREYOLO_MODEL_PACKS.ko.md">구성물·Windows 설치 명령·팩 개발 절차</a>'
         )
         message.exec()
@@ -967,7 +982,9 @@ class TrainingWidget(TrainingForm, QWidget):
 
         # Metric 차트
         self.metric_chart.update_metrics(epoch, metrics)
-        self._show_epoch_timing(metrics)
+        show_timing = getattr(self, "_show_epoch_timing", None)
+        if callable(show_timing):
+            show_timing(metrics)
 
     def _show_epoch_timing(self, values):
         """All native trainers publish these two values with epoch_finished."""

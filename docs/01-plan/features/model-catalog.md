@@ -48,8 +48,8 @@ freeze/unfreeze, 클래스별 weight, augmentation, resume도 실제 지원하�
 네이티브 SDK는 `pred_boxes=[1,N,4]`와 `pred_logits=[1,N,C]`를 검증하고 공통 detection 결과로 변환한다.
 실제 upstream 구현·checkpoint를 변형별로 연결하기 전에는 카탈로그 항목을 release-ready로 표시하지 않는다.
 여기서 제품 표기 `Re-DETR v4`는 공식 upstream 저장소의 표기 `RT-DETRv4`를 가리킨다.
-upstream 코드·설정·checkpoint는 기본 저장소나 기본 설치파일에 복사하지 않고, 별도 모델 팩의
-source revision·SHA-256·라이선스 고지로 추적한다.
+upstream 코드·설정·checkpoint는 기본 설치본의 native worker에 고정된 source revision·SHA-256·
+라이선스 고지로 추적한다. Docker 모델 팩은 이 기본 목록 밖의 사용자가 추가한 모델에만 쓴다.
 
 - class offset, query 선택, sigmoid/softmax, decode, resize 방식은 변형별 manifest에 기록한다.
 - NMS가 없는 모델에는 임의 NMS를 넣지 않는다. Libre 탐지의 NMS 규칙은 별도 계약이다.

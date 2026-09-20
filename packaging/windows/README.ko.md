@@ -118,8 +118,8 @@ BIOS 설정이나 조직 정책 때문에 가상화를 사용할 수 없다면 �
 3. 설치기가 번들 파일과 필요한 Windows 구성요소를 검사·설치한다. 필요하면 재부팅 후 이어간다.
 4. 설치 완료 검사에서 기본 모델/가중치와 Docker 확장 준비 상태를 확인한다.
 5. 새 프로젝트에서 태스크와 모델을 선택하고 로컬 데이터를 등록한다.
-6. 학습/fit 결과를 저장한 후 추론하거나 `ONNX 배포 내보내기`를 사용한다. 컨테이너 전용 모델은
-   학습 화면에서 팩 작업 버튼을 사용한다.
+6. 학습/fit 결과를 저장한 후 추론하거나 `ONNX 배포 내보내기`를 사용한다. Settings에서 사용자가
+   추가한 Docker 모델만 학습 화면의 팩 작업 버튼을 사용한다.
 
 한글·공백 경로와 일반 사용자 실행을 지원하도록 검증한다.
 프로젝트·원본 이미지·학습 결과는 사용자가 지정한 폴더에 저장한다.
@@ -134,10 +134,9 @@ BIOS 설정이나 조직 정책 때문에 가상화를 사용할 수 없다면 �
   자동 mask와 영상 state는 각각의 export/runtime 검증을 통과한 기능만 활성화한다.
 - Re-DETR v4는 Small/Medium/Large 세 변형만 제공 대상으로 관리하며, 실제 검증 전에는 설치기에서
   release-ready로 표시하지 않는다.
-- Re-DETR 팩은 `pred_boxes`/`pred_logits` 출력 계약을 C++17/C ABI에서 검증한다. 실제 Small/Medium/Large
+- Re-DETR v4는 `pred_boxes`/`pred_logits` 출력 계약을 C++17/C ABI에서 검증한다. 실제 Small/Medium/Large
   checkpoint의 ONNX 수치 및 Windows 인수 검증 전에는 설치기에서 release-ready로 표시하지 않는다.
-- SAM2 팩은 encoder·decoder 파일과
-  point/box/mask prompt 계약을 manifest에 기록해야 한다. 계약이 없는 팩은 등록되지 않는다.
+- SAM2는 encoder·decoder 파일과 point/box/mask prompt 계약을 기본 배포 manifest에 기록한다.
 
 ## ONNX 배포와 C#/C++
 
@@ -201,13 +200,13 @@ Windows 빌드 이미지는 먼저 `stage_payload.py`로 UI·worker·SDK·팩·�
 모델 허브 호출을 수행하지 않는다.
 
 일반 push 계약은 개발 중인 카탈로그(`requested`, `export_verified` 등)를 포함할 수 있다.
-정식 설치물을 만들 때는 `build_release.ps1 -RequireReleaseReadyModels
--ModelPackTrustStore <절대경로>`와
+정식 설치물을 만들 때는 `build_release.ps1 -RequireReleaseReadyModels`와
 workflow_dispatch의 `require_release_ready_models=true`를 함께 사용한다. 이 게이트는
 `release_ready_only=true` 카탈로그, 모든 모델의 `release_ready` 상태, 그리고 각 모델의
-`metadata.payload`(또는 `payload`)에 선언된 staged 파일을 확인한다. `kind=pack` 항목은
-실제 `.dvmodel` 파일을 포함해야 하며 모든 파일의 SHA-256과 Ed25519 서명을 검증한다. 따라서 카탈로그 JSON만 복사하거나 아직 검증되지 않은
-Re-DETR/SAM2/LibreYOLO 팩을 넣은 상태로는 production Setup을 만들 수 없다.
+`metadata.payload`(또는 `payload`)에 선언된 staged 파일을 확인한다. 기본 모델은 `kind=builtin`
+파일로 native worker와 export 자산을 명시한다. `kind=pack`은 Settings에서 추가하는 모델에만 쓰며,
+실제 `.dvmodel` 파일·SHA-256·Ed25519 서명을 요구한다. 따라서 카탈로그 JSON만 복사하거나 아직
+검증되지 않은 Re-DETR/SAM2/LibreYOLO native payload로 production Setup을 만들 수 없다.
 외부 모델 payload 루트는 `DEEPVISION_MODEL_PAYLOAD_ROOT`로 지정하고
 `default-model-catalog.json`을 루트에 둔다. 현재 저장소의 기본 카탈로그는 개발 검증 상태를
 그대로 기록하므로 이 strict 게이트를 통과하지 않으며, 실제 Windows·모델팩·라이선스 검증이

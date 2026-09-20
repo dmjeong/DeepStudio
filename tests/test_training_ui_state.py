@@ -129,14 +129,15 @@ def test_all_native_training_events_show_epoch_timing_without_polluting_metrics_
 
 @pytest.mark.parametrize("task,model_id", [("segment", "sam2_hiera_tiny"), ("detect", "re_detr_v4_small"),
                                          ("classify", "libreyolo_classify_mobilenetv4_small")])
-def test_container_models_do_not_offer_efficientnet_weights(page, task, model_id):
+def test_shipped_models_do_not_require_a_docker_pack(page, task, model_id):
     project = copy.deepcopy(page.project)
     project.task = task
     project.model.model_id = model_id
     project.training.training_mode = "custom"
     page.set_project(project)
     assert page.mode_combo.count() == 1
-    assert "모델 팩" in page.mode_desc.text()
+    assert "기본 제공 Windows worker" in page.mode_desc.text()
+    assert "모델 팩" not in page.mode_desc.text()
     assert "EfficientNet" not in page.mode_combo.currentText()
 
 
@@ -253,7 +254,7 @@ def test_completed_resume_displays_worker_config_and_class_order(prepared_page, 
 
 
 def test_installed_container_pack_actions_start_dvw1_job(prepared_page, monkeypatch, tmp_path):
-    """The desktop page exposes the same pack lifecycle as the web API."""
+    """A Settings-added Docker model exposes the same pack lifecycle as the web API."""
     from core.desktop_jobs import DesktopJob
     from core.project import ProjectManager
 
@@ -261,7 +262,7 @@ def test_installed_container_pack_actions_start_dvw1_job(prepared_page, monkeypa
     project = copy.deepcopy(page.project)
     project.task = "detect"
     project.training.training_mode = "custom"
-    project.model.model_id = "re_detr_v4_small"
+    project.model.model_id = "vendor.external-detector"
     data_root = tmp_path / "detect-data"
     pack_root = tmp_path / "re-detr-pack"
     pack_root.mkdir()
@@ -271,6 +272,8 @@ def test_installed_container_pack_actions_start_dvw1_job(prepared_page, monkeypa
     # The registry normally supplies this path after a real .dvmodel install;
     # the fixture supplies the already-validated directory directly.
     page.project.model.pack_path = str(pack_root)
+    external = SimpleNamespace(model_id="vendor.external-detector", display_name="External Detector")
+    monkeypatch.setattr(page, "_selected_container_spec", lambda: (external, pack_root.resolve()))
     page._update_pack_controls()
     assert page.model_pack_train_button.isHidden()
     data_root.mkdir()
@@ -291,7 +294,7 @@ def test_installed_container_pack_actions_start_dvw1_job(prepared_page, monkeypa
     assert page._pack_job.kind == "pack_train"
     assert page._pack_job.payload["pack_dir"] == str(pack_root.resolve())
     assert page._pack_job.payload["data_dir"] == str(data_root.resolve())
-    assert page._pack_job.payload["request"]["model"]["model_id"] == "re_detr_v4_small"
+    assert page._pack_job.payload["request"]["model"]["model_id"] == "vendor.external-detector"
     assert not page.start_btn.isEnabled()
     assert not page.settings_panel.isEnabled()
 

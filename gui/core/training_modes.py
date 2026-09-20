@@ -24,6 +24,17 @@ BUILTIN_ADAPTER_IDS = frozenset({
     "deeplabv3plus_resnet34", "unet_resnet18",
 })
 
+# These IDs belong to the shipped catalog, not to Docker extensions.  Their
+# upstream-native training workers are deliberately not connected yet; keeping
+# the list explicit prevents a selected product ID from silently training the
+# unrelated Custom CSP fallback.
+PENDING_NATIVE_MODEL_IDS = frozenset({
+    "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",
+    "re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large",
+    "sam2_hiera_tiny", "sam2_hiera_small", "sam2_hiera_base_plus",
+    "sam2_hiera_large",
+})
+
 
 def training_engine_name(mode):
     if mode not in MODE_LABELS:
@@ -129,6 +140,11 @@ def validate_training_options(project, *, require_runnable=True):
                     raise ValueError("설치된 모델 팩 manifest.json을 읽을 수 없습니다.") from exc
                 if not isinstance(manifest, dict) or manifest.get("model_id") != model_id:
                     raise ValueError("프로젝트 모델 ID와 설치된 모델 팩이 일치하지 않습니다.")
+            if require_runnable and model_id in PENDING_NATIVE_MODEL_IDS:
+                raise ValueError(
+                    f"{spec.display_name}은 Docker 모델 팩이 아닌 기본 제공 모델입니다. "
+                    "현재 Windows native 학습 worker·ONNX 인수가 완료되지 않아 Custom CSP로 대체 실행할 수 없습니다."
+                )
     if type(cfg.efficientnet_no_decay) is not bool:
         raise ValueError("EfficientNet weight decay 제외 옵션은 boolean 필요")
     if capabilities["engine"] == "efficientnet" and cfg.efficientnet_model not in capabilities["models"]:

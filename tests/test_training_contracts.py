@@ -184,7 +184,7 @@ class DataContracts(unittest.TestCase):
             self.assertFalse(set(train.dataset.indices) & set(val.dataset.indices))
 
 
-class ContainerModelTrainingContracts(unittest.TestCase):
+class PendingNativeModelTrainingContracts(unittest.TestCase):
     def _project(self):
         project = ProjectData()
         project.task = "detect"
@@ -193,14 +193,14 @@ class ContainerModelTrainingContracts(unittest.TestCase):
         project.training.in_channels = 3
         return project
 
-    def test_container_catalog_model_cannot_fall_back_to_custom_csp(self):
-        with self.assertRaisesRegex(ValueError, "Docker 모델 팩"):
+    def test_pending_native_catalog_model_cannot_fall_back_to_custom_csp(self):
+        with self.assertRaisesRegex(ValueError, "Windows native 학습 worker"):
             validate_training_options(self._project())
 
-    def test_container_catalog_settings_can_be_saved_before_pack_install(self):
+    def test_pending_native_catalog_settings_can_be_saved_before_native_worker_is_ready(self):
         validate_training_options(self._project(), require_runnable=False)
 
-    def test_container_catalog_model_accepts_matching_installed_manifest(self):
+    def test_pending_native_catalog_model_is_not_unblocked_by_a_docker_pack_path(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "manifest.json").write_text(json.dumps({
@@ -209,7 +209,8 @@ class ContainerModelTrainingContracts(unittest.TestCase):
             }), encoding="utf-8")
             project = self._project()
             project.model.pack_path = str(root)
-            validate_training_options(project)
+            with self.assertRaisesRegex(ValueError, "Windows native 학습 worker"):
+                validate_training_options(project)
 
 
 class PatchCoreSelectionContracts(unittest.TestCase):

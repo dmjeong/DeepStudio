@@ -40,6 +40,7 @@ from widgets.training_widget import TrainingWidget
 from widgets.inference_widget import InferenceWidget
 from widgets.export_widget import ExportWidget
 from widgets.defect_gen_widget import DefectGenWidget
+from widgets.model_manager_widget import ModelManagerWidget
 
 from core.project import ProjectData, ProjectManager, SUPPORTED_TASKS
 from core.device_manager import get_device_manager
@@ -95,6 +96,7 @@ class MainWindow(QMainWindow):
         self.inference_page = InferenceWidget()
         self.export_page = ExportWidget()
         self.defect_gen_page = DefectGenWidget()
+        self.model_manager_page = ModelManagerWidget()
 
         self.content_stack.addWidget(self.project_page)    # index 0
         self.content_stack.addWidget(self.dataset_page)     # index 1
@@ -102,6 +104,7 @@ class MainWindow(QMainWindow):
         self.content_stack.addWidget(self.inference_page)    # index 3
         self.content_stack.addWidget(self.export_page)      # index 4
         self.content_stack.addWidget(self.defect_gen_page)   # index 5
+        self.content_stack.addWidget(self.model_manager_page) # index 6
 
         # ── 상태바 ──
         self._create_statusbar()
@@ -149,6 +152,7 @@ class MainWindow(QMainWindow):
             ("Inference", "모델 테스트 및 검증"),
             ("Export", "ONNX 모델 변환"),
             ("Defect Gen", "합성 불량 이미지 생성"),
+            ("Settings", "기본 모델과 추가 Docker 모델 관리"),
         ]
 
         for idx, (text, tooltip) in enumerate(nav_items):
@@ -237,7 +241,7 @@ class MainWindow(QMainWindow):
     def _navigate_to(self, index: int):
         """페이지 전환"""
         # 프로젝트 없으면 프로젝트 페이지만 허용
-        if index > 0 and self.project is None:
+        if index not in {0, 6} and self.project is None:
             QMessageBox.information(
                 self, "프로젝트 필요",
                 "먼저 프로젝트를 생성하거나 열어주세요."
@@ -271,6 +275,7 @@ class MainWindow(QMainWindow):
         self.inference_page.set_project(project)
         self.export_page.set_project(project)
         self.defect_gen_page.set_project(project)
+        self.model_manager_page.set_project(project)
 
         self.status_label.setText(
             f"Project: {project.name}  ·  "
@@ -385,6 +390,12 @@ class MainWindow(QMainWindow):
         self.defect_gen_page.generation_finished.connect(
             self._on_defect_gen_finished
         )
+        self.model_manager_page.models_changed.connect(self._on_model_catalog_changed)
+
+    def _on_model_catalog_changed(self):
+        """새 Docker 모델을 설치하면 현재 프로젝트의 선택 목록만 새로 고친다."""
+        if self.project is not None:
+            self.training_page.refresh_model_catalog()
 
     def _on_project_created(self, project: ProjectData):
         """프로젝트 생성 완료 핸들러"""

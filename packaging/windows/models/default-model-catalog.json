@@ -159,7 +159,7 @@
       "variant": "MobileNetV4 Small",
       "task": "classify",
       "runtimes": [
-        "container",
+        "windows_native",
         "onnx"
       ],
       "capabilities": [
@@ -243,7 +243,7 @@
       "variant": "Small",
       "task": "detect",
       "runtimes": [
-        "container",
+        "windows_native",
         "onnx"
       ],
       "capabilities": [
@@ -282,7 +282,7 @@
       "variant": "Medium",
       "task": "detect",
       "runtimes": [
-        "container",
+        "windows_native",
         "onnx"
       ],
       "capabilities": [
@@ -321,7 +321,7 @@
       "variant": "Large",
       "task": "detect",
       "runtimes": [
-        "container",
+        "windows_native",
         "onnx"
       ],
       "capabilities": [
@@ -360,7 +360,7 @@
       "variant": "9 Tiny",
       "task": "detect",
       "runtimes": [
-        "container",
+        "windows_native",
         "onnx"
       ],
       "capabilities": [
@@ -445,7 +445,7 @@
       "variant": "Hiera Tiny",
       "task": "segment",
       "runtimes": [
-        "container",
+        "windows_native",
         "onnx"
       ],
       "capabilities": [
@@ -519,7 +519,7 @@
       "variant": "Hiera Small",
       "task": "segment",
       "runtimes": [
-        "container",
+        "windows_native",
         "onnx"
       ],
       "capabilities": [
@@ -593,7 +593,7 @@
       "variant": "Hiera Base+",
       "task": "segment",
       "runtimes": [
-        "container",
+        "windows_native",
         "onnx"
       ],
       "capabilities": [
@@ -667,7 +667,7 @@
       "variant": "Hiera Large",
       "task": "segment",
       "runtimes": [
-        "container",
+        "windows_native",
         "onnx"
       ],
       "capabilities": [

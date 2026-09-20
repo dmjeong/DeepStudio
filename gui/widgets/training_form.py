@@ -38,9 +38,9 @@ class TrainingForm:
 
         # ── 모델 카탈로그 선택 ──
         # Model IDs are persisted in the project so the same adapter is used
-        # by the desktop job, ONNX exporter, and native SDK.  Requested
-        # container models remain visible with their status; the start guard
-        # explains when their installed pack is required.
+        # by the desktop job, ONNX exporter, and native SDK. The shipped
+        # catalog always uses the native runtime; only user-added Docker
+        # models can expose the pack action buttons below.
         model_group = QGroupBox("모델 카탈로그")
         self.model_group = model_group
         model_layout = QVBoxLayout(model_group)
@@ -62,16 +62,6 @@ class TrainingForm:
             pass
         self.model_id_combo.currentIndexChanged.connect(self._on_model_id_changed)
         model_layout.addWidget(self.model_id_combo)
-        self.model_pack_install_button = QPushButton("모델 팩 가져오기 (.dvmodel)")
-        self.model_pack_install_button.setToolTip(
-            "서명된 오프라인 Docker 모델 팩을 사용자 모델 폴더에 설치합니다."
-        )
-        if hasattr(self, "_install_model_pack"):
-            self.model_pack_install_button.clicked.connect(self._install_model_pack)
-        model_layout.addWidget(self.model_pack_install_button)
-        self.model_pack_help_button = QPushButton("모델 팩 추가 방법 / LibreYOLO 제공 상태")
-        self.model_pack_help_button.clicked.connect(self._show_model_pack_help)
-        model_layout.addWidget(self.model_pack_help_button)
         pack_actions = QHBoxLayout()
         self.model_pack_train_button = QPushButton("팩 학습")
         self.model_pack_infer_button = QPushButton("팩 추론")
@@ -82,7 +72,7 @@ class TrainingForm:
             (self.model_pack_export_button, "export"),
         ):
             button.setVisible(False)
-            button.setToolTip("설치된 Docker 모델 팩의 DVW1 작업을 실행합니다.")
+            button.setToolTip("Settings에서 추가한 Docker 모델의 DVW1 작업을 실행합니다.")
             callback = getattr(self, "_start_model_pack_operation", None)
             if callable(callback):
                 button.clicked.connect(lambda _checked=False, op=operation: callback(op))

@@ -183,11 +183,12 @@ def validate_model_spec(spec: ModelSpec) -> None:
 
 
 def builtin_model_specs() -> tuple[ModelSpec, ...]:
-    """사용자가 요구한 기본 모델군의 등록 목록.
+    """사용자가 요구한 설치본 기본 모델군의 등록 목록.
 
-    ``requested`` 상태인 항목은 아직 실제 Windows 학습/내보내기 검증 전이다. 이 목록을
-    등록해 두면 구현 중인 모델도 프로젝트/팩 참조로 안정적으로 식별할 수 있지만,
-    ``ModelRegistry.available``는 release-ready 모델만 반환한다.
+    기본 목록의 각 모델은 Windows 내장 실행 경로를 제품 계약으로 가진다. ``requested``
+    상태는 이 계약의 구현·학습·ONNX 인수가 아직 끝나지 않았음을 뜻할 뿐, Docker 모델
+    팩을 설치해야 한다는 뜻이 아니다. Docker는 이 목록 밖의 사용자가 추가한 모델에만
+    쓴다. ``ModelRegistry.available``는 release-ready 모델만 반환한다.
     """
 
     common = frozenset({"train", "infer", "export_onnx", "csharp", "cpp"})
@@ -197,19 +198,19 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         ModelSpec("resnet18", "ResNet", "18", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", pretrained_asset="ResNet18_Weights.IMAGENET1K_V1", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
         ModelSpec("resnet50", "ResNet", "50", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", pretrained_asset="ResNet50_Weights.IMAGENET1K_V2", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
         ModelSpec("convnext_v1_tiny", "ConvNeXt V1", "Tiny", "classify", ("windows_native", "onnx"), common, (224, 224), (3,), "export_verified", pretrained_asset="ConvNeXt_Tiny_Weights.IMAGENET1K_V1", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
-        ModelSpec("libreyolo_classify_mobilenetv4_small", "LibreYOLO", "MobileNetV4 Small", "classify", ("container", "onnx"), common, (224, 224), (3,)),
+        ModelSpec("libreyolo_classify_mobilenetv4_small", "LibreYOLO", "MobileNetV4 Small", "classify", ("windows_native", "onnx"), common, (224, 224), (3,)),
         ModelSpec("patchcore_wide_resnet50_2", "PatchCore", "Wide-ResNet50-2", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
         ModelSpec("patchcore_resnet18", "PatchCore", "ResNet18", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
     ]
     for variant, size in (("small", 640), ("medium", 800), ("large", 1024)):
         specs.append(ModelSpec(
-            f"re_detr_v4_{variant}", "Re-DETR v4", variant.title(), "detect", ("container", "onnx"), common,
+            f"re_detr_v4_{variant}", "Re-DETR v4", variant.title(), "detect", ("windows_native", "onnx"), common,
             (size, size), (3,), notes="requested family fixed by product requirement",
             metadata={"contracts": {"onnx": {"file": "redetr.onnx", "input_name": "input_image", "boxes_name": "pred_boxes",
                                                 "logits_name": "pred_logits", "boxes_format": "normalized_cxcywh",
                                                 "score_activation": "sigmoid"}}}))
     specs.extend([
-        ModelSpec("libreyolo_detect_9t", "LibreYOLO", "9 Tiny", "detect", ("container", "onnx"), common, (640, 640), (3,)),
+        ModelSpec("libreyolo_detect_9t", "LibreYOLO", "9 Tiny", "detect", ("windows_native", "onnx"), common, (640, 640), (3,)),
         ModelSpec("deeplabv3plus_resnet34", "DeepLab V3+", "ResNet34", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", pretrained_asset="ResNet34_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
         ModelSpec("unet_resnet18", "U-Net", "ResNet18", "segment", ("windows_native", "onnx"), common, (512, 512), (1, 3), "export_verified", pretrained_asset="ResNet18_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
     ])
@@ -231,7 +232,7 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         ("sam2_hiera_base_plus", "Hiera Base+"), ("sam2_hiera_large", "Hiera Large"),
     ):
         specs.append(ModelSpec(
-            model_id, "SAM2", variant, "segment", ("container", "onnx"),
+            model_id, "SAM2", variant, "segment", ("windows_native", "onnx"),
             sam2_capabilities, (1024, 1024), (3,),
             notes="image/prompt/automatic-mask; video memory state 미지원",
             metadata=sam2_contract,
