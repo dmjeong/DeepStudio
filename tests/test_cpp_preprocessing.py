@@ -20,6 +20,8 @@ class CppPreprocessingTests(unittest.TestCase):
         if existing:
             cls.program = existing
             return
+        if os.name == "nt":
+            raise unittest.SkipTest("Windows preprocessing probe is built by the native C++ workflow")
         if not shutil.which("pkg-config") or subprocess.run(["pkg-config", "--exists", "opencv4"]).returncode:
             raise unittest.SkipTest("OpenCV C++ development package unavailable")
         compiler = shutil.which("g++") or shutil.which("clang++")

@@ -44,8 +44,8 @@ def test_project_format_uses_current_extension_and_can_read_selected_json(tmp_pa
 
 def test_public_cpp_and_packaging_names_agree():
     root = Path(__file__).resolve().parents[1]
-    header = (root / "cpp/include/vision_inference.h").read_text()
+    header = (root / "cpp/include/vision_inference.h").read_text(encoding="utf-8")
     assert "class VisionInference" in header
-    assert '#include "vision_inference.h"' in (root / "cpp/src/vision_inference.cpp").read_text()
-    assert "add_library(vision_inference" in (root / "cpp/CMakeLists.txt").read_text()
-    assert '"DeepVisionStudio/"' in (root / "tools/package_web.py").read_text()
+    assert '#include "vision_inference.h"' in (root / "cpp/src/vision_inference.cpp").read_text(encoding="utf-8")
+    assert "add_library(vision_inference" in (root / "cpp/CMakeLists.txt").read_text(encoding="utf-8")
+    assert '"DeepVisionStudio/"' in (root / "tools/package_web.py").read_text(encoding="utf-8")

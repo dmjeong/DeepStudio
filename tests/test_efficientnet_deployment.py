@@ -43,7 +43,7 @@ class DeploymentPolicyTests(unittest.TestCase):
             with patch("export_onnx._export_checkpoint", side_effect=RuntimeError("synthetic exporter failure")):
                 with self.assertRaisesRegex(ValueError, "synthetic exporter failure"):
                     export_checkpoint("weights.pt", output, log=lambda _: None)
-            diagnostic = json.loads(output.with_suffix(".export-error.json").read_text())
+            diagnostic = json.loads(output.with_suffix(".export-error.json").read_text(encoding="utf-8"))
             self.assertIn("python", diagnostic["versions"])
             self.assertIn("synthetic exporter failure", diagnostic["traceback"])
             self.assertEqual(diagnostic["opset"], 17)
@@ -54,7 +54,7 @@ class DeploymentPolicyTests(unittest.TestCase):
             metadata = make_checkpoint_metadata("classify", 2, ["OK", "NG"], 32, 3)
             path = create_inference_config(directory, "classify", 2, 32, 3, "model.onnx", ["OK", "NG"],
                                            metadata["preprocessing"], backend="efficientnet")
-            config = json.loads(Path(path).read_text())
+            config = json.loads(Path(path).read_text(encoding="utf-8"))
             validate_config(config)
             for change in ({"input_height": True}, {"normalize_std": [0, 0, 0]},
                            {"backend": "unsupported"}, {"class_names": ["wrong"]}):
