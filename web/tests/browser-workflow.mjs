@@ -280,7 +280,10 @@ try {
     } else await route.fallback();
   });
   await obbSave.click();
-  await page.getByRole("alert").filter({hasText:"강제 저장 실패"}).waitFor();
+  // The persistent page banner and the editor-local error are both valid
+  // failure surfaces.  Wait for the first one instead of relying on a
+  // strict single-match locator.
+  await page.getByRole("alert").filter({hasText:"강제 저장 실패"}).first().waitFor();
   assert.equal(await obbCanvas.isVisible(),true,"failed save keeps the editor and labels open");
   await page.unroute("**/api/dataset/edit");
   let annotationRequests = 0;
