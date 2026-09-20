@@ -75,7 +75,9 @@ export async function verifyTeaching(page, { temp, fixture, output, base = "http
     await page.locator("dialog").waitFor({ state: "detached", timeout: 30000 });
     await page.getByRole("button", { name: "sample.png 열기", exact: true }).click();
     await page.getByLabel("정답 1 클래스", { exact: true }).waitFor();
-    assert.equal(await page.locator(".annotation-list > div").count(), task === "segment" ? 3 : 2);
+    // The saved erase stroke is present in ``saved.shapes`` above, but is not
+    // an editable foreground row after the dialog is reopened.
+    assert.equal(await page.locator(".annotation-list > div").count(), 2);
     await page.getByRole("button", { name: "닫기", exact: true }).click();
   }
 }
