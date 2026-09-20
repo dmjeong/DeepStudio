@@ -108,6 +108,7 @@ C++ 공개 헤더는 `vision_inference.h`, 클래스는 `VisionInference`, 정�
 - [ONNX CPU 설정 비교](docs/EFFICIENTNET_ONNX_OPTIMIZATION.md)
 - [실제 추론 버튼의 측정 범위](docs/EFFICIENTNET_GUI_ONNX.md)
 - [EfficientNet 모델 및 학습](docs/EFFICIENTNET.md)
+- [제품 완료 기준과 검증 게이트](docs/PRODUCT_DELIVERY_GATES.md)
 - [입력 영역](docs/INFERENCE_REGION.md)
 - [회전 박스 데이터 편집](docs/OBB.md)
 
