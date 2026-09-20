@@ -178,6 +178,9 @@ class ContainerModelTrainingContracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Docker 모델 팩"):
             validate_training_options(self._project())
 
+    def test_container_catalog_settings_can_be_saved_before_pack_install(self):
+        validate_training_options(self._project(), require_runnable=False)
+
     def test_container_catalog_model_accepts_matching_installed_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

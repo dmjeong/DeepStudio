@@ -82,6 +82,21 @@ class WebAppTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 200, response.text)
 
+    def test_center_crop_settings_save_before_optional_model_pack_install(self):
+        for task in ("detect", "segment", "anomaly", "obb"):
+            with self.subTest(task=task):
+                self.project(name=f"crop-{task}", task=task)
+                response = self.client.put("/api/project", json={"training": {
+                    "patchcore_crop_enabled": True,
+                    "patchcore_crop_width": 320,
+                    "patchcore_crop_height": 192,
+                }})
+                self.assertEqual(response.status_code, 200, response.text)
+                saved = response.json()["training"]
+                self.assertTrue(saved["patchcore_crop_enabled"])
+                self.assertEqual(saved["patchcore_crop_width"], 320)
+                self.assertEqual(saved["patchcore_crop_height"], 192)
+
     def test_state_recovers_after_project_is_moved_or_corrupted(self):
         for damage in ("moved", "invalid"):
             with self.subTest(damage=damage):

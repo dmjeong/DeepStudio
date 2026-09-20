@@ -43,9 +43,21 @@ def training_capabilities(task, mode, anomaly_method="patchcore"):
     }
 
 
-def validate_training_options(project):
+def validate_training_options(project, *, require_runnable=True):
     cfg = project.training
-    capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method)
+    if project.task == "obb" and not require_runnable:
+        capabilities = {
+            "engine": "custom",
+            "models": [],
+            "resume": False,
+            "input_channels": [1, 3],
+            "augmentation": [],
+            "layer_debug": False,
+            "layer_debug_reason": "OBB 학습 엔진은 제공하지 않습니다.",
+            "default_layer_patterns": "",
+        }
+    else:
+        capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method)
     model_id = getattr(project.model, "model_id", "")
     if project.task == "anomaly" and cfg.anomaly_method == "patchcore" and model_id:
         expected_backbones = {
@@ -77,7 +89,7 @@ def validate_training_options(project):
             # Container-only catalog entries must never fall through to the
             # legacy Custom CSP engine.  The installed pack is deliberately a
             # project setting so a saved project can be reproduced offline.
-            if "container" in spec.runtimes and "windows_native" not in spec.runtimes:
+            if require_runnable and "container" in spec.runtimes and "windows_native" not in spec.runtimes:
                 pack_path = getattr(project.model, "pack_path", "")
                 if not isinstance(pack_path, str) or not pack_path.strip():
                     raise ValueError(

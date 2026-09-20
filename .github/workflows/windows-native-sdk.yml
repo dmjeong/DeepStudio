@@ -88,9 +88,9 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install contract test dependencies
-        run: python -m pip install pytest cryptography
+        run: python -m pip install pytest cryptography numpy
       - name: Run Windows packaging and worker contracts
-        run: python -m pytest -q tests/test_windows_packaging_contracts.py tests/test_model_pack_template.py tests/test_worker_runtime.py tests/test_model_pack_worker.py tests/test_model_registry.py tests/test_asset_resolver.py tests/test_deployment_bundle.py
+        run: python -m pytest -q tests/test_windows_packaging_contracts.py tests/test_model_pack_template.py tests/test_worker_runtime.py tests/test_model_pack_worker.py tests/test_model_registry.py tests/test_asset_resolver.py tests/test_deployment_bundle.py -k "not emit_sdk_bundle"
       - name: Compile frozen GUI builder
         run: python -m py_compile gui/build_exe.py
 

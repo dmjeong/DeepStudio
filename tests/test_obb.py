@@ -70,6 +70,7 @@ class OBBDatasetTests(unittest.TestCase):
             from core.training_modes import validate_training_options
             with self.assertRaisesRegex(ValueError, "학습 엔진"):
                 validate_training_options(project)
+            validate_training_options(project, require_runnable=False)
             with self.assertRaisesRegex(ValueError, "학습 엔진"):
                 selection_policy(project.training, "custom", "obb")
             source = root/"input.png"

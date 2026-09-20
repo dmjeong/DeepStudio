@@ -303,7 +303,10 @@ def create_app(state_dir=None):
             if cfg.in_channels not in (1, 3) or cfg.early_stop_patience < 0:
                 raise ValueError("채널 또는 조기 종료 설정 범위 오류")
             from core.training_modes import MODE_LABELS, training_engine_name, validate_training_options
-            validate_training_options(project)
+            # Persist editable settings even before an optional container model
+            # pack is installed.  The training worker performs the strict
+            # runtime validation immediately before starting a run.
+            validate_training_options(project, require_runnable=False)
             if cfg.training_mode not in MODE_LABELS:
                 raise ValueError("학습 모드 오류")
             if cfg.training_mode.startswith("efficientnet") and (
@@ -317,8 +320,9 @@ def create_app(state_dir=None):
                 raise ValueError("PatchCore 비율 또는 패치 수 오류")
             if not math.isfinite(project.model.backbone_lr_mult) or project.model.backbone_lr_mult <= 0:
                 raise ValueError("백본 학습률 배수 범위 오류")
-            engine = training_engine_name(cfg.training_mode) if project.task != "anomaly" else "custom"
-            selection_policy(cfg, engine, project.task)
+            if project.task != "obb":
+                engine = training_engine_name(cfg.training_mode) if project.task != "anomaly" else "custom"
+                selection_policy(cfg, engine, project.task)
             if body.data_root is not None:
                 root = existing_path(body.data_root, directory=True)
                 project.data.root = str(root)
