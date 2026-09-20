@@ -54,7 +54,7 @@ class TrainingForm:
             registry, _ = registry_with_installed_packs()
             for spec in registry.list():
                 self.model_id_combo.addItem(
-                    f"{spec.display_name} · {spec.task} · {spec.release_status}",
+                    spec.display_name,
                     spec.model_id)
         except Exception:
             # A frozen UI can still open a legacy project when the optional

@@ -49,6 +49,14 @@ class LayerDebugContracts(unittest.TestCase):
             with self.assertRaises(ValueError):
                 training_capabilities(task, mode)
 
+    def test_adapter_without_hooks_cannot_silently_accept_observation(self):
+        self.project.model.model_id = "resnet18"
+        self.project.training.training_mode = "custom"
+        capabilities = training_capabilities("classify", "custom", model_id="resnet18")
+        self.assertFalse(capabilities["layer_debug"])
+        with self.assertRaisesRegex(ValueError, "연결되어 있지"):
+            validate_training_options(self.project)
+
     def test_unsupported_and_invalid_observation_rejected(self):
         for mode in ("unsupported_finetune", "unsupported_resume"):
             self.project.training.training_mode = mode

@@ -246,11 +246,11 @@ def test_layer_observation_controls_and_result_reset(page):
     assert page.debug_table.item(0, 7).text() == "0"
     page.project.training.training_mode = "unsupported_finetune"
     page.set_project(page.project)
-    assert not page.debug_group.isEnabled()
+    assert not page.debug_check.isEnabled()
     page._sync_config()
     assert not page.project.training.layer_debug_enabled
     page.set_project(page.project)
     assert page.debug_table.rowCount() == 0
     change_mode(page, "efficientnet_resume")
-    assert page.debug_group.isEnabled()
+    assert page.debug_check.isEnabled()
     assert not page.lr_spin.isEnabled()

@@ -88,7 +88,7 @@ class TrainingWidget(TrainingForm, QWidget):
             self.model_id_combo.clear()
             for spec in registry.list(project.task):
                 self.model_id_combo.addItem(
-                    f"{spec.display_name} · {spec.release_status}", spec.model_id)
+                    spec.display_name, spec.model_id)
             if model_id and self.model_id_combo.findData(model_id) < 0:
                 self.model_id_combo.addItem(f"저장된 모델 팩 · {model_id}", model_id)
             index = self.model_id_combo.findData(model_id)
@@ -156,6 +156,7 @@ class TrainingWidget(TrainingForm, QWidget):
                     self.mode_combo.setCurrentIndex(custom)
         if model_id in {"efficientnet_b0", "efficientnet_b1"}:
             self._on_efficientnet_model_changed()
+        self._on_patchcore_settings_changed()
         self._update_pack_controls()
 
     def _selected_container_spec(self):
@@ -302,7 +303,8 @@ class TrainingWidget(TrainingForm, QWidget):
             return {"layer_debug": False, "layer_debug_reason": "지원하지 않는 모델 형식입니다.",
                     "augmentation": [], "default_layer_patterns": "features.0,features.1.*,classifier.1"}
         return training_capabilities(self.project.task if self.project else "classify",
-                                     self.mode_combo.currentData(), self.anomaly_method_combo.currentData())
+                                     self.mode_combo.currentData(), self.anomaly_method_combo.currentData(),
+                                     model_id=self.model_id_combo.currentData() or "")
 
     def _reset_unsupported_augmentation(self):
         if self.project:
@@ -322,6 +324,9 @@ class TrainingWidget(TrainingForm, QWidget):
             for column, value in enumerate(values):
                 self.debug_table.setItem(row, column, QTableWidgetItem(value))
         self.debug_table.resizeColumnsToContents()
+        self._on_log_message(
+            f"레이어 관찰 기록: 에폭 {snapshot.get('epoch')}, 배치 {snapshot.get('batch')}, "
+            f"{len(rows)}개 레이어. 설정한 초기 배치만 기록하며 이후에는 마지막 결과를 유지합니다.")
         self.debug_table.setToolTip(f"Run {snapshot.get('run_id', '')}, epoch {snapshot.get('epoch', '')}, batch {snapshot.get('batch', '')}. Gradient는 AMP 배율 제거 후 통계입니다.")
 
     def _on_efficientnet_model_changed(self, *_):
@@ -361,7 +366,8 @@ class TrainingWidget(TrainingForm, QWidget):
         self.selection_combo.setEnabled(not is_pc and not resume)
         self._selection_changed()
         capabilities = self._training_capabilities()
-        self.debug_group.setEnabled(capabilities["layer_debug"])
+        for control in (self.debug_check, self.debug_patterns, self.debug_batches, self.debug_default):
+            control.setEnabled(capabilities["layer_debug"])
         self.debug_info.setText("선택한 초기 배치만 관찰한 뒤 전체 학습을 계속합니다. Gradient는 AMP 배율을 제거합니다."
                                 if capabilities["layer_debug"] else capabilities["layer_debug_reason"])
         for key, control in (("horizontal_flip", self.hflip_spin), ("rotation", self.rotation_spin),
@@ -825,7 +831,12 @@ class TrainingWidget(TrainingForm, QWidget):
         self.run_identity_label.setText("현재 작업: 모델 준비 중")
 
         # Loss 차트 탭으로 이동
-        self.chart_tabs.setCurrentIndex(0)
+        if self.project.training.layer_debug_enabled:
+            self.chart_tabs.setCurrentWidget(self.debug_table)
+            self._on_log_message(
+                f"레이어 관찰 대기: 학습 시작 후 첫 {self.project.training.layer_debug_batches}개 배치를 기록합니다.")
+        else:
+            self.chart_tabs.setCurrentIndex(0)
         self.debug_table.setRowCount(0)
 
         # ── 모드에 따라 워커 생성 ──────────────────────

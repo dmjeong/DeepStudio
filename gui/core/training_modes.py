@@ -22,7 +22,7 @@ def training_engine_name(mode):
     return "efficientnet" if str(mode).startswith("efficientnet") else "custom"
 
 
-def training_capabilities(task, mode, anomaly_method="patchcore"):
+def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""):
     if task == "obb":
         raise ValueError("회전 박스 데이터 편집은 지원하지만 OBB 학습 엔진은 제공하지 않습니다.")
     if task not in {"classify", "segment", "detect", "anomaly"}:
@@ -31,14 +31,19 @@ def training_capabilities(task, mode, anomaly_method="patchcore"):
     if engine == "efficientnet" and task != "classify":
         raise ValueError("EfficientNet은 분류 태스크만 지원")
     patchcore = task == "anomaly" and anomaly_method == "patchcore"
+    # These adapters run train_builtin, which does not install observation hooks.
+    separate_adapter = model_id in {
+        "resnet18", "resnet50", "convnext_v1_tiny",
+        "deeplabv3plus_resnet34", "unet_resnet18",
+    }
     return {
         "engine": engine,
         "models": ["efficientnet_b0", "efficientnet_b1"] if engine == "efficientnet" else [],
         "resume": mode.endswith("_resume") and task != "anomaly",
         "input_channels": [1, 3],
         "augmentation": ["horizontal_flip", "rotation", "color_jitter"] if not patchcore and task == "classify" else [],
-        "layer_debug": not patchcore,
-        "layer_debug_reason": "레이어 관찰은 EfficientNet과 Custom CSP에서 지원합니다. PatchCore는 미지원입니다.",
+        "layer_debug": not patchcore and not separate_adapter,
+        "layer_debug_reason": "레이어 관찰은 현재 EfficientNet과 Custom CSP에서 지원합니다. 선택한 모델의 학습 경로에는 연결되어 있지 않습니다.",
         "default_layer_patterns": "features.0,features.1.*,classifier.1" if engine == "efficientnet" else "backbone.stem,backbone.stage1,backbone.stage4",
     }
 
@@ -57,7 +62,8 @@ def validate_training_options(project, *, require_runnable=True):
             "default_layer_patterns": "",
         }
     else:
-        capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method)
+        capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method,
+                                             model_id=getattr(project.model, "model_id", ""))
     model_id = getattr(project.model, "model_id", "")
     if project.task == "anomaly" and cfg.anomaly_method == "patchcore" and model_id:
         expected_backbones = {
