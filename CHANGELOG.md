@@ -174,4 +174,4 @@
 
 **0.0 — 기준 코드**
 
-`claude/custom_csp-classification-segmentation-5c1m2m`의 `39d2902`에서 `deep-studio-v0.0` 브랜치를 생성.
+기준 커밋 `39d2902`에서 `deep-studio-v0.0` 브랜치를 생성.
