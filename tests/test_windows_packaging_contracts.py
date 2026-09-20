@@ -69,6 +69,15 @@ def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk()
     assert "VISION_NATIVE_RUNTIME_DIR" in script
     assert "--add-binary" in script
     assert "packaging" in script and "windows" in script and "models" in script
+    assert "check_runtime_dependencies" in script
+    assert '"--collect-all", "PySide6"' in script
+    assert '"--collect-all", "shiboken6"' in script
+
+
+def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():
+    script = (ROOT / "gui" / "build.bat").read_text(encoding="utf-8")
+    assert "python -m pip install -r requirements.txt" in script
+    assert "pip show pyinstaller" not in script
 
 
 def test_csharp_sdk_exposes_directory_bundle_open():

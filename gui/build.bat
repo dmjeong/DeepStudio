@@ -9,10 +9,11 @@ REM  사용법:
 REM    build.bat         — EXE 빌드
 REM    build.bat clean   — 빌드 산출물 삭제
 REM
-REM  필수 패키지:
-REM    pip install pyinstaller
+REM  이 스크립트는 requirements.txt의 데스크톱 런타임을 설치한 뒤
+REM  PyInstaller로 EXE를 만듭니다. 이미 설치한 PyTorch(CPU/CUDA)는
+REM  requirements.txt의 버전 조건을 만족하면 그대로 사용합니다.
 REM
-REM  PyTorch 선행 설치 (택 1):
+REM  GPU PyTorch를 선택 설치하려면 build.bat 실행 전에 다음 중 하나를 실행:
 REM    [GPU] pip install torch torchvision --index-url https://download.pytorch.org/whl/cu132
 REM    [CPU] pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 REM
@@ -31,11 +32,19 @@ if "%1"=="clean" (
     goto :eof
 )
 
-REM 1. PyInstaller 설치 확인
-pip show pyinstaller >nul 2>&1
+REM 1. Python 및 GUI 런타임 확인. pip 대신 같은 Python의 -m pip을 사용해
+REM    PyInstaller가 다른 가상환경의 PySide6를 참조하는 문제를 막는다.
+python --version >nul 2>&1
 if errorlevel 1 (
-    echo Installing PyInstaller...
-    pip install pyinstaller
+    echo Python 3.11+ is required and was not found on PATH.
+    exit /b 1
+)
+
+echo Installing/verifying desktop build dependencies...
+python -m pip install -r requirements.txt
+if errorlevel 1 (
+    echo DEPENDENCY INSTALL FAILED!
+    exit /b 1
 )
 
 REM 2. 빌드 실행

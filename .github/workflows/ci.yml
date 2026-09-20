@@ -288,8 +288,10 @@ jobs:
           STUDIO_VERSION=$(python -c 'import runpy; print(runpy.run_path("gui/core/version.py")["APP_VERSION"])')
           STUDIO_TAG="react-v${STUDIO_VERSION}"
           if git rev-parse "$STUDIO_TAG" >/dev/null 2>&1; then
-            test "$(git rev-list -n 1 "$STUDIO_TAG")" = "$GITHUB_SHA"
-            exit $?
+            if test "$(git rev-list -n 1 "$STUDIO_TAG")" != "$GITHUB_SHA"; then
+              echo "Release tag $STUDIO_TAG already exists; skip until APP_VERSION is increased."
+            fi
+            exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -302,4 +304,8 @@ jobs:
         run: |
           STUDIO_VERSION=$(python -c 'import runpy; print(runpy.run_path("gui/core/version.py")["APP_VERSION"])')
           STUDIO_TAG="react-v${STUDIO_VERSION}"
+          if gh release view "$STUDIO_TAG" >/dev/null 2>&1; then
+            echo "Release $STUDIO_TAG already exists; skip publishing duplicate assets."
+            exit 0
+          fi
           gh release create "$STUDIO_TAG" "release/Deep-Vision-Studio-React-v${STUDIO_VERSION}.zip" "release/Deep-Vision-Studio-React-v${STUDIO_VERSION}.zip.sha256" "release/start_web.bat" --verify-tag --target "$GITHUB_SHA" --title "Deep Vision Studio React ${STUDIO_VERSION}" --notes-file "docs/RELEASE_${STUDIO_VERSION}.md"

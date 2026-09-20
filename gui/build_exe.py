@@ -44,6 +44,7 @@ from pathlib import Path
 import sys
 import subprocess
 import shutil
+from importlib.util import find_spec
 
 # 경로 설정
 GUI_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -55,6 +56,23 @@ DIST_DIR = os.path.join(GUI_DIR, "dist")
 BUILD_DIR = os.path.join(GUI_DIR, "build")
 
 APP_NAME = "DeepVisionStudio"
+
+# PyInstaller는 설치되지 않은 hidden import도 경고만 남기고 EXE 생성을 계속할
+# 수 있다. 그 경우 EXE는 만들어져도 시작 시 ``Failed to execute main``으로
+# 끝난다. 빌드 전에 실제 데스크톱 런타임을 모두 확인한다.
+REQUIRED_RUNTIME_MODULES = {
+    "PySide6": "PySide6",
+    "matplotlib": "matplotlib",
+    "Pillow": "PIL",
+    "PyTorch": "torch",
+    "torchvision": "torchvision",
+    "NumPy": "numpy",
+    "ONNX": "onnx",
+    "ONNX Runtime": "onnxruntime",
+    "psutil": "psutil",
+    "OpenCV": "cv2",
+    "cryptography": "cryptography",
+}
 
 
 def _native_runtime_arguments() -> list[str]:
@@ -93,6 +111,17 @@ def check_pyinstaller():
         return False
 
 
+def check_runtime_dependencies() -> bool:
+    """Fail before packaging when a module required by the desktop app is absent."""
+    missing = [label for label, module in REQUIRED_RUNTIME_MODULES.items()
+               if find_spec(module) is None]
+    if not missing:
+        return True
+    print("데스크톱 실행 의존성이 누락되었습니다: " + ", ".join(missing))
+    print("  gui 폴더에서 python -m pip install -r requirements.txt 를 실행하세요.")
+    return False
+
+
 def build():
     """EXE 빌드 실행"""
     # Windows에서 리다이렉트된 한글 빌드 로그도 UTF-8로 출력한다.
@@ -100,6 +129,8 @@ def build():
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     if not check_pyinstaller():
+        sys.exit(1)
+    if not check_runtime_dependencies():
         sys.exit(1)
 
     print("=" * 60)
@@ -129,6 +160,10 @@ def build():
         "--hidden-import", "PySide6.QtWidgets",
         "--hidden-import", "PySide6.QtCore",
         "--hidden-import", "PySide6.QtGui",
+        # PyInstaller의 Qt hook에만 의존하지 않고 Qt DLL·플러그인과 shiboken을
+        # 함께 수집한다. Windows EXE가 시작 시 PySide6를 못 찾는 회귀를 막는다.
+        "--collect-all", "PySide6",
+        "--collect-all", "shiboken6",
         "--hidden-import", "matplotlib",
         "--hidden-import", "matplotlib.backends.backend_qtagg",
         "--hidden-import", "PIL",
