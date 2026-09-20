@@ -2,7 +2,7 @@
 Deep Vision Studio — 메인 엔트리포인트
 
 실행 방법:
-    cd DeepVisionStudio/gui
+    cd gui
     python main.py
 
 또는:

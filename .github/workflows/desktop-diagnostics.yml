@@ -1,0 +1,80 @@
+name: Desktop package diagnostics
+on:
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: Existing candidate workflow run
+        default: '34185119592'
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-release-candidate
+          path: candidate
+          run-id: ${{ inputs.source_run || '34185119592' }}
+          github-token: ${{ github.token }}
+      - name: Inspect the existing EXE and collect its failure log
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          from pathlib import Path
+          import ctypes, os, subprocess, tempfile, zipfile
+          from ctypes import wintypes
+          output = Path('diagnostics').resolve()
+          output.mkdir()
+          archive, = Path('candidate').glob('*.zip')
+          with tempfile.TemporaryDirectory(prefix='Deep Studio (한글) ') as folder:
+              with zipfile.ZipFile(archive) as package:
+                  package.extractall(folder)
+              executable = Path(folder) / 'DeepVisionStudio/DeepVisionStudio.exe'
+              env = {k: v for k, v in os.environ.items() if not k.startswith(('PYTHON', 'CONDA', 'VIRTUAL_ENV'))}
+              env.update(PATH=os.path.join(os.environ['SystemRoot'], 'System32'), QT_QPA_PLATFORM='offscreen', MPLBACKEND='Agg')
+              process = subprocess.Popen([str(executable), '--smoke-test', str(output/'result.json')], cwd=folder, env=env)
+              try:
+                  print('EXE_EXIT:', process.wait(timeout=60))
+              except subprocess.TimeoutExpired:
+                  user = ctypes.windll.user32
+                  callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+                  texts = []
+                  def child(hwnd, unused):
+                      length = user.GetWindowTextLengthW(hwnd)
+                      buffer = ctypes.create_unicode_buffer(length + 1)
+                      user.GetWindowTextW(hwnd, buffer, length + 1)
+                      if buffer.value: texts.append(buffer.value)
+                      return True
+                  def window(hwnd, unused):
+                      pid = wintypes.DWORD()
+                      user.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                      if pid.value == process.pid:
+                          child(hwnd, 0)
+                          user.EnumChildWindows(hwnd, callback(child), 0)
+                      return True
+                  user.EnumWindows(callback(window), 0)
+                  print('EXE_WINDOWS:', repr(texts))
+                  subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], check=False)
+                  process.wait(timeout=30)
+              log = Path.home() / 'deep-studio-desktop.log'
+              if log.exists():
+                  content = log.read_text(encoding='utf-8', errors='replace')
+                  (output/'desktop.log').write_text(content, encoding='utf-8')
+                  print('EXE_LOG:', content[-24000:])
+              else:
+                  print('EXE_LOG_NOT_CREATED')
+          PYCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-diagnostics
+          path: diagnostics/

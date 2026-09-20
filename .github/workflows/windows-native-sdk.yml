@@ -1,0 +1,238 @@
+# Pushes to main validate the Windows payload before it reaches the default branch.
+name: Deep Studio Windows SDK and payload
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdk/**"
+      - "cpp/**"
+      - "model_runtime/**"
+      - "gui/core/model_pack_worker.py"
+      - "gui/core/model_registry.py"
+      - "webapp/worker.py"
+      - "python/export_onnx.py"
+      - "python/export_patchcore_onnx.py"
+      - "python/export_sam2_onnx.py"
+      - "python/builtin_models.py"
+      - "packaging/windows/**"
+      - "packaging/model-pack-template/**"
+      - "gui/build_exe.py"
+      - "gui/requirements.txt"
+      - "gui/widgets/**"
+      - "THIRD_PARTY_NOTICES.md"
+      - "tests/test_windows_packaging_contracts.py"
+      - "tests/test_model_pack_template.py"
+      - "tests/test_export_contracts.py"
+      - ".github/workflows/windows-native-sdk.yml"
+  pull_request:
+    paths:
+      - "sdk/**"
+      - "cpp/**"
+      - "model_runtime/**"
+      - "gui/core/model_pack_worker.py"
+      - "gui/core/model_registry.py"
+      - "webapp/worker.py"
+      - "python/export_onnx.py"
+      - "python/export_patchcore_onnx.py"
+      - "python/export_sam2_onnx.py"
+      - "python/builtin_models.py"
+      - "packaging/windows/**"
+      - "packaging/model-pack-template/**"
+      - "gui/build_exe.py"
+      - "gui/requirements.txt"
+      - "gui/widgets/**"
+      - "THIRD_PARTY_NOTICES.md"
+      - "tests/test_windows_packaging_contracts.py"
+      - "tests/test_model_pack_template.py"
+      - "tests/test_export_contracts.py"
+      - ".github/workflows/windows-native-sdk.yml"
+  workflow_dispatch:
+    inputs:
+      require_offline_wsl:
+        description: "Require the licensed offline WSL/Docker payload for a production installer"
+        required: true
+        default: false
+        type: boolean
+      require_release_ready_models:
+        description: "Require every catalog model and staged model pack to be release-ready"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  csharp-sdk:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build C# SDK
+        run: dotnet build sdk/csharp/VisionRuntime.csproj --configuration Release
+
+  payload-contracts:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install contract test dependencies
+        run: python -m pip install pytest cryptography
+      - name: Run Windows packaging and worker contracts
+        run: python -m pytest -q tests/test_windows_packaging_contracts.py tests/test_model_pack_template.py tests/test_worker_runtime.py tests/test_model_pack_worker.py tests/test_model_registry.py tests/test_asset_resolver.py tests/test_deployment_bundle.py
+      - name: Compile frozen GUI builder
+        run: python -m py_compile gui/build_exe.py
+
+  wix-installer-contract:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Install C++ runtime dependencies
+        shell: pwsh
+        run: |
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT
+          if ([string]::IsNullOrWhiteSpace($vcpkg)) { throw "VCPKG_INSTALLATION_ROOT is missing" }
+          & (Join-Path $vcpkg "vcpkg.exe") install opencv4:x64-windows nlohmann-json:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency build failed" }
+      - name: Download pinned ONNX Runtime native package
+        shell: pwsh
+        run: |
+          $version = "1.29.0"
+          $archive = Join-Path $env:RUNNER_TEMP "onnxruntime-win-x64-$version.zip"
+          $root = Join-Path $env:RUNNER_TEMP "onnxruntime-win-x64-$version"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/microsoft/onnxruntime/releases/download/v$version/onnxruntime-win-x64-$version.zip" -OutFile $archive
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP
+          "ONNXRUNTIME_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build C++17 native runtime
+        shell: pwsh
+        run: |
+          $build = Join-Path $env:RUNNER_TEMP "vision-cpp-build"
+          $native = Join-Path $env:RUNNER_TEMP "vision-native"
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT
+          $toolchain = Join-Path $vcpkg "scripts\buildsystems\vcpkg.cmake"
+          cmake -S cpp -B $build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE=$toolchain -DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT `
+            -DVISION_BUILD_DEMO=OFF -DBUILD_TESTING=OFF
+          if ($LASTEXITCODE -ne 0) { throw "C++ configure failed" }
+          cmake --build $build --config Release --target vision_runtime --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "C++ native runtime build failed" }
+          New-Item -ItemType Directory -Force -Path $native | Out-Null
+          $runtime = Get-ChildItem -Path $build -Recurse -Filter "vision_runtime.dll" | Select-Object -First 1
+          if ($null -eq $runtime) { throw "vision_runtime.dll was not produced" }
+          Copy-Item $runtime.FullName (Join-Path $native "vision_runtime.dll")
+          $ort = Get-ChildItem -Path $env:ONNXRUNTIME_ROOT -Recurse -Filter "onnxruntime.dll" | Select-Object -First 1
+          if ($null -eq $ort) { throw "onnxruntime.dll was not found" }
+          Copy-Item $ort.FullName $native
+          $opencv = Join-Path $vcpkg "installed\x64-windows\bin"
+          $opencvDlls = Get-ChildItem -Path $opencv -Filter "*.dll"
+          if ($opencvDlls.Count -eq 0) { throw "OpenCV runtime DLLs were not found" }
+          Copy-Item $opencvDlls.FullName $native
+          "VISION_NATIVE_RUNTIME_DIR=$native" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build the actual frozen Windows GUI
+        shell: pwsh
+        run: |
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r gui/requirements.txt
+          python gui/build_exe.py
+          if (-not (Test-Path "gui\dist\DeepVisionStudio\DeepVisionStudio.exe")) {
+            throw "PyInstaller did not produce DeepVisionStudio.exe"
+          }
+      - name: Install pinned WiX toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 7.0.0
+          $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+          "PATH=$env:PATH" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          wix --version
+      - name: Publish C# SDK into the payload source
+        run: dotnet publish sdk/csharp/VisionRuntime.csproj --configuration Release --output "$env:RUNNER_TEMP\csharp-sdk"
+      - name: Stage deterministic offline payload
+        shell: pwsh
+        run: |
+          $source = Join-Path $env:RUNNER_TEMP "studio-source"
+          $payload = Join-Path $env:RUNNER_TEMP "studio-payload"
+          $sdk = Join-Path $env:RUNNER_TEMP "csharp-sdk"
+          $native = $env:VISION_NATIVE_RUNTIME_DIR
+          $app = Join-Path $env:GITHUB_WORKSPACE "gui\dist\DeepVisionStudio"
+          $requireWsl = $env:REQUIRE_OFFLINE_WSL -eq "true"
+          $requireModels = $env:REQUIRE_RELEASE_READY_MODELS -eq "true"
+          $stageArgs = @(
+            "--output", $payload,
+            "--source", "app=$app",
+            "--source", "sdk=$sdk",
+            "--source", "sdk/native=$native",
+            "--notice", "THIRD_PARTY_NOTICES.md"
+          )
+          if ($requireModels) {
+            $modelRoot = $env:DEEPVISION_MODEL_PAYLOAD_ROOT
+            $modelTrustStore = $env:DEEPVISION_MODEL_PACK_TRUST_STORE
+            if ([string]::IsNullOrWhiteSpace($modelRoot) -or -not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
+              throw "DEEPVISION_MODEL_PAYLOAD_ROOT must point to a release-ready model payload source when require_release_ready_models is true."
+            }
+            if ([string]::IsNullOrWhiteSpace($modelTrustStore) -or -not (Test-Path -LiteralPath $modelTrustStore -PathType Leaf)) {
+              throw "DEEPVISION_MODEL_PACK_TRUST_STORE must point to an Ed25519 public-key trust store when require_release_ready_models is true."
+            }
+            if (-not (Test-Path -LiteralPath (Join-Path $modelRoot "default-model-catalog.json") -PathType Leaf)) {
+              throw "Release-ready model payload must include default-model-catalog.json."
+            }
+            $stageArgs += @("--source", "models=$modelRoot")
+          } else {
+            $stageArgs += @("--source", "models=packaging/windows/models")
+          }
+          if ($requireWsl) {
+            $wsl = $env:DEEPVISION_WSL_PAYLOAD_ROOT
+            if ([string]::IsNullOrWhiteSpace($wsl) -or -not (Test-Path -LiteralPath $wsl -PathType Container)) {
+              throw "DEEPVISION_WSL_PAYLOAD_ROOT must point to the licensed offline WSL payload source when require_offline_wsl is true."
+            }
+            $stageArgs += @("--source", "runtime/wsl=$wsl", "--source", "runtime/wsl/bootstrap_wsl.ps1=packaging/windows/wsl/bootstrap_wsl.ps1")
+          }
+          python packaging/windows/stage_payload.py @stageArgs
+          python packaging/windows/collect_payloads.py $payload --manifest (Join-Path $env:RUNNER_TEMP "release-manifest.json") --version 1.0.0 --commit $env:GITHUB_SHA
+          $validateArgs = @($payload, "--manifest", (Join-Path $env:RUNNER_TEMP "release-manifest.json"))
+          if ($requireModels) {
+            $validateArgs += @("--require-release-ready-models", "--model-pack-trust-store", $env:DEEPVISION_MODEL_PACK_TRUST_STORE)
+          }
+          python packaging/windows/validate_payloads.py @validateArgs
+      - name: Build offline WiX MSI and Burn setup contract
+        shell: pwsh
+        run: |
+          $payload = Join-Path $env:RUNNER_TEMP "studio-payload"
+          $output = Join-Path $env:RUNNER_TEMP "studio-release"
+          $releaseArgs = @("packaging/windows/build_release.ps1", "-PayloadRoot", $payload, "-Version", "1.0.0", "-OutputDirectory", $output)
+          if ($env:REQUIRE_OFFLINE_WSL -eq "true") { $releaseArgs += "-RequireOfflineWsl" }
+          if ($env:REQUIRE_RELEASE_READY_MODELS -eq "true") {
+            $releaseArgs += @("-RequireReleaseReadyModels", "-ModelPackTrustStore", $env:DEEPVISION_MODEL_PACK_TRUST_STORE)
+          }
+          pwsh @releaseArgs
+          Get-ChildItem $output | Format-Table Name,Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepvisionstudio-wix-contract
+          path: |
+            ${{ runner.temp }}/studio-release/*.msi
+            ${{ runner.temp }}/studio-release/*.exe
+          if-no-files-found: error
+    env:
+      REQUIRE_OFFLINE_WSL: ${{ inputs.require_offline_wsl || false }}
+      REQUIRE_RELEASE_READY_MODELS: ${{ inputs.require_release_ready_models || false }}

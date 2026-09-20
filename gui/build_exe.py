@@ -4,7 +4,7 @@ Deep Vision Studio — EXE 빌드 스크립트
 PyInstaller를 사용하여 독립 실행 파일(.exe) 생성
 
 사용법:
-    cd DeepVisionStudio/gui
+    cd gui
     python build_exe.py
 
 선택적 네이티브 SDK 포함:

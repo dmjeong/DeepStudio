@@ -2,3 +2,10 @@ demo_results/
 demo_results_trained/
 data_cache/
 *.pt
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+uv.lock
+runs/

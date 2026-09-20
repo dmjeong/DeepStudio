@@ -1,0 +1,310 @@
+name: Deep Studio CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["**", ".github/workflows/*.yml", ".gitattributes"]
+  pull_request:
+    branches: [main]
+    paths: ["**", ".github/workflows/*.yml", ".gitattributes"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: studio-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  result-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install numpy matplotlib psutil pillow opencv-python-headless
+      - name: Verify persistence and result coordinates without Qt or model downloads
+        working-directory: .
+        run: |
+          python -m unittest discover -s tests -p test_project_persistence.py -v
+          python -m unittest discover -s tests -p test_training_results_integrity.py -v
+          python -m unittest discover -s tests -p test_cpp_preprocessing.py -v
+          python -m unittest discover -s tests -p test_layer_debug_contracts.py -v
+          python -m unittest discover -s tests -p test_export_contracts.py -v
+          python -m unittest discover -s tests -p test_opencv_pipeline.py -v
+          python -m unittest discover -s tests -p test_efficientnet_channels.py -v
+
+  model-comparison:
+    uses: ./.github/workflows/training-comparison.yml
+
+  lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install ruff
+      - name: Lint Python
+        run: ruff check gui/core/ gui/widgets/ webapp/ run_web.py start_web.py tools/bootstrap_smoke.py tools/windows_release_smoke.py tools/package_web.py --select=E,F,W --ignore=E501,E402 --output-format=json --output-file=lint-results.json
+      - name: Summarize lint
+        if: always()
+        id: lint_summary
+        run: python tools/ci_summary.py lint lint-results.json
+      - name: "Lint result: ${{ steps.lint_summary.outputs.summary }}"
+        if: always()
+        run: echo 'See lint-results.json for full diagnostics.'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          retention-days: 3
+          name: lint-results
+          path: lint-results.json
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+      MPLBACKEND: Agg
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: gui/requirements.txt
+      - name: Install PyTorch CPU
+        run: python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Install Linux Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0
+      - name: Install dependencies
+        run: python -m pip install -r gui/requirements.txt -r webapp/requirements.txt pytest pytest-timeout==2.4.0 httpx
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Windows'
+        with:
+          node-version: "22"
+      - name: Rebuild the release candidate without artifact storage
+        if: runner.os == 'Windows'
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Package the Windows test candidate
+        if: runner.os == 'Windows'
+        run: python tools/package_web.py --output release
+      - name: Run the exact packaged Windows launcher and server
+        if: runner.os == 'Windows'
+        run: python tools/windows_release_smoke.py --release-dir release --runtime
+      - name: Verify desktop project and detection layouts
+        run: |
+          python tools/project_layout_smoke.py
+          python tools/detection_layout_smoke.py
+      - name: Record environment
+        run: python -m pip freeze > test-environment.txt
+      - name: Capture and verify real training UI with synthetic projects
+        run: python tools/training_ui_proof.py
+      - name: Run regression tests
+        run: python -m pytest tests/ --timeout=180 --timeout-method=thread -v --tb=short --junitxml=test-results.xml
+      - name: Verify automatic pip setup and cached launch
+        run: python tools/bootstrap_smoke.py
+      - name: Verify official EfficientNet B0 and B1 layers and fine tuning
+        run: python tools/efficientnet_pretrained_smoke.py
+      - name: Test official ImageNet PatchCore transfer and offline restore
+        run: python tools/patchcore_pretrained_smoke.py
+      - name: Verify EfficientNet export and optimized inference contracts
+        run: python -m unittest tests.test_efficientnet_deployment -v
+      - name: Summarize tests
+        if: always()
+        id: test_summary
+        run: python tools/ci_summary.py junit test-results.xml
+      - name: "Test result: ${{ steps.test_summary.outputs.summary }}"
+        if: always()
+        run: echo 'See test-results.xml for individual results.'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          retention-days: 3
+          name: test-results-${{ matrix.os }}
+          path: |
+            test-results.xml
+            test-environment.txt
+            efficientnet-validation.json
+            training-ui-proof/
+            cpu-benchmark/
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install and build React
+        working-directory: web
+        run: |
+          npm ci
+          npm audit --audit-level=high
+          npm test
+          npm run build
+      - name: Verify static assets through FastAPI
+        run: |
+          python -m pip install fastapi==0.128.0 httpx
+          python tools/web_asset_smoke.py
+      - name: Package the exact release candidate
+        run: python tools/package_web.py --output release
+      - name: Verify real browser workflows from the packaged ZIP
+        working-directory: web
+        run: |
+          python -m pip install uvicorn==0.34.0 numpy Pillow psutil opencv-python-headless
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+          python -c "import glob,zipfile; zipfile.ZipFile(glob.glob('../release/*.zip')[0]).extractall('../browser-package')"
+          STUDIO_PACKAGE_ROOT=../browser-package/DeepVisionStudio node tests/browser-workflow.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          retention-days: 3
+          name: browser-results
+          path: web/browser-results/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          retention-days: 3
+          name: react-build
+          path: |
+            web/dist/
+            web/package-lock.json
+
+  windows-launcher:
+    needs: frontend
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Rebuild the launcher candidate without artifact storage
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Package the launcher candidate
+        working-directory: .
+        run: python tools/package_web.py --output release
+      - name: Fetch the reported v8.0 package for batch diagnostics
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v8.0 --repo $env:GITHUB_REPOSITORY --pattern Deep-Vision-Studio-React-v8.0.zip --dir baseline
+      - name: Diagnose v8.0 bytes and verify the packaged launcher
+        run: python tools/windows_release_smoke.py --release-dir release --baseline-dir baseline
+
+  datagen-contract:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install isolated Data Gen CPU contract environment
+        run: |
+          python -m pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements-datagen.txt
+      - name: Test real Diffusers LoRA backward, safe reload and data integrity
+        run: python -m unittest tests.test_datagen tests.test_datagen_diffusers -v
+
+  cpp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install C++ dependencies
+        run: sudo apt-get update && sudo apt-get install -y libopencv-dev nlohmann-json3-dev
+      - name: Install ONNX Runtime
+        run: |
+          curl --fail --location --retry 3 https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-linux-x64-1.29.0.tgz -o "$RUNNER_TEMP/ort.tgz"
+          tar -xzf "$RUNNER_TEMP/ort.tgz" -C "$RUNNER_TEMP"
+      - name: Configure C++
+        run: cmake -S cpp -B build -DCMAKE_BUILD_TYPE=Release -DONNXRUNTIME_ROOT="$RUNNER_TEMP/onnxruntime-linux-x64-1.29.0"
+      - name: Build C++
+        run: cmake --build build --parallel 2
+      - name: Create deterministic ONNX fixtures
+        run: |
+          python -m pip install onnx pillow opencv-python-headless
+          python cpp/tests/make_models.py build/test-models
+      - name: Compare Python and compiled C++ OpenCV preprocessing
+        working-directory: .
+        env:
+          PREPROCESS_PROBE: ${{ github.workspace }}/build/preprocess_probe
+        run: python -m unittest tests.test_cpp_preprocessing -v
+      - name: Test C++ inference contracts
+        run: ctest --test-dir build --output-on-failure
+
+  tag-release:
+    needs: [result-contracts, model-comparison, lint, test, cpp, frontend, windows-launcher, datagen-contract]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Rebuild the verified release without artifact storage
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Package the verified release
+        run: python tools/package_web.py --output release
+      - name: Tag the verified release without replacing existing tags
+        shell: bash
+        run: |
+          STUDIO_VERSION=$(python -c 'import runpy; print(runpy.run_path("gui/core/version.py")["APP_VERSION"])')
+          STUDIO_TAG="react-v${STUDIO_VERSION}"
+          if git rev-parse "$STUDIO_TAG" >/dev/null 2>&1; then
+            test "$(git rev-list -n 1 "$STUDIO_TAG")" = "$GITHUB_SHA"
+            exit $?
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$STUDIO_TAG" "$GITHUB_SHA" -m "Deep Vision Studio $STUDIO_VERSION - verified CI release"
+          git push origin "refs/tags/$STUDIO_TAG"
+      - name: Publish the local web ZIP with the verified tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          STUDIO_VERSION=$(python -c 'import runpy; print(runpy.run_path("gui/core/version.py")["APP_VERSION"])')
+          STUDIO_TAG="react-v${STUDIO_VERSION}"
+          gh release create "$STUDIO_TAG" "release/Deep-Vision-Studio-React-v${STUDIO_VERSION}.zip" "release/Deep-Vision-Studio-React-v${STUDIO_VERSION}.zip.sha256" "release/start_web.bat" --verify-tag --target "$GITHUB_SHA" --title "Deep Vision Studio React ${STUDIO_VERSION}" --notes-file "docs/RELEASE_${STUDIO_VERSION}.md"

@@ -377,14 +377,14 @@ def test_release_script_has_production_offline_wsl_payload_gate():
     assert 'runtime\\wsl\\owned-distro.tar' in script
     assert 'runtime\\wsl\\licenses\\manifest.json' in script
     assert 'runtime\\wsl\\bootstrap_wsl.ps1' in script
-    workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
     assert '-RequireOfflineWsl' in workflow
     assert 'DEEPVISION_WSL_PAYLOAD_ROOT' in workflow
     assert 'bootstrap_wsl.ps1' in workflow
 
 
 def test_windows_workflow_keeps_release_ready_models_as_an_explicit_gate():
-    workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
     assert "require_release_ready_models" in workflow
     assert 'type: boolean' in workflow
     assert 'DEEPVISION_MODEL_PAYLOAD_ROOT' in workflow
@@ -415,9 +415,9 @@ def test_offline_wsl_bootstrap_rolls_back_only_a_failed_new_import():
 
 
 def test_windows_workflow_builds_real_gui_and_native_runtime():
-    workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
-    assert '"DeepVisionStudio/cpp/**"' in workflow
-    assert '"DeepVisionStudio/gui/widgets/**"' in workflow
+    workflow = (ROOT / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
+    assert '"cpp/**"' in workflow
+    assert '"gui/widgets/**"' in workflow
     assert "vcpkg.exe" in workflow
     assert 'version = "1.29.0"' in workflow
     assert "onnxruntime-win-x64-$version.zip" in workflow
@@ -425,14 +425,14 @@ def test_windows_workflow_builds_real_gui_and_native_runtime():
     assert "python gui/build_exe.py" in workflow
     assert '"--source", "app=$app"' in workflow
     assert '"--source", "sdk/native=$native"' in workflow
-    assert '"DeepVisionStudio/python/export_onnx.py"' in workflow
-    assert '"DeepVisionStudio/python/export_sam2_onnx.py"' in workflow
-    assert '"DeepVisionStudio/tests/test_export_contracts.py"' in workflow
+    assert '"python/export_onnx.py"' in workflow
+    assert '"python/export_sam2_onnx.py"' in workflow
+    assert '"tests/test_export_contracts.py"' in workflow
     assert "release-contract" not in workflow
 
 
 def test_ci_cpp_runtime_pin_matches_measured_onnx_runtime():
-    workflow = (ROOT.parent / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "onnxruntime-linux-x64-1.29.0.tgz" in workflow
     assert "onnxruntime-linux-x64-1.29.0\"" in workflow
 
@@ -445,14 +445,14 @@ def test_python_requirements_pin_the_same_onnx_runtime_release():
 
 
 def test_windows_workflow_keeps_offline_wsl_as_an_explicit_release_gate():
-    workflow = (ROOT.parent / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "windows-native-sdk.yml").read_text(encoding="utf-8")
     assert "require_offline_wsl" in workflow
     assert 'type: boolean' in workflow
     assert '$requireWsl = $env:REQUIRE_OFFLINE_WSL -eq "true"' in workflow
     assert 'if ($requireWsl)' in workflow
     assert 'if ($env:REQUIRE_OFFLINE_WSL -eq "true") { $releaseArgs += "-RequireOfflineWsl" }' in workflow
-    assert 'DeepVisionStudio/packaging/model-pack-template/**' in workflow
-    assert 'DeepVisionStudio/tests/test_model_pack_template.py' in workflow
+    assert 'packaging/model-pack-template/**' in workflow
+    assert 'tests/test_model_pack_template.py' in workflow
 
 
 def test_real_payload_layout_contains_managed_and_native_sdk_runtime(tmp_path):
