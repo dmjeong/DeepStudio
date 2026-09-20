@@ -129,7 +129,8 @@ int main(int argc, char** argv) {
         report["target"] = {{"metric","wall.p95_ms"}, {"threshold_ms",target},
                             {"met_on_this_machine", report["wall"]["p95_ms"].get<double>() <= target},
                             {"all_measured_requests_within_target",report["wall"]["max_ms"].get<double>() <= target}};
-        report["onnxruntime_options"] = {{"allow_spinning", config.ort_allow_spinning},
+        report["onnxruntime_options"] = {{"graph_optimization_level", config.ort_graph_optimization_level},
+                                         {"allow_spinning", config.ort_allow_spinning},
                                          {"dynamic_block_base", config.ort_dynamic_block_base}};
         if (!output.empty()) {
             const auto path = std::filesystem::u8path(output);

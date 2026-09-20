@@ -80,8 +80,17 @@ VisionInference::~VisionInference()
 // ═══════════════════════════════════════════════════
 
 namespace {
+GraphOptimizationLevel GraphLevel(const std::string& name)
+{
+    if (name == "all") return GraphOptimizationLevel::ORT_ENABLE_ALL;
+    if (name == "basic") return GraphOptimizationLevel::ORT_ENABLE_BASIC;
+    if (name == "disabled") return GraphOptimizationLevel::ORT_DISABLE_ALL;
+    throw std::invalid_argument("graph_optimization_level must be all, basic or disabled.");
+}
+
 void ValidateConfig(const InferenceConfig& config)
 {
+    GraphLevel(config.ort_graph_optimization_level);
     if (config.ort_allow_spinning < -1 || config.ort_allow_spinning > 1 || config.ort_dynamic_block_base < 0)
         throw std::invalid_argument("Invalid ONNX Runtime threading options.");
     if (config.runtime != "onnxruntime" && config.runtime != "openvino")
@@ -220,7 +229,7 @@ bool VisionInference::Initialize(const InferenceConfig& config)
 #endif
         }
         Ort::SessionOptions options;
-        options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        options.SetGraphOptimizationLevel(GraphLevel(config.ort_graph_optimization_level));
         options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
         if (config.ort_allow_spinning >= 0)
             options.AddConfigEntry("session.intra_op.allow_spinning", config.ort_allow_spinning ? "1" : "0");
@@ -323,14 +332,20 @@ bool VisionInference::InitializeFromJson(const std::string& config_path,
         if (!file) throw std::runtime_error("Cannot open configuration file.");
         const auto doc = nlohmann::json::parse(file);
         if (!doc.is_object()) throw std::invalid_argument("Configuration must be an object.");
-        if (doc.value("schema_version", 1) != 5)
-            throw std::invalid_argument("Re-export this model: OpenCV preprocessing requires schema 5.");
+        if (!doc.contains("schema_version") || !doc.at("schema_version").is_number_integer() ||
+            (doc.at("schema_version") != 5 && doc.at("schema_version") != 6))
+            throw std::invalid_argument("Re-export this model: supported schemas are 5 and 6.");
+        if (doc.at("schema_version") == 6 &&
+            (!doc.contains("onnxruntime") || !doc.at("onnxruntime").is_object() ||
+             !doc.at("onnxruntime").contains("graph_optimization_level") || !doc.contains("num_threads")))
+            throw std::invalid_argument("Schema 6 requires the verified ONNX Runtime settings.");
         InferenceConfig config;
         if (num_threads < -1) throw std::invalid_argument("Invalid thread override.");
         config.runtime = runtime.empty() ? doc.value("runtime", std::string("onnxruntime")) : runtime;
         if (doc.contains("onnxruntime")) {
             const auto& tuning = doc.at("onnxruntime");
             if (!tuning.is_object()) throw std::invalid_argument("onnxruntime must be an object.");
+            config.ort_graph_optimization_level = tuning.value("graph_optimization_level", std::string("all"));
             if (tuning.contains("allow_spinning")) {
                 if (!tuning.at("allow_spinning").is_boolean())
                     throw std::invalid_argument("allow_spinning must be boolean.");

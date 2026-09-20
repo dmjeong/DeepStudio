@@ -43,7 +43,8 @@ class EfficientNetOnnx:
             # retry the original evaluation graph before falling back to PyTorch.
             with tempfile.TemporaryDirectory(prefix="studio-efficientnet-") as folder:
                 path = Path(folder) / "model.onnx"
-                export_to_onnx(export_model, dummy, path, dynamic_batch=False, task="classify")
+                export_to_onnx(export_model, dummy, path, dynamic_batch=False, task="classify",
+                               constant_folding=graph_name == "fused")
                 model_bytes = path.read_bytes()
             probes = []
             invalid_reference = None

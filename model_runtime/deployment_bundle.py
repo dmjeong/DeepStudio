@@ -46,8 +46,14 @@ def _read_config(path: Path) -> dict[str, Any]:
         raise DeploymentBundleError(f"cannot read deployment config: {path}") from exc
     if not isinstance(value, dict):
         raise DeploymentBundleError("deployment config must be a JSON object")
-    if value.get("schema_version") != 5:
-        raise DeploymentBundleError("deployment config schema_version 5 is required")
+    if type(value.get("schema_version")) is not int or value["schema_version"] not in (5, 6):
+        raise DeploymentBundleError("deployment config schema_version 5 or 6 is required")
+    if value["schema_version"] == 6:
+        settings = value.get("onnxruntime")
+        if (not isinstance(settings, dict) or
+                settings.get("graph_optimization_level") not in ("all", "basic", "disabled") or
+                type(value.get("num_threads")) is not int or not 0 <= value["num_threads"] <= 2147483647):
+            raise DeploymentBundleError("schema 6 requires the verified ONNX Runtime settings")
     backend = value.get("backend")
     task = value.get("task")
     if not isinstance(backend, str) or not backend or not isinstance(task, str) or not task:

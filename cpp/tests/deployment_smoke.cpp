@@ -117,6 +117,29 @@ int main(int argc, char** argv)
             check_classification(gray);
         }
 
+        // This graph's Conv/BN folding really changes FP32 outputs: merely
+        // parsing the flag without passing it to ORT must fail this test.
+        const cv::Mat white(2, 3, CV_8UC1, cv::Scalar(255));
+        require(engine.InitializeFromJson((root / "runtime_optimization.json").u8string()),
+                "Schema 6 runtime fallback rejected.");
+        require(engine.GetConfig().ort_graph_optimization_level == "disabled" &&
+                    engine.GetConfig().num_threads == 1, "Verified settings not loaded.");
+        const auto unoptimized = engine.Classify(white).probabilities[0];
+        require(std::abs(unoptimized - 1.0 / (1.0 + std::exp(-2.0))) < 1e-6,
+                "ORT optimizations were re-enabled: cancellation output changed.");
+        auto optimized_config = engine.GetConfig();
+        optimized_config.ort_graph_optimization_level = "all";
+        require(engine.Initialize(optimized_config), "ALL optimization rejected.");
+        require(std::abs(engine.Classify(white).probabilities[0] - unoptimized) > 0.1,
+                "Fixture does not distinguish optimized and original computation.");
+        optimized_config.ort_graph_optimization_level = "unknown";
+        require(!engine.Initialize(optimized_config), "Unknown optimization level accepted.");
+        auto missing_profile = incompatible;
+        missing_profile["schema_version"] = 6;
+        std::ofstream(root / "missing_profile.json") << missing_profile;
+        require(!engine.InitializeFromJson((root / "missing_profile.json").u8string()),
+                "Schema 6 without verified settings accepted.");
+
         auto gray_contract = incompatible;
         gray_contract["backend"] = "efficientnet";
         gray_contract["model_config"] = {{"implementation_version", 2}, {"in_channels", 1},

@@ -244,3 +244,35 @@ for path in sorted(bundle.iterdir()):
     "schema_version": 1, "bundle_type": "onnx-deployment", "config": "classify.json",
     "backend": "custom", "task": "classify", "verification": "passed", "files": files,
 }, sort_keys=True), encoding="utf-8")
+
+# Real FP32 cancellation: Conv(1 * 1e8 - 1e8) + BN beta(1) gives 1.
+# Folding beta into the Conv bias loses the +1 at this magnitude and gives 0.
+initializers = [helper.make_tensor(name, TensorProto.FLOAT, shape, values) for name, shape, values in (
+    ("w", [1, 1, 1, 1], [1e8]), ("b", [1], [-1e8]),
+    ("scale", [1], [1]), ("beta", [1], [1]),
+    ("mean", [1], [0]), ("variance", [1], [1]))]
+nodes = [helper.make_node("Conv", ["input_image", "w", "b"], ["conv"], kernel_shape=[1, 1]),
+         helper.make_node("BatchNormalization", ["conv", "scale", "beta", "mean", "variance"], ["bn"], epsilon=0.),
+         helper.make_node("ReduceMean", ["bn"], ["positive"], axes=[2, 3], keepdims=0),
+         helper.make_node("Neg", ["positive"], ["negative"]),
+         helper.make_node("Concat", ["positive", "negative"], ["class_logits"], axis=1)]
+model = helper.make_model(helper.make_graph(nodes, "runtime_optimization", inputs, [output], initializers),
+                          opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
+onnx.checker.check_model(model)
+onnx.save(model, root / "runtime_optimization.onnx")
+config = json.loads((root / "classify.json").read_text(encoding="utf-8"))
+config.update(schema_version=6, model_path="runtime_optimization.onnx", num_threads=1,
+              normalize_mean=[0.], normalize_std=[1.],
+              onnxruntime={"graph_optimization_level": "disabled"})
+(root / "runtime_optimization.json").write_text(json.dumps(config), encoding="utf-8")
+bundle = root / "runtime_optimization.dvdeploy"
+shutil.rmtree(bundle, ignore_errors=True)
+bundle.mkdir()
+for name in ("runtime_optimization.json", "runtime_optimization.onnx"):
+    (bundle / name).write_bytes((root / name).read_bytes())
+files = {path.name: {"size": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+         for path in sorted(bundle.iterdir())}
+(bundle / "manifest.json").write_text(json.dumps({
+    "schema_version": 1, "bundle_type": "onnx-deployment", "config": "runtime_optimization.json",
+    "backend": "custom", "task": "classify", "verification": "passed", "files": files,
+}, sort_keys=True), encoding="utf-8")

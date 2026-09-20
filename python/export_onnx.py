@@ -277,10 +277,13 @@ def export_to_onnx(model, dummy_input, output_path, opset_version=17,
     return str(output_path)
 
 
-def verify_onnx(onnx_path, dummy_input, pytorch_model, task="classify", atol=None):
+def verify_onnx(onnx_path, dummy_input, pytorch_model, task="classify", atol=None,
+                runtime_settings=None):
     import torch
     import onnxruntime as ort
-    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    from onnx_session import cpu_session_options
+    options = cpu_session_options(**(runtime_settings or {}))
+    session = ort.InferenceSession(str(onnx_path), options, providers=["CPUExecutionProvider"])
     pytorch_model.cpu().eval()
     with torch.no_grad():
         expected = pytorch_model(dummy_input.cpu()).detach().numpy()
@@ -438,6 +441,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
     with tempfile.TemporaryDirectory(prefix=".onnx-export-", dir=output.parent) as temp:
         stage = Path(temp)
         staged_model = stage / output.name
+        runtime_settings = None
+        runtime_attempts = []
         log(f"내보내기 시작: {backend}")
         if backend in {"custom", "efficientnet", "builtin", "redetr_v4"}:
             spec = resolve_checkpoint_spec(checkpoint, overrides)
@@ -464,16 +469,17 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                 log("ONNX Runtime 검증: 내보낸 PyTorch 그래프와 비교 "
                     f"(atol={verification_profile['atol']}, rtol={verification_profile['rtol']}, probes=seeded+zero)")
                 failed_probe, failed_probe_name = dummy, "seeded"
-                def verify_candidate(candidate):
+                def verify_candidate(candidate, settings=None):
                     nonlocal failed_probe, failed_probe_name
                     probes = [("seeded", dummy), ("zero", torch.zeros_like(dummy))]
                     if dynamic_batch:
                         probes.append(("dynamic_batch_2", dummy.repeat(2, 1, 1, 1)))
                     for probe_name, probe in probes:
                         failed_probe, failed_probe_name = probe, probe_name
+                        kwargs = {} if settings is None else {"runtime_settings": settings}
                         verified = (verify_redetr_onnx(staged_model, probe, candidate)
                                     if backend == "redetr_v4"
-                                    else verify_onnx(staged_model, probe, candidate, task=spec["task"]))
+                                    else verify_onnx(staged_model, probe, candidate, task=spec["task"], **kwargs))
                         if not verified:
                             raise ValueError("ONNX 검증 실패")
                 try:
@@ -494,23 +500,26 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                     try:
                         verify_candidate(model)
                     except ValueError as original_error:
-                        log("ONNX 수치 원인 진단: 실행 최적화·FP64·중간 레이어 비교 중")
-                        try:
-                            from onnx_diagnostics import diagnose_efficientnet
-                            numeric = diagnose_efficientnet(model, staged_model, failed_probe,
-                                                           probe_name=failed_probe_name, opset=opset_version)
-                            summary = numeric["summary"]
-                            if numeric.get("first_divergent_stage"):
-                                summary += f"; 진단 그래프 최초 차이: {numeric['first_divergent_stage']}"
-                        except Exception as diagnostic_error:
-                            numeric = {"diagnostic_error": str(diagnostic_error)}
-                            summary = f"추가 수치 진단 실패: {diagnostic_error}"
-                        log("수치 진단: " + summary)
-                        raise ExportVerificationError(
-                            f"최적화·원본 그래프 모두 ONNX 검증 실패.\n"
-                            f"최적화: {optimized_error}\n원본 FP32: {original_error}\n"
-                            f"수치 진단: {summary}", numeric
-                        ) from original_error
+                        # A diagnostic pass on one probe is insufficient. Validate
+                        # every input again using the exact settings to be shipped.
+                        threads = max(1, min(torch.get_num_threads(), 4))
+                        for level in ("all", "basic", "disabled"):
+                            settings = {"graph_optimization_level": level, "num_threads": threads}
+                            log(f"원본 그래프 실행 설정 재시도: 최적화={level}, CPU {threads} threads")
+                            try:
+                                verify_candidate(model, settings)
+                            except ValueError as runtime_error:
+                                runtime_attempts.append({**settings, "passed": False,
+                                                         "probe": failed_probe_name, "error": str(runtime_error)})
+                            else:
+                                runtime_settings = settings
+                                runtime_attempts.append({**settings, "passed": True})
+                                log(f"모든 입력 검증 통과: 최적화={level}, CPU {threads} threads. 배포 JSON에 설정 저장")
+                                break
+                        if runtime_settings is None:
+                            _raise_efficientnet_verification_error(
+                                model, staged_model, failed_probe, failed_probe_name, opset_version,
+                                optimized_error, original_error, runtime_attempts, log)
             metadata = {"task": spec["task"], "num_classes": spec["num_classes"],
                         "input_size": [spec["input_height"], spec["input_width"]],
                         "in_channels": spec["in_channels"], "class_names": spec["class_names"],
@@ -543,6 +552,14 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
         if backend == "efficientnet":
             manifest["export"]["optimization"] = model.inference_optimization
             manifest["export"]["verification_reference"] = "exported_pytorch_graph"
+            if runtime_settings is not None:
+                # Earlier SDKs must reject this contract instead of silently
+                # enabling ALL again and undoing the verified fallback.
+                manifest["schema_version"] = 6
+                manifest["onnxruntime"] = {"graph_optimization_level": runtime_settings["graph_optimization_level"]}
+                manifest["num_threads"] = runtime_settings["num_threads"]
+                manifest["export"]["verified_runtime_settings"] = runtime_settings
+                manifest["export"]["runtime_attempts"] = runtime_attempts
         if backend == "redetr_v4":
             manifest["export"]["output_names"] = ["pred_boxes", "pred_logits"]
             manifest["postprocessing"]["class_scores"] = spec["model_config"].get("score_activation", "sigmoid")
@@ -555,8 +572,31 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
               "file_size_mb": output.stat().st_size / (1024 * 1024),
               "backend": backend, "verification": "passed" if verify else "skipped",
               "task": metadata["task"], "cpp_supported": manifest["cpp_supported"]}
+    if runtime_settings is not None:
+        result["runtime_settings"] = runtime_settings
     log(f"내보내기 완료: {output}\n배포 설정: {config_path}\n검증: {result['verification']}")
     return result
+
+
+def _raise_efficientnet_verification_error(model, path, probe, probe_name, opset,
+                                         optimized_error, original_error, attempts, log):
+    log("ONNX 수치 원인 진단: 실행 최적화·FP64·중간 레이어 비교 중")
+    try:
+        from onnx_diagnostics import diagnose_efficientnet
+        numeric = diagnose_efficientnet(model, path, probe, probe_name=probe_name, opset=opset)
+        summary = numeric["summary"]
+        if numeric.get("first_divergent_stage"):
+            summary += f"; 진단 그래프 최초 차이: {numeric['first_divergent_stage']}"
+    except Exception as diagnostic_error:
+        numeric = {"diagnostic_error": str(diagnostic_error)}
+        summary = f"추가 수치 진단 실패: {diagnostic_error}"
+    numeric["runtime_attempts"] = attempts
+    log("수치 진단: " + summary)
+    raise ExportVerificationError(
+        f"최적화·원본 그래프 및 실행 설정 모두 ONNX 검증 실패.\n"
+        f"최적화: {optimized_error}\n원본 FP32: {original_error}\n"
+        f"실행 설정 재시도: {attempts[-1]['error']}\n수치 진단: {summary}", numeric
+    ) from original_error
 
 
 def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_batch=False,

@@ -404,7 +404,8 @@ std::string bundle_config_path(const char* bundle_path_utf8) {
     std::ifstream config_stream(config);
     if (!config_stream) throw std::invalid_argument("Deployment bundle config cannot be opened.");
     const auto config_json = nlohmann::json::parse(config_stream);
-    if (!config_json.is_object() || config_json.value("schema_version", 0) != 5)
+    if (!config_json.is_object() || (config_json.value("schema_version", 0) != 5 &&
+                                    config_json.value("schema_version", 0) != 6))
         throw std::invalid_argument("Deployment bundle config is unsupported.");
     validate_bundle_references(root, config_json);
     return config.lexically_normal().u8string();

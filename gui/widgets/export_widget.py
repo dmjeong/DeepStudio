@@ -246,6 +246,10 @@ class ExportWidget(QWidget):
                 f"크기: {result['file_size_mb']:.1f} MB")
         if result.get("cpp_supported"):
             text += "\n제공된 C++ 추론기에서 ONNX와 JSON을 함께 로드할 수 있습니다."
+        if result.get("runtime_settings"):
+            settings = result["runtime_settings"]
+            level = {"all": "전체", "basic": "기본", "disabled": "끔"}[settings["graph_optimization_level"]]
+            text += f"\n검증된 실행 설정: ONNX Runtime 최적화 {level}, CPU {settings['num_threads']} 스레드"
         self.log_text.append(text)
         QMessageBox.information(self, "완료", text)
 

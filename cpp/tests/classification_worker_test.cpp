@@ -108,6 +108,13 @@ int main(int argc, char** argv) {
                 Require(std::abs(got.probabilities[i]-expected.probabilities[i])<1e-5,"Background probabilities mismatch.");
             actual.Stop();
         }
+        const auto numerical_path = (std::filesystem::u8path(argv[1]) / "runtime_optimization.json").u8string();
+        ClassificationWorker numerical(numerical_path);
+        numerical.Ready().get();
+        const auto stable = numerical.Submit(10, cv::Mat(2, 3, CV_8UC1, cv::Scalar(255))).get().prediction;
+        Require(std::abs(stable.confidence - 1.0 / (1.0 + std::exp(-2.0))) < 1e-6,
+                "Background worker ignored the verified runtime settings.");
+        numerical.Stop();
         std::cout << "Background ownership, FIFO, errors, shutdown, concurrent producers and actual runtime contracts passed.\n";
         return 0;
     } catch(const std::exception& error) { std::cerr<<error.what()<<'\n'; return 1; }

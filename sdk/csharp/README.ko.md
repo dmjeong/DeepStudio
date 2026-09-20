@@ -21,10 +21,14 @@ classification/segmentation API로 읽는다. 모델 가중치는 SDK에 포함�
 전처리 설정, SHA-256 manifest를 묶으며 `VisionSession.Open`에는 번들 안의 설정 경로를 넘긴다.
 디렉터리 번들을 바로 열 때는 `VisionSession.OpenBundle("model.dvdeploy")`를 사용한다.
 
+0.06 이상의 native SDK는 schema 6의 `onnxruntime.graph_optimization_level`을
+그대로 적용한다. `numThreads`를 생략하면 JSON에 저장된 검증 스레드 수를 사용한다.
+최적화를 꺼야 통과한 모델도 이 경로로 실행하며, 구형 native DLL은 schema 6을 거부한다.
+
 ```csharp
 using DeepVisionStudio;
 
-using var session = VisionSession.Open("classify.json", numThreads: 4);
+using var session = VisionSession.Open("classify.json");
 var result = session.InferClassification(bytes, width, height, channels);
 Console.WriteLine($"{result.ClassName}: {result.Confidence:P2}");
 ```

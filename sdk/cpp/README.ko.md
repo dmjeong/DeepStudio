@@ -43,11 +43,16 @@ encoder/decoder 그래프에서 동작하는 이미지 자동 마스크 primitiv
 
 ## 최소 사용 예
 
+0.06 이상의 SDK는 schema 6 JSON의 `onnxruntime.graph_optimization_level`
+(`all` / `basic` / `disabled`)을 세션에 적용한다. 최적화를 꺼야 검증을 통과한 모델은
+ONNX와 해당 JSON을 함께 사용한다. 스레드 수 `-1`은 JSON의 검증 값을 유지한다.
+구형 SDK는 schema 6을 거부하므로 헤더와 native 라이브러리를 함께 업데이트한다.
+
 ```cpp
 #include "vision_runtime_c.h"
 
 dv_session_options options{
-    sizeof(dv_session_options), DV_ABI_VERSION, "onnxruntime", 4};
+    sizeof(dv_session_options), DV_ABI_VERSION, "onnxruntime", -1};
 dv_session* session = nullptr;
 if (dv_create_session("model.json", &options, &session) != DV_STATUS_OK) {
     // 생성 실패 직후에도 dv_last_error(nullptr)를 읽을 수 있다.

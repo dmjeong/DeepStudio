@@ -23,7 +23,7 @@ if (image.Length != expected)
     return 2;
 }
 
-using var session = VisionSession.OpenBundle(args[0], numThreads: 4);
+using var session = VisionSession.OpenBundle(args[0]);
 var result = session.InferClassification(image, width, height, channels);
 Console.WriteLine($"class_id={result.ClassId} class={result.ClassName} confidence={result.Confidence:R} total_ms={result.TotalMilliseconds:R}");
 return 0;

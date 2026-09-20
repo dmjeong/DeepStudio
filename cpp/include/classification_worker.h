@@ -27,7 +27,7 @@ public:
 
     // num_threads=-1 reads num_threads from JSON; 0 uses the runtime's automatic count.
     ClassificationWorker(const std::string& config_path, const std::string& runtime = "onnxruntime",
-                         int num_threads = 4, size_t max_pending = 2, int warmup = 10);
+                         int num_threads = -1, size_t max_pending = 2, int warmup = 10);
     // Factory executes on the worker thread; useful for embedding an existing predictor.
     explicit ClassificationWorker(Factory factory, size_t max_pending = 2);
     ~ClassificationWorker();

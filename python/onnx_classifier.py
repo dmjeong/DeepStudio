@@ -9,8 +9,11 @@ import numpy as np
 def validate_config(config):
     from opencv_preprocess import resize_contract
     from center_crop import validate_center_crop
-    if config.get("schema_version") != 5 or config.get("backend") != "efficientnet" or config.get("task") != "classify":
+    if (type(config.get("schema_version")) is not int or config["schema_version"] not in (5, 6) or
+            config.get("backend") != "efficientnet" or config.get("task") != "classify"):
         raise ValueError("현재 버전에서 내보낸 EfficientNet JSON 필요")
+    from onnx_session import deployment_session_settings
+    deployment_session_settings(config)
     for key in ("input_height", "input_width", "input_channels", "num_classes"):
         if type(config.get(key)) is not int or config[key] < 1:
             raise ValueError(f"양의 정수 필요: {key}")
@@ -117,6 +120,7 @@ class ImageClassifier:
 class OnnxClassifier(ImageClassifier):
     def __init__(self, config_path, *, num_threads=None):
         import onnxruntime as ort
+        from onnx_session import cpu_session_options, deployment_session_settings
         path = Path(config_path)
         super().__init__(config_path)
         if num_threads is None:
@@ -124,10 +128,9 @@ class OnnxClassifier(ImageClassifier):
         if type(num_threads) is not int or num_threads < 0:
             raise ValueError("스레드 수는 0 이상의 정수 필요")
         cfg = self.config
-        options = ort.SessionOptions()
-        options.intra_op_num_threads = num_threads
-        options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        settings = deployment_session_settings(cfg)
+        settings["num_threads"] = num_threads
+        options = cpu_session_options(**settings)
         self.session = ort.InferenceSession(str(path.parent / cfg["model_path"]), options,
                                             providers=["CPUExecutionProvider"])
         inputs, outputs = self.session.get_inputs(), self.session.get_outputs()

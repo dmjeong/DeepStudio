@@ -85,6 +85,7 @@ struct InferenceConfig
     // ── 추론 옵션 ──
     int num_threads = 0;          ///< CPU 스레드 수 (0: 자동)
     std::string runtime = "onnxruntime"; ///< onnxruntime or optional openvino (classification)
+    std::string ort_graph_optimization_level = "all"; ///< all, basic, disabled; loaded from deployment JSON
     int ort_allow_spinning = -1;  ///< -1: SDK default, 0: sleep, 1: spin
     int ort_dynamic_block_base = 0; ///< 0: SDK default; e.g. 4: dynamic work partitioning
     bool enable_profiling = false; ///< 프로파일링 활성화

@@ -10,7 +10,7 @@ int main(int argc, char** argv)
     }
     try {
         cv::setNumThreads(1);
-        ClassificationWorker inference(argv[1], argc == 4 ? argv[3] : "onnxruntime", 4, 2, 30);
+        ClassificationWorker inference(argv[1], argc == 4 ? argv[3] : "onnxruntime", -1, 2, 30);
         // Loading/compilation/warmup also execute on the worker. Your UI remains here.
         size_t main_loop_ticks = 0;
         auto ready = inference.Ready();

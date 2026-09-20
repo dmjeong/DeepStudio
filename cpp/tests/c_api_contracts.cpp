@@ -32,6 +32,19 @@ int main(int argc, char** argv)
                 "C ABI invalid create arguments were not diagnosed.");
         require(dv_create_session(config.c_str(), &options, &session) == DV_STATUS_OK && session,
                 "C ABI session creation failed.");
+        dv_session* numerical_session = nullptr;
+        dv_result* numerical_result = nullptr;
+        const auto numerical_bundle = (fs::u8path(argv[1]) / "runtime_optimization.dvdeploy").u8string();
+        require(dv_create_session_from_bundle(numerical_bundle.c_str(), nullptr, &numerical_session) == DV_STATUS_OK,
+                "C ABI schema 6 bundle rejected.");
+        const unsigned char white[] = {255, 255, 255, 255, 255, 255};
+        const dv_image_view white_view{sizeof(dv_image_view), DV_ABI_VERSION, white, 3, 2, 1, 3};
+        require(dv_infer(numerical_session, &white_view, &numerical_result) == DV_STATUS_OK && numerical_result,
+                "C ABI numerical fixture inference failed.");
+        require(std::abs(numerical_result->confidence - 1.0 / (1.0 + std::exp(-2.0))) < 1e-6,
+                "C ABI ignored the verified graph optimization level.");
+        dv_release_result(numerical_result);
+        dv_close_session(numerical_session);
         const auto bundle = fs::u8path(argv[1]) / "classify.dvdeploy";
         dv_session* bundle_session = nullptr;
         require(dv_create_session_from_bundle(bundle.u8string().c_str(), &options, &bundle_session) == DV_STATUS_OK &&
