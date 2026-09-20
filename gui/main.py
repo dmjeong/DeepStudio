@@ -73,6 +73,9 @@ if sys.stdout is None or sys.stderr is None:
     sys.stdout = sys.stdout or _stream
     sys.stderr = sys.stderr or _stream
 
+from core.console_encoding import configure_console_output
+configure_console_output()
+
 # 이제 core.paths를 안전하게 import 가능
 from core.paths import GUI_DIR, PYTHON_DIR, ensure_python_path
 from core.version import APP_NAME, APP_VERSION

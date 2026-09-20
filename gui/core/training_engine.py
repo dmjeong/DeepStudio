@@ -28,6 +28,8 @@ class TrainingEvents:
 
 class TrainingEngine:
     def __init__(self, project, *, signals=None, should_stop=None):
+        from core.console_encoding import configure_console_output
+        configure_console_output()
         self.project = project
         self.signals = signals if signals is not None else TrainingEvents()
         self._cancel_check = should_stop or (lambda: False)

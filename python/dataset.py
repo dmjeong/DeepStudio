@@ -218,7 +218,7 @@ class ClassificationDataset(Dataset):
                 f"폴더 구조: root/class_name/image.jpg 형식이어야 합니다."
             )
 
-        print(f"📂 Classification 데이터셋 로드: {root}")
+        print(f"Classification 데이터셋 로드: {root}")
         print(f"   클래스 수: {len(self.classes)}")
         print(f"   이미지 수: {len(self.samples)}")
         for cls_name, idx in self.class_to_idx.items():
@@ -313,7 +313,7 @@ class SegmentationDataset(Dataset):
                 f"  마스크: {mask_dir}"
             )
 
-        print(f"📂 Segmentation 데이터셋 로드")
+        print("Segmentation 데이터셋 로드")
         print(f"   이미지-마스크 쌍: {len(self.pairs)}")
 
     def _find_pairs(self) -> List[Tuple[str, str]]:
@@ -430,7 +430,7 @@ class AnomalyDataset(Dataset):
                 f"train/good/ 또는 test/{{good,defect}}/ 구조를 확인하세요."
             )
 
-        print(f"📂 Anomaly 데이터셋 로드: {root}")
+        print(f"Anomaly 데이터셋 로드: {root}")
         print(f"   이미지 수: {len(self.samples)}")
         good_count = sum(1 for l in self.labels if l == 0)
         defect_count = sum(1 for l in self.labels if l == 1)
@@ -538,7 +538,7 @@ class DetectionDataset(Dataset):
                 f"  레이블 형식: class_id x_center y_center width height"
             )
 
-        print(f"📂 Detection 데이터셋 로드")
+        print("Detection 데이터셋 로드")
         print(f"   이미지-레이블 쌍: {len(self.samples)}")
 
     def _find_pairs(self) -> List[Tuple[str, str]]:
