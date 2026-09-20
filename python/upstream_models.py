@@ -88,7 +88,7 @@ def _api():
 
 
 def build_upstream_model(model_id: str, *, num_classes: int, device: str,
-                         weights: str | None = None):
+                         weights: str | None = None, pretrained: bool = False):
     """Create the exact public upstream wrapper for training or export.
 
     ``weights=None`` means random initialization.  Passing a local path is a
@@ -96,6 +96,11 @@ def build_upstream_model(model_id: str, *, num_classes: int, device: str,
     to the same selected family.
     """
     spec = get_upstream_spec(model_id)
+    if pretrained:
+        if weights is not None:
+            raise ValueError("기본 제공 사전학습 가중치와 로컬 가중치를 동시에 사용할 수 없습니다")
+        from builtin_assets import builtin_asset_path
+        weights = str(builtin_asset_path(model_id))
     if num_classes < 1:
         raise ValueError("num_classes must be positive")
     LibreMobileNetV4, LibreYOLO9, LibreRTDETRv4 = _api()
@@ -186,7 +191,7 @@ class _ProgressCallback:
 
 def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: list[str],
                          output_dir: str | Path, epochs: int, batch_size: int,
-                         learning_rate: float, device: str, weights: str | None,
+                         learning_rate: float, device: str, weights: str | None, pretrained: bool = False,
                          resume: bool, use_amp: bool, patience: int,
                          emit: Callable[[dict], None]) -> dict:
     """Run an upstream native trainer and return its documented result map."""
@@ -196,7 +201,7 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
     if resume and not weights:
         raise ValueError("학습 재개에는 같은 모델의 last.pt 또는 best.pt가 필요합니다")
     model = build_upstream_model(model_id, num_classes=len(class_names), device=device,
-                                 weights=weights)
+                                 weights=weights, pretrained=pretrained)
     source = str(data_root)
     if spec.task == "detect":
         source = str(write_detection_dataset_yaml(data_root, class_names, output / "dataset.yaml"))

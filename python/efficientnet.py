@@ -245,10 +245,9 @@ class EfficientNet(nn.Module):
 
 def load_imagenet(model, *, weights_path=None):
     """1000개 클래스 원형에 엄격히 로드한 후 사용자 분류기만 새로 초기화한다."""
-    from model_download import cached_imagenet_weights
+    from builtin_assets import builtin_asset_path
     spec = VARIANTS[model.architecture]
-    path = Path(weights_path) if weights_path else cached_imagenet_weights(
-        spec.url, Path(torch.hub.get_dir()) / "checkpoints")
+    path = Path(weights_path) if weights_path else builtin_asset_path(model.architecture)
     state = torch.load(path, map_location="cpu", weights_only=True)
     if not isinstance(state, dict):
         raise ValueError("ImageNet state_dict 형식 오류")

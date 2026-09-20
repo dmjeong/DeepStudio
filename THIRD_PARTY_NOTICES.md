@@ -1,9 +1,11 @@
 # Third-party notices
 
-Deep Vision Studio does not commit pretrained model weights. A release payload
-must include the exact source license and notice for every dependency it
-actually bundles; this file is the source list for the payload review and is
-not a substitute for a release-specific SBOM.
+Deep Vision Studio does not commit pretrained model weights to this source
+repository. The Windows build fetches the declared basic-model weights into
+the release payload. A release payload must include the exact source license
+and notice for every dependency and weight it actually bundles; this file is
+the source list for the payload review and is not a substitute for a
+release-specific SBOM.
 
 | Component | Use | Upstream license / source |
 |---|---|---|
@@ -21,8 +23,8 @@ Its distribution LICENSE and applicable NOTICE entries must be copied into the
 installer payload with this notice. Re-DETRv4 remains a source candidate until
 its source revision, license/NOTICE, Windows worker and ONNX acceptance tests
 are all present. SAM2 pretrained weights are obtained only from Meta's published
-`facebook/sam2.1-*` repositories after the user requests a download; they are
+`facebook/sam2.1-*` repositories during the controlled Windows build; they are
 not committed to this repository. A user-added `.dvmodel` must carry its own `license` object, source
 revision, asset hashes, and required notices before release signing.
-Pretrained weights are separate assets and require review against the exact
-model card before redistribution.
+Every bundled pretrained weight requires review against its exact model card
+before redistribution.

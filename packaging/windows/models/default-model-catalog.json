@@ -4,7 +4,7 @@
   "offline": true,
   "release_ready_only": false,
   "redistribution_policy": {
-    "weights_included": false,
+    "weights_included": true,
     "require_third_party_notices": true,
     "require_license_files_for_release_packs": true
   },
@@ -466,7 +466,7 @@
       ],
       "release_status": "requested",
       "pretrained_asset": "facebook/sam2.1-hiera-tiny",
-      "notes": "공식 SAM2.1 사전학습 가중치 다운로드 지원; image/prompt/automatic-mask; video memory state 미지원",
+      "notes": "공식 SAM2.1 사전학습 가중치가 설치본에 포함됨; image/prompt/automatic-mask; video memory state 미지원",
       "metadata": {
         "contracts": {
           "graphs": {
@@ -540,7 +540,7 @@
       ],
       "release_status": "requested",
       "pretrained_asset": "facebook/sam2.1-hiera-small",
-      "notes": "공식 SAM2.1 사전학습 가중치 다운로드 지원; image/prompt/automatic-mask; video memory state 미지원",
+      "notes": "공식 SAM2.1 사전학습 가중치가 설치본에 포함됨; image/prompt/automatic-mask; video memory state 미지원",
       "metadata": {
         "contracts": {
           "graphs": {
@@ -614,7 +614,7 @@
       ],
       "release_status": "requested",
       "pretrained_asset": "facebook/sam2.1-hiera-base-plus",
-      "notes": "공식 SAM2.1 사전학습 가중치 다운로드 지원; image/prompt/automatic-mask; video memory state 미지원",
+      "notes": "공식 SAM2.1 사전학습 가중치가 설치본에 포함됨; image/prompt/automatic-mask; video memory state 미지원",
       "metadata": {
         "contracts": {
           "graphs": {
@@ -688,7 +688,7 @@
       ],
       "release_status": "requested",
       "pretrained_asset": "facebook/sam2.1-hiera-large",
-      "notes": "공식 SAM2.1 사전학습 가중치 다운로드 지원; image/prompt/automatic-mask; video memory state 미지원",
+      "notes": "공식 SAM2.1 사전학습 가중치가 설치본에 포함됨; image/prompt/automatic-mask; video memory state 미지원",
       "metadata": {
         "contracts": {
           "graphs": {

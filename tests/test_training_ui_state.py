@@ -128,14 +128,14 @@ def test_all_native_training_events_show_epoch_timing_without_polluting_metrics_
 
 
 @pytest.mark.parametrize("task,model_id", [("segment", "sam2_hiera_tiny")])
-def test_pending_shipped_models_do_not_require_a_docker_pack(page, task, model_id):
+def test_sam2_shipped_model_uses_packaged_pretrained_asset_without_a_docker_pack(page, task, model_id):
     project = copy.deepcopy(page.project)
     project.task = task
     project.model.model_id = model_id
     project.training.training_mode = "custom"
     page.set_project(project)
     assert page.mode_combo.count() == 1
-    assert "기본 제공 Windows worker" in page.mode_desc.text()
+    assert "사전학습 가중치는 설치본에 포함" in page.mode_desc.text()
     assert "모델 팩" not in page.mode_desc.text()
     assert "EfficientNet" not in page.mode_combo.currentText()
 

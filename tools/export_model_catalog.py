@@ -22,7 +22,7 @@ def build_catalog(*, release_ready_only: bool = False) -> dict:
         "offline": True,
         "release_ready_only": release_ready_only,
         "redistribution_policy": {
-            "weights_included": False,
+            "weights_included": True,
             "require_third_party_notices": True,
             "require_license_files_for_release_packs": True,
         },

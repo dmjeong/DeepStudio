@@ -16,30 +16,21 @@ def build_backbone(name, pretrained):
         raise ValueError(f"PatchCore 미지원 백본: {name}")
     import torch
     import torchvision.models as models
-    from model_download import cached_imagenet_weights, certificate_failure
+    from builtin_assets import builtin_asset_path
     weights = getattr(models, BACKBONES[name][2]).IMAGENET1K_V1 if pretrained else None
-    cache = Path(torch.hub.get_dir()) / "checkpoints"
     try:
         if weights is not None:
-            cached_imagenet_weights(weights.url, cache)
-        return getattr(models, name)(weights=weights)
+            path = builtin_asset_path(name)
+            model = getattr(models, name)(weights=None)
+            model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True), strict=True)
+            return model
+        return getattr(models, name)(weights=None)
     except Exception as exc:
         if not pretrained:
             raise
-        if certificate_failure(exc):
-            raise RuntimeError(
-                f"{name} ImageNet 다운로드 인증서 검증 실패: {exc}\n"
-                f"다운로드 URL: {weights.url}\n가중치 캐시: {cache}\n"
-                "Windows 인증서 저장소와 공개 CA 목록으로도 인증서를 확인하지 못했습니다. "
-                "PC 날짜/시간과 회사 보안망의 루트 인증서 등록 상태를 확인하세요. "
-                "관리자가 제공한 PEM 인증서는 SSL_CERT_FILE 환경 변수로 지정할 수 있습니다.\n"
-                "브라우저에서 위 URL을 다운로드할 수 있다면 '로컬 ResNet 백본 가중치'에서 "
-                "같은 모델의 .pth 파일을 선택하세요."
-            ) from exc
         raise RuntimeError(
-            f"{name} ImageNet 가중치 로드 실패: {exc}\n"
-            f"가중치 캐시: {cache}\n인터넷/인증서 또는 캐시 파일 상태 확인 필요. "
-            "다운로드가 불가능하면 '로컬 백본 가중치'에서 같은 모델의 .pth 파일을 선택하세요."
+            f"{name} 기본 제공 ImageNet 가중치 로드 실패: {exc}\n"
+            "앱은 실행 중 가중치를 다운로드하지 않습니다. build.bat으로 설치본을 다시 만드세요."
         ) from exc
 
 

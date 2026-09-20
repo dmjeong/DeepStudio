@@ -196,26 +196,22 @@ class PatchCoreRuntimeTests(PatchCoreFixture):
         with self.assertRaisesRegex(ValueError, "불일치"):
             self.model(backbone_weights=str(bad))
 
-    def test_imagenet_download_failure_does_not_fall_back_to_random(self):
+    def test_missing_packaged_imagenet_weight_does_not_fall_back_to_random(self):
         from patchcore_weights import build_backbone
-        with patch("model_download.cached_imagenet_weights", side_effect=OSError("network unavailable")), \
+        with patch("builtin_assets.builtin_asset_path", side_effect=OSError("bundle unavailable")), \
                 patch("torchvision.models.resnet18") as constructor:
-            with self.assertRaisesRegex(RuntimeError, "로컬 백본 가중치"):
+            with self.assertRaisesRegex(RuntimeError, "설치본"):
                 build_backbone("resnet18", True)
         constructor.assert_not_called()
 
-    def test_certificate_failure_preserves_cause_and_gives_offline_instructions(self):
-        import ssl
-        from urllib.error import URLError
+    def test_packaged_asset_failure_preserves_cause(self):
         from patchcore_weights import build_backbone
-        failure = URLError(ssl.SSLCertVerificationError(1, "certificate verify failed"))
-        with patch("model_download.cached_imagenet_weights", side_effect=failure), \
+        failure = OSError("bundle corrupted")
+        with patch("builtin_assets.builtin_asset_path", side_effect=failure), \
                 patch("torchvision.models.resnet18") as constructor:
-            with self.assertRaisesRegex(RuntimeError, "SSL_CERT_FILE") as error:
+            with self.assertRaisesRegex(RuntimeError, "설치본") as error:
                 build_backbone("resnet18", True)
         self.assertIs(error.exception.__cause__, failure)
-        self.assertIn("https://download.pytorch.org/", str(error.exception))
-        self.assertIn("로컬 ResNet 백본 가중치", str(error.exception))
         constructor.assert_not_called()
 
     def test_atomic_save_failure_preserves_existing_checkpoint(self):

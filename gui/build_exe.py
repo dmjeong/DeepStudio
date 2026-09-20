@@ -52,6 +52,7 @@ PROJECT_ROOT = os.path.dirname(GUI_DIR)
 PYTHON_DIR = os.path.join(PROJECT_ROOT, "python")
 MODEL_CATALOG_DIR = os.path.join(PROJECT_ROOT, "packaging", "windows", "models")
 RESOURCES_DIR = os.path.join(GUI_DIR, "resources")
+BUILTIN_ASSETS_DIR = os.path.join(GUI_DIR, "builtin_assets")
 DIST_DIR = os.path.join(GUI_DIR, "dist")
 BUILD_DIR = os.path.join(GUI_DIR, "build")
 
@@ -134,6 +135,11 @@ def build():
         sys.exit(1)
     if not check_runtime_dependencies():
         sys.exit(1)
+    if PYTHON_DIR not in sys.path:
+        sys.path.insert(0, PYTHON_DIR)
+    from builtin_assets import builtin_assets_ready
+    if not builtin_assets_ready():
+        raise RuntimeError("기본 모델 가중치 묶음이 없거나 손상되었습니다. build.bat으로 빌드를 시작하세요.")
 
     print("=" * 60)
     print(f"{APP_NAME} 빌드 시작")
@@ -154,6 +160,7 @@ def build():
 
         # 데이터 파일 포함
         "--add-data", f"{RESOURCES_DIR}{os.pathsep}resources",
+        "--add-data", f"{BUILTIN_ASSETS_DIR}{os.pathsep}builtin_assets",
         "--add-data", f"{PYTHON_DIR}{os.pathsep}python",
         "--add-data", f"{os.path.join(PROJECT_ROOT, 'model_sdk', 'schemas')}{os.pathsep}model_sdk/schemas",
         "--add-data", f"{MODEL_CATALOG_DIR}{os.pathsep}packaging/windows/models",

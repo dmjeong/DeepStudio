@@ -20,13 +20,12 @@
 
 [C++17 / C# ONNX 실행·자동 테스트 예제](example/README.md)는 `example/`에서 제공한다.
 
-ResNet 18/50, ConvNeXt V1 Tiny는 `ImageNet 가중치로 시작` 또는 `로컬 가중치로 시작`을
-선택할 수 있다. DeepLab V3+와 U-Net은 ImageNet 백본을 사용하며 분할 헤드는 새로 학습한다.
-공식 파일은 최초 1회 다운로드 후 캐시로 사용한다. 가중치를 설치 파일에 새로 포함하지는 않는다.
-SAM2·Re-DETR v4·LibreYOLO도 설치본 기본 모델이다. Docker `.dvmodel`은 이 목록 밖에
-추가하는 사용자 모델 전용이다. 이 세 모델의 Windows 학습 worker와 각 변형의 ONNX 인수는
-현재 구현·검증 중이므로 `requested` 상태로 표시되며, production installer 검증은 이를
-실행 가능한 기본 모델로 잘못 출고하지 않도록 막는다.
+`build.bat`은 기본 모델의 런타임과 사전학습 가중치를 모두 받은 뒤 EXE에 포함한다.
+EfficientNet B0/B1, ResNet, ConvNeXt, DeepLab V3+, U-Net, PatchCore 백본, LibreYOLO,
+Re-DETR v4, SAM2 Hiera Tiny/Small/Base+/Large는 앱 실행 중 별도 다운로드를 하지 않는다.
+SAM2는 Settings에서 받거나 프로젝트에 적용하지 않는다. 분할 프로젝트에서 Hiera 변형을
+선택하면 번들 공식 checkpoint가 ONNX Export에 자동 연결된다. Docker `.dvmodel`은 이 목록
+밖에 추가하는 사용자 모델 전용이다.
 
 데이터셋 이미지를 열면 검출 박스와 분할 마스크를 직접 그릴 수 있다. Qt에서는
 이미지 선택 후 **데이터 티칭 / 정답 그리기**, 브라우저에서는 이미지 클릭으로 연다.

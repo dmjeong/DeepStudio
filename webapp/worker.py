@@ -251,13 +251,11 @@ def _train_upstream_project(context, project, device):
     spec = get_upstream_spec(model_id)
     mode = str(cfg.training_mode)
     source = project.model.pretrained_weights or None
-    if mode == "upstream_finetune":
-        source = spec.pretrained_name
     context.emit("log_message", [f"기본 native 모델 학습: {spec.family}/{spec.size}"])
     result = train_upstream_model(
         model_id, data_root=data.root, class_names=list(data.class_names), output_dir=run_dir,
         epochs=cfg.epochs, batch_size=cfg.batch_size, learning_rate=cfg.learning_rate,
-        device=str(device), weights=source, resume=mode == "upstream_resume",
+        device=str(device), weights=source, pretrained=mode == "upstream_finetune", resume=mode == "upstream_resume",
         use_amp=cfg.use_amp, patience=cfg.early_stop_patience, emit=progress)
     checkpoint = result.get("best_checkpoint") or result.get("last_checkpoint")
     if not checkpoint or not Path(checkpoint).is_file():

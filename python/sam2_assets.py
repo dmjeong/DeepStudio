@@ -64,8 +64,11 @@ def download_sam2_pretrained(model_id: str, cache_dir: str | Path | None = None)
 def load_sam2_pretrained(model_id: str, *, device: str = "cpu", checkpoint_path: str | Path | None = None):
     """Build an official SAM2.1 image model from a downloaded checkpoint."""
     asset = get_sam2_asset(model_id)
-    path = (Path(checkpoint_path).expanduser() if checkpoint_path is not None
-            else download_sam2_pretrained(model_id))
+    if checkpoint_path is None:
+        from builtin_assets import builtin_asset_path
+        path = builtin_asset_path(model_id)
+    else:
+        path = Path(checkpoint_path).expanduser()
     if not path.is_file():
         raise FileNotFoundError(f"SAM2 가중치 파일이 없습니다: {path}")
     try:

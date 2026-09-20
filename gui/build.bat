@@ -50,6 +50,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM 1.5. 모든 기본 모델의 사전학습 가중치를 빌드 시 한 번만 받아 EXE에 포함한다.
+REM 앱 실행 중 Settings/학습/추론 화면에서 모델 파일을 추가로 받지 않는다.
+echo Downloading/verifying packaged basic-model weights...
+python ..\python\prepare_builtin_assets.py --output builtin_assets
+if errorlevel 1 (
+    echo BASIC MODEL WEIGHT PREPARATION FAILED!
+    exit /b 1
+)
+
 REM 2. 빌드 실행
 echo Building EXE...
 python build_exe.py

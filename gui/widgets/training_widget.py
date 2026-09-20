@@ -109,10 +109,11 @@ class TrainingWidget(TrainingForm, QWidget):
             choices = [("custom", "모델 팩에서 학습" if model_id and not model_id.startswith("patchcore") else "Custom CSP")]
             self.mode_desc.setText(f"선택 모델: {name}\n해당 모델의 구현과 가중치가 포함된 .dvmodel 모델 팩이 필요합니다.")
         elif model_id in PENDING_NATIVE_MODEL_IDS:
-            choices = [("custom", "기본 모델 준비 중")]
+            choices = [("custom", "SAM2 사전학습 추론·ONNX 내보내기")]
             self.mode_desc.setText(
-                f"선택 모델: {name}\n기본 제공 Windows worker와 ONNX 인수를 구현·검증 중입니다. "
-                "다른 모델로 대체 학습하지 않습니다."
+                f"선택 모델: {name}\n사전학습 가중치는 설치본에 포함되어 있습니다. "
+                "학습 화면의 semantic class 학습과 SAM2 prompt mask 미세조정은 서로 다른 데이터 계약이므로, "
+                "이 선택에서는 학습을 시작하지 않고 Inference/ONNX Export에서 공식 가중치를 사용합니다."
             )
         else:
             choices = [("custom", "기본 내장 모델 학습")]
@@ -714,13 +715,16 @@ class TrainingWidget(TrainingForm, QWidget):
         selected_model = self.model_id_combo.currentData() if hasattr(self, "model_id_combo") else None
         if selected_model:
             mcfg.model_id = selected_model
+            if str(selected_model).startswith("sam2_hiera_"):
+                from builtin_assets import builtin_asset_path
+                mcfg.pretrained_weights = str(builtin_asset_path(selected_model))
         if mcfg.model_id not in {"efficientnet_b0", "efficientnet_b1"} and cfg.training_mode.startswith("efficientnet"):
             cfg.training_mode = "custom"
         if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
                                  "upstream_resume", "upstream_transfer"}:
             # 이어학습: resume_edit → pretrained_weights
             mcfg.pretrained_weights = self.resume_edit.text().strip()
-        elif cfg.training_mode == "custom":
+        elif cfg.training_mode == "custom" and not str(mcfg.model_id).startswith("sam2_hiera_"):
             # 커스텀: weights_edit → pretrained_weights
             mcfg.pretrained_weights = self.weights_edit.text().strip()
         elif cfg.training_mode in {"efficientnet_finetune", "builtin_finetune", "efficientnet_scratch", "builtin_scratch",

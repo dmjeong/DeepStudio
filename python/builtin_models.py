@@ -42,7 +42,7 @@ IMAGENET_WEIGHTS = {
 
 def _torchvision_base(name, *, pretrained=False, weights_path=None):
     from torchvision import models
-    from model_download import cached_imagenet_weights
+    from builtin_assets import builtin_asset_path
 
     if pretrained and weights_path:
         raise ValueError("ImageNet과 로컬 가중치를 동시에 지정할 수 없습니다")
@@ -51,13 +51,9 @@ def _torchvision_base(name, *, pretrained=False, weights_path=None):
     if pretrained:
         enum, revision = IMAGENET_WEIGHTS[name]
         weights = getattr(getattr(models, enum), revision)
-        try:
-            source = cached_imagenet_weights(weights.url, Path(torch.hub.get_dir()) / "checkpoints")
-        except Exception as exc:
-            raise RuntimeError(
-                f"{name} ImageNet 가중치 로드 실패: {exc}\n"
-                f"공식 파일: {weights.url}\n같은 파일을 다운로드한 뒤 '로컬 가중치'에서 선택할 수 있습니다."
-            ) from exc
+        key = {"resnet18": "resnet18", "resnet34": "resnet34", "resnet50": "resnet50",
+               "convnext_tiny": "convnext_v1_tiny"}[name]
+        source = builtin_asset_path(key)
         provenance.update(source="imagenet", weights=f"{enum}.{revision}", url=weights.url)
     elif weights_path:
         source = Path(weights_path)

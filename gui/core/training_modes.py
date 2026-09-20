@@ -21,7 +21,7 @@ MODE_HELP = {
     "efficientnet_transfer": "로컬 가중치에서 새 학습을 시작합니다. 클래스가 다르면 분류기를 교체합니다.",
     "efficientnet_resume": "중단한 학습의 모델, optimizer, 스케줄러와 난수 상태를 복원합니다.",
     "efficientnet_scratch": "선택한 EfficientNet B0/B1 구조를 무작위 초기화하고 처음부터 학습합니다.",
-    "builtin_finetune": "선택한 모델의 ImageNet 가중치를 검증 후 로드합니다. 최초 1회 다운로드하며 캐시가 있으면 오프라인으로 사용합니다. 분할 모델은 백본만 사전학습되어 있고 분할 헤드는 새로 학습합니다.",
+    "builtin_finetune": "선택한 모델의 설치본 ImageNet 가중치를 검증 후 로드합니다. 분할 모델은 백본만 사전학습되어 있고 분할 헤드는 새로 학습합니다.",
     "builtin_transfer": "같은 모델의 Deep Vision Studio 체크포인트 또는 해당 torchvision 백본의 .pth를 선택하세요. 새 데이터의 클래스로 학습을 시작합니다.",
     "builtin_scratch": "선택한 기본 모델 구조를 무작위 초기화하고 처음부터 학습합니다.",
     "upstream_finetune": "선택한 기본 제공 모델의 공식 사전학습 가중치로 시작합니다.",

@@ -193,6 +193,14 @@ class ExportWidget(QWidget):
             if latest.checkpoint_path:
                 self.ckpt_edit.setText(latest.checkpoint_path)
                 self._auto_checkpoint = os.path.abspath(latest.checkpoint_path)
+        # SAM2 is an app-packaged official checkpoint, not a learned Studio
+        # checkpoint. Selecting a Hiera variant therefore makes it ready for
+        # the two-graph exporter without a Settings download/apply step.
+        if (project.task == "segment" and
+                str(getattr(project.model, "model_id", "")).startswith("sam2_hiera_")):
+            from builtin_assets import builtin_asset_path
+            self.ckpt_edit.setText(str(builtin_asset_path(project.model.model_id)))
+            self._auto_checkpoint = self.ckpt_edit.text()
 
         # 기본 출력 경로
         export_dir = os.path.join(project.project_dir, "exports")
@@ -221,6 +229,15 @@ class ExportWidget(QWidget):
         """내보내기 시작"""
         ckpt_path = self.ckpt_edit.text().strip()
         output_path = self.output_edit.text().strip()
+
+        # The selection can change on the Training page after this page was
+        # initially bound to the project.  Resolve SAM2 again at action time
+        # so the packaged official checkpoint is always the export source.
+        if (self.project is not None and self.project.task == "segment" and
+                str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_")):
+            from builtin_assets import builtin_asset_path
+            ckpt_path = str(builtin_asset_path(self.project.model.model_id))
+            self.ckpt_edit.setText(ckpt_path)
 
         if not ckpt_path or not os.path.isfile(ckpt_path):
             QMessageBox.warning(self, "알림", "체크포인트 파일을 선택해 주세요.")

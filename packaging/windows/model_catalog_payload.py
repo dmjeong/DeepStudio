@@ -233,7 +233,7 @@ def validate_model_catalog_payload(
     if value.get("schema_version") != 1 or value.get("offline") is not True:
         raise ModelCatalogPayloadError("model catalog must be an offline schema_version 1 catalog")
     policy = value.get("redistribution_policy")
-    if (not isinstance(policy, Mapping) or policy.get("weights_included") is not False or
+    if (not isinstance(policy, Mapping) or policy.get("weights_included") is not True or
             policy.get("require_third_party_notices") is not True or
             policy.get("require_license_files_for_release_packs") is not True):
         raise ModelCatalogPayloadError("model catalog redistribution policy is incomplete")

@@ -57,7 +57,7 @@ def test_third_party_notice_names_optional_model_sources():
     notice = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
     for component in ("LibreYOLO", "RT-DETRv4", "SAM2 1.0", "ONNX Runtime"):
         assert component in notice
-    assert "weights are separate" in notice.lower()
+    assert "exact model card" in notice.lower()
 
 
 def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk():
@@ -75,12 +75,14 @@ def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk()
     assert '"--collect-all", "libreyolo"' in script
     assert '"--collect-all", "sam2"' in script
     assert '"--hidden-import", "huggingface_hub"' in script
+    assert '"--add-data", f"{BUILTIN_ASSETS_DIR}{os.pathsep}builtin_assets"' in script
 
 
 def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():
     script = (ROOT / "gui" / "build.bat").read_text(encoding="utf-8")
     assert "python -m pip install -r requirements.txt" in script
     assert "SAM2_BUILD_CUDA=0" in script
+    assert "prepare_builtin_assets.py --output builtin_assets" in script
     assert "pip show pyinstaller" not in script
 
 
@@ -103,7 +105,7 @@ def test_offline_default_model_catalog_matches_registry():
     catalog = json.loads((WINDOWS / "models" / "default-model-catalog.json").read_text(encoding="utf-8"))
     assert catalog["schema_version"] == 1
     assert catalog["offline"] is True
-    assert catalog["redistribution_policy"]["weights_included"] is False
+    assert catalog["redistribution_policy"]["weights_included"] is True
     expected = {spec.model_id for spec in builtin_model_specs()}
     actual = {item["model_id"] for item in catalog["models"]}
     assert actual == expected
@@ -127,7 +129,7 @@ def test_model_catalog_payload_gate_is_optional_for_development_and_strict_for_r
         "offline": True,
         "release_ready_only": False,
         "redistribution_policy": {
-            "weights_included": False,
+            "weights_included": True,
             "require_third_party_notices": True,
             "require_license_files_for_release_packs": True,
         },
@@ -212,7 +214,7 @@ def test_release_catalog_requires_every_builtin_model(tmp_path):
     catalog = {
         "schema_version": 1, "offline": True, "release_ready_only": True,
         "redistribution_policy": {
-            "weights_included": False,
+            "weights_included": True,
             "require_third_party_notices": True,
             "require_license_files_for_release_packs": True,
         },
