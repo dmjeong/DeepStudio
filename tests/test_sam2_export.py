@@ -89,7 +89,7 @@ class Sam2ExportTests(unittest.TestCase):
                 (Path(output) / "sam2_decoder.onnx").write_bytes(b"decoder")
                 return {"backend": "sam2", "verification": "passed", "config_path": str(Path(output) / "sam2.json")}
 
-            with patch("sam2_assets.load_sam2_pretrained", return_value=fake_model), \
+            with patch("sam2_assets.load_sam2_checkpoint", return_value=fake_model), \
                  patch("export_sam2_onnx.export_sam2_model", side_effect=export_adapter):
                 result = export_official_sam2_checkpoint("sam2_hiera_tiny", checkpoint, root, log=lambda _: None)
         self.assertEqual(result["model_id"], "sam2_hiera_tiny")

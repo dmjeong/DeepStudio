@@ -132,10 +132,12 @@ def test_sam2_shipped_model_uses_packaged_pretrained_asset_without_a_docker_pack
     project = copy.deepcopy(page.project)
     project.task = task
     project.model.model_id = model_id
-    project.training.training_mode = "custom"
+    project.training.training_mode = "sam2_finetune"
     page.set_project(project)
-    assert page.mode_combo.count() == 1
-    assert "사전학습 가중치는 설치본에 포함" in page.mode_desc.text()
+    assert {page.mode_combo.itemData(index) for index in range(page.mode_combo.count())} == {
+        "sam2_finetune", "sam2_transfer",
+    }
+    assert "prompt mask 미세조정" in page.mode_desc.text()
     assert "모델 팩" not in page.mode_desc.text()
     assert "EfficientNet" not in page.mode_combo.currentText()
 

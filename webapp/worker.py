@@ -285,6 +285,85 @@ def _train_upstream_project(context, project, device):
     return record
 
 
+def _train_sam2_project(context, project, device):
+    """Run the shipped SAM2 prompt-mask adapter instead of Custom CSP."""
+    from core.training_modes import SAM2_ADAPTER_IDS
+    model_id = project.model.model_id
+    if model_id not in SAM2_ADAPTER_IDS:
+        return None
+    if project.training.training_mode not in {"sam2_finetune", "sam2_transfer"}:
+        raise RuntimeError("SAM2는 '기본 제공 가중치로 미세조정' 또는 '로컬 미세조정 체크포인트' 모드로 실행하세요.")
+    from core.project import ProjectManager, RunRecord
+    from sam2_trainer import train_sam2
+    cfg, data = project.training, project.data
+    run_id = ProjectManager.new_run_id(task=project.task, model_name=model_id,
+                                       input_size=1024, project_dir=project.project_dir)
+    run_dir = Path(project.project_dir) / "runs" / run_id
+    history = []
+
+    def progress(event):
+        if event.get("event") == "training_started":
+            context.emit("progress_updated", [0, int(event["total_epochs"])])
+            context.emit("log_message", [
+                f"SAM2.1 native worker 준비 완료: {event['size']} | 1024 입력 | "
+                "image encoder 고정, prompt encoder·mask decoder 학습"
+            ])
+            return
+        if event.get("event") != "epoch_finished":
+            return
+        history.append(dict(event))
+        metrics = dict(event.get("metrics", {}))
+        metrics["epoch_time_sec"] = event.get("epoch_time_sec", 0.0)
+        metrics["elapsed_time_sec"] = event.get("elapsed_time_sec", 0.0)
+        context.emit("epoch_finished", [int(event["epoch"]), float(event["train_loss"]),
+                                        float(event["val_loss"]), metrics])
+        context.emit("lr_updated", [int(event["epoch"]), float(event["learning_rate"])])
+        if event.get("is_best"):
+            context.emit("best_epoch_updated", [int(event["best_epoch"]), float(event["train_loss"]),
+                                                 float(event["val_loss"]), metrics])
+        context.emit("progress_updated", [int(event["epoch"]), int(event["total_epochs"])])
+        context.emit("log_message", [
+            f"Epoch {event['epoch']}/{event['total_epochs']} | train={event['train_loss']:.5f} | "
+            f"val={event['val_loss']:.5f} | prompt_dice={event['metric']:.5f} | "
+            f"{event['epoch_time_sec']:.1f}s"
+        ])
+
+    source = project.model.pretrained_weights if cfg.training_mode == "sam2_transfer" else None
+    result = train_sam2(
+        model_id, data.root, output_dir=run_dir, epochs=cfg.epochs, batch_size=cfg.batch_size,
+        learning_rate=cfg.learning_rate, weight_decay=cfg.weight_decay, device=str(device),
+        use_amp=cfg.use_amp, input_size=1024, initial_checkpoint=source,
+        horizontal_flip=cfg.augmentation.horizontal_flip, rotation=cfg.augmentation.rotation,
+        color_jitter=cfg.augmentation.color_jitter, emit=progress, should_stop=context.cancelled,
+    )
+    checkpoint = result.get("best_checkpoint") or result.get("last_checkpoint")
+    if not checkpoint or not Path(checkpoint).is_file():
+        raise RuntimeError("SAM2 학습이 best.pt 또는 last.pt를 만들지 않았습니다.")
+    metric_name = "prompt_dice"
+    metrics_history = {
+        "train_loss": [float(item["train_loss"]) for item in history],
+        "val_loss": [float(item["val_loss"]) for item in history],
+        metric_name: [float(item["metric"]) for item in history],
+        "prompt_iou": [float(item["metrics"]["prompt_iou"]) for item in history],
+        "epoch_time_sec": [float(item.get("epoch_time_sec", 0.0)) for item in history],
+        "elapsed_time_sec": [float(item.get("elapsed_time_sec", 0.0)) for item in history],
+    }
+    record = RunRecord(
+        run_id=run_id, started_at=datetime.now().isoformat(), finished_at=datetime.now().isoformat(),
+        status="cancelled" if result.get("cancelled") else "completed", epochs_done=len(history),
+        best_metric=float(result.get("best_metric") or 0.0), best_epoch=int(result.get("best_epoch") or 0),
+        best_metric_name=metric_name, checkpoint_path=str(checkpoint), metrics_history=metrics_history,
+        config_snapshot={
+            "engine": "sam2", "model_id": model_id, "input_size": 1024,
+            "training_contract": "semantic-mask-to-positive-point-object-mask-v1",
+            "frozen_modules": ["image_encoder"], "sam2_result": result,
+        },
+    )
+    project.runs.append(record)
+    context.emit("training_finished", [record.best_metric, record.best_epoch, str(checkpoint)])
+    return record
+
+
 def train(context, payload):
     from core.project import ProjectManager
     from core.training_engine import TrainingEvents
@@ -317,7 +396,8 @@ def train(context, payload):
     config = {key: payload["project"][key] for key in ("task", "data", "model", "training")}
     builtin_record = _train_builtin_project(context, project, device)
     upstream_record = None if builtin_record is not None else _train_upstream_project(context, project, device)
-    if builtin_record is not None or upstream_record is not None:
+    sam2_record = None if builtin_record is not None or upstream_record is not None else _train_sam2_project(context, project, device)
+    if builtin_record is not None or upstream_record is not None or sam2_record is not None:
         engine = None
     elif project.task == "anomaly" and project.training.anomaly_method == "patchcore":
         engine_class = PatchCoreWorker
@@ -326,10 +406,11 @@ def train(context, payload):
         engine_class = EfficientNetTrainWorker
     else:
         engine_class = TrainWorker
-    if builtin_record is None and upstream_record is None:
+    if builtin_record is None and upstream_record is None and sam2_record is None:
         engine = engine_class(project, signals=TrainingEvents(context.emit), should_stop=context.cancelled)
         engine.run()
-    if builtin_record is not None or upstream_record is not None or getattr(engine, "engine_name", None) == "efficientnet":
+    if (builtin_record is not None or upstream_record is not None or sam2_record is not None or
+            getattr(engine, "engine_name", None) == "efficientnet"):
         config.update(training=asdict(project.training), model=asdict(project.model), data=asdict(project.data))
     for record in project.runs[before:]:
         record.config_snapshot = {**config, **record.config_snapshot, "runtime": runtime,

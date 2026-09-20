@@ -218,6 +218,26 @@ class NativeUpstreamModelTrainingContracts(unittest.TestCase):
             self.assertEqual(validate_training_options(project)["engine"], "custom")
 
 
+class Sam2NativeTrainingContracts(unittest.TestCase):
+    def _project(self):
+        project = ProjectData()
+        project.task = "segment"
+        project.model.model_id = "sam2_hiera_tiny"
+        project.training.training_mode = "sam2_finetune"
+        project.training.in_channels = 3
+        project.training.input_size = 1024
+        return project
+
+    def test_shipped_sam2_uses_the_native_prompt_finetune_engine(self):
+        self.assertEqual(validate_training_options(self._project())["engine"], "sam2")
+
+    def test_sam2_transfer_requires_a_local_checkpoint(self):
+        project = self._project()
+        project.training.training_mode = "sam2_transfer"
+        with self.assertRaisesRegex(ValueError, "로컬 가중치"):
+            validate_training_options(project)
+
+
 class PatchCoreSelectionContracts(unittest.TestCase):
     def test_catalog_model_and_training_backbone_must_match(self):
         project = ProjectData()

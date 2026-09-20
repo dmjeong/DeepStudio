@@ -14,6 +14,8 @@ MODE_LABELS = {
     "upstream_transfer": "선택 모델의 로컬 가중치로 시작",
     "upstream_resume": "선택 모델의 중단한 학습 재개",
     "upstream_scratch": "선택 모델을 무작위 초기화로 시작",
+    "sam2_finetune": "SAM2 기본 제공 가중치로 프롬프트 마스크 미세조정",
+    "sam2_transfer": "SAM2 로컬 미세조정 체크포인트로 시작",
     "custom": "Custom CSP",
 }
 MODE_HELP = {
@@ -28,6 +30,8 @@ MODE_HELP = {
     "upstream_transfer": "같은 모델군의 로컬 checkpoint를 사용해 새 데이터로 학습합니다.",
     "upstream_resume": "같은 모델군의 last.pt를 복원해 학습을 이어갑니다.",
     "upstream_scratch": "선택한 모델의 동일한 upstream 구조를 무작위 초기화하고 처음부터 학습합니다.",
+    "sam2_finetune": "설치본에 포함된 SAM2.1 가중치에서 시작합니다. semantic mask의 각 전경 클래스를 양성 점과 이진 객체 마스크로 바꿔 prompt encoder와 mask decoder를 학습합니다.",
+    "sam2_transfer": "같은 SAM2 Hiera 변형의 Deep Vision Studio SAM2 미세조정 체크포인트(.pt)를 선택해 새 데이터로 이어서 학습합니다.",
     "custom": "자체 CSP 구조. 초기 가중치가 없으면 무작위 초기화합니다.",
 }
 
@@ -41,11 +45,7 @@ UPSTREAM_ADAPTER_IDS = frozenset({
     "re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large",
 })
 
-# These IDs belong to the shipped catalog, not to Docker extensions.  Their
-# upstream-native training workers are deliberately not connected yet; keeping
-# the list explicit prevents a selected product ID from silently training the
-# unrelated Custom CSP fallback.
-PENDING_NATIVE_MODEL_IDS = frozenset({
+SAM2_ADAPTER_IDS = frozenset({
     "sam2_hiera_tiny", "sam2_hiera_small", "sam2_hiera_base_plus",
     "sam2_hiera_large",
 })
@@ -58,6 +58,8 @@ def training_engine_name(mode):
         return "efficientnet"
     if str(mode).startswith("builtin"):
         return "builtin"
+    if str(mode).startswith("sam2"):
+        return "sam2"
     return "upstream" if str(mode).startswith("upstream") else "custom"
 
 
@@ -71,16 +73,20 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
         raise ValueError("선택한 모델은 기본 모델의 사전학습 모드를 지원하지 않습니다.")
     if engine == "upstream" and model_id not in UPSTREAM_ADAPTER_IDS:
         raise ValueError("선택한 모델은 upstream native 학습 모드를 지원하지 않습니다.")
+    if engine == "sam2" and model_id not in SAM2_ADAPTER_IDS:
+        raise ValueError("선택한 모델은 SAM2 prompt 미세조정 모드를 지원하지 않습니다.")
+    if engine == "sam2" and task != "segment":
+        raise ValueError("SAM2는 분할 태스크만 지원합니다.")
     if engine == "efficientnet" and task != "classify":
         raise ValueError("EfficientNet은 분류 태스크만 지원")
     patchcore = task == "anomaly" and anomaly_method == "patchcore"
     # These adapters run train_builtin, which does not install observation hooks.
-    separate_adapter = model_id in BUILTIN_ADAPTER_IDS | UPSTREAM_ADAPTER_IDS
+    separate_adapter = model_id in BUILTIN_ADAPTER_IDS | UPSTREAM_ADAPTER_IDS | SAM2_ADAPTER_IDS
     return {
         "engine": engine,
         "models": ["efficientnet_b0", "efficientnet_b1"] if engine == "efficientnet" else [],
         "resume": mode.endswith("_resume") and task != "anomaly",
-        "input_channels": [1, 3],
+        "input_channels": [3] if engine == "sam2" else [1, 3],
         "augmentation": ["horizontal_flip", "rotation", "color_jitter"] if not patchcore and task == "classify" else [],
         "layer_debug": not patchcore and not separate_adapter,
         "layer_debug_reason": "레이어 관찰은 현재 EfficientNet과 Custom CSP에서 지원합니다. 선택한 모델의 학습 경로에는 연결되어 있지 않습니다.",
@@ -105,7 +111,7 @@ def validate_training_options(project, *, require_runnable=True):
         capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method,
                                              model_id=getattr(project.model, "model_id", ""))
     model_id = getattr(project.model, "model_id", "")
-    if cfg.training_mode in {"builtin_transfer", "upstream_transfer", "upstream_resume"} and require_runnable:
+    if cfg.training_mode in {"builtin_transfer", "upstream_transfer", "upstream_resume", "sam2_transfer"} and require_runnable:
         source = getattr(project.model, "pretrained_weights", "")
         if not source or not Path(source).is_file():
             raise ValueError("선택 모델의 로컬 가중치 파일(.pt/.pth)이 필요합니다.")
@@ -159,11 +165,6 @@ def validate_training_options(project, *, require_runnable=True):
                     raise ValueError("설치된 모델 팩 manifest.json을 읽을 수 없습니다.") from exc
                 if not isinstance(manifest, dict) or manifest.get("model_id") != model_id:
                     raise ValueError("프로젝트 모델 ID와 설치된 모델 팩이 일치하지 않습니다.")
-            if require_runnable and model_id in PENDING_NATIVE_MODEL_IDS:
-                raise ValueError(
-                    f"{spec.display_name}은 Docker 모델 팩이 아닌 기본 제공 모델입니다. "
-                    "현재 Windows native 학습 worker·ONNX 인수가 완료되지 않아 Custom CSP로 대체 실행할 수 없습니다."
-                )
     if type(cfg.efficientnet_no_decay) is not bool:
         raise ValueError("EfficientNet weight decay 제외 옵션은 boolean 필요")
     if capabilities["engine"] == "efficientnet" and cfg.efficientnet_model not in capabilities["models"]:

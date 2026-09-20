@@ -93,9 +93,9 @@ def export_official_sam2_checkpoint(model_id: str, checkpoint_path, output_dir: 
     this path uses Meta's public SAM2.1 checkpoint format and official builder.
     """
     try:
-        from sam2_assets import get_sam2_asset, load_sam2_pretrained
+        from sam2_assets import get_sam2_asset, load_sam2_checkpoint
         asset = get_sam2_asset(model_id)
-        model = load_sam2_pretrained(model_id, device="cpu", checkpoint_path=checkpoint_path)
+        model = load_sam2_checkpoint(model_id, device="cpu", checkpoint_path=checkpoint_path)
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
         raise Sam2ExportError(str(exc)) from exc
     input_size = int(getattr(model, "image_size", 0))

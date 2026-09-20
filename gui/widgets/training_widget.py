@@ -12,7 +12,7 @@ from PySide6.QtGui import QTextCursor
 from core.project import ProjectData, ProjectManager
 from core.qt_training import TrainWorker, PatchCoreWorker
 from core.training_modes import (training_engine_name, training_capabilities, MODE_LABELS,
-                                 BUILTIN_ADAPTER_IDS, UPSTREAM_ADAPTER_IDS, PENDING_NATIVE_MODEL_IDS)
+                                 BUILTIN_ADAPTER_IDS, UPSTREAM_ADAPTER_IDS, SAM2_ADAPTER_IDS)
 from core.training_progress import remaining_seconds, run_description
 from core.training_time import format_hms
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
@@ -62,7 +62,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self.efficientnet_model_combo.setEnabled(mode != "efficientnet_resume")
         # 이전 모델 경로: 이어학습에서만
         self.resume_frame.setVisible(mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
-                                              "upstream_resume", "upstream_transfer"})
+                                              "upstream_resume", "upstream_transfer", "sam2_transfer"})
         from core.training_modes import MODE_HELP
         help_text = MODE_HELP.get(mode, "지원하지 않는 학습 모드입니다. 현재 엔진을 선택하세요.")
         if mode == "custom" and self.model_id_combo.currentData() in BUILTIN_ADAPTER_IDS:
@@ -108,12 +108,11 @@ class TrainingWidget(TrainingForm, QWidget):
         elif self._selected_container_spec()[0] is not None:
             choices = [("custom", "모델 팩에서 학습" if model_id and not model_id.startswith("patchcore") else "Custom CSP")]
             self.mode_desc.setText(f"선택 모델: {name}\n해당 모델의 구현과 가중치가 포함된 .dvmodel 모델 팩이 필요합니다.")
-        elif model_id in PENDING_NATIVE_MODEL_IDS:
-            choices = [("custom", "SAM2 사전학습 추론·ONNX 내보내기")]
+        elif model_id in SAM2_ADAPTER_IDS:
+            choices = [(key, MODE_LABELS[key]) for key in ("sam2_finetune", "sam2_transfer")]
             self.mode_desc.setText(
-                f"선택 모델: {name}\n사전학습 가중치는 설치본에 포함되어 있습니다. "
-                "학습 화면의 semantic class 학습과 SAM2 prompt mask 미세조정은 서로 다른 데이터 계약이므로, "
-                "이 선택에서는 학습을 시작하지 않고 Inference/ONNX Export에서 공식 가중치를 사용합니다."
+                f"선택 모델: {name}\n설치본의 SAM2.1 가중치에서 prompt mask 미세조정을 수행합니다. "
+                "semantic mask의 전경 클래스별 객체 마스크와 양성 점을 만들어 학습하며, 결과 .pt는 SAM2 ONNX 내보내기에 사용할 수 있습니다."
             )
         else:
             choices = [("custom", "기본 내장 모델 학습")]
@@ -597,7 +596,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self.resume_edit.setText(
             (getattr(mcfg, "pretrained_weights", "") or "")
             if mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
-                        "upstream_resume", "upstream_transfer"}
+                        "upstream_resume", "upstream_transfer", "sam2_transfer"}
             else ""
         )
 
@@ -721,14 +720,14 @@ class TrainingWidget(TrainingForm, QWidget):
         if mcfg.model_id not in {"efficientnet_b0", "efficientnet_b1"} and cfg.training_mode.startswith("efficientnet"):
             cfg.training_mode = "custom"
         if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
-                                 "upstream_resume", "upstream_transfer"}:
+                                 "upstream_resume", "upstream_transfer", "sam2_transfer"}:
             # 이어학습: resume_edit → pretrained_weights
             mcfg.pretrained_weights = self.resume_edit.text().strip()
         elif cfg.training_mode == "custom" and not str(mcfg.model_id).startswith("sam2_hiera_"):
             # 커스텀: weights_edit → pretrained_weights
             mcfg.pretrained_weights = self.weights_edit.text().strip()
         elif cfg.training_mode in {"efficientnet_finetune", "builtin_finetune", "efficientnet_scratch", "builtin_scratch",
-                                   "upstream_finetune", "upstream_scratch"}:
+                                   "upstream_finetune", "upstream_scratch", "sam2_finetune"}:
             # 파인튜닝: 프리트레인드 모델이 소스이므로 경로 불필요
             mcfg.pretrained_weights = ""
 
@@ -739,6 +738,9 @@ class TrainingWidget(TrainingForm, QWidget):
         if cfg.training_mode in {"efficientnet_scratch", "builtin_scratch", "upstream_scratch"}:
             # Freezing random features is never a useful scratch-training mode.
             mcfg.freeze_backbone = False
+        elif cfg.training_mode in ("sam2_finetune", "sam2_transfer"):
+            # SAM2 native worker deliberately freezes its Hiera image encoder.
+            mcfg.freeze_backbone = True
         elif cfg.training_mode in ("efficientnet_finetune", "efficientnet_transfer", "builtin_finetune", "builtin_transfer",
                                    "upstream_finetune", "upstream_transfer"):
             mcfg.freeze_backbone = self.finetune_freeze_check.isChecked()
@@ -842,7 +844,7 @@ class TrainingWidget(TrainingForm, QWidget):
                 QMessageBox.warning(self, "가중치 파일 확인", f"전이학습 가중치 파일이 없습니다:\n{path}")
                 return
         if not is_anomaly and mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
-                                       "upstream_resume", "upstream_transfer"}:
+                                       "upstream_resume", "upstream_transfer", "sam2_transfer"}:
             resume_path = self.project.model.pretrained_weights
             if not resume_path:
                 QMessageBox.warning(

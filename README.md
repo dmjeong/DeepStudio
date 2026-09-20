@@ -24,8 +24,9 @@
 EfficientNet B0/B1, ResNet, ConvNeXt, DeepLab V3+, U-Net, PatchCore 백본, LibreYOLO,
 Re-DETR v4, SAM2 Hiera Tiny/Small/Base+/Large는 앱 실행 중 별도 다운로드를 하지 않는다.
 SAM2는 Settings에서 받거나 프로젝트에 적용하지 않는다. 분할 프로젝트에서 Hiera 변형을
-선택하면 번들 공식 checkpoint가 ONNX Export에 자동 연결된다. Docker `.dvmodel`은 이 목록
-밖에 추가하는 사용자 모델 전용이다.
+선택하면 기본 제공 가중치로 prompt mask 미세조정을 실행할 수 있다. 학습 결과는 같은
+Hiera 변형의 ONNX Export에 자동 연결되고, 새 프로젝트에서는 번들 공식 checkpoint가
+내보내기 소스가 된다. Docker `.dvmodel`은 이 목록 밖에 추가하는 사용자 모델 전용이다.
 
 데이터셋 이미지를 열면 검출 박스와 분할 마스크를 직접 그릴 수 있다. Qt에서는
 이미지 선택 후 **데이터 티칭 / 정답 그리기**, 브라우저에서는 이미지 클릭으로 연다.
@@ -134,8 +135,9 @@ npm run build
 현재 SDK는 EfficientNet B0/B1 분류와 Custom 분류·탐지·재구성 anomaly·semantic 배포 경로를 검증하고,
 고정 memory-bank를 포함해 export한 PatchCore anomaly의 score/map도 C ABI로 읽습니다. Re-DETR v4는
 `pred_boxes`/`pred_logits` 두 출력 계약과 C++17/C ABI 디코더를 검증했으며, 실제 Small/Medium/Large
-checkpoint의 ONNX 수치·Windows 인수 검증은 남아 있습니다. SAM2의 encoder/decoder prompt·video 경로와
-기본 제공 대상인 Re-DETR v4·SAM2·LibreYOLO는 native worker·그래프·실기 검증 대상으로 관리합니다.
+checkpoint의 ONNX 수치·Windows 인수 검증은 남아 있습니다. SAM2 image prompt 경로는 native
+worker와 encoder/decoder ONNX export에 연결되어 있고, video memory-state 경로는 아직 지원하지 않습니다.
+기본 제공 대상의 Windows 실기 검증 결과는 변형별로 계속 관리합니다.
 아래 문서는 구현 목표이며 위의 현재 지원 기능과 구분합니다.
 
 - [기본 모델 목록과 지원 판정](docs/01-plan/features/model-catalog.md)

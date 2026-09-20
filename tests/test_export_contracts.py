@@ -201,6 +201,20 @@ class ExportContractTests(unittest.TestCase):
         exporter.assert_called_once_with(checkpoint_path, output.parent.resolve(), verify=True,
                                          opset=17, log=unittest.mock.ANY)
 
+    def test_sam2_finetune_checkpoint_routes_to_the_official_hiera_exporter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "sam2-finetune.pt"
+            output = Path(directory) / "sam2.onnx"
+            torch.save({"type": "sam2_finetune", "backend": "sam2", "task": "segment",
+                        "model_id": "sam2_hiera_tiny", "model_state_dict": {"weight": torch.tensor(1)}},
+                       checkpoint_path)
+            with patch("export_sam2_onnx.export_official_sam2_checkpoint",
+                       return_value={"backend": "sam2", "verification": "passed"}) as exporter:
+                result = export_onnx.export_checkpoint(checkpoint_path, output, log=lambda _: None)
+        self.assertEqual(result["backend"], "sam2")
+        exporter.assert_called_once_with("sam2_hiera_tiny", checkpoint_path, output.parent.resolve(),
+                                         verify=True, opset=17, log=unittest.mock.ANY)
+
     def test_libreyolo_checkpoint_exports_with_native_api_and_runtime_parity(self):
         checkpoint = {"model_family": "mobilenetv4", "task": "classify", "nc": 2,
                       "names": {0: "OK", 1: "NG"}, "imgsz": 8}

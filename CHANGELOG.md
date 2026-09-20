@@ -2,6 +2,12 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**5.65 — SAM2 Windows native prompt-mask 학습**
+
+- SAM2 Hiera Tiny/Small/Base+/Large가 더 이상 학습 화면에서 차단되지 않는다. 기본 제공 가중치로 prompt encoder와 mask decoder를 미세조정한다.
+- semantic class-index mask의 전경 클래스를 이진 객체 마스크와 양성 point prompt로 변환한다. Hiera image encoder는 고정해 GPU 메모리 사용량을 줄인다.
+- `best.pt`/`last.pt`는 변경된 SAM2 모듈만 저장한다. 같은 Hiera 기본 가중치와 결합해 재학습과 ONNX encoder/decoder export에 사용하며, 다른 변형 체크포인트는 거부한다.
+
 **3.65 — PatchCore 보정·ONNX 배포 계약 수정**
 
 - 미보정 PatchCore 모델은 C++ ONNX 배포를 시작하지 않도록 막았다. 정상·불량 보정 데이터로 만든 양수 임계값이 있어야 내보낼 수 있다.

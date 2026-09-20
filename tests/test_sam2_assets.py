@@ -64,3 +64,42 @@ def test_load_uses_official_builder_and_selected_checkpoint(tmp_path, monkeypatc
     assert calls == [("configs/sam2.1/sam2.1_hiera_t.yaml", {
         "ckpt_path": str(checkpoint), "device": "cuda:0", "mode": "eval",
     })]
+
+
+def test_finetune_checkpoint_is_layered_on_the_matching_bundled_hiera_model(tmp_path, monkeypatch):
+    from unittest.mock import patch
+    from sam2_assets import load_sam2_checkpoint
+
+    checkpoint = tmp_path / "fine-tune.pt"
+    checkpoint.write_bytes(b"fine-tune")
+    payload = {"type": "sam2_finetune", "model_id": "sam2_hiera_tiny",
+               "model_state_dict": {"weight": 2.0}}
+    monkeypatch.setitem(sys.modules, "torch", ModuleType("torch"))
+    sys.modules["torch"].load = lambda *args, **kwargs: payload
+
+    class FakeModel:
+        def __init__(self):
+            self.loaded = None
+
+        def load_state_dict(self, state, strict=False):
+            self.loaded = (state, strict)
+            return [], []
+
+    model = FakeModel()
+    with patch("sam2_assets.load_sam2_pretrained", return_value=model) as base:
+        assert load_sam2_checkpoint("sam2_hiera_tiny", checkpoint_path=checkpoint) is model
+    base.assert_called_once_with("sam2_hiera_tiny", device="cpu")
+    assert model.loaded[0]["weight"] == 2.0
+
+
+def test_finetune_checkpoint_rejects_a_different_hiera_variant(tmp_path, monkeypatch):
+    from sam2_assets import load_sam2_checkpoint
+
+    checkpoint = tmp_path / "fine-tune.pt"
+    checkpoint.write_bytes(b"fine-tune")
+    monkeypatch.setitem(sys.modules, "torch", ModuleType("torch"))
+    sys.modules["torch"].load = lambda *args, **kwargs: {
+        "type": "sam2_finetune", "model_id": "sam2_hiera_small", "model_state_dict": {"weight": 2.0},
+    }
+    with pytest.raises(ValueError, match="sam2_hiera_small"):
+        load_sam2_checkpoint("sam2_hiera_tiny", checkpoint_path=checkpoint)

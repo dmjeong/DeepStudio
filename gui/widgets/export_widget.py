@@ -193,11 +193,12 @@ class ExportWidget(QWidget):
             if latest.checkpoint_path:
                 self.ckpt_edit.setText(latest.checkpoint_path)
                 self._auto_checkpoint = os.path.abspath(latest.checkpoint_path)
-        # SAM2 is an app-packaged official checkpoint, not a learned Studio
-        # checkpoint. Selecting a Hiera variant therefore makes it ready for
-        # the two-graph exporter without a Settings download/apply step.
+        # A fresh SAM2 project exports the bundled official checkpoint.  A
+        # SAM2 training run has its own compatible fine-tune checkpoint and
+        # must remain the source selected above.
         if (project.task == "segment" and
-                str(getattr(project.model, "model_id", "")).startswith("sam2_hiera_")):
+                str(getattr(project.model, "model_id", "")).startswith("sam2_hiera_") and
+                not self.ckpt_edit.text().strip()):
             from builtin_assets import builtin_asset_path
             self.ckpt_edit.setText(str(builtin_asset_path(project.model.model_id)))
             self._auto_checkpoint = self.ckpt_edit.text()
@@ -231,10 +232,12 @@ class ExportWidget(QWidget):
         output_path = self.output_edit.text().strip()
 
         # The selection can change on the Training page after this page was
-        # initially bound to the project.  Resolve SAM2 again at action time
-        # so the packaged official checkpoint is always the export source.
+        # initially bound to the project.  A blank SAM2 source resolves to the
+        # bundled official checkpoint; a selected SAM2 fine-tune result stays
+        # selected so its learned prompt/mask-decoder weights are exported.
         if (self.project is not None and self.project.task == "segment" and
-                str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_")):
+                str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_") and
+                not ckpt_path):
             from builtin_assets import builtin_asset_path
             ckpt_path = str(builtin_asset_path(self.project.model.model_id))
             self.ckpt_edit.setText(ckpt_path)

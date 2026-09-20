@@ -581,6 +581,13 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
         return export_patchcore_checkpoint(checkpoint_path, output_path, verify=verify,
                                            opset=opset_version, simplify=simplify, log=log)
     if backend == "sam2":
+        if checkpoint.get("type") == "sam2_finetune":
+            from export_sam2_onnx import export_official_sam2_checkpoint
+            model_id = checkpoint.get("model_id")
+            if not isinstance(model_id, str) or not model_id:
+                raise ValueError("SAM2 미세조정 체크포인트에 model_id가 없습니다.")
+            return export_official_sam2_checkpoint(model_id, checkpoint_path, output.parent,
+                                                    verify=verify, opset=opset_version, log=log)
         from export_sam2_onnx import export_sam2_checkpoint
         return export_sam2_checkpoint(checkpoint_path, output.parent, verify=verify,
                                       opset=opset_version, log=log)

@@ -1,10 +1,10 @@
 """Official SAM2.1 pretrained-asset discovery, download, and model loading.
 
-The Studio deliberately keeps the large checkpoint files out of source control.
-They are downloaded from Meta's official Hugging Face repositories into a user
-selected local cache, verified by the hub client, and then loaded by the
-official SAM-2 package. This is the mapping shared by Settings, native
-inference, and future fine-tuning/export adapters.
+The Studio keeps the large checkpoint files out of source control.  The release
+builder obtains them from Meta's official Hugging Face repositories, verifies
+them in the bundled asset manifest, and the application loads them through the
+official SAM-2 package. This mapping is shared by native inference, fine-tuning
+and ONNX export.
 """
 
 from __future__ import annotations
@@ -79,3 +79,52 @@ def load_sam2_pretrained(model_id: str, *, device: str = "cpu", checkpoint_path:
         return build_sam2(asset.config_name, ckpt_path=str(path), device=device, mode="eval")
     except Exception as exc:
         raise RuntimeError(f"SAM2.1 {asset.variant} 로드 실패: {exc}") from exc
+
+
+def _fine_tune_payload(path: Path):
+    """Read only the Studio SAM2 checkpoint marker, returning ``None`` for an
+    official SAM2 checkpoint.  The caller has already selected this local file.
+    """
+    try:
+        import torch
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+    except Exception:
+        # Official checkpoints are owned by SAM2's builder.  Do not reject one
+        # here merely because a future upstream serialization changes.
+        return None
+    if isinstance(payload, dict) and payload.get("type") == "sam2_finetune":
+        return payload
+    return None
+
+
+def load_sam2_checkpoint(model_id: str, *, device: str = "cpu",
+                         checkpoint_path: str | Path | None = None):
+    """Load either a bundled official checkpoint or a Studio fine-tune result.
+
+    Fine-tune files deliberately contain only changed prompt/mask-decoder
+    weights layered on the immutable bundled official asset.  This keeps the variant/config contract
+    explicit and makes the same artifact usable by native inference and ONNX
+    export without an internet download.
+    """
+    if checkpoint_path is None:
+        return load_sam2_pretrained(model_id, device=device)
+    path = Path(checkpoint_path).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(f"SAM2 가중치 파일이 없습니다: {path}")
+    payload = _fine_tune_payload(path)
+    if payload is None:
+        return load_sam2_pretrained(model_id, device=device, checkpoint_path=path)
+    saved_model_id = payload.get("model_id")
+    if saved_model_id != model_id:
+        raise ValueError(f"SAM2 체크포인트는 {saved_model_id}용이며 선택한 모델은 {model_id}입니다.")
+    state = payload.get("model_state_dict")
+    if not isinstance(state, dict) or not state:
+        raise ValueError("SAM2 미세조정 체크포인트에 model_state_dict가 없습니다.")
+    model = load_sam2_pretrained(model_id, device=device)
+    try:
+        _missing, unexpected = model.load_state_dict(state, strict=False)
+    except (RuntimeError, TypeError) as exc:
+        raise ValueError("SAM2 미세조정 체크포인트의 모델 구조가 맞지 않습니다.") from exc
+    if unexpected:
+        raise ValueError("SAM2 미세조정 체크포인트의 모델 구조가 선택한 Hiera 변형과 다릅니다.")
+    return model
