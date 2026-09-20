@@ -45,6 +45,11 @@ def test_retry_verifies_original_graph_or_preserves_existing_files(tmp_path, rej
                 export_onnx.export_checkpoint(source, output, dynamic_batch=True)
             assert output.read_bytes() == b"previous onnx"
             assert output.with_suffix(".json").read_bytes() == b"previous config"
+            diagnostic = json.loads(output.with_suffix(".export-error.json").read_text(encoding="utf-8"))
+            assert diagnostic["numerical_diagnostic"]["probe"] == "seeded"
+            # The failure was injected in verify_onnx, so independent actual
+            # ORT comparisons correctly report that it cannot be reproduced.
+            assert diagnostic["numerical_diagnostic"]["finding"] == "not_reproduced_in_diagnostic"
         else:
             result = export_onnx.export_checkpoint(source, output, dynamic_batch=True)
             assert result["verification"] == "passed"

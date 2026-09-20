@@ -17,6 +17,12 @@ OUTPUT_NAMES = {
 
 RE_DETR_VARIANTS = frozenset({"Small", "Medium", "Large"})
 
+
+class ExportVerificationError(ValueError):
+    def __init__(self, message, diagnostic):
+        super().__init__(message)
+        self.numerical_diagnostic = diagnostic
+
 # CPU FP32 ONNX kernels may reassociate fused convolution/normalization
 # operations. A 1e-3 absolute floor is the usual FP32 deployment parity
 # boundary; top-1 is checked separately so this does not hide a class change.
@@ -457,11 +463,14 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                 # checkpoint made valid graphs fail at near-zero logits.
                 log("ONNX Runtime 검증: 내보낸 PyTorch 그래프와 비교 "
                     f"(atol={verification_profile['atol']}, rtol={verification_profile['rtol']}, probes=seeded+zero)")
+                failed_probe, failed_probe_name = dummy, "seeded"
                 def verify_candidate(candidate):
-                    probes = [dummy, torch.zeros_like(dummy)]
+                    nonlocal failed_probe, failed_probe_name
+                    probes = [("seeded", dummy), ("zero", torch.zeros_like(dummy))]
                     if dynamic_batch:
-                        probes.append(dummy.repeat(2, 1, 1, 1))
-                    for probe in probes:
+                        probes.append(("dynamic_batch_2", dummy.repeat(2, 1, 1, 1)))
+                    for probe_name, probe in probes:
+                        failed_probe, failed_probe_name = probe, probe_name
                         verified = (verify_redetr_onnx(staged_model, probe, candidate)
                                     if backend == "redetr_v4"
                                     else verify_onnx(staged_model, probe, candidate, task=spec["task"]))
@@ -485,9 +494,22 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                     try:
                         verify_candidate(model)
                     except ValueError as original_error:
-                        raise ValueError(
+                        log("ONNX 수치 원인 진단: 실행 최적화·FP64·중간 레이어 비교 중")
+                        try:
+                            from onnx_diagnostics import diagnose_efficientnet
+                            numeric = diagnose_efficientnet(model, staged_model, failed_probe,
+                                                           probe_name=failed_probe_name, opset=opset_version)
+                            summary = numeric["summary"]
+                            if numeric.get("first_divergent_stage"):
+                                summary += f"; 진단 그래프 최초 차이: {numeric['first_divergent_stage']}"
+                        except Exception as diagnostic_error:
+                            numeric = {"diagnostic_error": str(diagnostic_error)}
+                            summary = f"추가 수치 진단 실패: {diagnostic_error}"
+                        log("수치 진단: " + summary)
+                        raise ExportVerificationError(
                             f"최적화·원본 그래프 모두 ONNX 검증 실패.\n"
-                            f"최적화: {optimized_error}\n원본 FP32: {original_error}"
+                            f"최적화: {optimized_error}\n원본 FP32: {original_error}\n"
+                            f"수치 진단: {summary}", numeric
                         ) from original_error
             metadata = {"task": spec["task"], "num_classes": spec["num_classes"],
                         "input_size": [spec["input_height"], spec["input_width"]],
@@ -567,6 +589,11 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
             report(f"배포 번들 생성: {bundle}")
     except Exception as error:
         versions = {"python": platform.python_version()}
+        try:
+            from core.version import APP_VERSION
+            versions["studio"] = APP_VERSION
+        except ImportError:
+            versions["studio"] = "unavailable"
         for name in ("torch", "torchvision", "onnx", "onnxruntime", "onnxsim"):
             try:
                 versions[name] = importlib.metadata.version(name)
@@ -574,7 +601,10 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
                 versions[name] = "not installed"
         diagnostic = {"stage": events[-1], "error": str(error), "versions": versions,
                       "opset": opset_version, "dynamic_batch": dynamic_batch,
+                      "platform": {"system": platform.system(), "machine": platform.machine()},
                       "events": events, "traceback": traceback.format_exc()}
+        if hasattr(error, "numerical_diagnostic"):
+            diagnostic["numerical_diagnostic"] = error.numerical_diagnostic
         path = Path(output_path).with_suffix(".export-error.json")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)

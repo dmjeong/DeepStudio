@@ -25,6 +25,17 @@ python -m pip install -r gui/requirements.txt
 python gui/main.py
 ```
 
+빌드 환경이 이미 준비된 Windows PC에서 소스 변경을 확인할 때는 저장소 폴더에서
+다음과 같이 실행합니다. `build.bat`으로 EXE를 다시 만들 필요는 없습니다.
+
+```bat
+git pull --ff-only
+python gui\main.py
+```
+
+`python`은 기존 빌드에 사용한 가상환경의 실행 파일이어야 합니다. 이미 만들어진 EXE에는
+소스 업데이트가 적용되지 않으므로 위 명령으로 소스 버전을 실행합니다.
+
 로컬 웹 UI는 Windows에서 `start_web.bat`, 다른 환경에서 `python start_web.py`로
 실행합니다. [로컬 웹 안내](docs/LOCAL_WEB.md). 설치/공식 초기 가중치 취득에는 네트워크가
 필요할 수 있지만 사용자 학습 이미지와 모델을 외부로 업로드하는 절차는 없습니다.
@@ -46,6 +57,12 @@ python gui/main.py
 CPU 자동 모드는 수치 검증을 통과한 ONNX 세션을 사용합니다. ONNX 준비에 실패하면
 기존 PyTorch로 계속 추론하고 실제 엔진과 실패 사유를 표시합니다. 명시적 ONNX
 내보내기는 검증에 실패한 모델을 배포하지 않습니다. Grad-CAM은 별도로 측정합니다.
+
+EfficientNet의 최적화·원본 그래프가 모두 내보내기 검증에 실패하면 추가 수치 진단을
+실행합니다. 실패한 입력으로 ONNX Runtime 최적화·스레드 설정, PyTorch FP32/FP64,
+중간 레이어 출력을 비교하고 오류창에 `수치 진단:`을 표시합니다. 상세 결과는 출력 경로의
+`*.export-error.json`에 기록합니다. 모델·이미지·중간 출력 배열을 전송하지 않으며,
+진단은 허용 오차를 완화하거나 재학습 필요성을 확정하지 않습니다.
 
 ```sh
 python tools/cpu_benchmark.py --weights model.pt --images images --runtime auto --threads 4 --output cpu-results

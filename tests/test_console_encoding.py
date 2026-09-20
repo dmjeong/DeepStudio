@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import os
 
 import pytest
 
@@ -30,11 +31,12 @@ def test_training_initialization_prevents_cp949_logging_crash(tmp_path):
         assert "\\U0001f4c2" in output
 
 
-def test_utf8_log_preserves_original_text():
+@pytest.mark.parametrize("newline,ending", [(None, os.linesep), ("\n", "\n"), ("\r\n", "\r\n")])
+def test_utf8_log_preserves_original_text(newline, ending):
     raw = io.BytesIO()
-    with io.TextIOWrapper(raw, encoding="utf-8") as stream:
+    with io.TextIOWrapper(raw, encoding="utf-8", newline=newline) as stream:
         with contextlib.redirect_stdout(stream):
             configure_console_output()
             print("📂 데이터 로드")
         stream.flush()
-        assert raw.getvalue().decode("utf-8") == "📂 데이터 로드\n"
+        assert raw.getvalue().decode("utf-8") == "📂 데이터 로드" + ending
