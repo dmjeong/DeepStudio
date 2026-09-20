@@ -140,6 +140,8 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
       else if (key === "enter" && points.length) { event.preventDefault(); finish(); }
       else if (key === "delete") { event.preventDefault(); remove(); }
       else if (key === "backspace" && points.length) { event.preventDefault(); setPoints(points.slice(0, -2)); }
+      else if (segment && key === "[") { event.preventDefault(); setBrush(value => Math.max(1, value - 2)); }
+      else if (segment && key === "]") { event.preventDefault(); setBrush(value => Math.min(1024, value + 2)); }
       else if (!ctrl && /^[1-9]$/.test(key)) setClassId(Math.min(names.length-1, Number(key)-1));
       else if (key === "0") setZoom(100);
       else if (key === "k" && navigation && navigation.index+1 < navigation.count) save(1);
@@ -183,7 +185,13 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
     } else if (mode === "polygon") {
       if (points.length >= 6 && Math.hypot((points[0]-p[0])*event.currentTarget.getBoundingClientRect().width, (points[1]-p[1])*event.currentTarget.getBoundingClientRect().height) < 10) finish();
       else setPoints([...points, ...p]);
-    } else gesture.current = { type: mode, start: p, index: -1, handle: -1, points: p };
+    } else {
+      // Holding Shift while painting is a momentary eraser.  The persisted
+      // stroke remains an explicit background operation so save/reopen and
+      // undo can reproduce the exact mask subtraction.
+      const gestureMode = segment && mode === "brush" && event.shiftKey ? "erase" : mode;
+      gesture.current = { type: gestureMode, start: p, index: -1, handle: -1, points: p };
+    }
   };
   const move = (event: React.PointerEvent<SVGSVGElement>): Shape | null => {
     const value = gesture.current; if (!value || !data) return null;
@@ -237,7 +245,7 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
       <span>{zoom.toFixed(0)}%</span><button onClick={() => setZoom(100)}>화면 맞춤 0</button></div>
     <div className="row teaching-tools">{([...(segment ? [["polygon", "다각형 P"], ["brush", "브러시 B"], ["erase", "지우개 E"]] : [["erase", "클릭 삭제 E"]]), ["rectangle", "사각형 R"], ["select", "선택/수정 V"], ["pan", "이동 H"]] as [Mode, string][]).map(([key, label]) => <button key={key} aria-pressed={mode === key} disabled={busy || submitting} className={mode === key ? "primary" : ""} onClick={() => chooseMode(key)}>{label}</button>)}
       <button disabled={busy || submitting || !undo.current.length} onClick={() => history(true)}>실행 취소 Ctrl+Z</button><button disabled={busy || submitting || !redo.current.length} onClick={() => history(false)}>다시 실행</button></div>
-    <p className="muted">휠: 확대 · Space+드래그: 이동 · 1~9: 클래스 · 선택 후 꼭짓점 드래그: 수정 · Delete: 삭제 · Ctrl+S: 저장{segment ? " · Enter/첫 점: 다각형 완료 · 지우개/미표시 영역은 클래스 0(배경)" : " · E: 객체 클릭 삭제 · Ctrl+D: 박스 복제"}</p>
+    <p className="muted">휠: 확대 · Space+드래그: 이동 · 1~9: 클래스 · 선택 후 꼭짓점 드래그: 수정 · Delete: 삭제 · Ctrl+S: 저장{segment ? " · Enter/첫 점: 다각형 완료 · Shift+브러시/지우개: 배경으로 지우기 · [ ]: 브러시 크기 · 지우개는 객체 목록에 추가되지 않습니다" : " · E: 객체 클릭 삭제 · Ctrl+D: 박스 복제"}</p>
     <div ref={scroll} className="annotation-canvas-scroll" onContextMenu={e => { e.preventDefault(); cancel(); }}>{data && <svg aria-label="정답 그리기 캔버스" className="annotation-canvas" viewBox={`0 0 ${data.width} ${data.height}`} style={{ width: `${fitWidth*zoom/100}px`, minWidth: `${fitWidth*zoom/100}px`, margin: "auto", aspectRatio: `${data.width}/${data.height}`, cursor: mode === "pan" ? "grab" : mode === "select" ? "default" : "crosshair" }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancel}>
       <image href={`/api/image?path=${encodeURIComponent(item.path)}&size=4096&v=${item.revision}`} width={data.width} height={data.height} style={{ pointerEvents: "none" }} />
       {segment && maskUrl && <image href={maskUrl} width={data.width} height={data.height} opacity={opacity/100} style={{ pointerEvents: "none", imageRendering: "pixelated" }} />}

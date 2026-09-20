@@ -2,10 +2,16 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**3.52 — 라벨 지우기·작은 화면과 SAM2 프롬프트 ONNX 검증 수정**
+
+- 분할 지우개가 객체 목록에 새 라벨처럼 나타나는 브라우저 회귀 검증을 실제 동작에 맞게 고쳤다. 지우개는 배경 subtraction으로 저장되어 다시 열기와 실행 취소에는 남고, 편집할 foreground 객체에는 추가되지 않는다. Shift+브러시와 `[`·`]` 브러시 크기 단축키도 지원한다.
+- 검출 편집기는 900 px 폭에서도 창을 강제로 넓히지 않도록 도구 모음을 줄바꿈 그리드로 배치했다.
+- SAM2 ONNX 검증은 빈 프롬프트, 양성·음성 점, box의 2/3 라벨, 혼합 점, 이전 mask refinement를 각각 PyTorch 원본과 ONNX Runtime으로 비교한다.
+
 **3.51 — SAM2.1 사전학습·실모델 ONNX 및 라벨 편집 개선**
 
 - Settings에서 공식 SAM2.1 Hiera Tiny/Small/Base+/Large 가중치를 선택해 백그라운드로 내려받는다. Windows 설치본은 고정한 공식 SAM-2 runtime을 포함한다.
-- 실제 공식 Hiera Tiny checkpoint의 encoder/prompt decoder를 두 ONNX 그래프로 export하고, 1·2·3·8개 point 입력에서 ONNX Runtime 출력 비교를 통과했다. C++ 실모델 검증과 나머지 변형 실기 검증은 아직 완료로 표시하지 않는다.
+- 실제 공식 Hiera Tiny checkpoint의 encoder/prompt decoder를 두 ONNX 그래프로 export하고, 당시 1·2·3·8개 point 입력에서 ONNX Runtime 출력 비교를 통과했다. C++ 실모델 검증과 나머지 변형 실기 검증은 아직 완료로 표시하지 않는다.
 - 분할 라벨 편집기에서 Shift+브러시 임시 지우개와 `[`, `]` 크기 단축키를 추가했다.
 
 **2.51 — LibreYOLO ONNX 내보내기 수정**

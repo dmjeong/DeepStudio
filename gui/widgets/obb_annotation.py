@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider,
     QGraphicsScene, QGraphicsView, QTableWidget, QTableWidgetItem,
     QHeaderView, QMessageBox, QInputDialog, QSplitter, QWidget, QAbstractItemView,
+    QGridLayout,
 )
 from core.paths import ensure_python_path
 from widgets.common import NoWheelComboBox
@@ -113,7 +114,12 @@ class OBBAnnotationDialog(AnnotationNavigation, QDialog):
             self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
             self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
             self.table.cellClicked.connect(lambda row, column: self._select_box(row))
-            controls = QHBoxLayout()
+            # Keep the direct-manipulation actions usable in a 900 px-wide
+            # dialog.  A single horizontal row forced Qt to enlarge the
+            # window on Windows because every translated button had to fit.
+            controls = QGridLayout()
+            controls.setHorizontalSpacing(6)
+            controls.setVerticalSpacing(6)
             self.mode_buttons = {}
             for mode, label in (("draw", "박스 그리기  B"), ("select", "선택과 이동  D"),
                                 ("erase", "클릭 삭제  E"), ("pan", "화면 이동  H")):
@@ -121,22 +127,24 @@ class OBBAnnotationDialog(AnnotationNavigation, QDialog):
                 button.setCheckable(True)
                 button.clicked.connect(lambda checked=False, mode=mode: self._set_mode(mode))
                 self.mode_buttons[mode] = button
-                controls.addWidget(button)
+                controls.addWidget(button, 0, len(self.mode_buttons) - 1)
             self.undo_button = QPushButton("실행 취소")
             self.undo_button.clicked.connect(self._undo)
-            controls.addWidget(self.undo_button)
+            controls.addWidget(self.undo_button, 1, 0)
             self.redo_button = QPushButton("다시 실행")
             self.redo_button.clicked.connect(self._redo)
-            controls.addWidget(self.redo_button)
+            controls.addWidget(self.redo_button, 1, 1)
             duplicate = QPushButton("선택 박스 복제")
             duplicate.clicked.connect(self._duplicate)
-            controls.addWidget(duplicate)
+            controls.addWidget(duplicate, 1, 2)
             remove = QPushButton("선택 박스 삭제")
             remove.clicked.connect(lambda: self._command("delete"))
-            controls.addWidget(remove)
+            controls.addWidget(remove, 1, 3)
             fit = QPushButton("화면 맞춤  0")
             fit.clicked.connect(self._fit)
-            controls.addWidget(fit)
+            controls.addWidget(fit, 2, 0, 1, 4)
+            for column in range(4):
+                controls.setColumnStretch(column, 1)
             layout.addLayout(controls)
             self.editor_splitter = QSplitter(Qt.Orientation.Horizontal)
             self.editor_splitter.addWidget(self.view)

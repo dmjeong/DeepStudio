@@ -19,9 +19,9 @@ ONNX Runtime 1.29.0, Meta SAM-2 source revision `2b90b9f`.
 | `sam2.json` | 약 2.2 KB |
 
 exporter는 `onnx.checker`를 실행하고, encoder와 decoder의 raw FP32 출력을 ONNX Runtime
-CPU Execution Provider와 비교했다. decoder는 1·2·3·8개의 prompt point와 mask prompt
-미사용 경로를 검사했고 검증 결과는 `passed`였다. 이 실행은 공식 Hiera Tiny의 실제
-checkpoint를 사용했다.
+CPU Execution Provider와 비교했다. decoder는 빈 프롬프트, 양성·음성 점, box를 표현하는
+2/3 라벨 점, 8개 혼합 점, 이전 mask refinement 경로를 모두 검사했고 검증 결과는
+`passed`였다. 이 실행은 공식 Hiera Tiny의 실제 checkpoint를 사용했다.
 
 고정 1024×1024 encoder graph를 export했기 때문에 PyTorch tracer가 input shape 분기에
 대한 경고를 낸다. 이는 SAM2의 고정 1024 deployment contract와 일치한다. Windows C++17

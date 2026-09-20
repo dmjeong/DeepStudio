@@ -44,7 +44,10 @@ export async function verifyTeaching(page, { temp, fixture, output, base = "http
       await page.getByRole("button", { name: "실행 취소 Ctrl+Z", exact: true }).click();
       assert.equal(await page.locator(".annotation-list > div").count(), 2);
       await page.getByRole("button", { name: "다시 실행", exact: true }).click();
-      assert.equal(await page.locator(".annotation-list > div").count(), 3);
+      // An eraser is stored as a background stroke so that it survives a
+      // save/reopen round trip, but it is not a foreground object to edit in
+      // the object list.  Showing it as one made an erase look like "add".
+      assert.equal(await page.locator(".annotation-list > div").count(), 2);
     } else {
       await page.keyboard.press("Control+d");
       assert.equal(await page.locator(".annotation-list > div").count(), 2);

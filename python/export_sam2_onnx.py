@@ -362,15 +362,31 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
             encoder_session = ort.InferenceSession(str(staged_encoder), providers=["CPUExecutionProvider"])
             decoder_session = ort.InferenceSession(str(staged_decoder), providers=["CPUExecutionProvider"])
             encoded = encoder_session.run(None, {"input_image": input_tensor.numpy()})
-            for point_count in (1, 2, 3, 8):
+            # Exercise the labels consumed by SAM's prompt encoder, rather
+            # than only proving a row of positive clicks.  The native C/C++
+            # ABI turns a box into labels 2/3, and refinement supplies an
+            # earlier low-resolution mask, so both paths need parity too.
+            prompt_cases = (
+                ("empty", torch.zeros((1, 1, 2), dtype=torch.float32),
+                 torch.full((1, 1), -1, dtype=torch.int64), 0.0),
+                ("positive_negative", torch.tensor([[[.2, .3], [.7, .6]]], dtype=torch.float32) * float(max(size)),
+                 torch.tensor([[1, 0]], dtype=torch.int64), 0.0),
+                ("box", torch.tensor([[[.1, .2], [.8, .9]]], dtype=torch.float32) * float(max(size)),
+                 torch.tensor([[2, 3]], dtype=torch.int64), 0.0),
+                ("mixed_points", torch.linspace(0.0, float(max(size)), 16, dtype=torch.float32).reshape(1, 8, 2),
+                 torch.tensor([[1, 0, 1, 0, 2, 3, 1, 0]], dtype=torch.int64), 0.0),
+                ("mask_refinement", torch.tensor([[[.5, .5]]], dtype=torch.float32) * float(max(size)),
+                 torch.tensor([[1]], dtype=torch.int64), 1.0),
+            )
+            for case_name, coords, labels, use_mask in prompt_cases:
                 case_values = dict(decoder_values_by_semantic)
-                if point_count > 1:
-                    case_values["point_coords"] = torch.linspace(
-                        0.0, float(max(size)), point_count * 2, dtype=torch.float32
-                    ).reshape(1, point_count, 2)
-                    case_values["point_labels"] = torch.ones(
-                        (1, point_count), dtype=torch.int64
-                    )
+                case_values["point_coords"] = coords
+                case_values["point_labels"] = labels
+                case_values["has_mask_input"] = torch.tensor([use_mask], dtype=torch.float32)
+                if use_mask:
+                    case_values["mask_input"] = torch.linspace(
+                        -1.0, 1.0, int(mask_size[0]) * int(mask_size[1]), dtype=torch.float32
+                    ).reshape(1, 1, int(mask_size[0]), int(mask_size[1]))
                 case_args = tuple(case_values[name] for name in decoder_input_order)
                 with torch.inference_mode():
                     expected_values = decoder_for_export(*case_args)
@@ -385,7 +401,7 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
                                          **VERIFICATION_TOLERANCE)
                     except ValueError as exc:
                         raise Sam2ExportError(
-                            f"SAM2 decoder verification failed for {point_count} prompt points: {exc}"
+                            f"SAM2 decoder verification failed for {case_name} prompt: {exc}"
                         ) from exc
         os.replace(staged_encoder, encoder_file)
         os.replace(staged_decoder, decoder_file)
