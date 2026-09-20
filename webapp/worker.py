@@ -110,8 +110,12 @@ def _train_builtin_project(context, project, device):
             total = int(message["total_epochs"])
             metric = float(message["metric"])
             metric_name = "accuracy" if project.task == "classify" else "mIoU"
+            event_metrics = dict(message.get("metrics", {metric_name: metric}))
+            for key in ("epoch_time_sec", "elapsed_time_sec"):
+                if key in message and key not in event_metrics:
+                    event_metrics[key] = message[key]
             context.emit("epoch_finished", [epoch, float(message["train_loss"]),
-                                              float(message["val_loss"]), message.get("metrics", {metric_name: metric})])
+                                              float(message["val_loss"]), event_metrics])
             context.emit("progress_updated", [epoch, total])
         elif isinstance(message, dict) and message.get("event") == "best_epoch_updated":
             context.emit("best_epoch_updated", [message["epoch"], message["train_loss"],
@@ -187,6 +191,9 @@ def _train_builtin_project(context, project, device):
     metric_keys = set.intersection(*(set(item.get("metrics", {})) for item in records)) if records else set()
     for name in sorted(metric_keys - {"train_loss", "val_loss", metric_name}):
         metrics_history[name] = [float(item["metrics"][name]) for item in records]
+    for name in ("epoch_time_sec", "elapsed_time_sec"):
+        if any(name in item for item in records):
+            metrics_history[name] = [item.get(name) for item in records]
     lr_history = [float(item["learning_rate"]) for item in full_history
                   if "learning_rate" in item]
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),

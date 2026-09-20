@@ -194,6 +194,10 @@ class PatchCoreWorker(TrainingEngine):
         pc.save(checkpoint)
         history = {"epoch": [1], "auroc": [auroc]}
         record_epoch_time(self._training_clock, history, self.signals.log_message.emit, 1)
+        self.signals.epoch_finished.emit(1, float("nan"), float("nan"), {
+            "epoch_time_sec": history["epoch_time_sec"][-1],
+            "elapsed_time_sec": history["elapsed_time_sec"][-1],
+        })
         self.signals.best_epoch_updated.emit(1, float("nan"), float("nan"),
             {key: evaluation.get(key) for key in ("auroc", "f1", "precision", "recall")})
         self.signals.eval_finished.emit(evaluation)

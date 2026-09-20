@@ -29,7 +29,7 @@ SAM2·Re-DETR v4·LibreYOLO는 각각 구현과 가중치가 포함된 `.dvmodel
 
 데이터셋 이미지를 열면 검출 박스와 분할 마스크를 직접 그릴 수 있다. Qt에서는
 이미지 선택 후 **데이터 티칭 / 정답 그리기**, 브라우저에서는 이미지 클릭으로 연다.
-[드로잉 도구 사용법](docs/DATASET_TEACHING.ko.md)과 [1.07 릴리스](docs/RELEASE_1.07.md)를 참고한다.
+[드로잉 도구 사용법](docs/DATASET_TEACHING.ko.md)과 [1.17 릴리스](docs/RELEASE_1.17.md)를 참고한다.
 
 Python 3.11 환경에서 이 폴더로 이동합니다.
 

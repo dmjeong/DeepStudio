@@ -52,6 +52,11 @@ def test_minimum_loss_ties_early_stop_and_resume_guard(tmp_path, monkeypatch, mo
     assert last["epoch"] == 3 and last["metric"] == .3
     assert state["best_epoch"] == 2 and state["completed_epochs"] == 4
     assert state["best_metric_name"] == "val_loss" and state["best_metric"] == .2
+    assert all(item["epoch_time_sec"] >= 0 and item["elapsed_time_sec"] >= 0
+               for item in state["metrics_history"])
+    epoch_events = [item for item in log if isinstance(item, dict) and item["event"] == "epoch_finished"]
+    assert all(event["metrics"]["epoch_time_sec"] >= 0 for event in epoch_events)
+    assert any(isinstance(item, str) and "총 학습시간:" in item for item in log)
     assert [item["epoch"] for item in log if isinstance(item, dict) and item["event"] == "best_epoch_updated"] == [1, 2]
     with pytest.raises(ValueError, match="Best 기준"):
         trainer.train_builtin(model_id, tmp_path, num_classes=2, input_size=32,

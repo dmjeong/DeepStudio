@@ -311,23 +311,6 @@ class TrainWorker(TrainingEngine):
                 if key in epoch_metrics and key not in {"train_loss", "val_loss"}:
                     metrics_history.setdefault(key, []).append(epoch_metrics[key])
 
-            # ── 시그널 emit → GUI 차트 업데이트 ──
-            self.signals.epoch_finished.emit(epoch, train_loss, val_loss, epoch_metrics)
-            self.signals.progress_updated.emit(epoch, cfg.epochs)
-
-            # ── 로그 ──
-            metric_str = ", ".join(
-                f"{metric_info.get('labels', {}).get(k, k)}: {v:.4f}"
-                for k, v in epoch_metrics.items()
-                if isinstance(v, (int, float)) and not isinstance(v, bool)
-                and math.isfinite(v)
-            )
-            self.signals.log_message.emit(
-                f"  Epoch {epoch}/{cfg.epochs} | "
-                f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | "
-                f"LR: {current_lr:.6f} | {metric_str}"
-            )
-
             # 최초 유효 에폭은 0점이어도 보존한다.
             current_metric = val_loss if primary_metric_name == "val_loss" else epoch_metrics.get(primary_metric_name)
             if current_metric is None or not math.isfinite(current_metric):
@@ -353,6 +336,27 @@ class TrainWorker(TrainingEngine):
                 checkpoint["class_weight_details"] = self._class_weight_details
             record_epoch_time(self._training_clock, metrics_history,
                               self.signals.log_message.emit, epoch)
+            epoch_metrics = {**epoch_metrics,
+                             "epoch_time_sec": metrics_history["epoch_time_sec"][-1],
+                             "elapsed_time_sec": metrics_history["elapsed_time_sec"][-1]}
+
+            # ── 시그널 emit → GUI 차트 및 시간 카드 업데이트 ──
+            self.signals.epoch_finished.emit(epoch, train_loss, val_loss, epoch_metrics)
+            self.signals.progress_updated.emit(epoch, cfg.epochs)
+
+            # ── 로그 ──
+            metric_str = ", ".join(
+                f"{metric_info.get('labels', {}).get(k, k)}: {v:.4f}"
+                for k, v in epoch_metrics.items()
+                if k not in {"epoch_time_sec", "elapsed_time_sec"}
+                and isinstance(v, (int, float)) and not isinstance(v, bool)
+                and math.isfinite(v)
+            )
+            self.signals.log_message.emit(
+                f"  Epoch {epoch}/{cfg.epochs} | "
+                f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | "
+                f"LR: {current_lr:.6f} | {metric_str}"
+            )
             checkpoint.update(self._checkpoint_extra(model, is_better, metrics_history,
                                                      lr_history, patience_counter))
             self._save_checkpoint(checkpoint, os.path.join(run_dir, "last.pt"))

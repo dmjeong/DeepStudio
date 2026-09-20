@@ -116,6 +116,17 @@ def test_builtin_run_description_uses_the_recorded_model_id():
     assert "모델: resnet50" in run_description(run)
 
 
+def test_all_native_training_events_show_epoch_timing_without_polluting_metrics_chart(page):
+    page._rebuild_metric_cards("classify")
+    page._on_epoch_finished(1, .4, .3, {
+        "accuracy": .8, "epoch_time_sec": 12.9, "elapsed_time_sec": 34.2,
+    })
+    assert page.metric_cards["최근 에폭 시간"].text() == "00:00:12"
+    assert page.metric_cards["누적 시간"].text() == "00:00:34"
+    assert "epoch_time_sec" not in page.metric_chart.metrics_history
+    assert "elapsed_time_sec" not in page.metric_chart.metrics_history
+
+
 @pytest.mark.parametrize("task,model_id", [("segment", "sam2_hiera_tiny"), ("detect", "re_detr_v4_small"),
                                          ("classify", "libreyolo_classify_mobilenetv4_small")])
 def test_container_models_do_not_offer_efficientnet_weights(page, task, model_id):
@@ -222,7 +233,8 @@ def test_completed_resume_displays_worker_config_and_class_order(prepared_page, 
     snapshot.data.num_classes = 2
     record = RunRecord(run_id="resumed-b1", status="completed", best_epoch=12, best_metric=.8,
         best_metric_name="accuracy", metrics_history={"epoch": [11, 12], "train_loss": [.5, .4],
-        "val_loss": [.6, .5], "accuracy": [.7, .8]}, lr_history=[.001, .0009],
+        "val_loss": [.6, .5], "accuracy": [.7, .8],
+        "epoch_time_sec": [11.2, 12.9], "elapsed_time_sec": [23.1, 36.0]}, lr_history=[.001, .0009],
         eval_results={"task": "classify", "accuracy": .8, "confusion_matrix": [[4, 1], [1, 4]]},
         config_snapshot={"training": asdict(snapshot.training), "runtime": {"name": "CPU"},
                          "checkpoint_sha256": "abc", "job_id": "job-b1"})
@@ -233,6 +245,8 @@ def test_completed_resume_displays_worker_config_and_class_order(prepared_page, 
     assert "efficientnet_b1" in page.run_identity_label.text()
     assert page.loss_chart.epochs == [11, 12]
     assert page.metric_cards["Best Epoch"].text() == "12"
+    assert page.metric_cards["최근 에폭 시간"].text() == "00:00:12"
+    assert page.metric_cards["누적 시간"].text() == "00:00:36"
     assert [label.get_text() for label in page.cm_chart.ax.get_xticklabels()] == ["NG", "OK"]
     assert page.progress_bar.value() == 100
     assert page.settings_panel.isEnabled()

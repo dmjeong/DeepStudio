@@ -193,7 +193,9 @@ class WebAppTests(unittest.TestCase):
         def fake_train(*args, log, **kwargs):
             forwarded.update(kwargs)
             log({"event": "epoch_finished", "epoch": 1, "total_epochs": 1,
-                 "train_loss": 0.4, "val_loss": 0.3, "metric": 0.75})
+                 "train_loss": 0.4, "val_loss": 0.3, "metric": 0.75,
+                 "metrics": {"mIoU": 0.75, "epoch_time_sec": 3.5, "elapsed_time_sec": 4.0},
+                 "epoch_time_sec": 3.5, "elapsed_time_sec": 4.0})
             return best
 
         with patch("train_builtin.train_builtin", side_effect=fake_train), \
@@ -203,6 +205,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(record.best_metric_name, "mIoU")
         self.assertEqual(record.metrics_history, {
             "train_loss": [0.4], "val_loss": [0.3], "mIoU": [0.75],
+            "elapsed_time_sec": [4.0], "epoch_time_sec": [3.5],
         })
         self.assertEqual(forwarded["optimizer_name"], project.training.optimizer)
         self.assertTrue(forwarded["pretrained"])
@@ -210,7 +213,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(forwarded["horizontal_flip"],
                          project.training.augmentation.horizontal_flip)
         epoch = next(args for event, args in events if event == "epoch_finished")
-        self.assertEqual(epoch[3], {"mIoU": 0.75})
+        self.assertEqual(epoch[3], {"mIoU": 0.75, "epoch_time_sec": 3.5, "elapsed_time_sec": 4.0})
 
         project.training.selection_metric = "val_loss"
 

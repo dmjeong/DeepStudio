@@ -200,7 +200,8 @@ class MetricChart(_BaseChart):
         observed = {}
         for key, value in metrics.items():
             # 차트에 표시할 메트릭만 추적 (loss, confusion_matrix 등 제외)
-            if key in ("val_loss", "recon_loss", "confusion_matrix", "per_class", "roc_curve") or not _finite_metric(value):
+            if key in ("val_loss", "recon_loss", "confusion_matrix", "per_class", "roc_curve",
+                       "epoch_time_sec", "elapsed_time_sec") or not _finite_metric(value):
                 continue
             observed[key] = value
         record_epoch(self.epochs, self.metrics_history, epoch, observed)

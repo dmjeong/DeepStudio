@@ -552,9 +552,10 @@ class TrainingForm:
         # ── 메트릭 카드 행 (태스크별 동적) ──
         self.metrics_card_row = QGridLayout()
         self.metric_cards = {}
-        # 기본 4개 카드 생성 (태스크 설정 시 갱신)
+        # 핵심 결과와 시간은 모든 내장 학습 엔진에서 같은 위치에 표시한다.
         for index, (name, default) in enumerate([("Best Metric", "—"), ("Best Epoch", "—"),
-                               ("Train Loss", "—"), ("Val Loss", "—")]):
+                               ("Train Loss", "—"), ("Val Loss", "—"),
+                               ("최근 에폭 시간", "—"), ("누적 시간", "—")]):
             card = self._create_metric_card(name, default)
             self.metrics_card_row.addWidget(card, index // 2, index % 2)
         right_layout.addLayout(self.metrics_card_row)
@@ -666,6 +667,10 @@ class TrainingForm:
         self.metric_cards[name] = val_label
         if name in ("Train Loss", "Val Loss"):
             card.setToolTip("베스트 모델로 선정된 에폭의 손실. 전체 에폭 추이는 Loss 그래프에서 확인.")
+        elif name == "최근 에폭 시간":
+            card.setToolTip("학습과 검증을 마친 최근 에폭의 소요 시간입니다. 저장과 최종 평가는 별도입니다.")
+        elif name == "누적 시간":
+            card.setToolTip("현재 학습 실행에서 마지막으로 완료된 에폭까지의 누적 시간입니다.")
         return card
 
     def _rebuild_metric_cards(self, task: str, project=None):
@@ -684,7 +689,8 @@ class TrainingForm:
         )
 
         cards = [(f"Best {primary_label}", "—"), ("Best Epoch", "—"),
-                 ("Train Loss", "—"), ("Val Loss", "—")]
+                 ("Train Loss", "—"), ("Val Loss", "—"),
+                 ("최근 에폭 시간", "—"), ("누적 시간", "—")]
 
         for index, (name, default) in enumerate(cards):
             card = self._create_metric_card(name, default)

@@ -143,6 +143,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if gui_path not in sys.path:
         sys.path.insert(0, gui_path)
     from core.model_selection import selection_policy
+    from core.training_time import TrainingClock, format_hms, log_total_time
     policy = selection_policy(SimpleNamespace(selection_metric=selection_metric), "builtin", spec.task)
     if epochs < 1 or batch_size < 1 or learning_rate <= 0 or weight_decay < 0:
         raise ValueError("epochs, batch_size and learning_rate must be positive")
@@ -309,6 +310,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             best_epoch = int(resume_best_checkpoint.get("epoch", start_epoch - 1)) + 1
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
+    training_clock = TrainingClock()
     if resume_best_checkpoint is not None:
         torch.save(resume_best_checkpoint, destination / "best.pt")
     completed_epochs = start_epoch
@@ -316,6 +318,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     for epoch in range(start_epoch, epochs):
         if should_stop():
             break
+        training_clock.start_epoch()
         validation_metrics = {}
         if spec.task == "classify":
             train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target)
@@ -326,17 +329,24 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         selected_value = policy.value(validation_metrics)
         if not all(torch.isfinite(torch.tensor(value)) for value in (train_loss, train_metric, val_loss, val_metric)):
             raise ValueError("training produced a non-finite metric")
+        epoch_time_sec, elapsed_time_sec = training_clock.end_epoch()
+        event_metrics = dict(validation_metrics)
+        event_metrics.update(epoch_time_sec=epoch_time_sec, elapsed_time_sec=elapsed_time_sec)
         log(f"epoch {epoch + 1}/{epochs}: train_loss={train_loss:.6f} val_loss={val_loss:.6f} metric={val_metric:.6f}")
+        log(f"  Epoch {epoch + 1} 시간 | 소요 {format_hms(epoch_time_sec)} | "
+            f"누적 {format_hms(elapsed_time_sec)}")
         completed_epochs = epoch + 1
         log({"event": "epoch_finished", "epoch": completed_epochs,
              "train_loss": train_loss, "val_loss": val_loss,
-             "metric": val_metric, "total_epochs": epochs, "metrics": validation_metrics,
+             "metric": val_metric, "total_epochs": epochs, "metrics": event_metrics,
              "selected_metric": policy.metric, "selected_value": selected_value})
         history.append({"epoch": completed_epochs, "train_loss": train_loss,
                         "train_metric": train_metric, "val_loss": val_loss,
                         "val_metric": val_metric,
                         "metrics": validation_metrics, "selected_value": selected_value,
-                        "learning_rate": float(optimizer.param_groups[0]["lr"])})
+                        "learning_rate": float(optimizer.param_groups[0]["lr"]),
+                        "epoch_time_sec": epoch_time_sec,
+                        "elapsed_time_sec": elapsed_time_sec})
         if scheduler is not None:
             scheduler.step()
         save_builtin_checkpoint(destination / "last.pt", model, model_id=model_id,
@@ -365,6 +375,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             break
     if completed_epochs == start_epoch and start_epoch >= epochs:
         raise ValueError("resume checkpoint already reached the requested epochs")
+    log_total_time(log, training_clock.elapsed())
     (destination / "training.json").write_text(json.dumps({"model_id": model_id,
         "task": spec.task, "epochs": epochs, "input_size": list(input_size),
         "in_channels": in_channels,

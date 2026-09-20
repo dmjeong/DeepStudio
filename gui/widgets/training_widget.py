@@ -13,6 +13,7 @@ from core.project import ProjectData, ProjectManager
 from core.qt_training import TrainWorker, PatchCoreWorker
 from core.training_modes import training_engine_name, training_capabilities, MODE_LABELS, BUILTIN_ADAPTER_IDS
 from core.training_progress import remaining_seconds, run_description
+from core.training_time import format_hms
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
 
 
@@ -960,11 +961,23 @@ class TrainingWidget(TrainingForm, QWidget):
 
     def _on_epoch_finished(self, epoch, train_loss, val_loss, metrics):
         """각 에폭의 손실과 메트릭 추이를 차트에 기록."""
+        metrics = dict(metrics or {})
         # Loss 차트
         self.loss_chart.update_chart(epoch, train_loss, val_loss)
 
         # Metric 차트
         self.metric_chart.update_metrics(epoch, metrics)
+        self._show_epoch_timing(metrics)
+
+    def _show_epoch_timing(self, values):
+        """All native trainers publish these two values with epoch_finished."""
+        for key, card in (("epoch_time_sec", "최근 에폭 시간"),
+                          ("elapsed_time_sec", "누적 시간")):
+            value = values.get(key) if isinstance(values, dict) else None
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+                label = self.metric_cards.get(card)
+                if label is not None:
+                    label.setText(format_hms(value))
 
     def _on_best_epoch_updated(self, epoch, train_loss, val_loss, metrics):
         """저장된 베스트 모델의 에폭, 손실, 주요 지표를 함께 표시."""
@@ -1172,6 +1185,13 @@ class TrainingWidget(TrainingForm, QWidget):
             self.metric_chart.update_metrics(epoch, {key: values.get(key) for key in display}, redraw=redraw)
             if index < len(run.lr_history):
                 self.lr_chart.update_lr(epoch, run.lr_history[index], redraw=index == min(len(epochs), len(run.lr_history)) - 1)
+        if epochs:
+            last_index = len(epochs) - 1
+            self._show_epoch_timing({
+                key: values[last_index] if last_index < len(values) else None
+                for key, values in history.items()
+                if key in {"epoch_time_sec", "elapsed_time_sec"}
+            })
         best_index = epochs.index(run.best_epoch) if run.best_epoch in epochs else -1
         def best_loss(name):
             values = history.get(name, [])
