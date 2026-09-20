@@ -247,7 +247,8 @@ def validate_outputs(expected, actual, atol=1e-4, rtol=1e-4):
 
 
 def export_to_onnx(model, dummy_input, output_path, opset_version=17,
-                   dynamic_batch=False, task="classify", output_names=None):
+                   dynamic_batch=False, task="classify", output_names=None,
+                   constant_folding=True):
     import torch
     from torch.onnx import _constants
     maximum = getattr(_constants, "ONNX_MAX_OPSET", 17)
@@ -264,7 +265,7 @@ def export_to_onnx(model, dummy_input, output_path, opset_version=17,
         exporter_options["external_data"] = False
     with torch.no_grad():
         torch.onnx.export(model, dummy_input.cpu(), str(output_path), export_params=True,
-                          opset_version=opset_version, do_constant_folding=True,
+                          opset_version=opset_version, do_constant_folding=constant_folding,
                           input_names=["input_image"], output_names=names,
                           dynamic_axes=axes, **exporter_options)
     return str(output_path)
@@ -456,17 +457,38 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                 # checkpoint made valid graphs fail at near-zero logits.
                 log("ONNX Runtime 검증: 내보낸 PyTorch 그래프와 비교 "
                     f"(atol={verification_profile['atol']}, rtol={verification_profile['rtol']}, probes=seeded+zero)")
-                for probe in (dummy, torch.zeros_like(dummy)):
-                    verified = (verify_redetr_onnx(staged_model, probe, model)
-                                if backend == "redetr_v4"
-                                else verify_onnx(staged_model, probe, model, task=spec["task"]))
-                    if not verified:
-                        raise ValueError("ONNX 검증 실패")
-                if dynamic_batch and backend != "redetr_v4":
-                    if not verify_onnx(staged_model, dummy.repeat(2, 1, 1, 1), model, task=spec["task"]):
-                        raise ValueError("동적 배치 ONNX 검증 실패")
-                if dynamic_batch and backend == "redetr_v4":
-                    verify_redetr_onnx(staged_model, dummy.repeat(2, 1, 1, 1), model)
+                def verify_candidate(candidate):
+                    probes = [dummy, torch.zeros_like(dummy)]
+                    if dynamic_batch:
+                        probes.append(dummy.repeat(2, 1, 1, 1))
+                    for probe in probes:
+                        verified = (verify_redetr_onnx(staged_model, probe, candidate)
+                                    if backend == "redetr_v4"
+                                    else verify_onnx(staged_model, probe, candidate, task=spec["task"]))
+                        if not verified:
+                            raise ValueError("ONNX 검증 실패")
+                try:
+                    verify_candidate(model)
+                except ValueError as optimized_error:
+                    if backend != "efficientnet":
+                        raise
+                    log(f"최적화 그래프 검증 실패: {optimized_error}")
+                    log("원본 FP32 그래프로 재시도: Conv/BN 사전 융합·상수 폴딩·단순화 제외")
+                    model = load_custom_model(checkpoint, spec).cpu().float().eval()
+                    model.inference_optimization = {
+                        "conv_bn_fused": 0, "channels_last": False,
+                        "constant_folding": False, "simplified": False,
+                        "fallback": "unfused_fp32",
+                    }
+                    export_to_onnx(model, dummy, staged_model, opset_version, dynamic_batch,
+                                   spec["task"], constant_folding=False)
+                    try:
+                        verify_candidate(model)
+                    except ValueError as original_error:
+                        raise ValueError(
+                            f"최적화·원본 그래프 모두 ONNX 검증 실패.\n"
+                            f"최적화: {optimized_error}\n원본 FP32: {original_error}"
+                        ) from original_error
             metadata = {"task": spec["task"], "num_classes": spec["num_classes"],
                         "input_size": [spec["input_height"], spec["input_width"]],
                         "in_channels": spec["in_channels"], "class_names": spec["class_names"],
