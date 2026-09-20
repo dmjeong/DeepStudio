@@ -29,6 +29,28 @@ class TinyReDetr(torch.nn.Module):
         return boxes, logits
 
 
+class TinyUpstreamClassifier(torch.nn.Module):
+    def forward(self, images):
+        value = images.mean(dim=(1, 2, 3))
+        return torch.stack((value, -value), dim=1)
+
+
+class FakeLibreYOLOClassifier:
+    FAMILY = "mobilenetv4"
+
+    def __init__(self):
+        self.model = TinyUpstreamClassifier().eval()
+
+    def export(self, format, *, output_path, imgsz, opset, dynamic, simplify, device):
+        assert format == "onnx"
+        assert imgsz == (8, 8)
+        torch.onnx.export(self.model, torch.zeros((1, 3, 8, 8)), output_path,
+                          input_names=["images"], output_names=["output"], opset_version=opset,
+                          dynamic_axes={"images": {0: "batch"}, "output": {0: "batch"}} if dynamic else None,
+                          dynamo=False)
+        return output_path
+
+
 class ExportContractTests(unittest.TestCase):
     def checkpoint(self):
         checkpoint = make_checkpoint_metadata(
@@ -178,6 +200,41 @@ class ExportContractTests(unittest.TestCase):
         self.assertEqual(result["backend"], "sam2")
         exporter.assert_called_once_with(checkpoint_path, output.parent.resolve(), verify=True,
                                          opset=17, log=unittest.mock.ANY)
+
+    def test_libreyolo_checkpoint_exports_with_native_api_and_runtime_parity(self):
+        checkpoint = {"model_family": "mobilenetv4", "task": "classify", "nc": 2,
+                      "names": {0: "OK", 1: "NG"}, "imgsz": 8}
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "libre.pt"
+            output = Path(directory) / "libre.onnx"
+            torch.save(checkpoint, checkpoint_path)
+            with patch("upstream_models.load_upstream_checkpoint", return_value=FakeLibreYOLOClassifier()) as loader:
+                result = export_onnx.export_checkpoint(checkpoint_path, output, dynamic_batch=True,
+                                                       verify=True, log=lambda _: None)
+            manifest = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+        loader.assert_called_once_with(checkpoint_path, device="cpu")
+        self.assertEqual(export_onnx.checkpoint_backend(checkpoint), "libreyolo")
+        self.assertEqual(result["backend"], "libreyolo_mobilenetv4")
+        self.assertTrue(result["cpp_supported"])
+        self.assertEqual(manifest["export"]["verification_reference"], "libreyolo_exported_pytorch_graph")
+        self.assertEqual(manifest["output_names"], ["output"])
+
+    def test_libreyolo_detection_manifests_keep_cpp_output_contracts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            yolo_path = export_onnx.create_inference_config(
+                directory, "detect", 2, 640, 3, "yolo.onnx", ["OK", "NG"],
+                backend="libreyolo_yolo9", output_names=["output"],
+                detection_box_encoding="pixel_xyxy", config_filename="yolo.json")
+            detr_path = export_onnx.create_inference_config(
+                directory, "detect", 2, 640, 3, "detr.onnx", ["OK", "NG"],
+                backend="libreyolo_rtdetrv4", output_names=["pred_logits", "pred_boxes"],
+                detection_box_encoding="normalized_cxcywh", config_filename="detr.json")
+            yolo = json.loads(Path(yolo_path).read_text(encoding="utf-8"))
+            detr = json.loads(Path(detr_path).read_text(encoding="utf-8"))
+        self.assertTrue(yolo["cpp_supported"])
+        self.assertTrue(detr["cpp_supported"])
+        self.assertEqual(yolo["output_names"], ["output"])
+        self.assertEqual(detr["output_names"], ["pred_logits", "pred_boxes"])
 
     def test_incompatible_resize_metadata_is_rejected(self):
         for key, value in (("resize", "bicubic"), ("resize_implementation", "opencv"),

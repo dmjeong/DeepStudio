@@ -102,13 +102,15 @@ void ValidateConfig(const InferenceConfig& config)
         ((config.crop_width == 0) != (config.crop_height == 0)))
         throw std::invalid_argument("Invalid center crop dimensions.");
     if (config.backend != "custom" && config.backend != "builtin" && config.backend != "patchcore" &&
-        config.backend != "redetr_v4" &&
+        config.backend != "redetr_v4" && config.backend != "libreyolo_mobilenetv4" &&
+        config.backend != "libreyolo_yolo9" && config.backend != "libreyolo_rtdetrv4" &&
         !(config.backend == "efficientnet" && config.task == "classify"))
-        throw std::invalid_argument("Supported backends: custom, builtin, patchcore, redetr_v4 and efficientnet classification.");
+        throw std::invalid_argument("Unsupported deployment backend.");
     if (config.backend == "patchcore" && config.task != "anomaly")
         throw std::invalid_argument("PatchCore backend requires anomaly task.");
-    if (config.backend == "redetr_v4" && config.task != "detect")
-        throw std::invalid_argument("Re-DETR backend requires detect task.");
+    if ((config.backend == "redetr_v4" || config.backend == "libreyolo_yolo9" ||
+         config.backend == "libreyolo_rtdetrv4") && config.task != "detect")
+        throw std::invalid_argument("Detection backend requires detect task.");
     if (config.resize_mode != "stretch" || config.classification_output != "logits")
         throw std::invalid_argument("Custom and EfficientNet models require stretch resize and logits.");
     if (config.task != "classify" && config.task != "segment" &&
@@ -127,12 +129,15 @@ void ValidateConfig(const InferenceConfig& config)
             throw std::invalid_argument("Normalization values must be finite; std must be positive.");
     if (config.task == "detect") {
         if (config.detection_box_encoding != "normalized_cxcywh" &&
-            config.detection_box_encoding != "normalized_xyxy")
+            config.detection_box_encoding != "normalized_xyxy" &&
+            config.detection_box_encoding != "pixel_xyxy")
             throw std::invalid_argument("Unsupported detection box encoding.");
-        const bool redetr = config.backend == "redetr_v4";
-        if ((!redetr && config.detection_objectness != "sigmoid") ||
-            (redetr && config.detection_objectness != "none") ||
-            (config.detection_class_scores != "sigmoid" && config.detection_class_scores != "softmax"))
+        const bool detr = config.backend == "redetr_v4" || config.backend == "libreyolo_rtdetrv4";
+        const bool yolo9 = config.backend == "libreyolo_yolo9";
+        if ((!detr && !yolo9 && config.detection_objectness != "sigmoid") ||
+            ((detr || yolo9) && config.detection_objectness != "none") ||
+            (config.detection_class_scores != "sigmoid" && config.detection_class_scores != "softmax" &&
+             !(yolo9 && config.detection_class_scores == "probabilities")))
             throw std::invalid_argument("Unsupported detection score activation.");
         if (!std::isfinite(config.detection_confidence_threshold) ||
             config.detection_confidence_threshold < 0.0f || config.detection_confidence_threshold > 1.0f ||
@@ -281,12 +286,14 @@ bool VisionInference::Initialize(const InferenceConfig& config)
                  (map_shape[2] > 0 && map_shape[2] != config.input_height) ||
                  (map_shape[3] > 0 && map_shape[3] != config.input_width)))
                 throw std::invalid_argument("PatchCore map output does not match the deployment contract.");
-        } else if (config.backend == "redetr_v4") {
+        } else if (config.backend == "redetr_v4" || config.backend == "libreyolo_rtdetrv4") {
             if (session->GetOutputCount() != 2 || output.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
-                out_shape.size() != 3 || (out_shape[0] > 0 && out_shape[0] != 1) ||
-                (out_shape[2] > 0 && out_shape[2] != 4))
-                throw std::invalid_argument("Re-DETR boxes output does not match the deployment contract.");
-            const auto logits = session->GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo();
+                out_shape.size() != 3 || (out_shape[0] > 0 && out_shape[0] != 1))
+                throw std::invalid_argument("Re-DETR output does not match the deployment contract.");
+            const bool native_order = config.backend == "libreyolo_rtdetrv4";
+            const auto boxes = native_order ? session->GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo() : output;
+            const auto logits = native_order ? output : session->GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo();
+            const auto boxes_shape = boxes.GetShape();
             const auto logits_shape = logits.GetShape();
             // As with PatchCore's constant map output, some ORT builds expose
             // no static type descriptor for a constant secondary output.  If
@@ -295,9 +302,17 @@ bool VisionInference::Initialize(const InferenceConfig& config)
             if (!logits_shape.empty() &&
                 (logits.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || logits_shape.size() != 3 ||
                  (logits_shape[0] > 0 && logits_shape[0] != 1) ||
-                 (logits_shape[1] > 0 && out_shape[1] > 0 && logits_shape[1] != out_shape[1]) ||
+                 boxes_shape.size() != 3 || (boxes_shape[0] > 0 && boxes_shape[0] != 1) ||
+                 (boxes_shape[2] > 0 && boxes_shape[2] != 4) ||
+                 (logits_shape[1] > 0 && boxes_shape[1] > 0 && logits_shape[1] != boxes_shape[1]) ||
                  (logits_shape[2] > 0 && logits_shape[2] != config.num_classes)))
                 throw std::invalid_argument("Re-DETR logits output does not match the deployment contract.");
+        } else if (config.backend == "libreyolo_yolo9") {
+            if (session->GetOutputCount() != 1 || output.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+                out_shape.size() != 3 || (out_shape[0] > 0 && out_shape[0] != 1) ||
+                (out_shape[1] > 0 && out_shape[1] != 4 + config.num_classes) ||
+                out_shape[2] <= 0)
+                throw std::invalid_argument("LibreYOLO9 output does not match the deployment contract.");
         } else if (output.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
                    out_shape.size() != rank ||
                    (config.task == "classify" && out_shape[1] > 0 && out_shape[1] != config.num_classes) ||
@@ -875,11 +890,14 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
     const float* boxes = nullptr;
     const float* scores = nullptr;
     int64_t candidates = 0;
-    if (m_config.backend == "redetr_v4") {
+    const bool detr_backend = m_config.backend == "redetr_v4" || m_config.backend == "libreyolo_rtdetrv4";
+    const bool yolo9_backend = m_config.backend == "libreyolo_yolo9";
+    if (detr_backend) {
         if (outputs.size() != 2) throw std::runtime_error("Re-DETR output count mismatch.");
-        const auto box_info = outputs[0].GetTensorTypeAndShapeInfo();
+        const bool native_order = m_config.backend == "libreyolo_rtdetrv4";
+        const auto box_info = outputs[native_order ? 1 : 0].GetTensorTypeAndShapeInfo();
         const auto box_shape = box_info.GetShape();
-        const auto logit_info = outputs[1].GetTensorTypeAndShapeInfo();
+        const auto logit_info = outputs[native_order ? 0 : 1].GetTensorTypeAndShapeInfo();
         const auto logit_shape = logit_info.GetShape();
         if (box_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
             logit_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
@@ -887,8 +905,8 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
             box_shape[2] != 4 || logit_shape[2] != m_config.num_classes ||
             box_shape[1] <= 0 || logit_shape[1] != box_shape[1])
             throw std::runtime_error("Re-DETR output shape/type mismatch.");
-        boxes = outputs[0].GetTensorData<float>();
-        scores = outputs[1].GetTensorData<float>();
+        boxes = outputs[native_order ? 1 : 0].GetTensorData<float>();
+        scores = outputs[native_order ? 0 : 1].GetTensorData<float>();
         candidates = box_shape[1];
         for (size_t index = 0; index < logit_info.GetElementCount(); ++index)
             if (!std::isfinite(scores[index])) throw std::runtime_error("Re-DETR returned non-finite scores.");
@@ -896,10 +914,15 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
             if (!std::isfinite(boxes[index])) throw std::runtime_error("Re-DETR returned non-finite boxes.");
     } else {
         if (outputs.size() != 1) throw std::runtime_error("Detection output count mismatch.");
-        ValidateOutput(outputs[0], m_config, 3);
         const auto shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
+        if (yolo9_backend) {
+            if (shape.size() != 3 || shape[0] != 1 || shape[1] != 4 + m_config.num_classes || shape[2] <= 0)
+                throw std::runtime_error("LibreYOLO9 output shape mismatch.");
+        } else {
+            ValidateOutput(outputs[0], m_config, 3);
+        }
         boxes = outputs[0].GetTensorData<float>();
-        candidates = shape[1];
+        candidates = yolo9_backend ? shape[2] : shape[1];
     }
     const int stride = 5 + m_config.num_classes;
     const int roi_width = m_config.crop_width > 0 ? m_config.crop_width : image.cols;
@@ -910,14 +933,15 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
     candidates_to_keep.reserve(static_cast<size_t>(candidates));
     for (int64_t index = 0; index < candidates; ++index)
     {
-        const float* row = boxes + index * (m_config.backend == "redetr_v4" ? 4 : stride);
-        const float objectness = m_config.backend == "redetr_v4" && m_config.detection_objectness == "none"
+        const float* row = boxes + index * (detr_backend ? 4 : stride);
+        const auto yolo9_value = [&](int channel) { return boxes[channel * candidates + index]; };
+        const float objectness = (detr_backend || yolo9_backend) && m_config.detection_objectness == "none"
             ? 1.0f : Sigmoid(row[4]);
         int class_id = 0;
         float best_class = -std::numeric_limits<float>::infinity();
         float score_sum = 0.0f;
         float score_max = -std::numeric_limits<float>::infinity();
-        if (m_config.backend == "redetr_v4" && m_config.detection_class_scores == "softmax") {
+        if (detr_backend && m_config.detection_class_scores == "softmax") {
             for (int cls = 0; cls < m_config.num_classes; ++cls)
                 score_max = std::max(score_max, scores[index * m_config.num_classes + cls]);
             for (int cls = 0; cls < m_config.num_classes; ++cls)
@@ -925,9 +949,10 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
         }
         for (int cls = 0; cls < m_config.num_classes; ++cls)
         {
-            const float raw_score = m_config.backend == "redetr_v4"
-                ? scores[index * m_config.num_classes + cls] : row[5 + cls];
-            const float score = m_config.backend == "redetr_v4" && m_config.detection_class_scores == "softmax"
+            const float raw_score = detr_backend ? scores[index * m_config.num_classes + cls]
+                : yolo9_backend ? yolo9_value(4 + cls) : row[5 + cls];
+            const float score = yolo9_backend ? raw_score
+                : detr_backend && m_config.detection_class_scores == "softmax"
                 ? std::exp(raw_score - score_max) / score_sum : Sigmoid(raw_score);
             if (score > best_class) { best_class = score; class_id = cls; }
         }
@@ -935,7 +960,14 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
         if (!std::isfinite(confidence) || confidence < m_config.detection_confidence_threshold)
             continue;
         float x1, y1, x2, y2;
-        if (m_config.detection_box_encoding == "normalized_cxcywh")
+        if (yolo9_backend)
+        {
+            x1 = yolo9_value(0) / m_config.input_width;
+            y1 = yolo9_value(1) / m_config.input_height;
+            x2 = yolo9_value(2) / m_config.input_width;
+            y2 = yolo9_value(3) / m_config.input_height;
+        }
+        else if (m_config.detection_box_encoding == "normalized_cxcywh")
         {
             const float cx = row[0], cy = row[1], width = row[2], height = row[3];
             x1 = cx - width * 0.5f; y1 = cy - height * 0.5f;

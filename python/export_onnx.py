@@ -16,6 +16,7 @@ OUTPUT_NAMES = {
 }
 
 RE_DETR_VARIANTS = frozenset({"Small", "Medium", "Large"})
+UPSTREAM_FAMILIES = frozenset({"mobilenetv4", "yolo9", "rtdetrv4"})
 
 
 class ExportVerificationError(ValueError):
@@ -77,11 +78,87 @@ def checkpoint_backend(checkpoint):
         return "redetr_v4"
     if checkpoint.get("type") == "sam2" or checkpoint.get("backend") == "sam2":
         return "sam2"
+    if (checkpoint.get("model_family") in UPSTREAM_FAMILIES and
+            checkpoint.get("task") in {"classify", "detect"}):
+        return "libreyolo"
     if "model_state_dict" in checkpoint:
         if checkpoint.get("engine") == "efficientnet":
             return "efficientnet"
         return "custom"
     raise ValueError("지원하지 않는 체크포인트 포맷")
+
+
+def _upstream_spec(checkpoint):
+    """Read the schema written by the shipped LibreYOLO trainers."""
+    family = checkpoint.get("model_family")
+    task = checkpoint.get("task")
+    if family not in UPSTREAM_FAMILIES or task not in {"classify", "detect"}:
+        raise ValueError("지원하지 않는 LibreYOLO 체크포인트 메타데이터")
+    num_classes = _positive_int(checkpoint.get("nc"), "nc")
+    names = checkpoint.get("names")
+    if isinstance(names, dict):
+        class_names = [str(names.get(index, names.get(str(index), f"Class {index}")))
+                       for index in range(num_classes)]
+    elif isinstance(names, (list, tuple)) and len(names) == num_classes:
+        class_names = [str(value) for value in names]
+    else:
+        raise ValueError("LibreYOLO 체크포인트의 names 메타데이터 오류")
+    size = _positive_int(checkpoint.get("imgsz"), "imgsz")
+    if task == "classify" and family != "mobilenetv4":
+        raise ValueError("기본 제공 LibreYOLO 분류 체크포인트 모델군 불일치")
+    if task == "detect" and family not in {"yolo9", "rtdetrv4"}:
+        raise ValueError("기본 제공 LibreYOLO 검출 체크포인트 모델군 불일치")
+    return {"family": family, "task": task, "num_classes": num_classes,
+            "class_names": class_names, "input_height": size, "input_width": size,
+            "in_channels": 3,
+            "preprocessing": {"normalize_mean": [0.485, 0.456, 0.406],
+                                "normalize_std": [0.229, 0.224, 0.225],
+                                "input_size": [size, size], "in_channels": 3,
+                                "color_order": "RGB"}}
+
+
+def _upstream_reference_outputs(model, family, dummy):
+    """Return the exact tensor schema selected by LibreYOLO's ONNX exporter."""
+    import torch
+    network = model.model.cpu().eval()
+    head = getattr(network, "head", None)
+    old_export = getattr(head, "export", None)
+    if family == "yolo9" and old_export is not None:
+        head.export = True
+    try:
+        with torch.no_grad():
+            value = network(dummy.cpu())
+    finally:
+        if family == "yolo9" and old_export is not None:
+            head.export = old_export
+    if family == "rtdetrv4":
+        if not isinstance(value, dict) or not {"pred_logits", "pred_boxes"} <= set(value):
+            raise ValueError("LibreYOLO Re-DETR v4 PyTorch 출력 형식 오류")
+        return [value["pred_logits"], value["pred_boxes"]]
+    if isinstance(value, (tuple, list)):
+        raise ValueError("LibreYOLO ONNX 단일 출력 모델 형식 오류")
+    return [value]
+
+
+def verify_upstream_onnx(onnx_path, model, spec, dummy):
+    """Compare every raw exported tensor with the public native checkpoint."""
+    import onnxruntime as ort
+    actual = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"]).run(
+        None, {"images": dummy.cpu().numpy()})
+    expected = _upstream_reference_outputs(model, spec["family"], dummy)
+    if len(actual) != len(expected):
+        raise ValueError(f"LibreYOLO ONNX 출력 개수 불일치: PyTorch={len(expected)}, ONNX={len(actual)}")
+    tolerances = verification_tolerances(spec["task"])
+    for index, (reference, converted) in enumerate(zip(expected, actual)):
+        reference = reference.detach().cpu().numpy()
+        if spec["task"] == "classify":
+            validate_classification_outputs(reference, converted, **tolerances)
+        else:
+            try:
+                validate_outputs(reference, converted, **tolerances)
+            except ValueError as exc:
+                raise ValueError(f"LibreYOLO ONNX 출력 {index} 검증 실패: {exc}") from exc
+    return True
 
 
 def _positive_int(value, name):
@@ -342,17 +419,20 @@ def create_inference_config(output_dir, task, num_classes, input_size,
                             model_config=None):
     size = [input_size, input_size] if isinstance(input_size, int) else list(input_size)
     preprocessing = dict(preprocessing or {})
-    if backend not in {"custom", "builtin", "efficientnet", "patchcore", "redetr_v4"}:
+    upstream_backends = {"libreyolo_mobilenetv4", "libreyolo_yolo9", "libreyolo_rtdetrv4"}
+    if backend not in {"custom", "builtin", "efficientnet", "patchcore", "redetr_v4", *upstream_backends}:
         raise ValueError("지원하지 않는 모델 형식입니다. 등록된 모델 체크포인트를 선택하세요.")
-    if backend == "redetr_v4" and task != "detect":
+    if backend in {"redetr_v4", "libreyolo_rtdetrv4", "libreyolo_yolo9"} and task != "detect":
         raise ValueError("Re-DETR v4 backend는 detect 태스크만 지원합니다.")
-    if backend == "redetr_v4" and (output_names is None or len(output_names) != 2):
+    if backend in {"redetr_v4", "libreyolo_rtdetrv4"} and (output_names is None or len(output_names) != 2):
         raise ValueError("Re-DETR v4는 pred_boxes와 pred_logits 두 출력 이름이 필요합니다.")
     detection_cpp_supported = task != "detect" or detection_box_encoding in {
         "grid_sigmoid_xywh", "normalized_cxcywh"
     }
-    if backend == "redetr_v4":
+    if backend in {"redetr_v4", "libreyolo_rtdetrv4"}:
         detection_cpp_supported = detection_box_encoding in {None, "normalized_cxcywh", "normalized_xyxy"}
+    if backend == "libreyolo_yolo9":
+        detection_cpp_supported = detection_box_encoding == "pixel_xyxy"
     config = {
         "schema_version": 1, "backend": backend, "model_path": onnx_filename,
         "task": task, "num_classes": num_classes, "input_channels": in_channels,
@@ -366,8 +446,9 @@ def create_inference_config(output_dir, task, num_classes, input_size,
         "cpp_supported": ((backend in {"custom", "builtin"} and task in ("classify", "segment", "detect", "anomaly") and
                             detection_cpp_supported) or
                           (backend == "patchcore" and task == "anomaly")) or
-                         (backend == "efficientnet" and task == "classify") or
-                         (backend == "redetr_v4" and task == "detect" and detection_cpp_supported),
+                         (backend in {"efficientnet", "libreyolo_mobilenetv4"} and task == "classify") or
+                         (backend in {"redetr_v4", "libreyolo_rtdetrv4", "libreyolo_yolo9"} and
+                          task == "detect" and detection_cpp_supported),
     }
     if architecture is not None:
         config["architecture"] = architecture
@@ -378,7 +459,7 @@ def create_inference_config(output_dir, task, num_classes, input_size,
             config["model_config"] = {**model_config, **model_input_contract(model_config, in_channels)}
     elif backend == "builtin" and model_config is not None:
         config["model_config"] = dict(model_config)
-    elif backend == "redetr_v4":
+    elif backend in {"redetr_v4", "libreyolo_rtdetrv4"}:
         config["postprocessing"] = {
             "box_format": detection_box_encoding or "normalized_cxcywh",
             "objectness": "none", "class_scores": "sigmoid",
@@ -413,6 +494,72 @@ def create_inference_config(output_dir, task, num_classes, input_size,
     return str(path)
 
 
+def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_version,
+                                dynamic_batch, simplify, verify, log):
+    """Export shipped LibreYOLO checkpoints without rebuilding them as CustomCSP."""
+    import onnx
+    import torch
+    from upstream_models import load_upstream_checkpoint
+
+    spec = _upstream_spec(checkpoint)
+    family = spec["family"]
+    backend = {"mobilenetv4": "libreyolo_mobilenetv4", "yolo9": "libreyolo_yolo9",
+               "rtdetrv4": "libreyolo_rtdetrv4"}[family]
+    output = Path(output)
+    config_name = output.with_suffix(".json").name
+    with tempfile.TemporaryDirectory(prefix=".onnx-export-", dir=output.parent) as temporary:
+        stage = Path(temporary)
+        staged_model = stage / output.name
+        log(f"내보내기 시작: LibreYOLO {family}")
+        model = load_upstream_checkpoint(checkpoint_path, device="cpu")
+        exported = Path(model.export(format="onnx", output_path=str(staged_model),
+                                     imgsz=(spec["input_height"], spec["input_width"]),
+                                     opset=opset_version, dynamic=dynamic_batch,
+                                     simplify=simplify, device="cpu"))
+        if exported.resolve() != staged_model.resolve() or not staged_model.is_file():
+            raise ValueError("LibreYOLO ONNX exporter가 요청한 출력 파일을 생성하지 않았습니다")
+        onnx.checker.check_model(str(staged_model))
+        if verify:
+            generator = torch.Generator().manual_seed(42)
+            dummy = torch.randn(1, 3, spec["input_height"], spec["input_width"], generator=generator)
+            log("ONNX Runtime 검증: LibreYOLO가 내보낸 원본 PyTorch 텐서와 비교 (seeded+zero)")
+            verify_upstream_onnx(staged_model, model, spec, dummy)
+            verify_upstream_onnx(staged_model, model, spec, torch.zeros_like(dummy))
+            if dynamic_batch:
+                verify_upstream_onnx(staged_model, model, spec, dummy.repeat(2, 1, 1, 1))
+        output_names = (["pred_logits", "pred_boxes"] if family == "rtdetrv4" else ["output"])
+        detection_encoding = ("pixel_xyxy" if family == "yolo9" else "normalized_cxcywh")
+        staged_config = create_inference_config(
+            stage, spec["task"], spec["num_classes"],
+            [spec["input_height"], spec["input_width"]], 3, output.name,
+            spec["class_names"], preprocessing=spec["preprocessing"], backend=backend,
+            verification="passed" if verify else "skipped", config_filename=config_name,
+            output_names=output_names, detection_box_encoding=detection_encoding,
+            model_config={"model_family": family, "upstream_export": "libreyolo_public_api"})
+        manifest = json.loads(Path(staged_config).read_text(encoding="utf-8"))
+        manifest["export"] = {"opset": opset_version, "precision": "float32",
+                              "dynamic_batch": dynamic_batch,
+                              "verification_tolerance": verification_tolerances(spec["task"]),
+                              "verification_reference": "libreyolo_exported_pytorch_graph"}
+        if family == "yolo9":
+            manifest["postprocessing"] = {
+                "box_format": "pixel_xyxy", "objectness": "none",
+                "class_scores": "probabilities", "confidence": "class_score",
+                "class_aware_nms": True, "confidence_threshold": .25,
+                "iou_threshold": .5, "max_detections": 300,
+            }
+        Path(staged_config).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(staged_model, output)
+        config_path = output.with_suffix(".json")
+        os.replace(staged_config, config_path)
+    result = {"output_path": str(output), "config_path": str(config_path),
+              "file_size_mb": output.stat().st_size / (1024 * 1024), "backend": backend,
+              "verification": "passed" if verify else "skipped", "task": spec["task"],
+              "cpp_supported": manifest["cpp_supported"]}
+    log(f"내보내기 완료: {output}\n배포 설정: {config_path}\n검증: {result['verification']}")
+    return result
+
+
 def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_batch=False,
                       simplify=False, verify=True, overrides=None, log=print):
     """검증 완료 후 ONNX와 동일 이름의 .json을 대상 폴더에 배치한다."""
@@ -425,7 +572,7 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
     # 사용자 선택 체크포인트를 로드한다.
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     backend = checkpoint_backend(checkpoint)
-    if backend not in {"custom", "efficientnet", "builtin", "patchcore", "redetr_v4", "sam2"}:
+    if backend not in {"custom", "efficientnet", "builtin", "patchcore", "redetr_v4", "sam2", "libreyolo"}:
         raise ValueError("지원하지 않는 모델 형식입니다. 등록된 모델 체크포인트를 선택하세요.")
     if output.resolve() == Path(checkpoint_path).resolve():
         raise ValueError("체크포인트와 ONNX 출력 경로가 같을 수 없습니다.")
@@ -437,6 +584,10 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
         from export_sam2_onnx import export_sam2_checkpoint
         return export_sam2_checkpoint(checkpoint_path, output.parent, verify=verify,
                                       opset=opset_version, log=log)
+    if backend == "libreyolo":
+        return _export_upstream_checkpoint(checkpoint_path, output, checkpoint,
+                                           opset_version=opset_version, dynamic_batch=dynamic_batch,
+                                           simplify=simplify, verify=verify, log=log)
     config_name = output.with_suffix(".json").name
     with tempfile.TemporaryDirectory(prefix=".onnx-export-", dir=output.parent) as temp:
         stage = Path(temp)

@@ -2,6 +2,11 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**2.51 — LibreYOLO ONNX 내보내기 수정**
+
+- LibreYOLO MobileNetV4 Small, LibreYOLO9 Tiny, Re-DETR v4 학습 체크포인트가 ONNX 내보내기에서 미지원 포맷으로 거부되던 오류를 수정했다.
+- 공개 LibreYOLO exporter로 그래프를 생성하고, seeded·zero 입력에서 native PyTorch 원본 출력과 ONNX Runtime 출력을 비교한다. C++ SDK는 LibreYOLO 분류·YOLO9·Re-DETR v4 출력 계약을 읽는다.
+
 **2.50 — Settings 모델 카탈로그 정리**
 
 - Settings의 태스크를 Classification, Object Detection, Segmentation, Anomaly Detection으로 통일했다.
