@@ -92,12 +92,12 @@ class TrainingWidget(TrainingForm, QWidget):
         if model_id in BUILTIN_ADAPTER_IDS:
             choices = [("builtin_finetune", f"{name} ImageNet 가중치로 시작"),
                        ("builtin_transfer", f"{name} 로컬 가중치로 시작"),
-                       ("custom", f"{name} 처음부터 학습")]
+                       ("builtin_scratch", f"{name} 처음부터 학습")]
             scope = "분류 모델" if self.project.task == "classify" else "백본 (분할 헤드는 새로 학습)"
             self.mode_desc.setText(f"선택 모델: {name}\n사전학습 범위: {scope}")
         elif model_id.startswith("efficientnet_") or (not model_id and self.project.task == "classify"):
             choices = [(key, MODE_LABELS[key]) for key in
-                       ("efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume", "custom")]
+                       ("efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume", "efficientnet_scratch")]
             self.mode_desc.setText(f"선택 모델: {name or 'EfficientNet'}\nImageNet 가중치 또는 로컬 체크포인트를 사용합니다.")
         elif self._selected_container_spec()[0] is not None:
             choices = [("custom", "모델 팩에서 학습" if model_id and not model_id.startswith("patchcore") else "Custom CSP")]
@@ -715,7 +715,7 @@ class TrainingWidget(TrainingForm, QWidget):
         elif cfg.training_mode == "custom":
             # 커스텀: weights_edit → pretrained_weights
             mcfg.pretrained_weights = self.weights_edit.text().strip()
-        elif cfg.training_mode in {"efficientnet_finetune", "builtin_finetune"}:
+        elif cfg.training_mode in {"efficientnet_finetune", "builtin_finetune", "efficientnet_scratch", "builtin_scratch"}:
             # 파인튜닝: 프리트레인드 모델이 소스이므로 경로 불필요
             mcfg.pretrained_weights = ""
 
@@ -723,7 +723,10 @@ class TrainingWidget(TrainingForm, QWidget):
         # ┌──────────────────────┬──────────────────────────────┐
         # │ custom 모드          │ freeze_check (커스텀 TL)      │
         # └──────────────────────┴──────────────────────────────┘
-        if cfg.training_mode in ("efficientnet_finetune", "efficientnet_transfer", "builtin_finetune", "builtin_transfer"):
+        if cfg.training_mode in {"efficientnet_scratch", "builtin_scratch"}:
+            # Freezing random features is never a useful scratch-training mode.
+            mcfg.freeze_backbone = False
+        elif cfg.training_mode in ("efficientnet_finetune", "efficientnet_transfer", "builtin_finetune", "builtin_transfer"):
             mcfg.freeze_backbone = self.finetune_freeze_check.isChecked()
         else:
             mcfg.freeze_backbone = self.freeze_check.isChecked()
@@ -893,8 +896,10 @@ class TrainingWidget(TrainingForm, QWidget):
             "efficientnet_finetune": "EfficientNet 사전학습",
             "efficientnet_transfer": "EfficientNet 추가 학습",
             "efficientnet_resume": "EfficientNet 학습 재개",
+            "efficientnet_scratch": "EfficientNet 처음부터 학습",
             "builtin_finetune": f"{self.model_id_combo.currentText()} 사전학습",
             "builtin_transfer": f"{self.model_id_combo.currentText()} 추가 학습",
+            "builtin_scratch": f"{self.model_id_combo.currentText()} 처음부터 학습",
             "custom": "커스텀",
         }
         mode_label = mode_labels.get(mode, "학습")

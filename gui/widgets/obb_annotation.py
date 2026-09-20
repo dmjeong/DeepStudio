@@ -61,7 +61,7 @@ class OBBAnnotationDialog(AnnotationNavigation, QDialog):
         help_text = QLabel("첫 두 번 클릭으로 한 변을 정하고, 세 번째 클릭으로 폭을 정하세요. "
                            "확대 후 가로와 세로 스크롤로 이동할 수 있습니다.")
         if task == "detect":
-            help_text.setText("B 박스 그리기 · V 선택/이동 · Space 화면 이동 · 휠 확대 · Delete 삭제 · Ctrl+Z 실행 취소 · Ctrl+D 복제 · 숫자 1~9 클래스")
+            help_text.setText("B 박스 그리기 · V 선택/이동 · E 클릭 삭제 · Space 화면 이동 · 휠 확대 · Delete 삭제 · Ctrl+Z 실행 취소 · Ctrl+D 복제 · 숫자 1~9 클래스")
         help_text.setWordWrap(True)
         layout.addWidget(help_text)
         toolbar = QHBoxLayout()
@@ -90,6 +90,7 @@ class OBBAnnotationDialog(AnnotationNavigation, QDialog):
             self.scene = self.view.scene()
             self.view.box_created.connect(self._create_box)
             self.view.box_edited.connect(self._edit_box)
+            self.view.box_deleted.connect(self._remove)
             self.view.selection_changed.connect(self._select_box)
             self.view.command.connect(self._command)
             self.view.zoom_requested.connect(lambda delta: self.zoom.setValue(self.zoom.value()+delta*10))
@@ -114,7 +115,8 @@ class OBBAnnotationDialog(AnnotationNavigation, QDialog):
             self.table.cellClicked.connect(lambda row, column: self._select_box(row))
             controls = QHBoxLayout()
             self.mode_buttons = {}
-            for mode, label in (("draw", "박스 그리기  B"), ("select", "선택과 이동  D"), ("pan", "화면 이동  H")):
+            for mode, label in (("draw", "박스 그리기  B"), ("select", "선택과 이동  D"),
+                                ("erase", "클릭 삭제  E"), ("pan", "화면 이동  H")):
                 button = QPushButton(label)
                 button.setCheckable(True)
                 button.clicked.connect(lambda checked=False, mode=mode: self._set_mode(mode))
@@ -198,7 +200,7 @@ class OBBAnnotationDialog(AnnotationNavigation, QDialog):
         self.view.setFocus()
 
     def _command(self, command):
-        if command in ("draw", "select", "pan"):
+        if command in ("draw", "select", "erase", "pan"):
             self._set_mode(command)
         elif command == "delete" and self.selected >= 0:
             self._remove(self.selected)

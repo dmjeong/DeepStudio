@@ -16,7 +16,7 @@ from efficientnet import EfficientNet, VARIANTS, load_imagenet
 from efficientnet_contract import NATIVE_INPUT, LEGACY_GRAY_INPUT, checkpoint_input_contract, channel_description
 
 
-MODES = {"efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume"}
+MODES = {"efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume", "efficientnet_scratch"}
 
 
 def dataset_signature(data):
@@ -46,7 +46,7 @@ class EfficientNetTrainWorker(TrainWorker):
         self._best_state = None
         self._weight_provenance = {}
         self._data_signature = dataset_signature(self.project.data)
-        if cfg.training_mode == "efficientnet_finetune":
+        if cfg.training_mode in {"efficientnet_finetune", "efficientnet_scratch"}:
             return
         source = self.project.model.pretrained_weights
         if not source or not Path(source).is_file():
@@ -113,6 +113,10 @@ class EfficientNetTrainWorker(TrainWorker):
         mode = self.project.training.training_mode
         if mode == "efficientnet_finetune":
             self._weight_provenance = load_imagenet(model, weights_path=weights_path or None)
+        elif mode == "efficientnet_scratch":
+            self._weight_provenance = {"source": "random", "architecture": model.architecture}
+            self.signals.log_message.emit("  EfficientNet 무작위 초기화에서 학습 시작")
+            return False
         else:
             checkpoint = self._source_checkpoint
             if "model_state_dict" not in checkpoint:

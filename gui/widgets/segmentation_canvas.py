@@ -26,16 +26,20 @@ class SegmentationCanvas(DetectionCanvas):
     def set_document(self, document, names, selected=-1):
         self.document, self.names, self.selected = document, list(names), selected
         self.rows = document.shapes
-        pixels = document.render()
+        self._set_overlay_pixels(document.render())
+        self.viewport().update()
+
+    def _set_overlay_pixels(self, pixels):
+        """Render the actual semantic mask, including an eraser preview."""
         palette = np.zeros((256, 4), dtype=np.uint8)
-        for i in range(1, document.classes):
+        for i in range(1, self.document.classes):
             color = QColor.fromHsv((i * 67 + 205) % 360, 180, 255)
             palette[i] = [color.red(), color.green(), color.blue(), 255]
         palette[255] = [255, 255, 255, 110]
         rgba = np.ascontiguousarray(palette[pixels])
-        image = QImage(rgba.data, document.width, document.height, document.width * 4, QImage.Format.Format_RGBA8888).copy()
+        image = QImage(rgba.data, self.document.width, self.document.height,
+                       self.document.width * 4, QImage.Format.Format_RGBA8888).copy()
         self.overlay.setPixmap(QPixmap.fromImage(image))
-        self.viewport().update()
 
     def set_opacity(self, value):
         self.overlay.setOpacity(value / 100)
@@ -47,6 +51,8 @@ class SegmentationCanvas(DetectionCanvas):
     def cancel_gesture(self):
         super().cancel_gesture()
         self.points, self.stroke, self.preview_shape = [], [], None
+        if self.document is not None:
+            self._set_overlay_pixels(self.document.render())
         self.pending_changed.emit(False)
 
     def _normalized(self, point):
@@ -152,6 +158,11 @@ class SegmentationCanvas(DetectionCanvas):
             normalized = self._normalized(point)
             if normalized != self.stroke[-2:]:
                 self.stroke.extend(normalized)
+            if self.mode == "erase":
+                self._set_overlay_pixels(self.document.render({
+                    "kind": "stroke", "class_id": 0, "operation": "erase",
+                    "points": list(self.stroke), "width": self.brush_size,
+                }))
         elif self.gesture == "rectangle":
             x1, y1 = self._normalized(self.start)
             x2, y2 = self._normalized(point)
@@ -183,17 +194,22 @@ class SegmentationCanvas(DetectionCanvas):
         if gesture == "stroke":
             shape = {"kind": "stroke", "class_id": 0 if self.mode == "erase" else self.class_id,
                      "points": list(self.stroke), "width": self.brush_size}
+            if self.mode == "erase":
+                shape["operation"] = "erase"
         if shape is not None:
             try:
                 shape = self.document.validate_shape(shape)
                 if gesture in {"vertex", "shape_move"}:
                     if shape != self.original_shape:
                         self.shape_edited.emit(self.selected, shape)
-                else:
+                elif shape.get("operation") != "erase" or not np.array_equal(
+                        self.document.render(), self.document.render(shape)):
                     self.shape_created.emit(shape)
             except ValueError as exc:
                 self.status_changed.emit(str(exc))
         self.stroke, self.preview_shape = [], None
+        if gesture == "stroke" and self.mode == "erase":
+            self._set_overlay_pixels(self.document.render())
         self.pending_changed.emit(bool(self.points))
         self.viewport().update()
         event.accept()

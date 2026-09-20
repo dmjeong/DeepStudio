@@ -60,7 +60,7 @@ class GuiSmokeTests(unittest.TestCase):
         from core.project import ProjectManager
         project = ProjectManager.create_new("모드 복원", "classify", str(Path(self.temp.name) / "modes"), ["OK", "NG"])
         page = self.window.training_page
-        for mode in ("custom", "efficientnet_resume", "efficientnet_transfer", "efficientnet_finetune"):
+        for mode in ("efficientnet_scratch", "efficientnet_resume", "efficientnet_transfer", "efficientnet_finetune"):
             project.training.training_mode = mode
             project.model.pretrained_weights = "D:/models/my-best.pt" if mode == "efficientnet_transfer" else ""
             page.set_project(project)

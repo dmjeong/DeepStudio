@@ -67,9 +67,13 @@ def test_polygon_vertex_brush_eraser_undo_save_and_reopen(editor):
     dialog.mode_buttons["erase"].click()
     drag(dialog, (250, 200), (250, 200))
     assert dialog.document.render()[200, 250] == 0
+    assert dialog.table.rowCount() == 2  # polygon + painted brush; eraser is not an object row
+    assert dialog.document.shapes[-1]["operation"] == "erase"
     QTest.keyClick(dialog.view, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
     assert dialog.document.render()[200, 250] == 2
     dialog.redo_button.click()
+    assert dialog.document.render()[200, 250] == 0
+    dialog._change_class(0, 2)
     assert dialog.document.render()[200, 250] == 0
     expected = dialog.document.render()
     QTest.keyClick(dialog.view, Qt.Key.Key_K)

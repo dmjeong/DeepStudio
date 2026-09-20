@@ -286,18 +286,16 @@ class ModelRegistry:
         self._models[spec.model_id] = spec
 
     def _register_installed(self, spec: ModelSpec) -> None:
-        """Activate a pack over its catalog entry without allowing downgrades."""
+        """Register an extension without letting it replace a shipped model."""
         current = self._models.get(spec.model_id)
         if current is None:
             self.register(spec)
             return
         if spec.model_id not in self._builtin_ids:
             raise ModelRegistryError(f"duplicate model id: {spec.model_id}")
-        if STATUS_ORDER[spec.release_status] < STATUS_ORDER[current.release_status]:
-            raise ModelRegistryError(
-                f"installed model would downgrade {spec.model_id}: "
-                f"{current.release_status} -> {spec.release_status}")
-        self._models[spec.model_id] = spec
+        raise ModelRegistryError(
+            f"installed model id is reserved for the built-in model: {spec.model_id}. "
+            "Use a vendor-prefixed model id for an added model pack.")
 
     def get(self, model_id: str) -> ModelSpec:
         try:

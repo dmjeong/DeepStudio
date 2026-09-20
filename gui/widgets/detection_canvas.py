@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QGraphicsView, QGraphicsScene
 class DetectionCanvas(QGraphicsView):
     box_created = Signal(list)
     box_edited = Signal(int, list)
+    box_deleted = Signal(int)
     selection_changed = Signal(int)
     zoom_requested = Signal(int)
     command = Signal(str)
@@ -108,7 +109,13 @@ class DetectionCanvas(QGraphicsView):
             self.start = self._clamp(point)
             handle = self._handle_at(point)
             hit = self._hit(point)
-            if handle >= 0:
+            if self.mode == 'erase':
+                self.selected = hit
+                self.selection_changed.emit(hit)
+                if hit >= 0:
+                    self.box_deleted.emit(hit)
+                self.gesture = None
+            elif handle >= 0:
                 self.gesture = 'resize'
                 self.handle = handle
                 self.original = self._rect(self.rows[self.selected])
@@ -203,8 +210,8 @@ class DetectionCanvas(QGraphicsView):
             self.command.emit('previous' if key == Qt.Key.Key_J else 'next')
         elif Qt.Key.Key_1 <= key <= Qt.Key.Key_9:
             self.command.emit(f'class:{key-Qt.Key.Key_1}')
-        elif key in (Qt.Key.Key_B, Qt.Key.Key_D, Qt.Key.Key_H):
-            self.command.emit({Qt.Key.Key_B:'draw', Qt.Key.Key_D:'select', Qt.Key.Key_H:'pan'}[key])
+        elif key in (Qt.Key.Key_B, Qt.Key.Key_D, Qt.Key.Key_E, Qt.Key.Key_H):
+            self.command.emit({Qt.Key.Key_B:'draw', Qt.Key.Key_D:'select', Qt.Key.Key_E:'erase', Qt.Key.Key_H:'pan'}[key])
         elif key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             self.command.emit('delete')
         elif key == Qt.Key.Key_Escape:

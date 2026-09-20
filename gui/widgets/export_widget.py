@@ -165,12 +165,21 @@ class ExportWidget(QWidget):
     def set_project(self, project: ProjectData):
         """프로젝트 설정"""
         self.project = project
+        # A previous project's checkpoint must never be exported under this
+        # project's output directory.  External checkpoints require an
+        # explicit browse action after this reset.
+        self.ckpt_edit.clear()
+        self.log_text.clear()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self._auto_checkpoint = ""
 
         # 최근 체크포인트 자동 설정
         if project.runs:
             latest = project.runs[-1]
             if latest.checkpoint_path:
                 self.ckpt_edit.setText(latest.checkpoint_path)
+                self._auto_checkpoint = os.path.abspath(latest.checkpoint_path)
 
         # 기본 출력 경로
         export_dir = os.path.join(project.project_dir, "exports")
@@ -208,6 +217,12 @@ class ExportWidget(QWidget):
             QMessageBox.warning(self, "알림", "출력 경로를 지정해 주세요.")
             return
 
+        try:
+            self._validate_checkpoint_for_project(ckpt_path)
+        except ValueError as exc:
+            QMessageBox.warning(self, "체크포인트 확인", str(exc))
+            return
+
         if getattr(self, "worker", None) is not None and self.worker.isRunning():
             return
         self.log_text.clear()
@@ -226,6 +241,38 @@ class ExportWidget(QWidget):
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker.finished.connect(self._worker_finished)
         self.worker.start()
+
+    def _validate_checkpoint_for_project(self, checkpoint_path):
+        """Reject a checkpoint whose declared task/model contradicts the project.
+
+        A user may explicitly browse a compatible external checkpoint, but a
+        stale checkpoint from a different project must not silently become a
+        new project's deployment artifact.
+        """
+        if self.project is None:
+            return
+        import torch
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        except Exception as exc:
+            raise ValueError(f"체크포인트를 읽을 수 없습니다: {exc}") from exc
+        if not isinstance(checkpoint, dict):
+            raise ValueError("체크포인트 메타데이터를 확인할 수 없습니다.")
+        task = checkpoint.get("task")
+        if task and task != self.project.task:
+            raise ValueError(
+                f"현재 프로젝트 태스크는 {self.project.task}이지만 체크포인트는 {task}입니다. "
+                "같은 프로젝트의 학습 결과를 선택하거나 호환되는 프로젝트를 여세요.")
+        selected = getattr(self.project.model, "model_id", "")
+        model_config = checkpoint.get("model_config") or {}
+        checkpoint_model = checkpoint.get("model_id") or model_config.get("model_id")
+        if selected and checkpoint_model and selected != checkpoint_model:
+            raise ValueError(
+                f"현재 선택 모델은 {selected}이지만 체크포인트 모델은 {checkpoint_model}입니다.")
+        architecture = model_config.get("architecture")
+        if selected.startswith("efficientnet_") and architecture and selected != architecture:
+            raise ValueError(
+                f"현재 선택 EfficientNet은 {selected}이지만 체크포인트 구조는 {architecture}입니다.")
 
     def _worker_finished(self):
         self.worker = None

@@ -34,8 +34,8 @@ def change_mode(page, mode):
 
 
 @pytest.mark.parametrize("task,source,metric,target", [
-    ("classify", "efficientnet_finetune", "val_loss", "custom"),
-    ("classify", "efficientnet_resume", "val_loss", "custom"),
+    ("classify", "efficientnet_finetune", "val_loss", "efficientnet_scratch"),
+    ("classify", "efficientnet_resume", "val_loss", "efficientnet_scratch"),
 ])
 def test_model_switch_preserves_supported_val_loss_selection(page, task, source, metric, target):
     project = page.project
@@ -163,7 +163,7 @@ def prepared_page(page, monkeypatch, tmp_path):
     for name in ("critical", "information", "warning"):
         monkeypatch.setattr(QMessageBox, name, MagicMock())
     page.project.data.root = str(tmp_path)
-    change_mode(page, "custom")
+    change_mode(page, "efficientnet_scratch")
     monkeypatch.setattr(ProjectManager, "save", lambda *args, **kwargs: "project.dvproj")
     monkeypatch.setattr(storage, "digest", lambda path: "unchanged")
     return page

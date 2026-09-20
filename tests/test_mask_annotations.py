@@ -52,6 +52,22 @@ def test_png_roundtrip_keeps_polygons_holes_ignore_and_external_edits():
     np.testing.assert_array_equal(external.render(), pixels)
 
 
+def test_eraser_is_a_noneditable_operation_that_keeps_the_hole_after_reopen():
+    document = MaskDocument(100, 80, 3, shapes=[polygon()])
+    erase = {"kind": "stroke", "class_id": 0, "operation": "erase", "width": 12,
+             "points": [.5, .5]}
+    document.shapes.append(document.validate_shape(erase))
+    assert document.shapes[-1]["operation"] == "erase"
+    assert document.render()[40, 50] == 0
+    # Editing the original object must not turn an eraser back into paint.
+    document.shapes[0]["class_id"] = 2
+    assert document.render()[40, 50] == 0
+    with Image.open(io.BytesIO(document.encode())) as image:
+        restored = MaskDocument.from_image(image, 100, 80, 3)
+    assert restored.shapes[-1]["operation"] == "erase"
+    assert restored.render()[40, 50] == 0
+
+
 def test_save_train_reopen_move_and_restore_on_failed_project_save(scene):
     from dataset import SegmentationDataset
     project, image = scene

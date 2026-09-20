@@ -95,7 +95,7 @@ class SegmentationAnnotationDialog(AnnotationNavigation, QDialog):
         self.table.setColumnWidth(0, 85)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.cellClicked.connect(lambda row, column: self._select(row))
+        self.table.cellClicked.connect(lambda row, column: self._select(self._visible_indices[row]))
         side_layout.addWidget(self.table, 1)
         remove = QPushButton("선택 영역 삭제 Delete")
         remove.clicked.connect(self._remove)
@@ -142,7 +142,8 @@ class SegmentationAnnotationDialog(AnnotationNavigation, QDialog):
     def _create(self, shape):
         self._checkpoint()
         self.document.shapes.append(self.document.validate_shape(shape))
-        self.selected = len(self.document.shapes)-1
+        # An eraser changes pixels but is not an editable foreground object.
+        self.selected = -1 if shape.get("operation") == "erase" else len(self.document.shapes)-1
         self.dirty = True
         self._render()
 
@@ -156,16 +157,19 @@ class SegmentationAnnotationDialog(AnnotationNavigation, QDialog):
         self.selected = index
         self.view.selected = index
         self.table.clearSelection()
-        if index >= 0:
-            self.table.selectRow(index)
+        if index in getattr(self, "_visible_indices", []):
+            self.table.selectRow(self._visible_indices.index(index))
         self.view.viewport().update()
 
     def _change_class(self, index, class_id):
+        if self.document.shapes[index].get("operation") == "erase":
+            return
         shape = dict(self.document.shapes[index], class_id=class_id)
         self._edit(index, shape)
 
     def _remove(self):
-        if self.worker or not 0 <= self.selected < len(self.document.shapes):
+        if (self.worker or not 0 <= self.selected < len(self.document.shapes)
+                or self.document.shapes[self.selected].get("operation") == "erase"):
             return
         self._checkpoint()
         self.document.shapes.pop(self.selected)
@@ -193,12 +197,15 @@ class SegmentationAnnotationDialog(AnnotationNavigation, QDialog):
 
     def _render(self):
         self.view.set_document(self.document, self.names, self.selected)
-        self.table.setRowCount(len(self.document.shapes))
-        for i, shape in enumerate(self.document.shapes):
+        self._visible_indices = [index for index, shape in enumerate(self.document.shapes)
+                                 if shape.get("operation") != "erase"]
+        self.table.setRowCount(len(self._visible_indices))
+        for row, i in enumerate(self._visible_indices):
+            shape = self.document.shapes[i]
             label = "다각형" if shape["kind"] == "polygon" else "브러시"
-            item = QTableWidgetItem(f"{i+1} {label}")
+            item = QTableWidgetItem(f"{row+1} {label}")
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(i, 0, item)
+            self.table.setItem(row, 0, item)
             combo = NoWheelComboBox()
             combo.addItems(self.names)
             if shape["class_id"] == 255:
@@ -207,10 +214,10 @@ class SegmentationAnnotationDialog(AnnotationNavigation, QDialog):
             else:
                 combo.setCurrentIndex(shape["class_id"])
             combo.currentIndexChanged.connect(lambda value, index=i: self._change_class(index, value if value < len(self.names) else 255))
-            self.table.setCellWidget(i, 1, combo)
+            self.table.setCellWidget(row, 1, combo)
         self.table.resizeRowsToContents()
-        if self.selected >= 0:
-            self.table.selectRow(self.selected)
+        if self.selected in self._visible_indices:
+            self.table.selectRow(self._visible_indices.index(self.selected))
         self._buttons()
 
     def _set_mode(self, mode):

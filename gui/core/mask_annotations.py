@@ -54,7 +54,16 @@ class MaskDocument:
         if (not isinstance(points, list) or not minimum <= len(points) <= 65536 or len(points) % 2 or
                 any(type(v) not in (int, float) or not np.isfinite(v) or not 0 <= v <= 1 for v in points)):
             raise ValueError("정답 좌표는 이미지 안의 유한한 값이어야 합니다.")
+        operation = shape.get("operation", "paint")
+        if operation not in {"paint", "erase"}:
+            raise ValueError("정답 편집 작업 오류")
+        if operation == "erase" and (shape["kind"] != "stroke" or class_id != 0):
+            raise ValueError("지우개는 배경 클래스의 브러시 작업이어야 합니다.")
         result = {"kind": shape["kind"], "class_id": class_id, "points": list(points)}
+        if operation == "erase":
+            # Keep deletion as a rendering operation, not as an editable
+            # foreground object.  This preserves holes after save/reopen.
+            result["operation"] = "erase"
         if shape["kind"] == "stroke":
             width = shape.get("width")
             if type(width) is not int or not 1 <= width <= 1024:
@@ -67,10 +76,11 @@ class MaskDocument:
                 raise ValueError("면적이 없는 다각형은 저장할 수 없습니다.")
         return result
 
-    def render(self):
+    def render(self, preview=None):
         image = Image.fromarray(self.base.copy())
         draw = ImageDraw.Draw(image)
-        for item in self.shapes:
+        items = self.shapes if preview is None else [*self.shapes, self.validate_shape(preview)]
+        for item in items:
             points = [(round(item["points"][i] * (self.width - 1)), round(item["points"][i+1] * (self.height - 1)))
                       for i in range(0, len(item["points"]), 2)]
             if item["kind"] == "polygon":
