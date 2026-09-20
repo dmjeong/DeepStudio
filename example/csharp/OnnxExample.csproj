@@ -5,7 +5,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+  <PropertyGroup>
+    <DeepVisionRuntimeProject Condition="'$(DeepVisionRuntimeProject)' == ''">../../sdk/csharp/VisionRuntime.csproj</DeepVisionRuntimeProject>
+    <DeepVisionRuntimeProject Condition="!Exists('$(DeepVisionRuntimeProject)')">vision-runtime/VisionRuntime.csproj</DeepVisionRuntimeProject>
+  </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../sdk/csharp/VisionRuntime.csproj" />
+    <ProjectReference Include="$(DeepVisionRuntimeProject)" />
   </ItemGroup>
 </Project>

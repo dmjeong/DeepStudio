@@ -11,7 +11,8 @@ param(
     [string] $ModelPackTrustStore = "",
     [switch] $RequireSignature,
     [switch] $RequireOfflineWsl,
-    [switch] $RequireReleaseReadyModels
+    [switch] $RequireReleaseReadyModels,
+    [switch] $Simple
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,6 +24,9 @@ if ($RequireSignature -and [string]::IsNullOrWhiteSpace($CertificatePath)) {
 }
 if ($RequireReleaseReadyModels -and [string]::IsNullOrWhiteSpace($ModelPackTrustStore)) {
     throw "-RequireReleaseReadyModels requires -ModelPackTrustStore."
+}
+if ($Simple -and ($RequireOfflineWsl -or $RequireReleaseReadyModels)) {
+    throw "-Simple cannot be combined with model-pack or offline WSL payload gates."
 }
 if (-not [string]::IsNullOrWhiteSpace($ModelPackTrustStore)) {
     $modelTrustStore = (Resolve-Path $ModelPackTrustStore -ErrorAction Stop).Path
@@ -77,11 +81,23 @@ $collector = Join-Path $scriptRoot "collect_payloads.py"
 $validator = Join-Path $scriptRoot "validate_payloads.py"
 python $collector $root --manifest $manifest --version $Version --commit $env:GITHUB_SHA
 if ($LASTEXITCODE -ne 0) { throw "Payload manifest collection failed." }
-python $validator $root --manifest $manifest `
-    --require "app\DeepVisionStudio.exe" `
-    --require "models\default-model-catalog.json" `
-    --require "sdk\VisionRuntime.dll" `
-    --require "sdk\native\vision_runtime.dll"
+if ($Simple) {
+    $simpleStager = Join-Path $scriptRoot "stage_simple_payload.py"
+    python $simpleStager --validate $root
+    if ($LASTEXITCODE -ne 0) { throw "Minimal installer layout validation failed." }
+    python $validator $root --manifest $manifest --skip-model-catalog `
+        --require "app\DeepVisionStudio.exe" `
+        --require "Examples\README.md" `
+        --require "Examples\assets\test.onnx" `
+        --require "Examples\cpp\CMakeLists.txt" `
+        --require "Examples\csharp\OnnxExample.csproj"
+} else {
+    python $validator $root --manifest $manifest `
+        --require "app\DeepVisionStudio.exe" `
+        --require "models\default-model-catalog.json" `
+        --require "sdk\VisionRuntime.dll" `
+        --require "sdk\native\vision_runtime.dll"
+}
 if ($LASTEXITCODE -ne 0) { throw "Payload contract validation failed." }
 if ($RequireReleaseReadyModels) {
     python $validator $root --manifest $manifest `

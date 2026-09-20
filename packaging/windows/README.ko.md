@@ -1,5 +1,30 @@
 # Deep Vision Studio — Windows 학습툴
 
+## 간단 설치파일: 프로그램 + C++/C# 예제
+
+일반 배포에는 `gui\\build.bat installer`를 사용한다. 이 명령은 먼저 PyInstaller
+실행 파일을 만든 뒤 WiX Setup을 생성한다. 설치파일은 다음 세 항목만 설치한다.
+
+| 설치 항목 | 내용 |
+|---|---|
+| `app/` | `DeepVisionStudio.exe`와 실행에 필요한 PyInstaller runtime |
+| `Examples/` | C++17 및 C# ONNX 모델 로드·자체 테스트 예제와 예제 SDK 소스 |
+| `THIRD_PARTY_NOTICES.md` | 포함된 런타임·예제의 고지 |
+
+따라서 설치파일의 최상위에는 저장소 전체, 사용자 데이터셋, Docker/WSL 런타임,
+별도 모델 팩 디렉터리가 포함되지 않는다. `app/`에는 프로그램 실행에 필요한 Python
+런타임과 기본 제공 자산이 PyInstaller 형태로 포함된다. PyInstaller의 onedir 실행 파일은
+`DeepVisionStudio.exe` 하나만 복사해서 실행할 수 없으므로 `app/` 폴더 전체가 함께
+설치된다. 생성 결과는 `release/DeepVisionStudio-Setup-<version>-win-x64.exe`다.
+
+빌드 PC에는 Python 3.11+, WiX 7.0.0 (`wix`), 그리고 앱 빌드에 필요한 의존성이
+필요하다. C++/C# 예제 자체를 빌드하는 개발자에게만 Visual Studio, CMake, vcpkg,
+ONNX Runtime 1.29.0, .NET 8 SDK가 추가로 필요하다. 설치된 앱을 실행하는 사용자는
+이 개발 도구가 필요 없다.
+
+아래 내용은 모델 팩, SDK 런타임, 오프라인 Docker/WSL까지 포함하는 확장 오프라인
+release payload 설계다. 간단 설치파일의 대상은 아니다.
+
 **배포 README 설계 초안 · 2026-09-18**
 이 파일은 다음 배포판에 동봉할 문서다. 아래 모델 지원과 최소사양은 개발·검증 목표이며,
 현재 저장소 또는 아직 생성하지 않은 설치파일의 기능을 보장하는 릴리스 공지가 아니다.

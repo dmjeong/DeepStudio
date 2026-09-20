@@ -86,6 +86,58 @@ def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():
     assert "pip show pyinstaller" not in script
 
 
+def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
+    simple = runpy.run_path(str(WINDOWS / "stage_simple_payload.py"))
+    app = tmp_path / "app"
+    examples = tmp_path / "example"
+    cpp = tmp_path / "cpp"
+    csharp = tmp_path / "csharp"
+    for directory in (app, examples / "assets", examples / "cpp", examples / "csharp",
+                      cpp / "include", cpp / "src", csharp):
+        directory.mkdir(parents=True, exist_ok=True)
+    (app / "DeepVisionStudio.exe").write_bytes(b"app")
+    (examples / "README.md").write_text("example", encoding="utf-8")
+    (examples / "assets" / "test.onnx").write_bytes(b"onnx")
+    (examples / "cpp" / "CMakeLists.txt").write_text("cmake", encoding="utf-8")
+    (examples / "cpp" / "main.cpp").write_text("int main() {}", encoding="utf-8")
+    (examples / "csharp" / "OnnxExample.csproj").write_text("project", encoding="utf-8")
+    (examples / "csharp" / "Program.cs").write_text("code", encoding="utf-8")
+    (cpp / "CMakeLists.txt").write_text("runtime", encoding="utf-8")
+    (cpp / "include" / "vision_inference.h").write_text("header", encoding="utf-8")
+    (cpp / "src" / "vision_inference.cpp").write_text("source", encoding="utf-8")
+    (csharp / "VisionRuntime.csproj").write_text("runtime", encoding="utf-8")
+    (csharp / "VisionRuntime.cs").write_text("source", encoding="utf-8")
+    notice = tmp_path / "THIRD_PARTY_NOTICES.md"
+    notice.write_text("notice", encoding="utf-8")
+
+    payload = simple["stage_simple_payload"](
+        tmp_path / "payload", app=app, example_root=examples, cpp_runtime_root=cpp,
+        csharp_runtime_root=csharp, notice=notice,
+    )
+    assert {item.name for item in payload.iterdir()} == {"app", "Examples", "THIRD_PARTY_NOTICES.md"}
+    assert (payload / "Examples/cpp/vision-runtime/src/vision_inference.cpp").is_file()
+    assert (payload / "Examples/csharp/vision-runtime/VisionRuntime.cs").is_file()
+    simple["validate_simple_payload"](payload)
+    (payload / "models").mkdir()
+    with pytest.raises(simple["PayloadStageError"], match="top level"):
+        simple["validate_simple_payload"](payload)
+
+
+def test_simple_installer_build_path_is_explicit_and_skips_model_catalog():
+    release = (WINDOWS / "build_release.ps1").read_text(encoding="utf-8")
+    simple = (WINDOWS / "build_simple_installer.ps1").read_text(encoding="utf-8")
+    batch = (ROOT / "gui" / "build.bat").read_text(encoding="utf-8")
+    validator = (WINDOWS / "validate_payloads.py").read_text(encoding="utf-8")
+    assert "[switch] $Simple" in release
+    assert "stage_simple_payload.py" in release
+    assert "--skip-model-catalog" in release
+    assert "stage_simple_payload.py" in simple
+    assert "-Simple" in simple
+    assert '"installer"' in batch
+    assert "build_simple_installer.ps1" in batch
+    assert "--skip-model-catalog" in validator
+
+
 def test_csharp_sdk_exposes_directory_bundle_open():
     source = (ROOT / "sdk" / "csharp" / "VisionRuntime.cs").read_text(encoding="utf-8")
     assert "OpenBundle" in source

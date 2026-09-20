@@ -7,6 +7,7 @@ REM ═════════════════════════�
 REM
 REM  사용법:
 REM    build.bat         — EXE 빌드
+REM    build.bat installer — EXE와 간단한 Windows 설치파일 빌드
 REM    build.bat clean   — 빌드 산출물 삭제
 REM
 REM  이 스크립트는 requirements.txt의 데스크톱 런타임을 설치한 뒤
@@ -81,6 +82,16 @@ if exist "dist\DeepVisionStudio\DeepVisionStudio.exe" (
     echo  BUILD FAILED!
     echo.
     exit /b 1
+)
+
+if /I "%1"=="installer" (
+    echo Building minimal Windows installer (app plus C++ and C# examples)...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "..\packaging\windows\build_simple_installer.ps1" ^
+        -AppRoot "%CD%\dist\DeepVisionStudio" -OutputDirectory "%CD%\..\release"
+    if errorlevel 1 (
+        echo INSTALLER BUILD FAILED!
+        exit /b 1
+    )
 )
 
 pause

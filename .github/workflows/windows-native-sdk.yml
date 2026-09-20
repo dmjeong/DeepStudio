@@ -187,6 +187,16 @@ jobs:
           $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
           "PATH=$env:PATH" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           wix --version
+      - name: Build minimal app and public-example installer
+        shell: pwsh
+        run: |
+          $app = Join-Path $env:GITHUB_WORKSPACE "gui\dist\DeepVisionStudio"
+          $output = Join-Path $env:RUNNER_TEMP "studio-simple-release"
+          pwsh packaging/windows/build_simple_installer.ps1 -AppRoot $app -OutputDirectory $output -Version 1.0.0
+          $setup = Join-Path $output "DeepVisionStudio-Setup-1.0.0-win-x64.exe"
+          if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) {
+            throw "Minimal app/example Setup was not produced"
+          }
       - name: Publish C# SDK into the payload source
         run: dotnet publish sdk/csharp/VisionRuntime.csproj --configuration Release --output "$env:RUNNER_TEMP\csharp-sdk"
       - name: Stage deterministic offline payload
@@ -254,6 +264,8 @@ jobs:
           path: |
             ${{ runner.temp }}/studio-release/*.msi
             ${{ runner.temp }}/studio-release/*.exe
+            ${{ runner.temp }}/studio-simple-release/*.msi
+            ${{ runner.temp }}/studio-simple-release/*.exe
           if-no-files-found: error
     env:
       REQUIRE_OFFLINE_WSL: ${{ inputs.require_offline_wsl || false }}

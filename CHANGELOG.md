@@ -2,6 +2,13 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**5.85 — 간단 Windows 설치파일**
+
+- `gui\\build.bat installer`가 실행 프로그램과 C++17/C# ONNX 예제만 담은 WiX Setup을 만든다.
+- 설치 payload는 `app/`, `Examples/`, `THIRD_PARTY_NOTICES.md`만 허용하도록 검증한다. 사용자 학습
+  데이터, Docker/WSL, 저장소 전체는 설치물에 포함되지 않는다. `app/`에는 실행용 기본 자산이 포함된다.
+- 설치된 C++/C# 예제는 필요한 SDK 소스를 `vision-runtime/`에 함께 포함해, 저장소 checkout 없이 빌드할 수 있다.
+
 **5.65 — SAM2 Windows native prompt-mask 학습**
 
 - SAM2 Hiera Tiny/Small/Base+/Large가 더 이상 학습 화면에서 차단되지 않는다. 기본 제공 가중치로 prompt encoder와 mask decoder를 미세조정한다.

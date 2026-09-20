@@ -11,7 +11,8 @@ EfficientNet B0/B1, ResNet, ConvNeXt 등 Studio 분류 export를 사용한다.
 
 앱/Python/PyTorch/Docker를 띄울 필요 없이 프로그램 내부 함수로 호출한다.
 세션은 한 번 열고 재사용한다. 이 SDK의 같은 세션을 여러 스레드에서 동시에 호출하지 않는다.
-비동기 큐가 필요하면 기존 [C++ ClassificationWorker](../cpp/include/classification_worker.h)를 사용한다.
+비동기 큐가 필요하면 설치된 `cpp/vision-runtime/include/classification_worker.h`의
+`ClassificationWorker`를 사용한다.
 
 ## Windows 준비
 
@@ -35,6 +36,27 @@ cmake --build example/build --config Release --target onnx_cpp_example vision_ru
 $env:PATH = "$env:ONNXRUNTIME_ROOT\lib;$env:VCPKG_ROOT\installed\x64-windows\bin;$env:PATH"
 ctest --test-dir example/build -C Release --output-on-failure
 ```
+
+## 설치파일에 포함된 예제
+
+Windows Setup은 최상위에 프로그램과 `Examples`만 설치한다. `Examples/cpp`와
+`Examples/csharp`는 위와 같은 ONNX 실행 예제이며, 각각 필요한 native runtime 소스를
+`vision-runtime/`에 같이 둔다. 설치본에서 예제를 빌드할 때는 다음처럼 경로만 바꾼다.
+
+```powershell
+cmake -S "$env:ProgramFiles\DeepVisionStudio\Examples\cpp" -B "$env:TEMP\dvs-cpp-example" `
+  -G "Visual Studio 17 2022" -A x64 `
+  "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+  "-DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT"
+cmake --build "$env:TEMP\dvs-cpp-example" --config Release --target onnx_cpp_example vision_runtime
+
+$env:DEEP_VISION_NATIVE_RUNTIME_DIR = "$env:TEMP\dvs-cpp-example\vision\Release"
+$env:PATH = "$env:DEEP_VISION_NATIVE_RUNTIME_DIR;$env:ONNXRUNTIME_ROOT\lib;$env:VCPKG_ROOT\installed\x64-windows\bin;$env:PATH"
+dotnet build "$env:ProgramFiles\DeepVisionStudio\Examples\csharp\OnnxExample.csproj" -c Release
+```
+
+설치 예제는 모델·학습 데이터·Python 소스 저장소를 포함하지 않는다. 앱에서 내보낸
+ONNX/JSON 또는 `.dvdeploy` 번들을 예제 실행 인수로 지정한다.
 
 `100% tests passed`가 나오면 C++ 모델 로드와 실제 추론이 통과한 것이다.
 
@@ -77,14 +99,9 @@ var result = model.InferClassification(pixels, width, height, channels);
 Console.WriteLine($"{result.ClassName}: {result.Confidence:P2}");
 ```
 
-PNG/JPEG 파일로 확인하려면 제공된 변환기로 raw 파일을 만든다.
-Python/Pillow는 이 변환기에만 필요하며 C# 추론에는 필요하지 않다.
-
-```powershell
-python example/convert_image.py C:\images\test.png C:\images\test.raw
-# 위 명령이 출력한 width, height, channels를 아래 인자에 입력한다.
-dotnet example/dotnet-build/bin/OnnxExample/release/OnnxExample.dll C:\models\model.json C:\images\test.raw 640 480 3 100
-```
+C# 예제의 CLI는 카메라 프레임처럼 이미 디코딩된 raw BGR/GRAY 배열을 받는다. PNG/JPEG을
+사용하는 프로그램은 사용하는 이미지 라이브러리로 먼저 해당 배열을 만들고, 실제 `width`,
+`height`, `channels`를 인수로 전달한다. C# SDK 자체에는 Python/Pillow 의존성이 없다.
 
 다른 PC에 C# 실행 파일을 배포하려면:
 
@@ -106,7 +123,8 @@ C# 호출 시간에는 P/Invoke와 결과 복사도 포함된다. 디스크 읽�
 합성 모델의 시간은 EfficientNet 속도가 아니므로 실제 내보낸 모델로 측정해야 한다.
 
 이 실행 예제의 결과 처리는 **분류 전용**이다. 분할·검출·PatchCore·SAM2 API는
-[C++ SDK](../sdk/cpp/README.ko.md)와 [C# SDK](../sdk/csharp/README.ko.md)를 참고한다.
+설치된 `cpp/vision-runtime/include/vision_runtime_c.h`와
+`csharp/vision-runtime/VisionRuntime.cs`를 참고한다.
 `VisionSession.OpenBundle("model.dvdeploy")`는 해시 검증을 포함한 배포 폴더를 연다.
 
 테스트 파일을 재생성할 때만 `python example/generate_test_assets.py`를 실행한다 (`onnx` 필요).

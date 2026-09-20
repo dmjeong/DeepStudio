@@ -24,16 +24,21 @@ def main(argv=None) -> int:
                         help="verify WSL/Docker artifact hashes and license inventory")
     parser.add_argument("--model-catalog", default="models/default-model-catalog.json",
                         help="catalog path relative to the staged payload")
+    parser.add_argument("--skip-model-catalog", action="store_true",
+                        help="do not require a model catalog (minimal app/example installer only)")
     parser.add_argument("--require-release-ready-models", action="store_true",
                         help="require every catalog entry and its staged model payload")
     parser.add_argument("--model-pack-trust-store", type=Path,
                         help="absolute Ed25519 public-key trust store for release model packs")
     args = parser.parse_args(argv)
+    if args.skip_model_catalog and args.require_release_ready_models:
+        parser.error("--skip-model-catalog cannot be combined with --require-release-ready-models")
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     verify_payload(args.root, manifest, required_paths=args.require)
-    validate_model_catalog_payload(args.root, args.model_catalog,
-                                   require_release_ready=args.require_release_ready_models,
-                                   trust_store=args.model_pack_trust_store)
+    if not args.skip_model_catalog:
+        validate_model_catalog_payload(args.root, args.model_catalog,
+                                       require_release_ready=args.require_release_ready_models,
+                                       trust_store=args.model_pack_trust_store)
     if args.require_offline_wsl:
         verify_offline_wsl_payload(args.root, manifest)
     print("payload verified")
