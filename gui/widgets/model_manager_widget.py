@@ -41,6 +41,7 @@ class ModelManagerWidget(QWidget):
     """모델 추가는 Settings에서만 시작하고, 학습 화면은 선택과 실행에 집중한다."""
 
     models_changed = Signal()
+    project_updated = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -96,13 +97,18 @@ class ModelManagerWidget(QWidget):
         self.sam2_variant.addItem("SAM2.1 Hiera Small", "sam2_hiera_small")
         self.sam2_variant.addItem("SAM2.1 Hiera Base+", "sam2_hiera_base_plus")
         self.sam2_variant.addItem("SAM2.1 Hiera Large", "sam2_hiera_large")
+        self.sam2_variant.currentIndexChanged.connect(self._update_sam2_apply_state)
         sam_buttons.addWidget(self.sam2_variant)
         self.sam2_download_button = QPushButton("사전학습 가중치 다운로드")
         self.sam2_download_button.clicked.connect(self._download_sam2)
         sam_buttons.addWidget(self.sam2_download_button)
+        self.sam2_apply_button = QPushButton("현재 프로젝트에 적용")
+        self.sam2_apply_button.setEnabled(False)
+        self.sam2_apply_button.clicked.connect(self._apply_sam2_to_project)
+        sam_buttons.addWidget(self.sam2_apply_button)
         sam_buttons.addStretch()
         sam_layout.addLayout(sam_buttons)
-        self.sam2_status = QLabel("다운로드한 가중치는 선택한 프로젝트의 로컬 가중치로 사용할 수 있습니다.")
+        self.sam2_status = QLabel("다운로드 후 현재 분할 프로젝트에 적용하면 export에서 바로 사용합니다.")
         self.sam2_status.setObjectName("text_tertiary")
         self.sam2_status.setWordWrap(True)
         sam_layout.addWidget(self.sam2_status)
@@ -134,6 +140,25 @@ class ModelManagerWidget(QWidget):
 
     def set_project(self, project):
         self.project = project
+        self._update_sam2_apply_state()
+
+    def _update_sam2_apply_state(self, path: str = ""):
+        """Enable the explicit project action only for a downloaded SAM2 weight."""
+        from core.model_registry import default_installed_model_root
+
+        candidate = Path(path) if path else (
+            default_installed_model_root() / "_builtin_assets" / "sam2" /
+            {"sam2_hiera_tiny": "sam2.1_hiera_tiny.pt",
+             "sam2_hiera_small": "sam2.1_hiera_small.pt",
+             "sam2_hiera_base_plus": "sam2.1_hiera_base_plus.pt",
+             "sam2_hiera_large": "sam2.1_hiera_large.pt"}[self.sam2_variant.currentData()]
+        )
+        valid_project = self.project is not None and self.project.task == "segment"
+        self.sam2_apply_button.setEnabled(valid_project and candidate.is_file())
+        self.sam2_apply_button.setToolTip(
+            "선택한 SAM2 변형과 가중치 경로를 현재 분할 프로젝트에 저장합니다."
+            if valid_project else "분할 프로젝트를 먼저 열어주세요."
+        )
 
     def refresh_catalog(self):
         """Only registry metadata is read; installed pack code is never imported here."""
@@ -201,8 +226,39 @@ class ModelManagerWidget(QWidget):
         self.sam2_status.setText(f"다운로드 완료: {path}")
         self.sam2_download_button.setEnabled(True)
         self._sam2_worker = None
+        self._update_sam2_apply_state(path)
 
     def _sam2_download_failed(self, message: str):
         self.sam2_status.setText("다운로드 실패: " + message)
         self.sam2_download_button.setEnabled(True)
         self._sam2_worker = None
+
+    def _apply_sam2_to_project(self):
+        """Persist an official checkpoint as the selected project's export source.
+
+        This deliberately changes the project model ID too: keeping a SAM2
+        weight attached to DeepLab/U-Net would route export through the wrong
+        exporter and was the source of a misleading 'downloaded but unused'
+        state.
+        """
+        if self.project is None or self.project.task != "segment":
+            self.sam2_status.setText("SAM2 가중치는 분할 프로젝트에만 적용할 수 있습니다.")
+            self._update_sam2_apply_state()
+            return
+        from core.model_registry import default_installed_model_root
+        from core.project import ProjectManager
+        from sam2_assets import get_sam2_asset
+
+        model_id = self.sam2_variant.currentData()
+        checkpoint = (default_installed_model_root() / "_builtin_assets" / "sam2" /
+                      get_sam2_asset(model_id).filename).resolve()
+        if not checkpoint.is_file():
+            self.sam2_status.setText("먼저 선택한 SAM2.1 가중치를 다운로드하세요.")
+            self._update_sam2_apply_state()
+            return
+        self.project.model.model_id = model_id
+        self.project.model.pretrained_weights = str(checkpoint)
+        self.project.model.pack_path = ""
+        ProjectManager.save(self.project)
+        self.sam2_status.setText(f"현재 프로젝트에 적용됨: {checkpoint}")
+        self.project_updated.emit()

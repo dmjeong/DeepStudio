@@ -99,7 +99,7 @@ def render(scale, output):
             ("efficientnet_finetune", "efficientnet_b1", "recall_macro"),
             ("efficientnet_transfer", "efficientnet_b0", "engine_default"),
             ("efficientnet_resume", "efficientnet_b0", "engine_default"),
-            ("custom", "efficientnet_b0", "engine_default"),
+            ("efficientnet_scratch", "efficientnet_b0", "engine_default"),
         ]
         with tempfile.TemporaryDirectory(prefix="studio-ui-proof-") as temp:
             project = ProjectManager.create_new("UI Proof", "classify", str(Path(temp) / "project"), ["OK", "NG"])

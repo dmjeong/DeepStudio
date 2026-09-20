@@ -391,11 +391,21 @@ class MainWindow(QMainWindow):
             self._on_defect_gen_finished
         )
         self.model_manager_page.models_changed.connect(self._on_model_catalog_changed)
+        self.model_manager_page.project_updated.connect(self._on_model_manager_project_updated)
 
     def _on_model_catalog_changed(self):
         """새 Docker 모델을 설치하면 현재 프로젝트의 선택 목록만 새로 고친다."""
         if self.project is not None:
             self.training_page.refresh_model_catalog()
+
+    def _on_model_manager_project_updated(self):
+        """Reflect an explicit Settings weight/model choice on every project page."""
+        if self.project is None:
+            return
+        self.training_page.set_project(self.project)
+        self.inference_page._clear_model()
+        self.inference_page.set_project(self.project)
+        self.export_page.set_project(self.project)
 
     def _on_project_created(self, project: ProjectData):
         """프로젝트 생성 완료 핸들러"""
