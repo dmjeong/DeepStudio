@@ -6,17 +6,18 @@ REM  Deep Vision Studio — Windows EXE 빌드 스크립트
 REM ═══════════════════════════════════════════════════
 REM
 REM  사용법:
-REM    build.bat         — EXE 빌드
-REM    build.bat installer — EXE와 간단한 Windows 설치파일 빌드
+REM    build.bat             — NVIDIA GPU 자동 감지 후 EXE 빌드
+REM    build.bat gpu         — CUDA GPU 학습을 필수로 검사 후 EXE 빌드
+REM    build.bat cpu         — CPU 전용 PC에서 EXE 빌드
+REM    build.bat installer gpu — GPU 학습 EXE와 간단한 설치파일 빌드
 REM    build.bat clean   — 빌드 산출물 삭제
 REM
 REM  이 스크립트는 requirements.txt의 데스크톱 런타임을 설치한 뒤
 REM  PyInstaller로 EXE를 만듭니다. 이미 설치한 PyTorch(CPU/CUDA)는
 REM  requirements.txt의 버전 조건을 만족하면 그대로 사용합니다.
 REM
-REM  GPU PyTorch를 선택 설치하려면 build.bat 실행 전에 다음 중 하나를 실행:
-REM    [GPU] pip install torch torchvision --index-url https://download.pytorch.org/whl/cu132
-REM    [CPU] pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+REM  NVIDIA GPU가 있으면 드라이버에 맞는 공식 CUDA PyTorch를 자동 설치하고
+REM  실제 합성곱/역전파까지 검사합니다. CUDA 실패를 CPU로 숨기지 않습니다.
 REM
 REM  빌드 결과:
 REM    dist\DeepVisionStudio\DeepVisionStudio.exe
@@ -33,6 +34,13 @@ if "%1"=="clean" (
     goto :eof
 )
 
+set "DVS_ACCELERATOR=auto"
+for %%A in (%*) do (
+    if /I "%%~A"=="gpu" set "DVS_ACCELERATOR=cuda"
+    if /I "%%~A"=="cpu" set "DVS_ACCELERATOR=cpu"
+)
+set "DEEP_STUDIO_BUILD_ACCELERATOR=%DVS_ACCELERATOR%"
+
 REM 1. Python 및 GUI 런타임 확인. pip 대신 같은 Python의 -m pip을 사용해
 REM    PyInstaller가 다른 가상환경의 PySide6를 참조하는 문제를 막는다.
 python --version >nul 2>&1
@@ -45,6 +53,11 @@ echo Installing/verifying desktop build dependencies...
 REM SAM2's optional CUDA extension needs a locally installed matching nvcc.
 REM The PyTorch implementation remains functional without it.
 set SAM2_BUILD_CUDA=0
+python prepare_torch_runtime.py --accelerator %DVS_ACCELERATOR%
+if errorlevel 1 (
+    echo PYTORCH CPU/CUDA RUNTIME PREPARATION FAILED!
+    exit /b 1
+)
 python -m pip install -r requirements.txt
 if errorlevel 1 (
     echo DEPENDENCY INSTALL FAILED!

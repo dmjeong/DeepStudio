@@ -6,7 +6,7 @@ import subprocess
 import sys
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "gui"))
@@ -65,6 +65,33 @@ class AcceleratorTests(unittest.TestCase):
             manager.get_device("cuda:1")
         with self.assertRaises(ValueError):
             manager.get_device("unrecognized")
+
+    def test_desktop_builder_upgrades_cpu_torch_and_verifies_cuda_backward(self):
+        spec = importlib.util.spec_from_file_location(
+            "studio_prepare_torch", ROOT / "gui/prepare_torch_runtime.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        installed = [
+            {"versions": {"torch": "2.14.0+cpu", "torchvision": "0.29.0+cpu"}},
+            {"versions": {"torch": "2.14.0+cu130", "torchvision": "0.29.0+cu130"}},
+        ]
+        reports = [
+            {"cuda_available": False},
+            {"cuda_available": True, "cuda_runtime": "13.0", "name": "RTX",
+             "backward_checked": True, "error": ""},
+        ]
+        runner = MagicMock()
+        with patch.object(module, "installed_state", side_effect=installed), \
+             patch.object(module, "inspect_runtime", side_effect=reports), \
+             patch.object(module, "nvidia_devices",
+                          return_value=[{"name": "RTX 4000", "driver": "591.44"}]), \
+             patch.object(module.subprocess, "run", runner):
+            result = module.prepare_runtime("auto", python=ROOT / "python.exe")
+        command = runner.call_args.args[0]
+        self.assertIn("torch==2.14.0+cu130", command)
+        self.assertIn("torchvision==0.29.0+cu130", command)
+        self.assertEqual(result["name"], "RTX")
 
 
 if __name__ == "__main__":

@@ -21,6 +21,10 @@
 [C++17 / C# ONNX 실행·자동 테스트 예제](example/README.md)는 `example/`에서 제공한다.
 
 `build.bat`은 기본 모델의 런타임과 사전학습 가중치를 모두 받은 뒤 EXE에 포함한다.
+NVIDIA GPU가 있는 PC에서는 드라이버에 맞는 CUDA PyTorch를 자동 설치하고 실제 GPU
+합성곱과 역전파를 확인한 뒤 빌드한다. GPU 학습을 반드시 요구하려면 `gui\build.bat gpu`,
+CPU 전용 빌드는 `gui\build.bat cpu`를 사용한다. 학습 화면의 `자동 (GPU 우선)` 또는
+GPU 이름을 선택하면 EfficientNet을 포함한 기본 모델 학습이 CUDA에서 실행된다.
 EfficientNet B0/B1, ResNet, ConvNeXt, DeepLab V3+, U-Net, PatchCore 백본, LibreYOLO,
 Re-DETR v4, SAM2 Hiera Tiny/Small/Base+/Large는 앱 실행 중 별도 다운로드를 하지 않는다.
 SAM2는 Settings에서 받거나 프로젝트에 적용하지 않는다. 분할 프로젝트에서 Hiera 변형을

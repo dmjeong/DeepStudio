@@ -18,7 +18,9 @@ on:
       - "python/builtin_models.py"
       - "packaging/windows/**"
       - "packaging/model-pack-template/**"
+      - "gui/build.bat"
       - "gui/build_exe.py"
+      - "gui/prepare_torch_runtime.py"
       - "gui/requirements.txt"
       - "gui/widgets/**"
       - "THIRD_PARTY_NOTICES.md"
@@ -41,7 +43,9 @@ on:
       - "python/builtin_models.py"
       - "packaging/windows/**"
       - "packaging/model-pack-template/**"
+      - "gui/build.bat"
       - "gui/build_exe.py"
+      - "gui/prepare_torch_runtime.py"
       - "gui/requirements.txt"
       - "gui/widgets/**"
       - "THIRD_PARTY_NOTICES.md"
@@ -176,11 +180,22 @@ jobs:
       - name: Build the actual frozen Windows GUI
         shell: pwsh
         run: |
-          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install torch==2.14.0+cu130 torchvision==0.29.0+cu130 --index-url https://download.pytorch.org/whl/cu130
           python -m pip install -r gui/requirements.txt
           python gui/build_exe.py
           if (-not (Test-Path "gui\dist\DeepVisionStudio\DeepVisionStudio.exe")) {
             throw "PyInstaller did not produce DeepVisionStudio.exe"
+          }
+      - name: Verify frozen CUDA training runtime without a GPU
+        shell: pwsh
+        run: |
+          $torch = python -c "import torch; print(torch.version.cuda or '')"
+          if ($torch.Trim() -ne "13.0") { throw "Frozen build source is not CUDA 13.0 PyTorch: $torch" }
+          $library = python -c "import pathlib,torch; print(pathlib.Path(torch.__file__).parent / 'lib')"
+          foreach ($name in @("torch_cuda.dll", "c10_cuda.dll")) {
+            if (-not (Test-Path (Join-Path $library $name))) { throw "CUDA runtime DLL missing before freeze: $name" }
+            $frozen = Get-ChildItem -Path "gui\dist\DeepVisionStudio" -Recurse -Filter $name | Select-Object -First 1
+            if ($null -eq $frozen) { throw "CUDA runtime DLL missing from frozen app: $name" }
           }
       - name: Install pinned WiX toolset
         shell: pwsh

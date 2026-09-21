@@ -80,10 +80,19 @@ def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk()
 
 def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():
     script = (ROOT / "gui" / "build.bat").read_text(encoding="utf-8")
+    assert "prepare_torch_runtime.py --accelerator %DVS_ACCELERATOR%" in script
+    assert 'set "DVS_ACCELERATOR=auto"' in script
     assert "python -m pip install -r requirements.txt" in script
     assert "SAM2_BUILD_CUDA=0" in script
     assert "prepare_builtin_assets.py --output builtin_assets" in script
     assert "pip show pyinstaller" not in script
+
+
+def test_windows_installer_contract_freezes_cuda_training_runtime():
+    workflow = (ROOT / ".github/workflows/windows-native-sdk.yml").read_text(encoding="utf-8")
+    assert "torch==2.14.0+cu130" in workflow
+    assert "torchvision==0.29.0+cu130" in workflow
+    assert "torch_cuda.dll" in workflow and "c10_cuda.dll" in workflow
 
 
 def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):

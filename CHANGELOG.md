@@ -2,6 +2,12 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**5.95 — EfficientNet GPU 학습 빌드 보장**
+
+- EfficientNet의 CPU 최적화는 추론 배포 전용이며 학습은 `auto` 또는 `cuda:0` 선택 시 CUDA와 AMP를 사용한다.
+- `build.bat`이 NVIDIA GPU와 드라이버를 감지해 공식 CUDA PyTorch를 설치하고 합성곱·역전파를 검증한다. GPU 준비 실패를 CPU 학습으로 숨기지 않는다.
+- Windows 설치파일 검증본에도 CUDA 13.0 PyTorch와 필수 CUDA DLL을 포함하고 동결 결과에서 다시 검사한다.
+
 **5.94 — LibreYOLO 분류의 빈 검증 클래스 자동 분할**
 
 - 새 프로젝트의 빈 `val/<class>` 폴더를 LibreYOLO가 유효하지 않은 클래스로 거부하던 문제를 수정했다.

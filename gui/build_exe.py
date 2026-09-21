@@ -125,6 +125,22 @@ def check_runtime_dependencies() -> bool:
     return False
 
 
+def check_training_accelerator() -> bool:
+    """Prevent a GPU build PC from silently freezing a CPU-only PyTorch."""
+    if os.environ.get("DEEP_STUDIO_BUILD_ACCELERATOR", "auto").lower() == "cpu":
+        return True
+    from core.accelerator import nvidia_devices, runtime_report
+    if not nvidia_devices():
+        return True
+    report = runtime_report("cuda:0", check=True)
+    if report.get("backward_checked") and not report.get("error"):
+        return True
+    print("NVIDIA GPU가 있지만 CUDA 학습 런타임 검증에 실패했습니다.")
+    print("  build.bat gpu를 실행해 CUDA PyTorch를 준비하세요.")
+    print("  원인: " + (report.get("error") or "GPU 역전파 검사 실패"))
+    return False
+
+
 def build():
     """EXE 빌드 실행"""
     # Windows에서 리다이렉트된 한글 빌드 로그도 UTF-8로 출력한다.
@@ -134,6 +150,8 @@ def build():
     if not check_pyinstaller():
         sys.exit(1)
     if not check_runtime_dependencies():
+        sys.exit(1)
+    if not check_training_accelerator():
         sys.exit(1)
     if PYTHON_DIR not in sys.path:
         sys.path.insert(0, PYTHON_DIR)
@@ -254,7 +272,7 @@ def build():
     ]
     cmd[cmd.index(os.path.join(GUI_DIR, "main.py")):cmd.index(os.path.join(GUI_DIR, "main.py"))] = _native_runtime_arguments()
 
-    print(f"\n 빌드 명령어:")
+    print("\n 빌드 명령어:")
     print(f"  {' '.join(cmd[:6])} ...")
 
     # ── 빌드 실행 ──
@@ -274,7 +292,7 @@ def build():
                 print(f"빌드 결과 파일 없음: {exe_path}")
                 return 1
             print("\n" + "=" * 60)
-            print(f"빌드 성공!")
+            print("빌드 성공!")
             print(f"  실행 파일: {exe_path}")
             if os.path.exists(exe_path):
                 size_mb = os.path.getsize(exe_path) / (1024 * 1024)
