@@ -78,10 +78,10 @@ def test_b1_100px_precision_fallback_uses_original_reference_and_preserves_faile
             patch("efficientnet_precision.prepare_precision_export", side_effect=factory):
         if corrupt_candidate:
             with pytest.raises(ValueError, match="모두 ONNX 검증 실패"):
-                export_onnx.export_checkpoint(source, output, dynamic_batch=True, log=lambda _: None)
+                export_onnx.export_checkpoint(source, output, dynamic_batch=True, log=lambda _: None, allow_precision_fallback=True)
             assert output.read_bytes() == b"previous"
             return
-        result = export_onnx.export_checkpoint(source, output, dynamic_batch=True, log=lambda _: None)
+        result = export_onnx.export_checkpoint(source, output, dynamic_batch=True, log=lambda _: None, allow_precision_fallback=True)
     assert tested[:3] == [(1, False), (1, True), (2, False)]
     assert tested[-3:] == [(1, False), (1, True), (2, False)]  # Restored winner is reloaded.
     manifest = json.loads(output.with_suffix(".json").read_text())

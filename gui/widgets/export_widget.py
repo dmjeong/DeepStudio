@@ -39,12 +39,14 @@ class ExportWorker(QThread):
     error = Signal(str)
 
     def __init__(self, checkpoint_path, output_path, opset_version,
-                 dynamic_batch, simplify, verify, parent=None, *, sam2_model_id=""):
+                 dynamic_batch, simplify, verify, parent=None, *, sam2_model_id="",
+                 validation_dir=None, allow_precision_fallback=False):
         super().__init__(parent)
         self.checkpoint_path = checkpoint_path
         self.output_path = output_path
         self.options = dict(opset_version=opset_version, dynamic_batch=dynamic_batch,
-                            simplify=simplify, verify=verify)
+                            simplify=simplify, verify=verify, validation_dir=validation_dir,
+                            allow_precision_fallback=allow_precision_fallback)
         self.sam2_model_id = sam2_model_id
 
     def run(self):
@@ -143,6 +145,20 @@ class ExportWidget(QWidget):
         self.verify_check.setChecked(True)
         opt_layout.addRow("", self.verify_check)
 
+        self.dataset_verify_check = QCheckBox("실제 이미지로 FP32 분류 검증 (판정 일치·확률 차이 0.1%p 이하)")
+        self.dataset_verify_check.setChecked(False)
+        opt_layout.addRow("", self.dataset_verify_check)
+        self.validation_edit = QLineEdit()
+        self.validation_edit.setPlaceholderText("클래스별 이미지 폴더가 들어 있는 비교 데이터 경로")
+        validation_row = QHBoxLayout()
+        validation_row.addWidget(self.validation_edit)
+        validation_browse = QPushButton("찾아보기...")
+        validation_browse.clicked.connect(self._browse_validation)
+        validation_row.addWidget(validation_browse)
+        opt_layout.addRow("비교 이미지:", validation_row)
+        self.precision_check = QCheckBox("고정밀 호환 내보내기 허용 (느려질 수 있음, 실제 이미지 검증 모드에서는 미사용)")
+        opt_layout.addRow("", self.precision_check)
+
         layout.addWidget(opt_group)
 
         # ── 내보내기 버튼 ──
@@ -178,6 +194,19 @@ class ExportWidget(QWidget):
     def set_project(self, project: ProjectData):
         """프로젝트 설정"""
         self.project = project
+        self.validation_edit.clear()
+        efficientnet = project.task == "classify" and str(getattr(project.model, "model_id", "")).startswith("efficientnet_")
+        self.dataset_verify_check.setChecked(efficientnet)
+        self.dataset_verify_check.setEnabled(efficientnet)
+        if efficientnet:
+            from classification_export_validation import collect_images
+            for folder in (project.data.val_dir, project.data.test_dir, project.data.train_dir):
+                try:
+                    collect_images(folder, project.data.class_names)
+                except (ValueError, OSError):
+                    continue
+                self.validation_edit.setText(folder)
+                break
         # A previous project's checkpoint must never be exported under this
         # project's output directory.  External checkpoints require an
         # explicit browse action after this reset.
@@ -226,6 +255,11 @@ class ExportWidget(QWidget):
         if filepath:
             self.output_edit.setText(filepath)
 
+    def _browse_validation(self):
+        folder = QFileDialog.getExistingDirectory(self, "분류 비교 이미지 폴더", self.validation_edit.text())
+        if folder:
+            self.validation_edit.setText(folder)
+
     def _start_export(self):
         """내보내기 시작"""
         ckpt_path = self.ckpt_edit.text().strip()
@@ -256,6 +290,13 @@ class ExportWidget(QWidget):
             QMessageBox.warning(self, "체크포인트 확인", str(exc))
             return
 
+        validation_dir = None
+        if self.dataset_verify_check.isChecked() and self.verify_check.isChecked():
+            validation_dir = self.validation_edit.text().strip()
+            if not validation_dir or not os.path.isdir(validation_dir):
+                QMessageBox.warning(self, "비교 이미지 필요", "클래스별 이미지 폴더가 있는 비교 데이터 경로를 선택하세요. 이미지와 가중치는 이 PC에서만 검사합니다.")
+                return
+
         if getattr(self, "worker", None) is not None and self.worker.isRunning():
             return
         self.log_text.clear()
@@ -267,6 +308,8 @@ class ExportWidget(QWidget):
             dynamic_batch=self.dynamic_check.isChecked(),
             simplify=self.simplify_check.isChecked(),
             verify=self.verify_check.isChecked(), parent=self,
+            validation_dir=validation_dir,
+            allow_precision_fallback=self.precision_check.isChecked(),
             sam2_model_id=(getattr(self.project.model, "model_id", "")
                            if self.project is not None and self.project.task == "segment" and
                            str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_") else ""),
@@ -344,6 +387,13 @@ class ExportWidget(QWidget):
         if timing:
             text += (f"\n현재 PC 모델 추론 중앙값: {timing['baseline_median_ms']:.2f} → "
                      f"{timing['selected_median_ms']:.2f} ms (전·후처리 제외)")
+        validation = result.get("classification_validation")
+        if validation:
+            measured = validation["selected"]
+            text += (f"\n실제 이미지 {validation['image_count']}장: 분류 일치·확률 검증 통과 (FP32)"
+                     f"\n전처리+추론+후처리: 중앙값 {measured['pipeline_median_ms']:.2f} / "
+                     f"p95 {measured['pipeline_p95_ms']:.2f} / 최대 {measured['pipeline_max_ms']:.2f} ms"
+                     f"\n8ms 목표: {'측정 이미지 모두 충족' if validation['target_met'] else '미달성 — 내보내기 검증 통과와 별개'}")
         self.log_text.append(text)
         QMessageBox.information(self, "완료", text)
 

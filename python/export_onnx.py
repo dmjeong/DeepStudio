@@ -562,7 +562,8 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
 
 
 def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_batch=False,
-                      simplify=False, verify=True, overrides=None, log=print):
+                      simplify=False, verify=True, overrides=None, log=print, *,
+                      validation_dir=None, allow_precision_fallback=False):
     """검증 완료 후 ONNX와 동일 이름의 .json을 대상 폴더에 배치한다."""
     import torch
     import onnx
@@ -573,6 +574,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
     # 사용자 선택 체크포인트를 로드한다.
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     backend = checkpoint_backend(checkpoint)
+    if validation_dir and backend != "efficientnet":
+        raise ValueError("실제 이미지 분류 검증은 현재 EfficientNet 내보내기에서 지원합니다")
     if backend not in {"custom", "efficientnet", "builtin", "patchcore", "redetr_v4", "sam2", "libreyolo"}:
         raise ValueError("지원하지 않는 모델 형식입니다. 등록된 모델 체크포인트를 선택하세요.")
     if output.resolve() == Path(checkpoint_path).resolve():
@@ -602,6 +605,7 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
         staged_model = stage / output.name
         runtime_settings = None
         runtime_attempts = []
+        classification_validation = None
         log(f"내보내기 시작: {backend}")
         if backend in {"custom", "efficientnet", "builtin", "redetr_v4"}:
             spec = resolve_checkpoint_spec(checkpoint, overrides)
@@ -617,11 +621,18 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             log(f"ONNX 그래프 생성: opset={opset_version}, 입력={tuple(dummy.shape)}")
             redetr_outputs = ["pred_boxes", "pred_logits"] if backend == "redetr_v4" else None
             export_kwargs = {} if redetr_outputs is None else {"output_names": redetr_outputs}
-            export_to_onnx(model, dummy, staged_model, opset_version, dynamic_batch,
-                           spec["task"], **export_kwargs)
-            if simplify:
+            if backend == "efficientnet" and validation_dir and verify:
+                from classification_export_validation import export_validated_fp32
+                model, runtime_settings, classification_validation = export_validated_fp32(
+                    reference_model, spec, staged_model, dummy, validation_dir=validation_dir,
+                    opset=opset_version, dynamic_batch=dynamic_batch, log=log)
+                runtime_attempts = classification_validation["attempts"]
+            else:
+                export_to_onnx(model, dummy, staged_model, opset_version, dynamic_batch,
+                               spec["task"], **export_kwargs)
+            if simplify and classification_validation is None:
                 simplify_onnx(staged_model)
-            if verify:
+            if verify and classification_validation is None:
                 # Fusion is itself a numerical transformation. Every EfficientNet
                 # candidate must agree with one original checkpoint reference.
                 log("ONNX Runtime 검증: 원본 체크포인트 PyTorch 출력과 비교 "
@@ -647,7 +658,7 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                 except ValueError as optimized_error:
                     if backend != "efficientnet":
                         raise
-                    log(f"최적화 그래프 검증 실패: {optimized_error}")
+                    log(f"고속 FP32 후보 제외 — 다른 실행 방식 검사 중: {optimized_error}")
                     log("원본 FP32 그래프로 재시도: Conv/BN 사전 융합·상수 폴딩·단순화 제외")
                     model = load_custom_model(checkpoint, spec).cpu().float().eval()
                     model.inference_optimization = {
@@ -701,7 +712,7 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                                         break
                                 if runtime_settings is not None:
                                     break
-                            if runtime_settings is None:
+                            if runtime_settings is None and allow_precision_fallback:
                                 from efficientnet_precision import prepare_precision_export
                                 log("고정밀 ONNX 재시도: 내부 FP64 계산, 입출력 FP32 유지. 추론 속도는 느려질 수 있습니다")
                                 model = prepare_precision_export(reference_model)
@@ -765,6 +776,10 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             manifest["export"]["io_precision"] = "float32"
             manifest["export"]["compute_precision"] = model.inference_optimization.get("compute_precision", "float32")
             manifest["export"]["verification_reference"] = "original_checkpoint_pytorch"
+            if classification_validation is not None:
+                manifest["export"]["classification_validation"] = classification_validation
+                manifest["export"]["strict_logit_tolerance_diagnostic_only"] = manifest["export"].pop("verification_tolerance")
+                manifest["export"]["verification_policy"] = classification_validation["policy"]
             if runtime_settings is not None:
                 # Earlier SDKs must reject this contract instead of silently
                 # enabling ALL again and undoing the verified fallback.
@@ -789,6 +804,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
         result["runtime_settings"] = runtime_settings
     if backend == "efficientnet":
         result["optimization"] = manifest["export"]["optimization"]
+        if classification_validation is not None:
+            result["classification_validation"] = classification_validation
     log(f"내보내기 완료: {output}\n배포 설정: {config_path}\n검증: {result['verification']}")
     return result
 
@@ -825,7 +842,7 @@ def _raise_efficientnet_verification_error(model, path, probe, probe_name, opset
 
 def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_batch=False,
                       simplify=False, verify=True, overrides=None, log=print,
-                      bundle_output=None):
+                      bundle_output=None, validation_dir=None, allow_precision_fallback=False):
     """실패 단계와 환경을 자동 기록한다. 검증 실패한 모델은 배포하지 않는다.
 
     ``bundle_output`` is optional so existing callers can keep the historical
@@ -841,8 +858,11 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
         log(message)
     report("체크포인트 및 ONNX 의존성 로드")
     try:
+        if validation_dir and not verify:
+            raise ValueError("실제 이미지 검증을 사용하려면 출력 검증을 켜세요")
         result = _export_checkpoint(checkpoint_path, output_path, opset_version, dynamic_batch,
-                                    simplify, verify, overrides, report)
+                                    simplify, verify, overrides, report, validation_dir=validation_dir,
+                                    allow_precision_fallback=allow_precision_fallback)
         if bundle_output is not None:
             from model_runtime.deployment_bundle import build_deployment_bundle
             source = result.get("output_dir") or result.get("output_path")
@@ -899,6 +919,8 @@ def parse_args(argv=None):
     parser.add_argument("--simplify", action="store_true")
     parser.add_argument("--verify", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bundle", help="optional .dvdeploy output directory for C++/C# SDK")
+    parser.add_argument("--validation-dir", help="class folders of local images for classification FP32 verification")
+    parser.add_argument("--allow-precision-fallback", action="store_true", help="explicitly allow slow FP64 compatibility export")
     return parser.parse_args(argv)
 
 
@@ -907,7 +929,8 @@ def main():
     export_checkpoint(args.checkpoint, args.output, args.opset, args.dynamic_batch,
                       args.simplify, args.verify,
                       {key: getattr(args, key) for key in ("task", "num_classes", "in_channels", "input_size")},
-                      bundle_output=args.bundle)
+                      bundle_output=args.bundle, validation_dir=args.validation_dir,
+                      allow_precision_fallback=args.allow_precision_fallback)
 
 
 if __name__ == "__main__":
