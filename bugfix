@@ -1,3 +1,5 @@
+체크포인트 및 ONNX 의존성 로드
+내보내기 시작: efficientnet
 추론 최적화: {'conv_bn_fused': 69, 'channels_last': False}
 ONNX 그래프 생성: opset=17, 입력=(1, 1, 100, 100)
 ONNX Runtime 검증: 원본 체크포인트 PyTorch 출력과 비교 (atol=0.001, rtol=0.0005, probes=seeded+zero)
@@ -11,21 +13,29 @@ BatchNorm 연산 방식: native_batch_norm_affine
 BatchNorm 연산 방식: native_batch_norm_affine_fma
 고정밀 ONNX 재시도: 내부 FP64 계산, 입출력 FP32 유지. 추론 속도는 느려질 수 있습니다
 고정밀 ONNX: 모든 검사 입력이 원본 FP32 출력 비교 통과
-내보내기 완료: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\effb1_model_classify.onnx
-배포 설정: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\effb1_model_classify.json
+검증을 유지하며 FP64 범위 축소·추론 속도 측정 중
+검증·속도 개선: FP64 stage [0, 1, 2, 3, 4], CPU 4 threads, 모델 추론 40.62 → 24.92 ms (현재 PC 측정)
+검증·속도 개선: FP64 stage [0, 2, 3, 4], CPU 4 threads, 모델 추론 24.40 → 22.89 ms (현재 PC 측정)
+검증·속도 개선: FP64 stage [0, 3, 4], CPU 4 threads, 모델 추론 22.18 → 16.85 ms (현재 PC 측정)
+검증·속도 개선: FP64 stage [0, 4], CPU 4 threads, 모델 추론 17.10 → 11.00 ms (현재 PC 측정)
+검증·속도 개선: FP64 stage [0], CPU 4 threads, 모델 추론 11.23 → 7.42 ms (현재 PC 측정)
+내보내기 완료: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\b1_model_classify.onnx
+배포 설정: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\b1_model_classify.json
 검증: passed
 ONNX 내보내기 완료 (검증 통과)
 
-모델: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\effb1_model_classify.onnx
-설정: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\effb1_model_classify.json
-크기: 52.2 MB
+모델: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\b1_model_classify.onnx
+설정: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\b1_model_classify.json
+크기: 25.3 MB
 제공된 C++ 추론기에서 ONNX와 JSON을 함께 로드할 수 있습니다.
 검증된 실행 설정: ONNX Runtime 최적화 끔, CPU 4 스레드
+고정밀 계산 구간: [0] (나머지는 FP32)
+현재 PC 모델 추론 중앙값: 40.44 → 7.42 ms (전·후처리 제외)
 
 {
   "schema_version": 6,
   "backend": "efficientnet",
-  "model_path": "effb1_model_classify.onnx",
+  "model_path": "b1_model_classify.onnx",
   "task": "classify",
   "num_classes": 4,
   "input_channels": 1,
@@ -100,14 +110,28 @@ ONNX 내보내기 완료 (검증 통과)
       "rtol": 0.0005
     },
     "optimization": {
-      "fallback": "portable_fp64",
-      "compute_precision": "float64",
+      "fallback": "mixed_precision",
+      "compute_precision": "mixed_float32_float64",
       "io_precision": "float32",
+      "fp64_stages": [
+        0
+      ],
+      "head_precision": "float64",
       "conv_bn_fused": 0,
       "constant_folding": false,
       "simplified": false,
-      "latency_optimized": false
+      "latency_optimized": true,
+      "latency_measurement": {
+        "scope": "model_only",
+        "baseline_median_ms": 40.43879999881028,
+        "selected_median_ms": 7.416299999022158,
+        "runs": 7,
+        "selection": "verified_candidate_at_least_5_percent_faster",
+        "host_specific": true
+      }
     },
+    "io_precision": "float32",
+    "compute_precision": "mixed_float32_float64",
     "verification_reference": "original_checkpoint_pytorch",
     "verified_runtime_settings": {
       "graph_optimization_level": "disabled",
@@ -172,6 +196,123 @@ ONNX 내보내기 완료 (검증 통과)
         "num_threads": 4,
         "graph": "portable_fp64",
         "passed": true
+      },
+      {
+        "graph_optimization_level": "disabled",
+        "num_threads": 1,
+        "graph": "portable_fp64",
+        "fp64_stages": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "passed": true,
+        "model_median_ms": 99.5212999987416,
+        "compared_model_median_ms": 40.54000000178348,
+        "selected": false
+      },
+      {
+        "graph_optimization_level": "disabled",
+        "num_threads": 4,
+        "graph": "mixed_precision",
+        "fp64_stages": [
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "passed": false,
+        "error": "ONNX 검증 실패: 최대 오차 0.0021220446 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22443216, 허용 오차의 1.872배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8333625, 0.29074305]"
+      },
+      {
+        "graph_optimization_level": "disabled",
+        "num_threads": 4,
+        "graph": "mixed_precision",
+        "fp64_stages": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "passed": true,
+        "model_median_ms": 24.91569999983767,
+        "compared_model_median_ms": 40.62119999798597,
+        "selected": true
+      },
+      {
+        "graph_optimization_level": "disabled",
+        "num_threads": 4,
+        "graph": "mixed_precision",
+        "fp64_stages": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "passed": false,
+        "error": "ONNX 검증 실패: 최대 오차 0.0033890009 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22312514, 허용 오차의 3.049배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8321162, 0.29018515]"
+      },
+      {
+        "graph_optimization_level": "disabled",
+        "num_threads": 4,
+        "graph": "mixed_precision",
+        "fp64_stages": [
+          0,
+          2,
+          3,
+          4
+        ],
+        "passed": true,
+        "model_median_ms": 22.891500000696396,
+        "compared_model_median_ms": 24.40030000070692,
+        "selected": true
+      },
+      {
+        "graph_optimization_level": "disabled",
+        "num_threads": 4,
+        "graph": "mixed_precision",
+        "fp64_stages": [
+          0,
+          3,
+          4
+        ],
+        "passed": true,
+        "model_median_ms": 16.845399997691857,
+        "compared_model_median_ms": 22.1772000004421,
+        "selected": true
+      },
+      {
+        "graph_optimization_level": "disabled",
+        "num_threads": 4,
+        "graph": "mixed_precision",
+        "fp64_stages": [
+          0,
+          4
+        ],
+        "passed": true,
+        "model_median_ms": 11.003100000380073,
+        "compared_model_median_ms": 17.101800000091316,
+        "selected": true
+      },
+      {
+        "graph_optimization_level": "disabled",
+        "num_threads": 4,
+        "graph": "mixed_precision",
+        "fp64_stages": [
+          0
+        ],
+        "passed": true,
+        "model_median_ms": 7.416299999022158,
+        "compared_model_median_ms": 11.225700000068173,
+        "selected": true
       }
     ]
   },
