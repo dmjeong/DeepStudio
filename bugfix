@@ -1,688 +1,118 @@
-오류: ONNX 내보내기 실패 [수치 진단: 그래프 변환 또는 런타임 연산 차이 추가 조사 필요; 진단 그래프 최초 차이: features.4]: 최적화·원본 그래프 및 실행 설정 모두 ONNX 검증 실패.
-최적화: ONNX 검증 실패: 최대 오차 0.0065917224 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22800852, ONNX=0.2214168, 허용 오차의 5.935배; 출력 범위 PyTorch=[-1.8370349, 0.29235107], ONNX=[-1.8306837, 0.28930876]
-원본 FP32: ONNX 검증 실패: 최대 오차 0.0050078034 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22150634, 허용 오차의 4.508배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8309493, 0.28937167]
-실행 설정 재시도: ONNX 검증 실패: 최대 오차 0.0021469593 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22445026, 허용 오차의 1.856배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8333375, 0.2907424]
-수치 진단: 그래프 변환 또는 런타임 연산 차이 추가 조사 필요; 진단 그래프 최초 차이: features.4
+추론 최적화: {'conv_bn_fused': 69, 'channels_last': False}
+ONNX 그래프 생성: opset=17, 입력=(1, 1, 100, 100)
+ONNX Runtime 검증: 원본 체크포인트 PyTorch 출력과 비교 (atol=0.001, rtol=0.0005, probes=seeded+zero)
+최적화 그래프 검증 실패: ONNX 검증 실패: 최대 오차 0.0050973445 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.2214168, 허용 오차의 4.589배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8306837, 0.28930876]
+원본 FP32 그래프로 재시도: Conv/BN 사전 융합·상수 폴딩·단순화 제외
+원본 그래프 실행 설정 재시도: 최적화=all, CPU 4 threads
+원본 그래프 실행 설정 재시도: 최적화=basic, CPU 4 threads
+원본 그래프 실행 설정 재시도: 최적화=disabled, CPU 4 threads
+BatchNorm 계수 고정 그래프로 재시도: PyTorch 정규화 계수 보존, Conv 융합 제외
+BatchNorm 연산 방식: native_batch_norm_affine
+BatchNorm 연산 방식: native_batch_norm_affine_fma
+고정밀 ONNX 재시도: 내부 FP64 계산, 입출력 FP32 유지. 추론 속도는 느려질 수 있습니다
+고정밀 ONNX: 모든 검사 입력이 원본 FP32 출력 비교 통과
+내보내기 완료: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\effb1_model_classify.onnx
+배포 설정: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\effb1_model_classify.json
+검증: passed
+ONNX 내보내기 완료 (검증 통과)
 
-니가 수정한 뒤 또 에러남
-오류: ONNX 내보내기 실패 [수치 진단: 그래프 변환 또는 런타임 연산 차이 추가 조사 필요; 진단 그래프 최초 차이: features.4]: 최적화·원본 그래프 및 실행 설정 모두 ONNX 검증 실패.
-최적화: ONNX 검증 실패: 최대 오차 0.0050973445 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.2214168, 허용 오차의 4.589배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8306837, 0.28930876]
-원본 FP32: ONNX 검증 실패: 최대 오차 0.0050078034 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22150634, 허용 오차의 4.508배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8309493, 0.28937167]
-실행 설정 재시도: ONNX 검증 실패: 최대 오차 0.0027741194 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22382993, 허용 오차의 2.414배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8327104, 0.29044658]
-수치 진단: 그래프 변환 또는 런타임 연산 차이 추가 조사 필요; 진단 그래프 최초 차이: features.4
+모델: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\effb1_model_classify.onnx
+설정: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\effb1_model_classify.json
+크기: 52.2 MB
+제공된 C++ 추론기에서 ONNX와 JSON을 함께 로드할 수 있습니다.
+검증된 실행 설정: ONNX Runtime 최적화 끔, CPU 4 스레드
+
 {
-  "stage": "수치 진단: 그래프 변환 또는 런타임 연산 차이 추가 조사 필요; 진단 그래프 최초 차이: features.4",
-  "error": "최적화·원본 그래프 및 실행 설정 모두 ONNX 검증 실패.\n최적화: ONNX 검증 실패: 최대 오차 0.0050973445 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.2214168, 허용 오차의 4.589배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8306837, 0.28930876]\n원본 FP32: ONNX 검증 실패: 최대 오차 0.0050078034 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22150634, 허용 오차의 4.508배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8309493, 0.28937167]\n실행 설정 재시도: ONNX 검증 실패: 최대 오차 0.0027741194 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22382993, 허용 오차의 2.414배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8327104, 0.29044658]\n수치 진단: 그래프 변환 또는 런타임 연산 차이 추가 조사 필요; 진단 그래프 최초 차이: features.4",
-  "versions": {
-    "python": "3.14.7",
-    "studio": "5.87",
-    "torch": "2.14.0+cu132",
-    "torchvision": "0.29.0+cu132",
-    "onnx": "1.22.0",
-    "onnxruntime": "1.29.0",
-    "onnxsim": "not installed"
-  },
-  "opset": 17,
-  "dynamic_batch": false,
-  "platform": {
-    "system": "Windows",
-    "machine": "AMD64"
-  },
-  "events": [
-    "체크포인트 및 ONNX 의존성 로드",
-    "내보내기 시작: efficientnet",
-    "추론 최적화: {'conv_bn_fused': 69, 'channels_last': False}",
-    "ONNX 그래프 생성: opset=17, 입력=(1, 1, 100, 100)",
-    "ONNX Runtime 검증: 원본 체크포인트 PyTorch 출력과 비교 (atol=0.001, rtol=0.0005, probes=seeded+zero)",
-    "최적화 그래프 검증 실패: ONNX 검증 실패: 최대 오차 0.0050973445 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.2214168, 허용 오차의 4.589배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8306837, 0.28930876]",
-    "원본 FP32 그래프로 재시도: Conv/BN 사전 융합·상수 폴딩·단순화 제외",
-    "원본 그래프 실행 설정 재시도: 최적화=all, CPU 4 threads",
-    "원본 그래프 실행 설정 재시도: 최적화=basic, CPU 4 threads",
-    "원본 그래프 실행 설정 재시도: 최적화=disabled, CPU 4 threads",
-    "BatchNorm 계수 고정 그래프로 재시도: PyTorch 정규화 계수 보존, Conv 융합 제외",
-    "BatchNorm 연산 방식: native_batch_norm_affine",
-    "BatchNorm 연산 방식: native_batch_norm_affine_fma",
-    "ONNX 수치 원인 진단: 실행 최적화·FP64·중간 레이어 비교 중",
-    "수치 진단: 그래프 변환 또는 런타임 연산 차이 추가 조사 필요; 진단 그래프 최초 차이: features.4"
+  "schema_version": 6,
+  "backend": "efficientnet",
+  "model_path": "effb1_model_classify.onnx",
+  "task": "classify",
+  "num_classes": 4,
+  "input_channels": 1,
+  "input_height": 100,
+  "input_width": 100,
+  "input_name": "input_image",
+  "output_name": "class_logits",
+  "output_names": [
+    "class_logits"
   ],
-  "traceback": "Traceback (most recent call last):\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 646, in _export_checkpoint\n    verify_candidate(model)\n    ~~~~~~~~~~~~~~~~^^^^^^^\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 642, in verify_candidate\n    else verify_onnx(staged_model, probe, candidate, task=spec[\"task\"], **kwargs))\n         ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 372, in verify_onnx\n    return validate_classification_outputs(expected, actual[0], atol=atol)\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 57, in validate_classification_outputs\n    validate_outputs(expected, actual, **tolerances)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 323, in validate_outputs\n    raise ValueError(\n    ...<4 lines>...\n        f\"ONNX=[{converted.min():.8g}, {converted.max():.8g}]\")\nValueError: ONNX 검증 실패: 최대 오차 0.0050973445 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.2214168, 허용 오차의 4.589배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8306837, 0.28930876]\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 661, in _export_checkpoint\n    verify_candidate(model)\n    ~~~~~~~~~~~~~~~~^^^^^^^\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 642, in verify_candidate\n    else verify_onnx(staged_model, probe, candidate, task=spec[\"task\"], **kwargs))\n         ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 372, in verify_onnx\n    return validate_classification_outputs(expected, actual[0], atol=atol)\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 57, in validate_classification_outputs\n    validate_outputs(expected, actual, **tolerances)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 323, in validate_outputs\n    raise ValueError(\n    ...<4 lines>...\n        f\"ONNX=[{converted.min():.8g}, {converted.max():.8g}]\")\nValueError: ONNX 검증 실패: 최대 오차 0.0050078034 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22150634, 허용 오차의 4.508배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8309493, 0.28937167]\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 809, in export_checkpoint\n    result = _export_checkpoint(checkpoint_path, output_path, opset_version, dynamic_batch,\n                                simplify, verify, overrides, report)\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 709, in _export_checkpoint\n    _raise_efficientnet_verification_error(\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^\n        reference_model, staged_model, failed_probe, failed_probe_name, opset_version,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        optimized_error, original_error, runtime_attempts, log)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\SVM\\DeepStudio\\python\\export_onnx.py\", line 784, in _raise_efficientnet_verification_error\n    raise ExportVerificationError(\n    ...<3 lines>...\n    ) from original_error\nexport_onnx.ExportVerificationError: 최적화·원본 그래프 및 실행 설정 모두 ONNX 검증 실패.\n최적화: ONNX 검증 실패: 최대 오차 0.0050973445 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.2214168, 허용 오차의 4.589배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8306837, 0.28930876]\n원본 FP32: ONNX 검증 실패: 최대 오차 0.0050078034 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22150634, 허용 오차의 4.508배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8309493, 0.28937167]\n실행 설정 재시도: ONNX 검증 실패: 최대 오차 0.0027741194 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22382993, 허용 오차의 2.414배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8327104, 0.29044658]\n수치 진단: 그래프 변환 또는 런타임 연산 차이 추가 조사 필요; 진단 그래프 최초 차이: features.4\n",
-  "numerical_diagnostic": {
-    "schema_version": 1,
-    "probe": "zero",
-    "input_shape": [
-      1,
-      1,
+  "normalize_mean": [
+    0.449
+  ],
+  "normalize_std": [
+    0.226
+  ],
+  "class_names": [
+    "double",
+    "empty",
+    "normal",
+    "shift"
+  ],
+  "preprocessing": {
+    "input_size": [
       100,
       100
     ],
-    "state": {
-      "dtypes": {
-        "torch.float32": 439,
-        "torch.int64": 69
-      },
-      "nonfinite_tensors": [],
-      "batch_norm": [
-        {
-          "layer": "features.0.1",
-          "min_running_variance": 0.029340792447328568,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.1.0.block.0.1",
-          "min_running_variance": 0.007099434267729521,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.1.0.block.2.1",
-          "min_running_variance": 0.5271724462509155,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.1.1.block.0.1",
-          "min_running_variance": 5.605905055999756,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.1.1.block.2.1",
-          "min_running_variance": 0.16908806562423706,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.2.0.block.0.1",
-          "min_running_variance": 54.4620475769043,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.2.0.block.1.1",
-          "min_running_variance": 0.011299188248813152,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.2.0.block.3.1",
-          "min_running_variance": 33.037593841552734,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.2.1.block.0.1",
-          "min_running_variance": 6.629910945892334,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.2.1.block.1.1",
-          "min_running_variance": 0.0004813182749785483,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.2.1.block.3.1",
-          "min_running_variance": 3.4789154529571533,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.2.2.block.0.1",
-          "min_running_variance": 89.76854705810547,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.2.2.block.1.1",
-          "min_running_variance": 0.00013013662828598171,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.2.2.block.3.1",
-          "min_running_variance": 1.460919976234436,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.3.0.block.0.1",
-          "min_running_variance": 109.05069732666016,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.3.0.block.1.1",
-          "min_running_variance": 0.0015956677962094545,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.3.0.block.3.1",
-          "min_running_variance": 2.600094795227051,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.3.1.block.0.1",
-          "min_running_variance": 35.81306457519531,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.3.1.block.1.1",
-          "min_running_variance": 0.0006153183057904243,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.3.1.block.3.1",
-          "min_running_variance": 1.5264462232589722,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.3.2.block.0.1",
-          "min_running_variance": 66.93278503417969,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.3.2.block.1.1",
-          "min_running_variance": 0.00032150684273801744,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.3.2.block.3.1",
-          "min_running_variance": 0.5643318295478821,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.0.block.0.1",
-          "min_running_variance": 20.191753387451172,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.0.block.1.1",
-          "min_running_variance": 4.328019258537097e-06,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.0.block.3.1",
-          "min_running_variance": 1.42030668258667,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.1.block.0.1",
-          "min_running_variance": 29.724916458129883,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.1.block.1.1",
-          "min_running_variance": 0.00016304367454722524,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.1.block.3.1",
-          "min_running_variance": 0.27403324842453003,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.2.block.0.1",
-          "min_running_variance": 36.60917282104492,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.2.block.1.1",
-          "min_running_variance": 0.00014433077012654394,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.2.block.3.1",
-          "min_running_variance": 0.26595935225486755,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.3.block.0.1",
-          "min_running_variance": 41.67319107055664,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.3.block.1.1",
-          "min_running_variance": 0.00013457036402542144,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.4.3.block.3.1",
-          "min_running_variance": 0.27466511726379395,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.0.block.0.1",
-          "min_running_variance": 52.621551513671875,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.0.block.1.1",
-          "min_running_variance": 0.0004682297876570374,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.0.block.3.1",
-          "min_running_variance": 1.7125271558761597,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.1.block.0.1",
-          "min_running_variance": 37.09421157836914,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.1.block.1.1",
-          "min_running_variance": 0.0006588776595890522,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.1.block.3.1",
-          "min_running_variance": 0.28973671793937683,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.2.block.0.1",
-          "min_running_variance": 31.0958251953125,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.2.block.1.1",
-          "min_running_variance": 0.00034338264958932996,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.2.block.3.1",
-          "min_running_variance": 0.3263028562068939,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.3.block.0.1",
-          "min_running_variance": 43.91142272949219,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.3.block.1.1",
-          "min_running_variance": 0.00020962211419828236,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.5.3.block.3.1",
-          "min_running_variance": 0.27470096945762634,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.0.block.0.1",
-          "min_running_variance": 57.70694351196289,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.0.block.1.1",
-          "min_running_variance": 0.0020171692594885826,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.0.block.3.1",
-          "min_running_variance": 1.7694292068481445,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.1.block.0.1",
-          "min_running_variance": 26.95111846923828,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.1.block.1.1",
-          "min_running_variance": 0.0003766539157368243,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.1.block.3.1",
-          "min_running_variance": 0.23987838625907898,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.2.block.0.1",
-          "min_running_variance": 28.028520584106445,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.2.block.1.1",
-          "min_running_variance": 0.00048439178499393165,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.2.block.3.1",
-          "min_running_variance": 0.16832703351974487,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.3.block.0.1",
-          "min_running_variance": 30.104137420654297,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.3.block.1.1",
-          "min_running_variance": 0.0003152762947138399,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.3.block.3.1",
-          "min_running_variance": 0.14232872426509857,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.4.block.0.1",
-          "min_running_variance": 33.38335418701172,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.4.block.1.1",
-          "min_running_variance": 0.00022219940728973597,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.6.4.block.3.1",
-          "min_running_variance": 0.11932369321584702,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.7.0.block.0.1",
-          "min_running_variance": 57.7452278137207,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.7.0.block.1.1",
-          "min_running_variance": 9.003179729916155e-05,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.7.0.block.3.1",
-          "min_running_variance": 0.2916543781757355,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.7.1.block.0.1",
-          "min_running_variance": 14.010485649108887,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.7.1.block.1.1",
-          "min_running_variance": 6.031498924130574e-05,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.7.1.block.3.1",
-          "min_running_variance": 0.06469563394784927,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        },
-        {
-          "layer": "features.8.1",
-          "min_running_variance": 104.54051208496094,
-          "negative_variances": 0,
-          "epsilon": 1e-05
-        }
-      ]
-    },
-    "onnx_sessions": {
-      "all_default": {
-        "passed": false,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 0.005007803440093994,
-        "max_tolerance_ratio": 4.508475483286409,
-        "reference_abs_max": 1.835484504699707,
-        "actual_abs_max": 1.830949306488037,
-        "failed_elements": 3,
-        "top1_equal": true
-      },
-      "all": {
-        "passed": false,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 0.005007803440093994,
-        "max_tolerance_ratio": 4.508475483286409,
-        "reference_abs_max": 1.835484504699707,
-        "actual_abs_max": 1.830949306488037,
-        "failed_elements": 3,
-        "top1_equal": true
-      },
-      "basic": {
-        "passed": false,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 0.003798544406890869,
-        "max_tolerance_ratio": 3.417931115097613,
-        "reference_abs_max": 1.835484504699707,
-        "actual_abs_max": 1.8318593502044678,
-        "failed_elements": 3,
-        "top1_equal": true
-      },
-      "disabled": {
-        "passed": false,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 0.0021469593048095703,
-        "max_tolerance_ratio": 1.8556363051984142,
-        "reference_abs_max": 1.835484504699707,
-        "actual_abs_max": 1.8333375453948975,
-        "failed_elements": 2,
-        "top1_equal": true
-      }
-    },
-    "requires_retraining": "not_determined",
-    "threads": {
-      "pytorch": 12,
-      "onnx_default": 0,
-      "onnx_controlled": 4
-    },
-    "mkldnn_available": true,
-    "mkldnn_enabled": true,
-    "cpu_autocast_enabled_before_diagnostic": false,
-    "float32_matmul_precision": "highest",
-    "mkldnn_conv_fp32_precision": "none",
-    "pytorch_repeat": {
-      "passed": true,
-      "shape_matches": true,
-      "finite": true,
-      "max_abs_error": 0.0,
-      "max_tolerance_ratio": 0.0,
-      "reference_abs_max": 1.835484504699707,
-      "actual_abs_max": 1.835484504699707,
-      "failed_elements": 0,
-      "top1_equal": true
-    },
-    "pytorch_fp64_vs_fp32": {
-      "passed": true,
-      "shape_matches": true,
-      "finite": true,
-      "max_abs_error": 0.0005633856944451399,
-      "max_tolerance_ratio": 0.5060697193638868,
-      "reference_abs_max": 1.8349261100413148,
-      "actual_abs_max": 1.835484504699707,
-      "failed_elements": 0,
-      "top1_equal": true
-    },
-    "instrumented_final": {
-      "passed": false,
-      "shape_matches": true,
-      "finite": true,
-      "max_abs_error": 0.0021469593048095703,
-      "max_tolerance_ratio": 1.8556363051984142,
-      "reference_abs_max": 1.835484504699707,
-      "actual_abs_max": 1.8333375453948975,
-      "failed_elements": 2,
-      "top1_equal": true
-    },
-    "instrumentation_vs_original_onnx": {
-      "passed": true,
-      "shape_matches": true,
-      "finite": true,
-      "max_abs_error": 0.0,
-      "max_tolerance_ratio": 0.0,
-      "reference_abs_max": 1.8333375453948975,
-      "actual_abs_max": 1.8333375453948975,
-      "failed_elements": 0,
-      "top1_equal": true
-    },
-    "stages": [
-      {
-        "layer": "features.0",
-        "passed": true,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 4.76837158203125e-07,
-        "max_tolerance_ratio": 0.0002084706915011815,
-        "reference_abs_max": 8.551085472106934,
-        "actual_abs_max": 8.551085472106934,
-        "failed_elements": 0
-      },
-      {
-        "layer": "features.1",
-        "passed": true,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 4.100799560546875e-05,
-        "max_tolerance_ratio": 0.015142681920394922,
-        "reference_abs_max": 16.0039005279541,
-        "actual_abs_max": 16.003887176513672,
-        "failed_elements": 0
-      },
-      {
-        "layer": "features.2",
-        "passed": true,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 0.0003070831298828125,
-        "max_tolerance_ratio": 0.15724676087636733,
-        "reference_abs_max": 36.77800750732422,
-        "actual_abs_max": 36.77799987792969,
-        "failed_elements": 0
-      },
-      {
-        "layer": "features.3",
-        "passed": true,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 0.00131988525390625,
-        "max_tolerance_ratio": 0.5344139285620397,
-        "reference_abs_max": 46.55216979980469,
-        "actual_abs_max": 46.55337142944336,
-        "failed_elements": 0
-      },
-      {
-        "layer": "features.4",
-        "passed": false,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 0.0844268798828125,
-        "max_tolerance_ratio": 12.393251931751918,
-        "reference_abs_max": 167.0800018310547,
-        "actual_abs_max": 167.13548278808594,
-        "failed_elements": 105
-      },
-      {
-        "layer": "features.5",
-        "passed": false,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 0.417724609375,
-        "max_tolerance_ratio": 21.650953325025817,
-        "reference_abs_max": 714.0718994140625,
-        "actual_abs_max": 714.4896240234375,
-        "failed_elements": 1925
-      },
-      {
-        "layer": "features.6",
-        "passed": false,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 0.145965576171875,
-        "max_tolerance_ratio": 19.854233192215965,
-        "reference_abs_max": 182.1672821044922,
-        "actual_abs_max": 182.30136108398438,
-        "failed_elements": 1697
-      },
-      {
-        "layer": "features.7",
-        "passed": false,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 0.230621337890625,
-        "max_tolerance_ratio": 31.715644724150525,
-        "reference_abs_max": 212.1053466796875,
-        "actual_abs_max": 212.33596801757812,
-        "failed_elements": 3016
-      },
-      {
-        "layer": "features.8",
-        "passed": false,
-        "shape_matches": true,
-        "finite": true,
-        "max_abs_error": 0.008167862892150879,
-        "max_tolerance_ratio": 5.5170460782621396,
-        "reference_abs_max": 5.662797451019287,
-        "actual_abs_max": 5.665323257446289,
-        "failed_elements": 797
-      }
+    "in_channels": 1,
+    "mean": [
+      0.449
     ],
-    "first_divergent_stage": "features.4",
-    "finding": "unresolved_graph_or_runtime_difference",
-    "summary": "그래프 변환 또는 런타임 연산 차이 추가 조사 필요",
+    "std": [
+      0.226
+    ],
+    "resize": "bilinear",
+    "resize_implementation": "opencv_linear_exact_v1",
+    "antialias": false,
+    "interpolation": "INTER_LINEAR_EXACT",
+    "layout": "NCHW",
+    "color_order": "GRAY",
+    "value_scale": 255.0,
+    "grayscale_adapter": "native",
+    "normalize_mean": [
+      0.449
+    ],
+    "normalize_std": [
+      0.226
+    ],
+    "center_crop": null
+  },
+  "verification": "passed",
+  "cpp_supported": true,
+  "architecture": "efficientnet_b1",
+  "postprocessing": {
+    "output": "logits",
+    "softmax_axis": 1
+  },
+  "model_config": {
+    "architecture": "efficientnet_b1",
+    "dropout": 0.2,
+    "implementation_version": 2,
+    "in_channels": 1,
+    "input_adapter": "native",
+    "stem_in_channels": 1
+  },
+  "export": {
+    "opset": 17,
+    "precision": "float32",
+    "dynamic_batch": false,
+    "verification_tolerance": {
+      "atol": 0.001,
+      "rtol": 0.0005
+    },
+    "optimization": {
+      "fallback": "portable_fp64",
+      "compute_precision": "float64",
+      "io_precision": "float32",
+      "conv_bn_fused": 0,
+      "constant_folding": false,
+      "simplified": false,
+      "latency_optimized": false
+    },
+    "verification_reference": "original_checkpoint_pytorch",
+    "verified_runtime_settings": {
+      "graph_optimization_level": "disabled",
+      "num_threads": 4
+    },
     "runtime_attempts": [
       {
         "graph_optimization_level": "all",
@@ -736,7 +166,17 @@
         "passed": false,
         "probe": "zero",
         "error": "ONNX 검증 실패: 최대 오차 0.0027741194 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=0.22651415, ONNX=0.22382993, 허용 오차의 2.414배; 출력 범위 PyTorch=[-1.8354845, 0.29166228], ONNX=[-1.8327104, 0.29044658]"
+      },
+      {
+        "graph_optimization_level": "disabled",
+        "num_threads": 4,
+        "graph": "portable_fp64",
+        "passed": true
       }
     ]
-  }
+  },
+  "onnxruntime": {
+    "graph_optimization_level": "disabled"
+  },
+  "num_threads": 4
 }
