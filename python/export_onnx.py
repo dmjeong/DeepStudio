@@ -63,7 +63,9 @@ def validate_classification_outputs(expected, actual, *, atol=None, rtol=None):
     actual_top = np.argmax(actual_array, axis=1)
     if not np.array_equal(expected_top, actual_top):
         raise ValueError(f"ONNX 검증 실패: 분류 top-1 불일치 "
-                         f"(PyTorch={expected_top.tolist()}, ONNX={actual_top.tolist()})")
+                         f"(PyTorch={expected_top.tolist()}, ONNX={actual_top.tolist()}); "
+                         f"출력 범위 PyTorch=[{expected_array.min():.8g}, {expected_array.max():.8g}], "
+                         f"ONNX=[{actual_array.min():.8g}, {actual_array.max():.8g}]")
     validate_outputs(expected_array, actual_array, **tolerances)
     return True
 
