@@ -1,10 +1,17 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from upstream_models import (_ProgressCallback, get_upstream_spec, upstream_model_ids,
-                             write_detection_dataset_yaml)
+import upstream_models
+from upstream_models import (
+    _ProgressCallback,
+    get_upstream_spec,
+    prepare_classification_dataset,
+    train_upstream_model,
+    upstream_model_ids,
+    write_detection_dataset_yaml,
+)
 
 
 def test_shipped_upstream_ids_are_explicit_and_use_real_family_sizes():
@@ -31,6 +38,79 @@ def test_detection_descriptor_rejects_missing_train_split_or_invalid_class_names
     (tmp_path / "images/train").mkdir(parents=True)
     with pytest.raises(ValueError, match="class names"):
         write_detection_dataset_yaml(tmp_path, [""], tmp_path / "dataset.yaml")
+
+
+def test_classification_dataset_fills_empty_val_per_class_without_touching_sources(tmp_path):
+    root = tmp_path / "data"
+    for class_name in ("double", "single"):
+        for index in range(4):
+            path = root / "train" / class_name / f"nested/{index}.JPG"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"image")
+        (root / "val" / class_name).mkdir(parents=True)
+
+    with prepare_classification_dataset(
+        root, ["double", "single"], tmp_path / "runs", val_split=0.25, seed=7,
+    ) as (prepared, summary):
+        prepared_path = prepared
+        assert summary == {"automatic_classes": ["double", "single"],
+                           "train_images": 6, "val_images": 2}
+        for class_name in ("double", "single"):
+            assert len(list((prepared / "train" / class_name).glob("*.jpg"))) == 3
+            assert len(list((prepared / "val" / class_name).glob("*.jpg"))) == 1
+    assert not prepared_path.exists()
+    assert len(list((root / "train" / "double").rglob("*.JPG"))) == 4
+
+
+def test_classification_dataset_reports_class_that_cannot_be_split(tmp_path):
+    image = tmp_path / "data/train/double/only.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"image")
+    with (
+        pytest.raises(ValueError, match="클래스 'double'.*최소 2장"),
+        prepare_classification_dataset(
+            tmp_path / "data", ["double"], tmp_path / "runs",
+        ),
+    ):
+        pass
+
+
+def test_libreyolo_classification_trains_with_prepared_dataset(tmp_path, monkeypatch):
+    root = tmp_path / "data"
+    for class_name in ("double", "single"):
+        for index in range(3):
+            path = root / "train" / class_name / f"{index}.png"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"image")
+        (root / "val" / class_name).mkdir(parents=True)
+
+    observed = {}
+
+    class FakeModel:
+        def train(self, **kwargs):
+            prepared = Path(kwargs["data"])
+            observed["root"] = prepared
+            observed["counts"] = {
+                (split, name): len(list((prepared / split / name).iterdir()))
+                for split in ("train", "val") for name in ("double", "single")
+            }
+            return {"best_checkpoint": "best.pt"}
+
+    monkeypatch.setattr(upstream_models, "build_upstream_model", lambda *args, **kwargs: FakeModel())
+    events = []
+    result = train_upstream_model(
+        "libreyolo_classify_mobilenetv4_small", data_root=root,
+        class_names=["double", "single"], output_dir=tmp_path / "runs/run-1",
+        epochs=1, batch_size=2, learning_rate=1e-3, device="cpu", weights=None,
+        resume=False, use_amp=False, patience=1, val_split=0.34, seed=3, emit=events.append,
+    )
+    assert result == {"best_checkpoint": "best.pt"}
+    assert observed["counts"] == {
+        ("train", "double"): 2, ("train", "single"): 2,
+        ("val", "double"): 1, ("val", "single"): 1,
+    }
+    assert not observed["root"].exists()
+    assert events[0]["event"] == "dataset_prepared"
 
 
 def test_upstream_callback_records_real_validation_loss_instead_of_training_loss():

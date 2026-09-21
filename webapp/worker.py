@@ -239,6 +239,15 @@ def _train_upstream_project(context, project, device):
         if event.get("event") == "training_exception":
             context.emit("log_message", ["native worker 오류: " + event["message"]])
             return
+        if event.get("event") == "dataset_prepared":
+            automatic = event.get("automatic_classes", [])
+            suffix = f" | 자동 검증 분할: {', '.join(automatic)}" if automatic else ""
+            context.emit("log_message", [
+                "LibreYOLO 데이터 준비: train {}장, val {}장{}".format(
+                    event["train_images"], event["val_images"], suffix,
+                )
+            ])
+            return
         if event.get("event") != "epoch_finished":
             return
         history.append(dict(event))
@@ -264,7 +273,8 @@ def _train_upstream_project(context, project, device):
         model_id, data_root=data.root, class_names=list(data.class_names), output_dir=run_dir,
         epochs=cfg.epochs, batch_size=cfg.batch_size, learning_rate=cfg.learning_rate,
         device=str(device), weights=source, pretrained=mode == "upstream_finetune", resume=mode == "upstream_resume",
-        use_amp=cfg.use_amp, patience=cfg.early_stop_patience, emit=progress)
+        use_amp=cfg.use_amp, patience=cfg.early_stop_patience,
+        val_split=data.val_split, seed=0, emit=progress)
     checkpoint = result.get("best_checkpoint") or result.get("last_checkpoint")
     if not checkpoint or not Path(checkpoint).is_file():
         raise RuntimeError("upstream 학습이 best.pt 또는 last.pt를 만들지 않았습니다")
