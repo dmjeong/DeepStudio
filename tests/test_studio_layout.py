@@ -19,8 +19,18 @@ def test_supported_task_engine_contract(task, mode, engine):
     assert training_capabilities(task, mode)["engine"] == engine
     assert set(MODE_LABELS) == {"custom", "efficientnet_finetune", "efficientnet_transfer", "efficientnet_resume",
                                 "efficientnet_scratch", "builtin_finetune", "builtin_transfer", "builtin_scratch",
-                                "upstream_finetune", "upstream_transfer", "upstream_resume", "upstream_scratch"}
+                                "upstream_finetune", "upstream_transfer", "upstream_resume", "upstream_scratch",
+                                "sam2_finetune", "sam2_transfer"}
     assert {key for key in asdict(TrainingConfig()) if key.endswith("_model")} == {"efficientnet_model"}
+
+
+@pytest.mark.parametrize("mode", ["sam2_finetune", "sam2_transfer"])
+def test_sam2_modes_require_segmentation_and_a_supported_model(mode):
+    assert training_capabilities("segment", mode, model_id="sam2_hiera_tiny")["engine"] == "sam2"
+    with pytest.raises(ValueError):
+        training_capabilities("classify", mode, model_id="sam2_hiera_tiny")
+    with pytest.raises(ValueError):
+        training_capabilities("segment", mode, model_id="efficientnet_b0")
 
 
 def test_unknown_modes_do_not_silently_select_a_different_model():
