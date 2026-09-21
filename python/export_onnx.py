@@ -717,6 +717,12 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                                     runtime_settings = settings
                                     runtime_attempts.append({**settings, "graph": "portable_fp64", "passed": True})
                                     log("고정밀 ONNX: 모든 검사 입력이 원본 FP32 출력 비교 통과")
+                                    from efficientnet_precision_tuning import tune_precision_export
+                                    log("검증을 유지하며 FP64 범위 축소·추론 속도 측정 중")
+                                    model, runtime_settings = tune_precision_export(
+                                        reference_model, model, staged_model, dummy, runtime_settings,
+                                        verify_candidate, opset=opset_version, dynamic_batch=dynamic_batch,
+                                        attempts=runtime_attempts, log=log)
                             if runtime_settings is None:
                                 # Diagnose the original graph, not a differently
                                 # lowered rescue graph against an altered reference.
@@ -756,6 +762,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             manifest["export"]["verification_tolerance"] = verification_profile
         if backend == "efficientnet":
             manifest["export"]["optimization"] = model.inference_optimization
+            manifest["export"]["io_precision"] = "float32"
+            manifest["export"]["compute_precision"] = model.inference_optimization.get("compute_precision", "float32")
             manifest["export"]["verification_reference"] = "original_checkpoint_pytorch"
             if runtime_settings is not None:
                 # Earlier SDKs must reject this contract instead of silently
@@ -779,6 +787,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
               "task": metadata["task"], "cpp_supported": manifest["cpp_supported"]}
     if runtime_settings is not None:
         result["runtime_settings"] = runtime_settings
+    if backend == "efficientnet":
+        result["optimization"] = manifest["export"]["optimization"]
     log(f"내보내기 완료: {output}\n배포 설정: {config_path}\n검증: {result['verification']}")
     return result
 

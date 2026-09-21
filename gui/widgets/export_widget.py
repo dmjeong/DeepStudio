@@ -335,6 +335,15 @@ class ExportWidget(QWidget):
             settings = result["runtime_settings"]
             level = {"all": "전체", "basic": "기본", "disabled": "끔"}[settings["graph_optimization_level"]]
             text += f"\n검증된 실행 설정: ONNX Runtime 최적화 {level}, CPU {settings['num_threads']} 스레드"
+        optimization = result.get("optimization", {})
+        if optimization.get("fallback") == "mixed_precision":
+            text += f"\n고정밀 계산 구간: {optimization['fp64_stages']} (나머지는 FP32)"
+        elif optimization.get("fallback") == "portable_fp64":
+            text += "\n전체 고정밀 계산을 유지합니다. 추론이 느릴 수 있습니다."
+        timing = optimization.get("latency_measurement")
+        if timing:
+            text += (f"\n현재 PC 모델 추론 중앙값: {timing['baseline_median_ms']:.2f} → "
+                     f"{timing['selected_median_ms']:.2f} ms (전·후처리 제외)")
         self.log_text.append(text)
         QMessageBox.information(self, "완료", text)
 

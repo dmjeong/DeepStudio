@@ -244,7 +244,7 @@ def test_only_a_numerically_verified_onnx_session_is_accepted(checkpoint_factory
             assert "모든 최적화 설정" in failure
             for part in ("all/seeded", "basic/seeded", "disabled/seeded", "PyTorch=", "ONNX=", "출력 범위"):
                 assert part in failure
-            assert attempted == ["all", "basic", "disabled"] * 2 + ["disabled"] * 5
+            assert attempted == ["all", "basic", "disabled"] * 2 + ["disabled"] * (5 if runtime == "onnx" else 4)
             assert engine._onnx_runtime is None
         else:
             engine.prepare()
@@ -258,6 +258,68 @@ def test_only_a_numerically_verified_onnx_session_is_accepted(checkpoint_factory
             assert not any(item["passed"] for item in result.details["runtime_validation_attempts"][:-1])
             np.testing.assert_allclose(result.details["probabilities"], expected.details["probabilities"], atol=1e-6)
             assert ("기본 최적화" if passing_level == "basic" else "최적화 꺼짐") in format_result_timing(result)
+
+
+@pytest.mark.parametrize("runtime", ["auto", "onnx"])
+def test_whole_model_fp64_is_explicit_only_and_visible(checkpoint_factory, runtime):
+    import torch
+    import export_onnx
+    from efficientnet_precision import prepare_precision_export
+    from core.inference_loading import load_cpu_engine
+    from core.inference_timing import format_result_timing
+    weights, image = checkpoint_factory(size=(32, 40))
+    engine = load_cpu_engine(weights, runtime=runtime, threads=2)
+    expected = load_cpu_engine(weights, runtime="pytorch").infer(image)
+    real_export = export_onnx.export_to_onnx
+
+    def export(candidate, *args, **kwargs):
+        # Fail real FP32 graphs without changing the retained checkpoint model.
+        if getattr(candidate, "inference_optimization", {}).get("fallback") != "portable_fp64":
+            with torch.no_grad():
+                candidate.classifier[1].bias.add_(1.)
+        return real_export(candidate, *args, **kwargs)
+
+    with patch.object(export_onnx, "export_to_onnx", side_effect=export), \
+            patch("efficientnet_precision.prepare_precision_export", wraps=prepare_precision_export) as precision:
+        result = engine.infer(image)
+    assert result.status == "ok", result.error
+    np.testing.assert_allclose(result.details["probabilities"], expected.details["probabilities"], atol=1e-6)
+    if runtime == "auto":
+        precision.assert_not_called()
+        assert result.details["runtime"] == "pytorch"
+        assert "전체 FP64 변환을 사용하지 않습니다" in result.details["runtime_warning"]
+        assert "모든 최적화 설정의 출력 비교 실패" in result.details["runtime_warning"]
+        assert engine._onnx_runtime is None
+    else:
+        precision.assert_called_once()
+        assert result.details["runtime"] == "onnxruntime"
+        assert result.details["runtime_export_graph"] == "portable_fp64"
+        assert result.details["runtime_compute_precision"] == "float64"
+        assert "느릴 수 있습니다" in result.details["runtime_warning"]
+        timing = format_result_timing(result)
+        assert "고정밀 FP64" in timing
+        assert "속도 저하 가능" in timing
+        assert "→ PyTorch" not in timing
+
+
+def test_auto_does_not_reuse_a_cached_whole_model_fp64_session(checkpoint_factory):
+    from types import SimpleNamespace
+    from core.efficientnet_onnx import EfficientNetOnnx
+    from core.inference_loading import load_cpu_engine
+    weights, image = checkpoint_factory(size=(32, 40))
+    engine = load_cpu_engine(weights, runtime="auto", threads=2)
+    expected = load_cpu_engine(weights, runtime="pytorch").infer(image)
+    engine._onnx_runtime = SimpleNamespace(
+        export_graph="portable_fp64", matches=lambda *args: True)
+    with patch.object(EfficientNetOnnx, "__init__", side_effect=AssertionError("must not re-export cached model")):
+        result = engine.infer(image)
+        again = engine.infer(image)
+    for actual in (result, again):
+        assert actual.status == "ok", actual.error
+        assert actual.details["runtime"] == "pytorch"
+        assert "전체 FP64 ONNX 캐시를 사용하지 않습니다" in actual.details["runtime_warning"]
+        np.testing.assert_array_equal(actual.details["probabilities"], expected.details["probabilities"])
+    assert engine._onnx_runtime is None
 
 
 def wait_until(app, predicate, timeout=60):

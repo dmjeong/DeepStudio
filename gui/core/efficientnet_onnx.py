@@ -9,7 +9,8 @@ import torch
 
 
 class EfficientNetOnnx:
-    def __init__(self, model, input_size, *, threads=4, warmup=10):
+    def __init__(self, model, input_size, *, threads=4, warmup=10,
+                 allow_precision_fallback=True):
         started = time.perf_counter()
         # Decoder module loading belongs to model setup, not the first image's decode timing.
         import cv2  # noqa: F401
@@ -45,11 +46,14 @@ class EfficientNetOnnx:
                     raise ValueError(f"ONNX 검증 실패: 기준 PyTorch 출력에 NaN 또는 무한대 "
                                      f"(입력 {probe_name}); ONNX 출력 비교 전 중단")
                 probes.append((probe_name, tensor.numpy(), expected))
-        candidates = (("fused", lambda: prepare_for_inference(reference)),
+        candidates = [("fused", lambda: prepare_for_inference(reference)),
                       ("unfused", lambda: copy.deepcopy(reference)),
                       ("native_batch_norm_affine", lambda: prepare_native_bn_export(reference)),
-                      ("native_batch_norm_affine_fma", lambda: prepare_native_bn_export(reference, emulate_fma=True)),
-                      ("portable_fp64", lambda: prepare_precision_export(reference)))
+                      ("native_batch_norm_affine_fma", lambda: prepare_native_bn_export(reference, emulate_fma=True))]
+        # Automatic acceleration must not replace native PyTorch with the much
+        # slower whole-model FP64 compatibility graph. Explicit ONNX may opt in.
+        if allow_precision_fallback:
+            candidates.append(("portable_fp64", lambda: prepare_precision_export(reference)))
         for graph_name, factory in candidates:
             export_model = factory()
             optimization = getattr(export_model, "inference_optimization", {
@@ -99,9 +103,12 @@ class EfficientNetOnnx:
         if self.session is None:
             failures = "\n".join(f"{item['graph']}/{item['optimization']}/{item['probe']}: {item['error']}"
                                  for item in self.validation_attempts)
-            raise ValueError(f"ONNX 검증 실패: fused/unfused/native-BN/FP64 모든 최적화 설정의 출력 비교 실패 "
+            graphs = "fused/unfused/native-BN" + ("/FP64" if allow_precision_fallback else "")
+            precision_note = ("" if allow_precision_fallback else
+                              "\n자동 가속에서는 속도가 느린 전체 FP64 변환을 사용하지 않습니다.")
+            raise ValueError(f"ONNX 검증 실패: {graphs} 모든 최적화 설정의 출력 비교 실패 "
                              f"(PyTorch {torch.__version__}, ONNX Runtime {self.version}, "
-                             f"입력 {self.input_shape}, CPU {threads} threads).\n{failures}")
+                             f"입력 {self.input_shape}, CPU {threads} threads).\n{failures}{precision_note}")
         for _ in range(warmup):
             self.logits(dummy.numpy())
         self.setup_sec = time.perf_counter() - started

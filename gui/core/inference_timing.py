@@ -84,7 +84,12 @@ def format_result_timing(result, include_total=False):
         if level in ("basic", "disabled"):
             text += " [기본 최적화]" if level == "basic" else " [최적화 꺼짐]"
         if details.get("runtime_warning"):
-            text += " [ONNX 준비 실패 → PyTorch]"
+            if details["runtime"] == "pytorch":
+                text += " [ONNX 준비 실패 → PyTorch]"
+            elif details.get("runtime_compute_precision") == "float64":
+                text += " [고정밀 FP64 · 속도 저하 가능]"
+            else:
+                text += " [실행 경고]"
     if include_total:
         text += f" | 전체 처리 {format_duration(result.elapsed_sec)}"
     return text

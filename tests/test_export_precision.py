@@ -82,7 +82,8 @@ def test_b1_100px_precision_fallback_uses_original_reference_and_preserves_faile
             assert output.read_bytes() == b"previous"
             return
         result = export_onnx.export_checkpoint(source, output, dynamic_batch=True, log=lambda _: None)
-    assert tested == [(1, False), (1, True), (2, False)]
+    assert tested[:3] == [(1, False), (1, True), (2, False)]
+    assert tested[-3:] == [(1, False), (1, True), (2, False)]  # Restored winner is reloaded.
     manifest = json.loads(output.with_suffix(".json").read_text())
     assert manifest["export"]["optimization"]["compute_precision"] == "float64"
     assert manifest["onnxruntime"]["graph_optimization_level"] == "disabled"

@@ -182,6 +182,7 @@ class InferenceOperations:
                                               runtime_setup_sec=onnx.setup_sec,
                                               runtime_optimization=onnx.optimization_level,
                                               runtime_export_graph=onnx.export_graph,
+                                              runtime_compute_precision=onnx.export_optimization.get("compute_precision", "float32"),
                                               runtime_verification_tolerance=onnx.verification_tolerance,
                                               runtime_validation_attempts=onnx.validation_attempts)
 
@@ -326,8 +327,15 @@ class InferenceEngine(InferenceOperations):
         if eligible and self.runtime_requested != "pytorch":
             try:
                 from core.efficientnet_onnx import EfficientNetOnnx
-                if self._onnx_runtime is None or not self._onnx_runtime.matches(self.model, self._input_size, self.runtime_threads):
-                    self._onnx_runtime = EfficientNetOnnx(self.model, self._input_size, threads=self.runtime_threads)
+                cached_matches = (self._onnx_runtime is not None and self._onnx_runtime.matches(
+                    self.model, self._input_size, self.runtime_threads))
+                if (cached_matches and self.runtime_requested == "auto"
+                        and self._onnx_runtime.export_graph == "portable_fp64"):
+                    raise ValueError("자동 가속에서는 속도가 느린 전체 FP64 ONNX 캐시를 사용하지 않습니다.")
+                if not cached_matches:
+                    self._onnx_runtime = EfficientNetOnnx(
+                        self.model, self._input_size, threads=self.runtime_threads,
+                        allow_precision_fallback=self.runtime_requested == "onnx")
             except Exception as exc:
                 self._onnx_runtime = None
                 if self.runtime_requested == "onnx":
@@ -338,6 +346,9 @@ class InferenceEngine(InferenceOperations):
                 self.runtime_warning = f"ONNX 준비 실패로 PyTorch에서 실행합니다.\n{type(exc).__name__}: {exc}"
             else:
                 self.runtime = "onnxruntime"
+                if self._onnx_runtime.export_graph == "portable_fp64":
+                    self.runtime_warning = ("ONNX 수치 검증을 통과한 전체 FP64 계산을 사용합니다. "
+                                            "추론이 느릴 수 있습니다. 자동 실행은 PyTorch를 사용합니다.")
         else:
             self._onnx_runtime = None
         self._prepared = True
