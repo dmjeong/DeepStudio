@@ -147,7 +147,7 @@ def test_synthetic_policy_exports_fast_fp32_when_logits_shift_but_decisions_matc
     assert report["selected"]["max_logit_error"] > .019
     assert report["selected"]["max_probability_error"] < 1e-6
     assert report["selected"]["model_median_ms"] > 0
-    manifest = json.loads(output.with_suffix(".json").read_text())
+    manifest = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
     assert manifest["export"]["verification_policy"] == "classification_synthetic_probe_v1"
     assert manifest["export"]["compute_precision"] == "float32"
     assert manifest["schema_version"] == 6
