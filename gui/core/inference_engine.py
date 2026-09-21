@@ -178,7 +178,7 @@ class InferenceOperations:
                                "preprocess": ((prepared-phase_started)-(decoded-decode_started))*1000,
                                "model": (inferred-prepared)*1000, "postprocess": (finished-inferred)*1000})
                 if onnx is not None:
-                    prediction.details.update(runtime_version=onnx.version, runtime_threads=onnx.threads,
+                    prediction.details.update(runtime_version=onnx.version, runtime_threads=onnx.runtime_threads,
                                               runtime_setup_sec=onnx.setup_sec,
                                               runtime_optimization=onnx.optimization_level,
                                               runtime_export_graph=onnx.export_graph,

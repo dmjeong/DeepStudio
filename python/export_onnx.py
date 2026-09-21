@@ -346,7 +346,7 @@ def export_to_onnx(model, dummy_input, output_path, opset_version=17,
     exporter_options = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
     if "external_data" in inspect.signature(torch.onnx.export).parameters:
         exporter_options["external_data"] = False
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device_type="cpu", enabled=False):
         torch.onnx.export(model, dummy_input.cpu(), str(output_path), export_params=True,
                           opset_version=opset_version, do_constant_folding=constant_folding,
                           input_names=["input_image"], output_names=names,
@@ -355,15 +355,16 @@ def export_to_onnx(model, dummy_input, output_path, opset_version=17,
 
 
 def verify_onnx(onnx_path, dummy_input, pytorch_model, task="classify", atol=None,
-                runtime_settings=None):
+                runtime_settings=None, reference_model=None):
     import torch
     import onnxruntime as ort
     from onnx_session import cpu_session_options
     options = cpu_session_options(**(runtime_settings or {}))
     session = ort.InferenceSession(str(onnx_path), options, providers=["CPUExecutionProvider"])
-    pytorch_model.cpu().eval()
-    with torch.no_grad():
-        expected = pytorch_model(dummy_input.cpu()).detach().numpy()
+    reference = reference_model if reference_model is not None else pytorch_model
+    reference.cpu().eval()
+    with torch.no_grad(), torch.autocast(device_type="cpu", enabled=False):
+        expected = reference(dummy_input.cpu()).detach().numpy()
     actual = session.run(None, {session.get_inputs()[0].name: dummy_input.cpu().numpy()})
     if len(actual) != 1:
         raise ValueError("커스텀 모델은 출력 텐서 하나만 지원합니다.")
@@ -605,6 +606,7 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
         if backend in {"custom", "efficientnet", "builtin", "redetr_v4"}:
             spec = resolve_checkpoint_spec(checkpoint, overrides)
             model = load_custom_model(checkpoint, spec)
+            reference_model = model if backend == "efficientnet" else None
             verification_profile = verification_tolerances(spec["task"])
             if backend == "efficientnet":
                 from efficientnet import prepare_for_inference
@@ -620,11 +622,9 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             if simplify:
                 simplify_onnx(staged_model)
             if verify:
-                # Compare against the exact PyTorch graph that was exported.
-                # Conv/BatchNorm fusion is mathematically equivalent but can
-                # reassociate FP32 operations; comparing it with the unfused
-                # checkpoint made valid graphs fail at near-zero logits.
-                log("ONNX Runtime 검증: 내보낸 PyTorch 그래프와 비교 "
+                # Fusion is itself a numerical transformation. Every EfficientNet
+                # candidate must agree with one original checkpoint reference.
+                log("ONNX Runtime 검증: 원본 체크포인트 PyTorch 출력과 비교 "
                     f"(atol={verification_profile['atol']}, rtol={verification_profile['rtol']}, probes=seeded+zero)")
                 failed_probe, failed_probe_name = dummy, "seeded"
                 def verify_candidate(candidate, settings=None):
@@ -635,6 +635,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                     for probe_name, probe in probes:
                         failed_probe, failed_probe_name = probe, probe_name
                         kwargs = {} if settings is None else {"runtime_settings": settings}
+                        if reference_model is not None:
+                            kwargs["reference_model"] = reference_model
                         verified = (verify_redetr_onnx(staged_model, probe, candidate)
                                     if backend == "redetr_v4"
                                     else verify_onnx(staged_model, probe, candidate, task=spec["task"], **kwargs))
@@ -675,9 +677,33 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                                 log(f"모든 입력 검증 통과: 최적화={level}, CPU {threads} threads. 배포 JSON에 설정 저장")
                                 break
                         if runtime_settings is None:
-                            _raise_efficientnet_verification_error(
-                                model, staged_model, failed_probe, failed_probe_name, opset_version,
-                                optimized_error, original_error, runtime_attempts, log)
+                            from efficientnet import prepare_native_bn_export
+                            log("BatchNorm 계수 고정 그래프로 재시도: PyTorch 정규화 계수 보존, Conv 융합 제외")
+                            model = prepare_native_bn_export(reference_model)
+                            export_to_onnx(model, dummy, staged_model, opset_version, dynamic_batch,
+                                           spec["task"], constant_folding=False)
+                            # Preserve operation order; try serial reduction as well.
+                            for count in dict.fromkeys((threads, 1)):
+                                settings = {"graph_optimization_level": "disabled", "num_threads": count}
+                                try:
+                                    verify_candidate(model, settings)
+                                except ValueError as runtime_error:
+                                    runtime_attempts.append({**settings, "graph": "native_batch_norm_affine",
+                                                             "passed": False, "probe": failed_probe_name,
+                                                             "error": str(runtime_error)})
+                                else:
+                                    runtime_settings = settings
+                                    runtime_attempts.append({**settings, "graph": "native_batch_norm_affine", "passed": True})
+                                    log("BatchNorm 계수 고정 그래프: 모든 입력 원본 출력 비교 통과")
+                                    break
+                            if runtime_settings is None:
+                                # Diagnose the original graph, not a differently
+                                # lowered rescue graph against an altered reference.
+                                export_to_onnx(reference_model, dummy, staged_model, opset_version,
+                                               dynamic_batch, spec["task"], constant_folding=False)
+                                _raise_efficientnet_verification_error(
+                                    reference_model, staged_model, failed_probe, failed_probe_name, opset_version,
+                                    optimized_error, original_error, runtime_attempts, log)
             metadata = {"task": spec["task"], "num_classes": spec["num_classes"],
                         "input_size": [spec["input_height"], spec["input_width"]],
                         "in_channels": spec["in_channels"], "class_names": spec["class_names"],
@@ -709,7 +735,7 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             manifest["export"]["verification_tolerance"] = verification_profile
         if backend == "efficientnet":
             manifest["export"]["optimization"] = model.inference_optimization
-            manifest["export"]["verification_reference"] = "exported_pytorch_graph"
+            manifest["export"]["verification_reference"] = "original_checkpoint_pytorch"
             if runtime_settings is not None:
                 # Earlier SDKs must reject this contract instead of silently
                 # enabling ALL again and undoing the verified fallback.

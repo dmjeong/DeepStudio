@@ -1,4 +1,5 @@
 """Prepare the loaded CPU EfficientNet for the actual Studio inference button."""
+import copy
 from pathlib import Path
 import tempfile
 import time
@@ -12,7 +13,7 @@ class EfficientNetOnnx:
         started = time.perf_counter()
         # Decoder module loading belongs to model setup, not the first image's decode timing.
         import cv2  # noqa: F401
-        from efficientnet import EfficientNet, prepare_for_inference
+        from efficientnet import EfficientNet, prepare_for_inference, prepare_native_bn_export
         from export_onnx import (export_to_onnx, validate_classification_outputs,
                                  verification_tolerances)
         import onnxruntime as ort
@@ -33,8 +34,21 @@ class EfficientNetOnnx:
         levels = (("all", ort.GraphOptimizationLevel.ORT_ENABLE_ALL),
                   ("basic", ort.GraphOptimizationLevel.ORT_ENABLE_BASIC),
                   ("disabled", ort.GraphOptimizationLevel.ORT_DISABLE_ALL))
-        candidates = (("fused", prepare_for_inference(model)), ("unfused", model.float().eval()))
-        for graph_name, export_model in candidates:
+        reference = copy.deepcopy(model).cpu().float().eval()
+        # Fix the reference before any export transformation, including fusion.
+        probes = []
+        with torch.inference_mode(), torch.autocast(device_type="cpu", enabled=False):
+            for probe_name, tensor in (("seeded", dummy), ("zero", torch.zeros_like(dummy))):
+                expected = reference(tensor).detach().numpy().copy()
+                if not np.isfinite(expected).all():
+                    raise ValueError(f"ONNX 검증 실패: 기준 PyTorch 출력에 NaN 또는 무한대 "
+                                     f"(입력 {probe_name}); ONNX 출력 비교 전 중단")
+                probes.append((probe_name, tensor.numpy(), expected))
+        candidates = (("fused", lambda: prepare_for_inference(reference)),
+                      ("unfused", lambda: copy.deepcopy(reference)),
+                      ("native_batch_norm_affine", lambda: prepare_native_bn_export(reference)))
+        for graph_name, factory in candidates:
+            export_model = factory()
             optimization = getattr(export_model, "inference_optimization", {
                 "conv_bn_fused": 0, "channels_last": False,
             })
@@ -46,27 +60,13 @@ class EfficientNetOnnx:
                 export_to_onnx(export_model, dummy, path, dynamic_batch=False, task="classify",
                                constant_folding=graph_name == "fused")
                 model_bytes = path.read_bytes()
-            probes = []
-            invalid_reference = None
-            with torch.inference_mode():
-                for probe_name, tensor in (("seeded", dummy), ("zero", torch.zeros_like(dummy))):
-                    expected = export_model(tensor).detach().numpy().copy()
-                    if not np.isfinite(expected).all():
-                        invalid_reference = (
-                            f"ONNX 검증 실패: 기준 PyTorch 출력에 NaN 또는 무한대 "
-                            f"{np.count_nonzero(~np.isfinite(expected))}개 "
-                            f"(그래프 {graph_name}, 입력 {probe_name}); ONNX 출력 비교 전 중단"
-                        )
-                        break
-                    probes.append((probe_name, tensor.numpy(), expected))
-            if invalid_reference:
-                self.validation_attempts.append({"graph": graph_name, "optimization": "none",
-                                                 "passed": False, "probe": probe_name,
-                                                 "error": invalid_reference})
-                continue
-            for name, level in levels:
+            profiles = [(name, level, threads) for name, level in levels]
+            if graph_name == "native_batch_norm_affine":
+                profiles = [("disabled", ort.GraphOptimizationLevel.ORT_DISABLE_ALL, count)
+                            for count in dict.fromkeys((threads, 1))]
+            for name, level, count in profiles:
                 options = ort.SessionOptions()
-                options.intra_op_num_threads = threads
+                options.intra_op_num_threads = count
                 options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
                 options.graph_optimization_level = level
                 self.session = ort.InferenceSession(model_bytes, options, providers=["CPUExecutionProvider"])
@@ -77,7 +77,7 @@ class EfficientNetOnnx:
                         actual = self.session.run([self.output_name], {self.input_name: tensor})[0]
                         validate_classification_outputs(expected, actual, **self.verification_tolerance)
                 except ValueError as exc:
-                    self.validation_attempts.append({"graph": graph_name, "optimization": name,
+                    self.validation_attempts.append({"graph": graph_name, "optimization": name, "num_threads": count,
                                                      "passed": False, "probe": probe_name,
                                                      "error": str(exc)})
                     self.session = None
@@ -85,15 +85,16 @@ class EfficientNetOnnx:
                     self.export_graph = graph_name
                     self.export_optimization = dict(optimization)
                     self.optimization_level = name
+                    self.runtime_threads = count
                     self.validation_attempts.append({"graph": graph_name,
-                                                     "optimization": name, "passed": True})
+                                                     "optimization": name, "num_threads": count, "passed": True})
                     break
             if self.session is not None:
                 break
         if self.session is None:
             failures = "\n".join(f"{item['graph']}/{item['optimization']}/{item['probe']}: {item['error']}"
                                  for item in self.validation_attempts)
-            raise ValueError(f"ONNX 검증 실패: fused/unfused 모든 최적화 설정의 출력 비교 실패 "
+            raise ValueError(f"ONNX 검증 실패: fused/unfused/native-BN 모든 최적화 설정의 출력 비교 실패 "
                              f"(PyTorch {torch.__version__}, ONNX Runtime {self.version}, "
                              f"입력 {self.input_shape}, CPU {threads} threads).\n{failures}")
         for _ in range(warmup):

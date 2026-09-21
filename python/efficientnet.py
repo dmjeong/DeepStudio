@@ -285,3 +285,54 @@ def prepare_for_inference(model, *, channels_last=False):
         optimized.to(memory_format=torch.channels_last)
     optimized.inference_optimization = {"conv_bn_fused": fused, "channels_last": channels_last}
     return optimized
+
+
+class _NativeAffineExportBatchNorm(nn.Module):
+    """Freeze PyTorch's evaluation BN coefficients instead of recomputing in ORT.
+
+    Variance/epsilon/rsqrt rounding can differ between native BN kernels. Large
+    running means amplify that difference. Evaluate scale and offset with the
+    source kernel, then export only Mul/Add, without folding into convolution.
+    The original checkpoint remains the mandatory numerical reference.
+    """
+
+    def __init__(self, batch_norm):
+        super().__init__()
+        self.native = batch_norm
+        bn = batch_norm
+        channels = bn.running_mean.numel()
+        zeros = torch.zeros(1, channels, 1, 1)
+        with torch.no_grad(), torch.autocast(device_type="cpu", enabled=False):
+            scale = torch.nn.functional.batch_norm(
+                torch.ones_like(zeros), torch.zeros_like(bn.running_mean), bn.running_var,
+                bn.weight, None, training=False, eps=bn.eps)
+            offset = bn(zeros)
+        self.register_buffer("scale", scale.detach())
+        self.register_buffer("offset", offset.detach())
+
+    def forward(self, images):
+        if not torch.onnx.is_in_onnx_export():
+            return self.native(images)
+        return images * self.scale + self.offset
+
+
+def prepare_native_bn_export(model):
+    """Create an independent export candidate with native BN coefficients."""
+    if not isinstance(model, EfficientNet):
+        raise TypeError("EfficientNet 모델 필요")
+    candidate = copy.deepcopy(model).cpu().float().eval()
+    replaced = 0
+    for module in list(candidate.modules()):
+        for name, child in list(module.named_children()):
+            if isinstance(child, nn.BatchNorm2d):
+                if not child.track_running_stats:
+                    raise ValueError("ONNX 평가용 BatchNorm running statistics 필요")
+                setattr(module, name, _NativeAffineExportBatchNorm(child))
+                replaced += 1
+    candidate.eval()
+    candidate.inference_optimization = {
+        "conv_bn_fused": 0, "channels_last": False,
+        "constant_folding": False, "simplified": False,
+        "fallback": "native_batch_norm_affine", "native_batch_norms": replaced,
+    }
+    return candidate
