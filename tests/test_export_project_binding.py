@@ -1,6 +1,7 @@
 """The export page must not carry a checkpoint across project boundaries."""
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -27,7 +28,7 @@ def test_project_switch_clears_old_checkpoint_and_rejects_mismatched_metadata(tm
         assert os.path.abspath(widget.ckpt_edit.text()) == str(checkpoint)
         widget.set_project(second)
         assert widget.ckpt_edit.text() == ""
-        assert widget.output_edit.text().endswith("second/exports/model_segment.onnx")
+        assert Path(widget.output_edit.text()) == tmp_path / "second" / "exports" / "model_segment.onnx"
         with pytest.raises(ValueError, match="태스크"):
             widget._validate_checkpoint_for_project(str(checkpoint))
     finally:

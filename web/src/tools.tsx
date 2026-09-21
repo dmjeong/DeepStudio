@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { join } from "./api";
 import { Check, Field, JobMonitor, Panel, PathField } from "./components";
 import type { PageProps } from "./pages";
@@ -12,6 +12,17 @@ export function Export({ state, run, act, busy }: PageProps) {
   );
   const [opset, setOpset] = useState(17);
   const [dynamic, setDynamic] = useState(false);
+  const efficientnet = state.project?.task === "classify" && String(state.project.model.model_id || "").startsWith("efficientnet_");
+  const [datasetValidation, setDatasetValidation] = useState(efficientnet);
+  const [validationDir, setValidationDir] = useState("");
+  const [precisionFallback, setPrecisionFallback] = useState(false);
+  useEffect(() => {
+    setDatasetValidation(efficientnet);
+    setValidationDir("");
+    setPrecisionFallback(false);
+    setWeights(state.project?.runs.at(-1)?.checkpoint_path || "");
+    setOutput(state.project ? join(state.project.project_dir, "exports/model.onnx") : "");
+  }, [state.project?.filepath, efficientnet]);
   const [id, setId] = useState<string | null>(
     state.jobs.find((j) => j.kind === "export")?.id || null,
   );
@@ -34,6 +45,16 @@ export function Export({ state, run, act, busy }: PageProps) {
               />
             </Field>
           </div>
+          {efficientnet && <>
+            <Check label="실제 이미지로 FP32 분류 검증: 판정 일치·확률 오차 0.1%p 이하"
+              value={datasetValidation} onChange={setDatasetValidation} />
+            {datasetValidation ? <>
+              <PathField label="비교 이미지 폴더 (비우면 프로젝트 val → test → train에서 자동 선택)"
+                value={validationDir} onChange={setValidationDir} home={state.home} directory />
+              <p className="muted">모든 클래스의 이미지가 필요합니다. 이미지와 가중치는 이 PC에서만 검사합니다.</p>
+            </> : <Check label="고정밀 호환 재시도 허용 (추론이 느려질 수 있음)"
+              value={precisionFallback} onChange={setPrecisionFallback} />}
+          </>}
           <div className="toolbar">
             <Field label="ONNX opset">
               <select
@@ -58,6 +79,9 @@ export function Export({ state, run, act, busy }: PageProps) {
                         output,
                         opset,
                         dynamic_batch: dynamic,
+                        dataset_validation: efficientnet && datasetValidation,
+                        validation_dir: validationDir,
+                        allow_precision_fallback: efficientnet && !datasetValidation && precisionFallback,
                       })
                     ).id,
                   ),

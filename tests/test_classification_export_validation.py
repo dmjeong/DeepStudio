@@ -103,3 +103,35 @@ def test_no_automatic_whole_fp64_export(tmp_path):
         with pytest.raises(ValueError, match="모두 ONNX 검증 실패"):
             export_onnx.export_checkpoint(source, tmp_path / "model.onnx", log=lambda _: None)
         precision.assert_not_called()
+
+
+def test_web_export_worker_uses_complete_project_corpus_and_explicit_options(tmp_path):
+    from types import SimpleNamespace
+    from webapp.worker import export
+    data = {"class_names": ["a", "b"], "val_dir": str(tmp_path / "val"),
+            "test_dir": str(tmp_path / "test"), "train_dir": str(tmp_path / "train")}
+    for name in data["class_names"]:
+        folder = tmp_path / "train" / name
+        folder.mkdir(parents=True)
+        cv2.imwrite(str(folder / "image.png"), np.zeros((8, 8), np.uint8))
+    context = SimpleNamespace(cancelled=lambda: False, emit=lambda *args: None)
+    payload = {"weights": "model.pt", "output": "model.onnx", "dataset_validation": True,
+               "project": {"data": data}}
+    with patch.object(export_onnx, "export_checkpoint", return_value={}) as exporter:
+        assert export(context, payload)["status"] == "completed"
+        assert exporter.call_args.kwargs["validation_dir"] == data["train_dir"]
+        assert exporter.call_args.kwargs["allow_precision_fallback"] is False
+        payload.update(dataset_validation=False, allow_precision_fallback=True)
+        export(context, payload)
+        assert exporter.call_args.kwargs["validation_dir"] is None
+        assert exporter.call_args.kwargs["allow_precision_fallback"] is True
+
+
+def test_web_export_worker_rejects_missing_validation_corpus(tmp_path):
+    from types import SimpleNamespace
+    from webapp.worker import export
+    context = SimpleNamespace(cancelled=lambda: False, emit=lambda *args: None)
+    with patch.object(export_onnx, "export_checkpoint") as exporter:
+        with pytest.raises(ValueError, match="비교 경로"):
+            export(context, {"weights": "model.pt", "output": "model.onnx", "dataset_validation": True})
+        exporter.assert_not_called()

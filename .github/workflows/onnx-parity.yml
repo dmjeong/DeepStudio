@@ -70,5 +70,7 @@ jobs:
         if: always()
         with:
           name: onnx-parity-${{ matrix.os }}
-          path: onnx-parity.xml
+          path: |
+            onnx-parity.xml
+            export-ui.xml
           retention-days: 3

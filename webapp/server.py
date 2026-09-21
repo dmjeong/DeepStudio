@@ -75,6 +75,9 @@ class ExportRequest(Body):
     output: str
     opset: int = Field(default=17, ge=17, le=20)
     dynamic_batch: bool = False
+    dataset_validation: bool = False
+    validation_dir: str = ""
+    allow_precision_fallback: bool = False
 
 
 class ModelPackRequest(Body):
@@ -598,7 +601,8 @@ def create_app(state_dir=None):
             existing_path(body.weights)
             if not Path(body.output).is_absolute():
                 raise ValueError("출력의 절대 경로 필요")
-            return jobs.start("export", body.model_dump())
+            return jobs.start("export", {**body.model_dump(),
+                "project": project_view(store.project) if store.project else {}})
 
     @app.post("/api/jobs/model-pack/{operation}")
     def model_pack(operation: str, body: ModelPackRequest):

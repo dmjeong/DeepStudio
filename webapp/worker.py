@@ -536,10 +536,39 @@ def export(context, payload):
     from export_onnx import export_checkpoint
     if context.cancelled():
         return {"status": "cancelled"}
+    validation_dir = None
+    if payload.get("dataset_validation"):
+        from classification_export_validation import collect_images
+        validation_dir = payload.get("validation_dir")
+        if not validation_dir:
+            data = payload.get("project", {}).get("data", {})
+            for split in ("val_dir", "test_dir", "train_dir"):
+                folder = data.get(split)
+                if not folder:
+                    continue
+                try:
+                    collect_images(folder, data.get("class_names", []))
+                except (ValueError, OSError):
+                    continue
+                validation_dir = folder
+                break
+        if not validation_dir:
+            raise ValueError("실제 이미지 분류 검증에는 모든 클래스의 이미지 하위 폴더가 있는 비교 경로가 필요합니다")
+        context.emit("log_message", [f"실제 이미지 비교 폴더: {validation_dir}"])
     result = export_checkpoint(payload["weights"], payload["output"],
                                opset_version=payload.get("opset", 17),
                                dynamic_batch=payload.get("dynamic_batch", False), verify=True,
+                               validation_dir=validation_dir,
+                               allow_precision_fallback=payload.get("allow_precision_fallback", False),
                                log=lambda line: context.emit("log_message", [line]))
+    validation = result.get("classification_validation")
+    if validation:
+        selected = validation["selected"]
+        context.emit("log_message", [
+            f"실제 이미지 {validation['image_count']}장 검증 통과. 전처리+추론+후처리 "
+            f"중앙값 {selected['pipeline_median_ms']:.2f}ms / p95 {selected['pipeline_p95_ms']:.2f}ms / "
+            f"최대 {selected['pipeline_max_ms']:.2f}ms. "
+            f"관측 8ms 목표: {'충족' if validation['target_met'] else '미달'} (파일 디코딩 제외)"])
     return {"status": "completed", "output": result}
 
 

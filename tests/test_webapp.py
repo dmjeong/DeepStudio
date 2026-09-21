@@ -67,6 +67,20 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/projects", json={"name": "검사 프로젝트", "task": "classify",
                             "parent": str(self.root), "class_names": ["NG"]}).status_code, 409)
 
+    def test_export_carries_validation_options_and_project_to_worker(self):
+        project = self.project()
+        weights = self.root / "checkpoint.pt"
+        weights.write_bytes(b"test")
+        with patch.object(self.app.state.jobs, "start", return_value={"id": "export-test"}) as start:
+            response = self.client.post("/api/jobs/export", json={"weights": str(weights),
+                "output": str(self.root / "model.onnx"), "dataset_validation": True})
+        self.assertEqual(response.status_code, 200, response.text)
+        kind, payload = start.call_args.args
+        self.assertEqual(kind, "export")
+        self.assertTrue(payload["dataset_validation"])
+        self.assertFalse(payload["allow_precision_fallback"])
+        self.assertEqual(payload["project"]["data"], project["data"])
+
     def test_mask_teaching_api_saves_real_training_png_and_restores_editable_shapes(self):
         project = self.project(task="segment")
         path = Path(project["data"]["train_dir"]) / "part.png"
