@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -29,10 +30,12 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
     correct = 0
     samples = 0
     confusion = None
+    non_blocking = torch.device(device).type == "cuda"
     context = torch.enable_grad() if training else torch.inference_mode()
     with context:
         for images, labels in loader:
-            images, labels = images.to(device), labels.to(device)
+            images = images.to(device, non_blocking=non_blocking)
+            labels = labels.to(device, non_blocking=non_blocking)
             logits = model(images)
             loss = criterion(logits, labels)
             if training:
@@ -68,10 +71,12 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
     samples = 0
     intersection = None
     union = None
+    non_blocking = torch.device(device).type == "cuda"
     context = torch.enable_grad() if training else torch.inference_mode()
     with context:
         for images, masks in loader:
-            images, masks = images.to(device), masks.to(device, dtype=torch.long)
+            images = images.to(device, non_blocking=non_blocking)
+            masks = masks.to(device, dtype=torch.long, non_blocking=non_blocking)
             logits = model(images)
             loss = criterion(logits, masks)
             if training:
@@ -133,7 +138,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   early_stop_patience: int = 0, label_smoothing: float = 0.0,
                   horizontal_flip: float = 0.5, rotation: float = 15.0,
                   color_jitter: float = 0.2, val_split: float = 0.2,
-                  num_workers: int = 0, freeze_backbone: bool = False,
+                  num_workers: int | None = None, freeze_backbone: bool = False,
                   backbone_lr_mult: float = 0.1,
                   output_dir: str | Path = "runs/builtin", device: str = "cpu",
                   resume: str | Path | None = None,
@@ -157,8 +162,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         raise ValueError("scheduler_name must be cosine, step or none")
     if not 0 <= horizontal_flip <= 1 or rotation < 0 or not 0 <= color_jitter <= 1:
         raise ValueError("augmentation values are outside their supported ranges")
-    if not 0 < val_split < 1 or num_workers < 0 or not 0 <= label_smoothing < 1:
-        raise ValueError("validation, worker or label smoothing settings are invalid")
+    if not 0 < val_split < 1 or not 0 <= label_smoothing < 1:
+        raise ValueError("validation or label smoothing settings are invalid")
     if warmup_epochs < 0 or early_stop_patience < 0 or not 0 < backbone_lr_mult <= 1:
         raise ValueError("scheduler, early-stop or backbone LR settings are invalid")
     if resume is not None and initial_weights is not None:
@@ -175,10 +180,19 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise ValueError("CUDA device requested but CUDA is unavailable")
     target = torch.device(device)
+    if num_workers is None:
+        cores = os.cpu_count() or 1
+        num_workers = max(2, min(cores // 2, 8)) if target.type == "cuda" else 0
+    if num_workers < 0:
+        raise ValueError("num_workers must be zero or greater")
+    pin_memory = target.type == "cuda"
+    log(f"data loader: workers={num_workers}, pin_memory={pin_memory}, "
+        f"persistent_workers={num_workers > 0}, prefetch_factor={2 if num_workers else 0}")
     if spec.task == "classify":
         train_loader, val_loader, class_names = create_classification_loaders(
             str(data_root), input_size=input_size, batch_size=batch_size,
-            num_workers=num_workers, in_channels=in_channels, val_split=val_split,
+            num_workers=num_workers, pin_memory=pin_memory,
+            in_channels=in_channels, val_split=val_split,
             flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
         num_classes = len(class_names) if num_classes == 0 else num_classes
         if num_classes != len(class_names):
@@ -188,7 +202,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             raise ValueError("num_classes is required for segmentation")
         train_loader, val_loader = create_segmentation_loaders(
             str(data_root), input_size=input_size, batch_size=batch_size,
-            num_workers=num_workers, in_channels=in_channels, num_classes=num_classes,
+            num_workers=num_workers, pin_memory=pin_memory,
+            in_channels=in_channels, num_classes=num_classes,
             flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
         class_names = [str(index) for index in range(num_classes)]
     initial_checkpoint = None
@@ -403,6 +418,7 @@ def main() -> None:
     parser.add_argument("--learning_rate", type=float, default=1e-3)
     parser.add_argument("--output_dir", default="runs/builtin")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--resume")
     parser.add_argument("--pretrained", action="store_true", help="Load the selected ImageNet backbone")
     parser.add_argument("--initial_weights", help="Local torchvision backbone or matching Studio checkpoint")
@@ -412,7 +428,8 @@ def main() -> None:
                   input_size=args.input_size or None, in_channels=args.in_channels,
                   epochs=args.epochs, batch_size=args.batch_size,
                   learning_rate=args.learning_rate, output_dir=args.output_dir,
-                  device=args.device, resume=args.resume, pretrained=args.pretrained,
+                  device=args.device, num_workers=args.num_workers,
+                  resume=args.resume, pretrained=args.pretrained,
                   initial_weights=args.initial_weights, selection_metric=args.selection_metric)
 
 

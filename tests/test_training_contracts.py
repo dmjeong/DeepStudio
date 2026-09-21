@@ -80,7 +80,8 @@ def dataset_namespace():
                             utils=SimpleNamespace(data=SimpleNamespace(random_split=split, Subset=Subset)))
     names = {"ClassificationDataset", "SegmentationDataset", "AnomalyDataset",
              "_TransformOverrideSubset", "_has_classification_images",
-             "create_classification_loaders", "create_anomaly_loaders"}
+             "_loader_runtime_options", "create_classification_loaders",
+             "create_anomaly_loaders"}
     from opencv_preprocess import read_image, resize
     return source_objects("python/dataset.py", names, {
         "read_image": read_image, "resize": resize,
@@ -98,6 +99,35 @@ def write_image(path, values=None):
 
 @unittest.skipUnless(importlib.util.find_spec("cv2"), "OpenCV image loading unavailable")
 class DataContracts(unittest.TestCase):
+    def test_gpu_loader_pins_memory_and_reuses_prefetch_workers(self):
+        ns = dataset_namespace()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for index in range(4):
+                write_image(root / "good" / f"{index}.png")
+            train, val, _ = ns["create_classification_loaders"](
+                str(root), batch_size=2, num_workers=2, pin_memory=True,
+            )
+            for loader in (train, val):
+                self.assertTrue(loader.options["pin_memory"])
+                self.assertEqual(loader.options["num_workers"], 2)
+                self.assertTrue(loader.options["persistent_workers"])
+                self.assertEqual(loader.options["prefetch_factor"], 2)
+
+    def test_classification_decoded_image_cache_avoids_repeated_file_reads(self):
+        ns = dataset_namespace()
+        reads = []
+        ns["read_image"] = lambda path, channels: (
+            reads.append((path, channels)) or np.zeros((8, 8, channels), dtype=np.uint8)
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write_image(root / "good" / "sample.png")
+            dataset = ns["ClassificationDataset"](str(root), cache_size_mb=1)
+            dataset[0]
+            dataset[0]
+            self.assertEqual(len(reads), 1)
+
     def test_validation_missing_class_preserves_training_id(self):
         ns = dataset_namespace()
         with tempfile.TemporaryDirectory() as temp:

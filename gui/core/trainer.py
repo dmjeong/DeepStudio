@@ -138,8 +138,9 @@ class TrainWorker(TrainingEngine):
             raise ValueError("에폭과 배치 크기는 1 이상 필요")
         # 실제 클래스 목록을 확정한 뒤 출력 헤드를 생성한다.
         num_workers = getattr(self, "debug_num_workers", dm.get_optimal_num_workers(device))
+        pin_memory = getattr(device, "type", str(device).split(":", 1)[0]) == "cuda"
         train_loader, val_loader = self._create_dataloaders(
-            task, data_cfg, cfg, num_workers=num_workers
+            task, data_cfg, cfg, num_workers=num_workers, pin_memory=pin_memory
         )
         if train_loader is None or len(train_loader) == 0:
             detail = getattr(self, "_dataloader_error", "")
@@ -722,7 +723,7 @@ class TrainWorker(TrainingEngine):
         return nn.CrossEntropyLoss()
 
     # ── 데이터 로더 생성 ──────────────────────────────
-    def _create_dataloaders(self, task, data_cfg, cfg, num_workers=0):
+    def _create_dataloaders(self, task, data_cfg, cfg, num_workers=0, pin_memory=False):
         """
         태스크별 데이터 로더 생성
 
@@ -752,8 +753,9 @@ class TrainWorker(TrainingEngine):
                 create_detection_loaders,
             )
 
+            worker_mode = "persistent/prefetch=2" if num_workers else "main process"
             self.signals.log_message.emit(
-                f"  데이터 로더 num_workers: {num_workers}"
+                f"  데이터 로더: workers={num_workers}, pin_memory={pin_memory}, {worker_mode}"
             )
 
             # ── 입력 크기를 (H, W) 튜플로 정규화 ──
@@ -784,6 +786,7 @@ class TrainWorker(TrainingEngine):
                     input_size=input_size,
                     batch_size=cfg.batch_size,
                     num_workers=num_workers,
+                    pin_memory=pin_memory,
                     in_channels=cfg.in_channels,
                     flip_prob=flip_prob,
                     rotation=rotation,
@@ -820,6 +823,7 @@ class TrainWorker(TrainingEngine):
                     input_size=input_size,
                     batch_size=cfg.batch_size,
                     num_workers=num_workers,
+                    pin_memory=pin_memory,
                     in_channels=cfg.in_channels,
                     flip_prob=flip_prob,
                     num_classes=data_cfg.num_classes,
@@ -834,6 +838,7 @@ class TrainWorker(TrainingEngine):
                     input_size=input_size,
                     batch_size=cfg.batch_size,
                     num_workers=num_workers,
+                    pin_memory=pin_memory,
                     num_classes=data_cfg.num_classes,
                     in_channels=cfg.in_channels,
                     flip_prob=flip_prob,
@@ -848,6 +853,7 @@ class TrainWorker(TrainingEngine):
                     input_size=input_size,
                     batch_size=cfg.batch_size,
                     num_workers=num_workers,
+                    pin_memory=pin_memory,
                     in_channels=cfg.in_channels,
                     val_split=data_cfg.val_split,
                     flip_prob=flip_prob,
@@ -990,6 +996,7 @@ class TrainWorker(TrainingEngine):
 
         if loader is None:
             return 0.0, {"val_metric": 0.0}
+        non_blocking = getattr(device, "type", str(device).split(":", 1)[0]) == "cuda"
 
         # 태스크별 메트릭 수집기 생성
         num_classes = max(data_cfg.num_classes, 1)
@@ -1002,9 +1009,9 @@ class TrainWorker(TrainingEngine):
                 images = batch
                 targets = images
 
-            images = images.to(device)
+            images = images.to(device, non_blocking=non_blocking)
             if isinstance(targets, torch.Tensor):
-                targets = targets.to(device)
+                targets = targets.to(device, non_blocking=non_blocking)
 
             outputs = model(images)
 
@@ -1110,6 +1117,7 @@ class TrainWorker(TrainingEngine):
         if loader is None:
             self.signals.log_message.emit("  검증 데이터 없음 — 평가 스킵")
             return {}
+        non_blocking = getattr(device, "type", str(device).split(":", 1)[0]) == "cuda"
 
         num_classes = max(data_cfg.num_classes, 1)
         meter = create_metrics(task, num_classes, data_cfg.class_names)
@@ -1121,9 +1129,9 @@ class TrainWorker(TrainingEngine):
                 images = batch
                 targets = images
 
-            images = images.to(device)
+            images = images.to(device, non_blocking=non_blocking)
             if isinstance(targets, torch.Tensor):
-                targets = targets.to(device)
+                targets = targets.to(device, non_blocking=non_blocking)
 
             outputs = model(images)
 

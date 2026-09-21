@@ -25,6 +25,9 @@ NVIDIA GPU가 있는 PC에서는 드라이버에 맞는 CUDA PyTorch를 자동 �
 합성곱과 역전파를 확인한 뒤 빌드한다. GPU 학습을 반드시 요구하려면 `gui\build.bat gpu`,
 CPU 전용 빌드는 `gui\build.bat cpu`를 사용한다. 학습 화면의 `자동 (GPU 우선)` 또는
 GPU 이름을 선택하면 EfficientNet을 포함한 기본 모델 학습이 CUDA에서 실행된다.
+CUDA 학습에서는 pinned memory, 지속 worker, batch prefetch와 제한된 이미지 디코딩
+캐시를 자동 적용한다. 학습 로그의 `workers`, `pin_memory`, `persistent/prefetch` 값으로
+실제 데이터 공급 설정을 확인할 수 있다.
 EfficientNet B0/B1, ResNet, ConvNeXt, DeepLab V3+, U-Net, PatchCore 백본, LibreYOLO,
 Re-DETR v4, SAM2 Hiera Tiny/Small/Base+/Large는 앱 실행 중 별도 다운로드를 하지 않는다.
 SAM2는 Settings에서 받거나 프로젝트에 적용하지 않는다. 분할 프로젝트에서 Hiera 변형을

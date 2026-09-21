@@ -160,7 +160,7 @@ class _TransformOverrideSubset(Dataset):
 
         # 원본 픽셀을 OpenCV로 읽고 검증용 변환 적용
         img_path, label = base_dataset.samples[original_idx]
-        image = read_image(img_path, base_dataset.in_channels)
+        image = base_dataset.read_cached(img_path)
 
         if self.transform is not None:
             image = self.transform(image)
@@ -194,12 +194,19 @@ class ClassificationDataset(Dataset):
 
     def __init__(self, root: str, transform=None,
                  in_channels: int = 3,
-                 extensions: set = None, class_to_idx: Optional[Dict[str, int]] = None):
+                 extensions: set = None, class_to_idx: Optional[Dict[str, int]] = None,
+                 cache_images: bool = True, cache_size_mb: int = 32):
         super().__init__()
         self.root = root
         self.transform = transform
         self.in_channels = in_channels
         self.extensions = extensions or self.SUPPORTED_EXT
+        # 각 DataLoader worker가 디코딩 결과를 제한된 크기로 재사용한다.
+        # 원본 해상도가 큰 데이터에서도 메모리가 무한히 증가하지 않는다.
+        self.cache_images = bool(cache_images)
+        self.cache_limit_bytes = max(0, int(cache_size_mb)) * 1024 * 1024
+        self._image_cache = {}
+        self._image_cache_bytes = 0
 
         # 클래스 목록 & 인덱스 매핑 구축
         self.classes, self.class_to_idx = self._find_classes()
@@ -251,10 +258,28 @@ class ClassificationDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
+    def read_cached(self, path: str) -> np.ndarray:
+        """Read once per worker and retain decoded pixels in a bounded LRU cache."""
+        key = os.fspath(path)
+        cached = self._image_cache.pop(key, None)
+        if cached is not None:
+            self._image_cache[key] = cached
+            return cached
+        image = read_image(key, self.in_channels)
+        size = int(image.nbytes)
+        if self.cache_images and self.cache_limit_bytes and size <= self.cache_limit_bytes:
+            while self._image_cache and self._image_cache_bytes + size > self.cache_limit_bytes:
+                oldest = next(iter(self._image_cache))
+                removed = self._image_cache.pop(oldest)
+                self._image_cache_bytes -= int(removed.nbytes)
+            self._image_cache[key] = image
+            self._image_cache_bytes += size
+        return image
+
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
         path, label = self.samples[idx]
         # 이미지 로드 — 채널 수에 따라 RGB 또는 Grayscale 변환
-        image = read_image(path, self.in_channels)
+        image = self.read_cached(path)
         if self.transform:
             image = self.transform(image)
         return image, label
@@ -604,6 +629,15 @@ def _has_classification_images(root: str, extensions: set) -> bool:
             return True
     return False
 
+def _loader_runtime_options(num_workers: int, pin_memory: bool) -> dict:
+    """Options that keep GPU input workers alive and overlap batch preparation."""
+    workers = max(0, int(num_workers))
+    options = {"num_workers": workers, "pin_memory": bool(pin_memory)}
+    if workers:
+        options.update(persistent_workers=True, prefetch_factor=2)
+    return options
+
+
 def create_classification_loaders(
     data_root: str,
     input_size: Tuple[int, int] = (224, 224),
@@ -612,6 +646,7 @@ def create_classification_loaders(
     in_channels: int = 3,
     val_split: float = 0.2,
     seed: int = 0,
+    pin_memory: bool = False,
     **aug_kwargs
 ) -> Tuple[DataLoader, DataLoader, List[str]]:
     """
@@ -689,21 +724,19 @@ def create_classification_loaders(
                    if hasattr(train_dataset, 'classes')
                    else train_dataset.dataset.classes)
 
-    # DataLoader 생성 (CPU 환경: pin_memory=False)
+    loader_options = _loader_runtime_options(num_workers, pin_memory)
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
-        pin_memory=False,  # CPU 환경에서는 False
+        **loader_options,
         drop_last=False    # 작은 데이터셋도 실제 학습 배치를 유지
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=False
+        **loader_options,
     )
 
     return train_loader, val_loader, class_names
@@ -719,6 +752,7 @@ def create_segmentation_loaders(
     rotation: float = 0.0,
     color_jitter: float = 0.0,
     num_classes: Optional[int] = None,
+    pin_memory: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Segmentation 데이터 로더 생성
@@ -753,20 +787,19 @@ def create_segmentation_loaders(
         num_classes=num_classes,
     )
 
+    loader_options = _loader_runtime_options(num_workers, pin_memory)
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
-        pin_memory=False,
+        **loader_options,
         drop_last=False
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=False
+        **loader_options,
     )
 
     return train_loader, val_loader
@@ -781,6 +814,7 @@ def create_anomaly_loaders(
     val_split: float = 0.2,
     flip_prob: float = 0.5,
     seed: int = 0,
+    pin_memory: bool = False,
 ) -> Tuple[DataLoader, Optional[DataLoader]]:
     """
     Anomaly Detection 데이터 로더 생성
@@ -823,20 +857,19 @@ def create_anomaly_loaders(
                               flip_prob=0.0)
     val_dataset = torch.utils.data.Subset(val_base, val_subset.indices)
 
+    loader_options = _loader_runtime_options(num_workers, pin_memory)
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
-        pin_memory=False,
+        **loader_options,
         drop_last=False,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=False,
+        **loader_options,
     )
 
     return train_loader, val_loader
@@ -851,6 +884,7 @@ def create_detection_loaders(
     in_channels: int = 3,
     max_objects: int = 50,
     flip_prob: float = 0.5,
+    pin_memory: bool = False,
 ) -> Tuple[DataLoader, Optional[DataLoader]]:
     """
     Detection 데이터 로더 생성 (정규화 좌표 포맷)
@@ -893,22 +927,22 @@ def create_detection_loaders(
                 is_train=False,
                 max_objects=max_objects,
             )
+            loader_options = _loader_runtime_options(num_workers, pin_memory)
             val_loader = DataLoader(
                 val_dataset,
                 batch_size=batch_size,
                 shuffle=False,
-                num_workers=num_workers,
-                pin_memory=False,
+                **loader_options,
             )
         except RuntimeError:
             pass  # val 데이터 없으면 None
 
+    loader_options = _loader_runtime_options(num_workers, pin_memory)
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
-        pin_memory=False,
+        **loader_options,
         drop_last=False,
     )
 
