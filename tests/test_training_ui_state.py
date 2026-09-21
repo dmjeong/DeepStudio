@@ -127,6 +127,44 @@ def test_all_native_training_events_show_epoch_timing_without_polluting_metrics_
     assert "elapsed_time_sec" not in page.metric_chart.metrics_history
 
 
+@pytest.mark.parametrize("task,metric,values", [
+    ("classify", "val_loss", {"accuracy": .8, "top5_accuracy": .95}),
+    ("detect", "mAP_50_95", {"mAP_50": .7, "precision": .8}),
+    ("segment", "prompt_dice", {"prompt_iou": .65}),
+    ("segment", "mIoU", {"dice_score": .75}),
+    ("anomaly", "auroc", {"f1": .85, "recall": .9}),
+])
+def test_dashboard_and_summary_render_all_saved_best_metrics_without_full_eval(page, task, metric, values):
+    from core.best_metrics import best_epoch_metrics, metric_label
+    snapshot = copy.deepcopy(page.project)
+    snapshot.task = task
+    snapshot.training.selection_metric = "engine_default"
+    history = {"epoch": [11, 12], "train_loss": [.4, .1], "val_loss": [.3, .05],
+               **{key: [value, .01] for key, value in values.items()}}
+    run = RunRecord(best_epoch=11, best_metric_name=metric, best_metric=.75, metrics_history=history)
+    page._display_finished_run(snapshot, run)
+    expected = best_epoch_metrics(run)
+    table = page.eval_widget.summary_table
+    summary = {table.item(row, 0).text(): table.item(row, 1).text() for row in range(table.rowCount())}
+    assert summary == {metric_label(key, task): f"{value:.4f}" for key, value in expected.items()}
+    assert set(page._metric_card_keys) == set(expected)
+    for key, name in page._metric_card_keys.items():
+        assert page.metric_cards[name].text() == summary[metric_label(key, task)]
+    page._on_epoch_finished(13, .001, .001, {metric: .01})
+    assert page.metric_cards["Best Epoch"].text() == "11"
+    assert page.metric_cards["Train Loss"].text() == "0.4000"
+
+
+def test_live_best_event_updates_summary_and_replaces_previous_model_metrics(page):
+    page._on_best_epoch_updated(2, .4, .3, {"accuracy": .8, "recall_macro": .7})
+    old_card = page.metric_cards["Best Accuracy"].parentWidget()
+    page._on_best_epoch_updated(3, .2, .25, {"prompt_dice": .9, "prompt_iou": .8})
+    assert old_card.isHidden()
+    assert "accuracy" not in page._metric_card_keys
+    assert page.metric_cards["Best Prompt Dice"].text() == "0.9000"
+    assert page.eval_widget.summary_table.rowCount() == 4
+
+
 @pytest.mark.parametrize("task,model_id", [("segment", "sam2_hiera_tiny")])
 def test_sam2_shipped_model_uses_packaged_pretrained_asset_without_a_docker_pack(page, task, model_id):
     project = copy.deepcopy(page.project)

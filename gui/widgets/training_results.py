@@ -11,6 +11,7 @@ from PySide6.QtGui import QFont, QColor
 from core.project import ProjectData
 from core.metrics import TASK_METRIC_NAMES
 from core.training_progress import record_epoch
+from core.best_metrics import scalar_metrics, metric_label
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
 
 
@@ -399,7 +400,7 @@ class EvalResultsWidget(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
 
         # ── 요약 메트릭 ──
-        summary_label = QLabel("종합 평가 지표")
+        summary_label = QLabel("종합 평가 지표 — 저장된 Best epoch")
         summary_label.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         summary_label.setStyleSheet("color: #E8EAEF;")
         layout.addWidget(summary_label)
@@ -447,19 +448,20 @@ class EvalResultsWidget(QWidget):
         self.summary_table.hide()
         self.detail_table.hide()
 
-    def update_results(self, results: dict):
+    def update_results(self, results: dict, *, metrics=None):
         """평가 결과를 테이블에 표시"""
         task = results.get("task", "classify")
-        metric_info = _metric_info_for(results=results)
 
         # ── 요약 테이블 ──
-        display_keys = metric_info.get("display", [])
-        labels = metric_info.get("labels", {})
+        values = scalar_metrics(results if metrics is None else metrics)
+        display_keys = list(values)
 
         self.summary_table.setRowCount(len(display_keys))
+        self.summary_table.setFixedHeight(min(420, self.summary_table.horizontalHeader().height()
+            + self.summary_table.verticalHeader().defaultSectionSize() * max(1, len(display_keys)) + 4))
         for row, key in enumerate(display_keys):
-            label = labels.get(key, key)
-            value = results.get(key)
+            label = metric_label(key, task)
+            value = values[key]
 
             name_item = QTableWidgetItem(label)
             name_item.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
@@ -467,13 +469,7 @@ class EvalResultsWidget(QWidget):
 
             val_item = QTableWidgetItem(_format_metric(value))
             val_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            # 색상: Premium Dashboard functional colors
-            if isinstance(value, (int, float)) and value > 0.8:
-                val_item.setForeground(QColor("#34C759"))  # success
-            elif isinstance(value, (int, float)) and value > 0.5:
-                val_item.setForeground(QColor("#E5A832"))  # warning
-            else:
-                val_item.setForeground(QColor("#E05555"))  # error
+            # A high accuracy and a high loss have opposite meanings; use neutral values.
             val_item.setFont(QFont("Consolas", 12, QFont.Weight.Bold))
             self.summary_table.setItem(row, 1, val_item)
 

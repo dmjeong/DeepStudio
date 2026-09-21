@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CURRENT_RUN, initialRunIndex, runModel, trainingView } from "../src/training-view.ts";
+import { CURRENT_RUN, initialRunIndex, runModel, trainingView, savedBestMetrics } from "../src/training-view.ts";
 import type { Event, Job, Run } from "../src/api.ts";
 
 const saved: Run = {
@@ -82,4 +82,17 @@ test("이어학습 이전 Best의 손실이 없으면 다른 에폭 손실로 �
   assert.equal(view.best, 3);
   assert.equal(view.bestTrain, undefined);
   assert.equal(view.bestVal, undefined);
+  assert.deepEqual(view.bestMetrics, { accuracy: .8 });
+});
+
+test("모델의 모든 저장 지표를 Best 에폭에서 읽고 시간·마지막 에폭은 제외한다", () => {
+  const run = { ...saved, best_epoch: 11, best_metric_name: "prompt_dice", best_metric: .8,
+    metrics_history: { epoch: [11, 12], train_loss: [.4, .1], prompt_iou: [.7, .2], epoch_time_sec: [1, 2] },
+    config_snapshot: { best_selection: { epoch: 11, metrics: { prompt_iou: .75 } } } };
+  assert.deepEqual(savedBestMetrics(run), { train_loss: .4, prompt_iou: .75, prompt_dice: .8 });
+  const live = trainingView([], CURRENT_RUN, true, [
+    { event: "best_epoch_updated", args: [2, .5, .4, { mAP_50_95: .7, recall: .9, epoch_time_sec: 5 }] },
+    { event: "epoch_finished", args: [3, .1, .2, { mAP_50_95: .2 }] },
+  ]);
+  assert.deepEqual(live.bestMetrics, { mAP_50_95: .7, recall: .9, train_loss: .5, val_loss: .4 });
 });

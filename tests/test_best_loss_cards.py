@@ -34,6 +34,9 @@ class Card:
     def setStyleSheet(self, style):
         self.style = style
 
+    def text(self):
+        return self.value
+
 
 def project_for(task="classify", mode="custom", anomaly_method="patchcore"):
     return SimpleNamespace(task=task, training=SimpleNamespace(
@@ -53,6 +56,15 @@ class BestLossCardContracts(unittest.TestCase):
                                   loss_chart=Mock(), metric_chart=Mock())
         self.ui.metric_cards = {name: Card() for name in (
             "Best Accuracy", "Best Epoch", "Train Loss", "Val Loss")}
+        render = source_method("gui/widgets/training_widget.py", "TrainingWidget", "_render_best_metrics", namespace)
+        self.ui._render_best_metrics = lambda *args: render(self.ui, *args)
+        self.ui.eval_widget = Mock()
+        def rebuild(task, project=None, metrics=None):
+            from core.best_metrics import metric_label
+            self.ui._metric_card_keys = {key: (metric_label(key, task) if key in {"train_loss", "val_loss"}
+                else f"Best {metric_label(key, task)}") for key in metrics}
+            self.ui.metric_cards = {name: Card() for name in ["Best Epoch", *self.ui._metric_card_keys.values()]}
+        self.ui._rebuild_metric_cards = rebuild
 
     def values(self):
         return {name: card.value for name, card in self.ui.metric_cards.items()}
@@ -98,15 +110,15 @@ class BestLossCardContracts(unittest.TestCase):
                 self.ui.metric_cards[card_name] = Card()
                 self.on_best(self.ui, 7, .3, .2, metrics)
                 self.assertEqual(self.ui.metric_cards[card_name].value, expected)
-                self.assertEqual(self.ui.metric_cards["Best Accuracy"].value, "—")
+                self.assertNotIn("Best Accuracy", self.ui.metric_cards)
 
     def test_unavailable_best_values_replace_previous_numbers_and_highlight(self):
         self.on_best(self.ui, 2, .3, .4, {"accuracy": .8})
-        self.assertTrue(self.ui.metric_cards["Best Accuracy"].style)
+        self.assertEqual(self.ui.metric_cards["Best Accuracy"].value, "0.8000")
         self.on_best(self.ui, 3, float("nan"), None, {})
-        self.assertEqual(self.values(), {"Best Accuracy": "N/A", "Best Epoch": "3",
+        self.assertEqual(self.values(), {"Best Epoch": "3",
                                         "Train Loss": "N/A", "Val Loss": "N/A"})
-        self.assertEqual(self.ui.metric_cards["Best Accuracy"].style, "")
+        self.assertNotIn("Best Accuracy", self.ui.metric_cards)
 
 
 GUI_AVAILABLE = all(importlib.util.find_spec(name) is not None for name in (

@@ -663,12 +663,13 @@ class TrainingForm:
             card.setToolTip("현재 학습 실행에서 마지막으로 완료된 에폭까지의 누적 시간입니다.")
         return card
 
-    def _rebuild_metric_cards(self, task: str, project=None):
+    def _rebuild_metric_cards(self, task: str, project=None, metrics=None):
         """태스크에 맞게 메트릭 카드 갱신"""
         # 기존 카드 제거
         while self.metrics_card_row.count():
             item = self.metrics_card_row.takeAt(0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
         self.metric_cards.clear()
 
@@ -681,6 +682,15 @@ class TrainingForm:
         cards = [(f"Best {primary_label}", "—"), ("Best Epoch", "—"),
                  ("Train Loss", "—"), ("Val Loss", "—"),
                  ("최근 에폭 시간", "—"), ("누적 시간", "—")]
+        self._metric_card_keys = {}
+        if metrics is None:
+            self._best_display_metrics, self._best_display_epoch = {}, None
+        if metrics is not None:
+            from core.best_metrics import metric_label
+            self._metric_card_keys = {key: (metric_label(key, task) if key in {"train_loss", "val_loss"}
+                                            else f"Best {metric_label(key, task)}") for key in metrics}
+            cards = [("Best Epoch", "—"), *((label, "—") for label in self._metric_card_keys.values()),
+                     ("최근 에폭 시간", "—"), ("누적 시간", "—")]
 
         for index, (name, default) in enumerate(cards):
             card = self._create_metric_card(name, default)

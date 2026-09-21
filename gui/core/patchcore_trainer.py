@@ -211,7 +211,8 @@ class PatchCoreWorker(TrainingEngine):
         checkpoint, selection = publish_best(
             checkpoint, run_dir, history, epoch=1, metric="auroc" if auroc is not None else "unavailable",
             value=auroc, direction="single_fit", engine="patchcore", task="anomaly",
-            policy="single_memory_bank_snapshot_auroc_is_evaluation_only", timing=self._training_clock)
+            policy="single_memory_bank_snapshot_auroc_is_evaluation_only", timing=self._training_clock,
+            evaluation_metrics=evaluation)
         record.finished_at = datetime.now().isoformat()
         record.status, record.epochs_done, record.best_epoch = "completed", 1, 1
         record.best_metric, record.best_metric_name = auroc if auroc is not None else 0., "auroc" if auroc is not None else "unavailable"

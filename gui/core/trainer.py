@@ -308,8 +308,8 @@ class TrainWorker(TrainingEngine):
             metrics_history["train_loss"].append(train_loss)
             metrics_history["val_loss"].append(val_loss)
             for key in set(metric_info.get("display", []) + [primary_metric_name]):
-                if key in epoch_metrics and key not in {"train_loss", "val_loss"}:
-                    metrics_history.setdefault(key, []).append(epoch_metrics[key])
+                if key not in {"train_loss", "val_loss"}:
+                    metrics_history.setdefault(key, []).append(epoch_metrics.get(key))
 
             # 최초 유효 에폭은 0점이어도 보존한다.
             current_metric = val_loss if primary_metric_name == "val_loss" else epoch_metrics.get(primary_metric_name)
@@ -438,7 +438,7 @@ class TrainWorker(TrainingEngine):
             metric=primary_metric_name, value=best_metric,
             direction="min" if minimize_metric else "max", engine=self.engine_name, task=task,
             policy="strict_improvement_first_tie", timing=self._training_clock,
-            formula=selected_policy.formula)
+            formula=selected_policy.formula, evaluation_metrics=eval_for_save)
         run_record.checkpoint_path = ckpt_path
         run_record.config_snapshot["best_selection"] = selection
         log_total_time(self.signals.log_message.emit, selection["total_seconds"])

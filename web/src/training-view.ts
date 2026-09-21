@@ -2,6 +2,29 @@ import type { Event, Job, Run } from "./api";
 
 export const CURRENT_RUN = -1;
 
+const nonMetrics = new Set(["epoch", "best_epoch", "is_best", "learning_rate", "lr", "selected_value",
+  "selection_value", "sample_count", "num_classes", "num_samples", "threshold", "optimal_threshold", "anomaly_threshold", "total_seconds"]);
+export function scalarMetrics(values: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(values).filter(([key, value]) =>
+    !nonMetrics.has(key) && !/(_sec|_seconds|_hms)$/.test(key) && (value === null || typeof value === "number"))
+    .map(([key, value]) => [key, typeof value === "number" && Number.isFinite(value) ? value : null])) as Record<string, number | null>;
+}
+
+export function savedBestMetrics(run: Run) {
+  if (run.best_epoch < 1) return {};
+  const history = run.metrics_history || {};
+  const epochs = history.epoch || (run.config_snapshot.training?.training_mode === "upstream_resume" ? [] :
+    Array.from({ length: Math.max(0, ...Object.values(history).map(v => v.length)) }, (_, i) => i + 1));
+  const index = epochs.indexOf(run.best_epoch);
+  const saved = run.config_snapshot.best_selection || {};
+  return scalarMetrics({
+    ...run.eval_results,
+    ...Object.fromEntries(Object.entries(history).filter(([, values]) => index >= 0 && index < values.length).map(([key, values]) => [key, values[index]])),
+    ...(saved.epoch === run.best_epoch ? saved.metrics || {} : {}),
+    ...(run.best_metric_name && run.best_metric_name !== "unavailable" ? { [run.best_metric_name]: run.best_metric } : {}),
+  });
+}
+
 export function initialRunIndex(runCount: number, hasLiveJob: boolean, hasJob = false) {
   return hasLiveJob || hasJob ? CURRENT_RUN : Math.max(0, runCount - 1);
 }
@@ -26,12 +49,13 @@ export function trainingView(
   const val = live ? epochs.map((e) => e.args[2]) : history.val_loss || [];
   const best = live ? bestEvent?.[0] : selectedRun?.best_epoch;
   const epochNumbers = live ? epochs.map((e) => e.args[0]) : history.epoch;
-  const bestIndex = epochNumbers ? epochNumbers.indexOf(best || 0) : (best || 0) - 1;
+  const bestMetrics = live ? scalarMetrics({ ...(bestEvent?.[3] || {}), train_loss: bestEvent?.[1], val_loss: bestEvent?.[2] })
+    : selectedRun ? savedBestMetrics(selectedRun) : {};
   return {
-    runIndex, selectedRun, train, val, best, epochNumbers,
+    runIndex, selectedRun, train, val, best, epochNumbers, bestMetrics,
     missingResult: current && !hasLiveJob && !selectedRun,
-    bestTrain: live ? bestEvent?.[1] : history.train_loss?.[bestIndex],
-    bestVal: live ? bestEvent?.[2] : history.val_loss?.[bestIndex],
+    bestTrain: bestMetrics.train_loss ?? undefined,
+    bestVal: bestMetrics.val_loss ?? undefined,
   };
 }
 

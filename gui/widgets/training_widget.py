@@ -1022,36 +1022,29 @@ class TrainingWidget(TrainingForm, QWidget):
                 if label is not None:
                     label.setText(format_hms(value))
 
+    def _render_best_metrics(self, epoch, values, project=None):
+        from core.best_metrics import scalar_metrics
+        project = project or self._run_snapshot or self.project
+        values = scalar_metrics(values)
+        timing = {key: self.metric_cards[key].text() for key in ("최근 에폭 시간", "누적 시간")
+                  if key in self.metric_cards}
+        self._rebuild_metric_cards(project.task if project else "classify", project=project, metrics=values)
+        self._best_display_metrics, self._best_display_epoch = values, epoch
+        self.metric_cards["Best Epoch"].setText(str(epoch) if epoch else "N/A")
+        for key, name in self._metric_card_keys.items():
+            self.metric_cards[name].setText(_format_metric(values[key]))
+        for key, value in timing.items():
+            self.metric_cards[key].setText(value)
+        if hasattr(self, "best_selection_label"):
+            self.best_selection_label.setText(f"Best epoch {epoch} — 저장된 체크포인트 지표")
+
     def _on_best_epoch_updated(self, epoch, train_loss, val_loss, metrics):
-        """저장된 베스트 모델의 에폭, 손실, 주요 지표를 함께 표시."""
-        if "Best Epoch" in self.metric_cards:
-            self.metric_cards["Best Epoch"].setText(str(epoch))
-        if "Train Loss" in self.metric_cards:
-            self.metric_cards["Train Loss"].setText(_format_metric(train_loss))
-        if "Val Loss" in self.metric_cards:
-            self.metric_cards["Val Loss"].setText(_format_metric(val_loss))
-
+        """Only a checkpoint-save event replaces the displayed best metrics."""
+        values = {**(metrics or {}), "train_loss": train_loss, "val_loss": val_loss}
+        self._render_best_metrics(epoch, values)
         project = self._run_snapshot or self.project
-        if project and hasattr(self, "best_selection_label"):
-            from core.model_selection import selection_policy
-            engine = training_engine_name(project.training.training_mode)
-            if project.task == "anomaly" and project.training.anomaly_method == "patchcore":
-                self.best_selection_label.setText("PatchCore 메모리 뱅크 구축 완료")
-            else:
-                policy = selection_policy(project.training, engine, project.task)
-                self.best_selection_label.setText(
-                    f"Best epoch {epoch} | {policy.describe()} | 값 {_format_metric(metrics.get(policy.metric))}")
-        if project:
-            metric_info = _metric_info_for(project)
-            primary = metric_info.get("primary", "")
-            primary_label = metric_info.get("labels", {}).get(primary, "Best Metric")
-            card_name = f"Best {primary_label}"
-
-            if card_name in self.metric_cards:
-                current = metrics.get(primary)
-                self.metric_cards[card_name].setText(_format_metric(current))
-                self.metric_cards[card_name].setStyleSheet(
-                    "color: #34C759;" if _finite_metric(current) else "")
+        self.eval_widget.update_results({"task": project.task if project else "classify"},
+                                        metrics=self._best_display_metrics)
 
     def _on_batch_finished(self, epoch, batch_idx, total_batches, loss):
         """배치 완료"""
@@ -1094,7 +1087,12 @@ class TrainingWidget(TrainingForm, QWidget):
                 self.cm_chart.update_matrix(cm, class_names)
 
         # 평가 결과 테이블
-        self.eval_widget.update_results(eval_results)
+        from core.best_metrics import scalar_metrics
+        values = {**scalar_metrics(eval_results), **getattr(self, "_best_display_metrics", {})}
+        epoch = getattr(self, "_best_display_epoch", None)
+        if epoch is not None:
+            self._render_best_metrics(epoch, values)
+        self.eval_widget.update_results(eval_results, metrics=values)
 
         # Confusion Matrix 탭으로 전환
         if "confusion_matrix" in eval_results:
@@ -1229,13 +1227,14 @@ class TrainingWidget(TrainingForm, QWidget):
         self.loss_chart.clear()
         self.metric_chart.clear()
         self.lr_chart.clear()
-        display = _metric_info_for(snapshot).get("display", [])
+        from core.best_metrics import scalar_metrics
         for index, epoch in enumerate(epochs):
             values = {key: sequence[index] if index < len(sequence) else None
                       for key, sequence in history.items() if key != "epoch"}
             redraw = index == len(epochs) - 1
             self.loss_chart.update_chart(epoch, values.get("train_loss"), values.get("val_loss"), redraw=redraw)
-            self.metric_chart.update_metrics(epoch, {key: values.get(key) for key in display}, redraw=redraw)
+            self.metric_chart.update_metrics(epoch, {key: value for key, value in scalar_metrics(values).items()
+                                                   if key not in {"train_loss", "val_loss"}}, redraw=redraw)
             if index < len(run.lr_history):
                 self.lr_chart.update_lr(epoch, run.lr_history[index], redraw=index == min(len(epochs), len(run.lr_history)) - 1)
         if epochs:
@@ -1245,17 +1244,20 @@ class TrainingWidget(TrainingForm, QWidget):
                 for key, values in history.items()
                 if key in {"epoch_time_sec", "elapsed_time_sec"}
             })
-        best_index = epochs.index(run.best_epoch) if run.best_epoch in epochs else -1
-        def best_loss(name):
-            values = history.get(name, [])
-            return values[best_index] if 0 <= best_index < len(values) else None
-        if run.best_metric_name and (run.best_epoch > 0 or run.eval_results):
-            self._on_best_epoch_updated(run.best_epoch, best_loss("train_loss"), best_loss("val_loss"),
-                                        {run.best_metric_name: run.best_metric})
+        from core.best_metrics import best_epoch_metrics
+        values = best_epoch_metrics(run)
+        self._render_best_metrics(run.best_epoch, values, project=snapshot)
+        self.best_selection_label.setText(
+            f"Best epoch {run.best_epoch} | 저장 기준: {run.best_metric_name} = {_format_metric(run.best_metric)}")
         self.cm_chart.clear()
         self.eval_widget.clear()
-        if run.eval_results:
-            self._on_eval_finished(run.eval_results)
+        # Built-in, upstream and SAM2 runs need not have a separate full evaluation.
+        # Their saved best-epoch history is still a complete display source.
+        results = {"task": snapshot.task, **run.eval_results}
+        self.eval_widget.update_results(results, metrics=values)
+        if "confusion_matrix" in results:
+            names = snapshot.data.class_names if snapshot.task == "classify" else ["Normal", "Anomaly"]
+            self.cm_chart.update_matrix(np.asarray(results["confusion_matrix"]), names)
 
     def _on_log_message(self, message):
         """로그 메시지"""

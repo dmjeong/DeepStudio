@@ -97,7 +97,7 @@ export function Training({
       />
     </Field>
   );
-  const { runIndex: selectedIndex, selectedRun, train, val, best, epochNumbers, bestTrain, bestVal, missingResult } =
+  const { runIndex: selectedIndex, selectedRun, train, val, best, epochNumbers, bestMetrics, missingResult } =
     trainingView(project.runs, runIndex, hasLiveJob, events, job);
   return (
     <>
@@ -482,14 +482,8 @@ export function Training({
             </p>}
             <div className="stats">
               <Stat label="Best epoch" value={best || "—"} />
-              <Stat
-                label="Best Train loss"
-                value={number(bestTrain)}
-              />
-              <Stat
-                label="Best Val loss"
-                value={number(bestVal)}
-              />
+              {Object.entries(bestMetrics).map(([key, value]) =>
+                <Stat key={key} label={`Best ${key}`} value={number(value)} />)}
             </div>
             <LossChart
               train={train}
@@ -503,6 +497,12 @@ export function Training({
                 {number(selectedRun.best_metric)}
               </p>
             )}
+            <h3>종합 평가 지표 — Best epoch {best || "—"}</h3>
+            {Object.keys(bestMetrics).length ? <table aria-label="Best epoch 종합 평가 지표">
+              <thead><tr><th>저장 지표</th><th>값</th></tr></thead>
+              <tbody>{Object.entries(bestMetrics).map(([key, value]) =>
+                <tr key={key}><td>{key}</td><td>{number(value)}</td></tr>)}</tbody>
+            </table> : <p className="muted">저장된 Best 지표가 없습니다.</p>}
           </Panel>
           <LayerDebug snapshot={selectedIndex === CURRENT_RUN
             ? [...events].reverse().find(e => e.event === "layer_debug")?.args[0] ?? selectedRun?.config_snapshot.layer_debug?.latest

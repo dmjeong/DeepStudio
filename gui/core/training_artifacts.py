@@ -44,7 +44,7 @@ def _write_csv(path, rows):
 
 
 def publish_best(checkpoint, run_dir, history, *, epoch, metric, value,
-                 direction, engine, task, policy, version="", timing=None, formula=""):
+                 direction, engine, task, policy, version="", timing=None, formula="", evaluation_metrics=None):
     """점수를 다시 비교하지 않고 엔진이 실제 저장한 Best만 내보낸다.
 
     학습 중에는 ``best.pt``를 임시 고정 이름으로 써서 평가·재개 로직을 단순하게
@@ -104,12 +104,17 @@ def publish_best(checkpoint, run_dir, history, *, epoch, metric, value,
                     "selection_direction": direction, "selection_value": value}
         rows.insert(0, best_row.copy())
     best_row["checkpoint"] = named.name
+    from core.best_metrics import scalar_metrics
+    best_metrics = scalar_metrics({**(evaluation_metrics or {}), **by_epoch.get(epoch, {}),
+                                   **({metric: value} if metric != "unavailable" else {})})
+    best_row.update(best_metrics)
     _write_csv(csv_path, rows)
     _write_csv(run_dir / "best_result.csv", [best_row])
     details = {"epoch": epoch, "metric": metric, "value": value, "direction": direction,
                "engine": engine, "task": task, "policy": policy, "engine_version": version or APP_VERSION,
                "studio_version": APP_VERSION, "formula": formula,
                "checkpoint": os.path.relpath(named, run_dir), "filename_decimals": 6}
+    details["metrics"] = best_metrics
     if total_seconds is not None:
         details["total_seconds"] = total_seconds
         details["total_hms"] = format_hms(total_seconds)

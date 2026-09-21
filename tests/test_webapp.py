@@ -218,6 +218,7 @@ class WebAppTests(unittest.TestCase):
 
         self.assertEqual(record.best_metric_name, "mIoU")
         self.assertEqual(record.metrics_history, {
+            "epoch": [1],
             "train_loss": [0.4], "val_loss": [0.3], "mIoU": [0.75],
             "elapsed_time_sec": [4.0], "epoch_time_sec": [3.5],
         })
@@ -245,7 +246,7 @@ class WebAppTests(unittest.TestCase):
             record = _train_builtin_project(Context(), project, "cpu")
         self.assertEqual(record.best_metric_name, "val_loss")
         self.assertEqual(record.best_metric, .3)
-        self.assertEqual(record.metrics_history, {"train_loss": [.4], "val_loss": [.3], "mIoU": [.75]})
+        self.assertEqual(record.metrics_history, {"epoch": [1], "train_loss": [.4], "val_loss": [.3], "mIoU": [.75]})
         self.assertEqual(next(args for event, args in events if event == "best_epoch_updated")[3]["val_loss"], .3)
 
     def test_builtin_options_use_selected_model_and_hide_layer_debug(self):

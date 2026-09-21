@@ -189,9 +189,10 @@ def _train_builtin_project(context, project, device):
         metric_name: metric_history,
     }
     records = full_history or history
-    metric_keys = set.intersection(*(set(item.get("metrics", {})) for item in records)) if records else set()
+    metrics_history["epoch"] = [int(item["epoch"]) for item in records]
+    metric_keys = set.union(*(set(item.get("metrics", {})) for item in records)) if records else set()
     for name in sorted(metric_keys - {"train_loss", "val_loss", metric_name}):
-        metrics_history[name] = [float(item["metrics"][name]) for item in records]
+        metrics_history[name] = [item.get("metrics", {}).get(name) for item in records]
     for name in ("epoch_time_sec", "elapsed_time_sec"):
         if any(name in item for item in records):
             metrics_history[name] = [item.get(name) for item in records]
@@ -272,13 +273,14 @@ def _train_upstream_project(context, project, device):
                         else (history[-1]["metric"] if history else 0.0))
     best_epoch = int(result.get("best_epoch") or (history[-1]["epoch"] if history else 0))
     metrics_history = {"train_loss": [float(item["train_loss"]) for item in history],
+                       "epoch": [int(item["epoch"]) for item in history],
                        "val_loss": [float(item["val_loss"]) for item in history],
                        metric_name: [float(item["metric"]) for item in history],
                        "epoch_time_sec": [float(item.get("epoch_time_sec", 0.0)) for item in history],
                        "elapsed_time_sec": [float(item.get("elapsed_time_sec", 0.0)) for item in history]}
-    metric_keys = set.intersection(*(set(item.get("metrics", {})) for item in history)) if history else set()
+    metric_keys = set.union(*(set(item.get("metrics", {})) for item in history)) if history else set()
     for name in sorted(metric_keys - {"epoch_time_sec", "elapsed_time_sec", metric_name}):
-        metrics_history[name] = [float(item["metrics"][name]) for item in history]
+        metrics_history[name] = [item.get("metrics", {}).get(name) for item in history]
     direction = "min" if "loss" in metric_name.lower() else "max"
     named_checkpoint, selection = publish_best(
         checkpoint, run_dir, metrics_history, epoch=best_epoch, metric=metric_name, value=best_metric,
@@ -354,6 +356,7 @@ def _train_sam2_project(context, project, device):
         raise RuntimeError("SAM2 학습이 best.pt 또는 last.pt를 만들지 않았습니다.")
     metric_name = "prompt_dice"
     metrics_history = {
+        "epoch": [int(item["epoch"]) for item in history],
         "train_loss": [float(item["train_loss"]) for item in history],
         "val_loss": [float(item["val_loss"]) for item in history],
         metric_name: [float(item["metric"]) for item in history],
