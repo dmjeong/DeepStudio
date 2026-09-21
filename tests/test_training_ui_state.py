@@ -155,6 +155,27 @@ def test_dashboard_and_summary_render_all_saved_best_metrics_without_full_eval(p
     assert page.metric_cards["Train Loss"].text() == "0.4000"
 
 
+def test_finished_models_replace_precision_recall_in_both_views(page):
+    for model_id, precision, recall in [("resnet18", .625, .6333333333),
+                                      ("convnext_v1_tiny", .875, .9)]:
+        snapshot = copy.deepcopy(page.project)
+        snapshot.task = "classify"
+        snapshot.model.model_id = model_id
+        snapshot.training.training_mode = "builtin_scratch"
+        run = RunRecord(run_id=model_id, status="completed", best_epoch=2,
+            best_metric_name="accuracy", best_metric=.75,
+            metrics_history={"epoch": [1, 2, 3], "accuracy": [.5, .75, .6],
+                "precision_macro": [.1, precision, .2], "recall_macro": [.1, recall, .2]})
+        page._display_finished_run(snapshot, run)
+        table = page.eval_widget.summary_table
+        summary = {table.item(row, 0).text(): table.item(row, 1).text()
+                   for row in range(table.rowCount())}
+        assert summary["Precision"] == f"{precision:.4f}"
+        assert summary["Recall"] == f"{recall:.4f}"
+        assert page.metric_cards["Best Precision"].text() == summary["Precision"]
+        assert page.metric_cards["Best Recall"].text() == summary["Recall"]
+
+
 def test_live_best_event_updates_summary_and_replaces_previous_model_metrics(page):
     page._on_best_epoch_updated(2, .4, .3, {"accuracy": .8, "recall_macro": .7})
     old_card = page.metric_cards["Best Accuracy"].parentWidget()

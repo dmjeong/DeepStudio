@@ -43,7 +43,7 @@ def verify(architecture, device):
         for handle in handles:
             handle.remove()
     classifier = EfficientNet(architecture, num_classes=2, in_channels=3).to(device).train()
-    provenance = load_imagenet(classifier)
+    provenance = load_imagenet(classifier, weights_path=path)
     before = classifier.features[0][0].weight.detach().clone()
     optimizer = torch.optim.SGD(classifier.parameters(), lr=.001)
     torch.manual_seed(71)

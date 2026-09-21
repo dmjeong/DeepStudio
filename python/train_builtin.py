@@ -52,9 +52,11 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
     if metrics_out is not None:
         counts = confusion.double()
         tp = counts.diag()
+        precision = tp / counts.sum(0).clamp(min=1)
         recall = tp / counts.sum(1).clamp(min=1)
         f1 = 2 * tp / (counts.sum(0) + counts.sum(1)).clamp(min=1)
-        metrics_out.update(accuracy=correct / samples, recall_macro=float(recall.mean()),
+        metrics_out.update(accuracy=correct / samples, precision_macro=float(precision.mean()),
+                           recall_macro=float(recall.mean()),
                            f1_macro=float(f1.mean()), val_loss=total_loss / samples)
     return total_loss / samples, correct / samples
 

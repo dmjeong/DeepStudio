@@ -18,7 +18,7 @@ from core.training_time import format_hms
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
 
 
-from widgets.training_results import _finite_metric, _format_metric, _metric_info_for
+from widgets.training_results import _format_metric, _metric_info_for
 from widgets.training_form import TrainingForm
 
 class TrainingWidget(TrainingForm, QWidget):
