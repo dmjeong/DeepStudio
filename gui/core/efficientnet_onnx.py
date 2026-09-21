@@ -14,6 +14,7 @@ class EfficientNetOnnx:
         # Decoder module loading belongs to model setup, not the first image's decode timing.
         import cv2  # noqa: F401
         from efficientnet import EfficientNet, prepare_for_inference, prepare_native_bn_export
+        from efficientnet_precision import prepare_precision_export
         from export_onnx import (export_to_onnx, validate_classification_outputs,
                                  verification_tolerances)
         import onnxruntime as ort
@@ -47,7 +48,8 @@ class EfficientNetOnnx:
         candidates = (("fused", lambda: prepare_for_inference(reference)),
                       ("unfused", lambda: copy.deepcopy(reference)),
                       ("native_batch_norm_affine", lambda: prepare_native_bn_export(reference)),
-                      ("native_batch_norm_affine_fma", lambda: prepare_native_bn_export(reference, emulate_fma=True)))
+                      ("native_batch_norm_affine_fma", lambda: prepare_native_bn_export(reference, emulate_fma=True)),
+                      ("portable_fp64", lambda: prepare_precision_export(reference)))
         for graph_name, factory in candidates:
             export_model = factory()
             optimization = getattr(export_model, "inference_optimization", {
@@ -65,6 +67,8 @@ class EfficientNetOnnx:
             if graph_name.startswith("native_batch_norm_affine"):
                 profiles = [("disabled", ort.GraphOptimizationLevel.ORT_DISABLE_ALL, count)
                             for count in dict.fromkeys((threads, 1))]
+            elif graph_name == "portable_fp64":
+                profiles = [("disabled", ort.GraphOptimizationLevel.ORT_DISABLE_ALL, threads)]
             for name, level, count in profiles:
                 options = ort.SessionOptions()
                 options.intra_op_num_threads = count
@@ -95,7 +99,7 @@ class EfficientNetOnnx:
         if self.session is None:
             failures = "\n".join(f"{item['graph']}/{item['optimization']}/{item['probe']}: {item['error']}"
                                  for item in self.validation_attempts)
-            raise ValueError(f"ONNX 검증 실패: fused/unfused/native-BN 모든 최적화 설정의 출력 비교 실패 "
+            raise ValueError(f"ONNX 검증 실패: fused/unfused/native-BN/FP64 모든 최적화 설정의 출력 비교 실패 "
                              f"(PyTorch {torch.__version__}, ONNX Runtime {self.version}, "
                              f"입력 {self.input_shape}, CPU {threads} threads).\n{failures}")
         for _ in range(warmup):

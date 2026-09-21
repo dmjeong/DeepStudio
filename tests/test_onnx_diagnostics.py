@@ -7,7 +7,7 @@ import torch
 
 from efficientnet import EfficientNet
 from export_onnx import export_to_onnx
-from onnx_diagnostics import comparison, conclusion, diagnose_efficientnet
+from onnx_diagnostics import comparison, conclusion, diagnose_efficientnet, diagnose_stage_operators
 
 
 @pytest.fixture(autouse=True)
@@ -88,3 +88,44 @@ def test_diagnostic_distinguishes_modified_artifact_from_instrumented_graph(tmp_
     assert not report["instrumentation_vs_original_onnx"]["passed"]
     assert report["first_divergent_stage"] is None
     assert report["finding"] == "unresolved_graph_or_runtime_difference"
+
+
+class _ExportOffset(torch.nn.Module):
+    def forward(self, value):
+        return value + (0.02 if torch.onnx.is_in_onnx_export() else 0.0)
+
+
+class _DiagnosticModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.features = torch.nn.Sequential(
+            torch.nn.Sequential(_ExportOffset(), torch.nn.ReLU()),
+            torch.nn.Sequential(torch.nn.ReLU()))
+
+    def forward(self, images):
+        return self.features(images).mean(dim=(2, 3))
+
+
+def test_operator_diagnostic_finds_local_error_without_blame_on_next_operator(tmp_path):
+    model = _DiagnosticModel().eval()
+    sample = torch.ones(1, 2, 4, 4)
+    path = tmp_path / "model.onnx"
+    export_to_onnx(model, sample, path, constant_folding=False)
+    report = diagnose_efficientnet(model, path, sample, probe_name="seeded")
+    detail = report["operator_diagnostic"]
+    assert detail["first_local_difference"] == "features.0.0"
+    rows = detail["operators"]
+    assert not rows[0]["identical_input"]["passed"]
+    assert not rows[1]["propagated"]["passed"]
+    assert rows[1]["identical_input"]["passed"]
+    assert not any(module._forward_hooks or module._forward_pre_hooks for module in model.modules())
+    assert list(tmp_path.iterdir()) == [path]
+    json.dumps(report, allow_nan=False)
+
+
+def test_operator_diagnostic_distinguishes_upstream_error(tmp_path):
+    model = _DiagnosticModel().eval()
+    report = diagnose_stage_operators(model, torch.ones(1, 2, 4, 4),
+                                      "features.1", tmp_path, 1, 17)
+    assert report["first_propagated_difference"] == "features.1.0"
+    assert report["first_local_difference"] is None

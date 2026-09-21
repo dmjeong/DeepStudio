@@ -702,6 +702,22 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                                 if runtime_settings is not None:
                                     break
                             if runtime_settings is None:
+                                from efficientnet_precision import prepare_precision_export
+                                log("고정밀 ONNX 재시도: 내부 FP64 계산, 입출력 FP32 유지. 추론 속도는 느려질 수 있습니다")
+                                model = prepare_precision_export(reference_model)
+                                settings = {"graph_optimization_level": "disabled", "num_threads": threads}
+                                try:
+                                    export_to_onnx(model, dummy, staged_model, opset_version,
+                                                   dynamic_batch, spec["task"], constant_folding=False)
+                                    verify_candidate(model, settings)
+                                except Exception as precision_error:
+                                    runtime_attempts.append({**settings, "graph": "portable_fp64",
+                                        "passed": False, "probe": failed_probe_name, "error": str(precision_error)})
+                                else:
+                                    runtime_settings = settings
+                                    runtime_attempts.append({**settings, "graph": "portable_fp64", "passed": True})
+                                    log("고정밀 ONNX: 모든 검사 입력이 원본 FP32 출력 비교 통과")
+                            if runtime_settings is None:
                                 # Diagnose the original graph, not a differently
                                 # lowered rescue graph against an altered reference.
                                 export_to_onnx(reference_model, dummy, staged_model, opset_version,
@@ -776,15 +792,24 @@ def _raise_efficientnet_verification_error(model, path, probe, probe_name, opset
         summary = numeric["summary"]
         if numeric.get("first_divergent_stage"):
             summary += f"; 진단 그래프 최초 차이: {numeric['first_divergent_stage']}"
+        operator = numeric.get("operator_diagnostic", {})
+        if operator.get("first_local_difference"):
+            summary += f"; 동일 입력 연산 비교 실패: {operator['first_local_difference']}"
+        elif operator.get("first_propagated_difference"):
+            summary += f"; 누적 차이 관측: {operator['first_propagated_difference']} (단일 연산 원인 미확정)"
     except Exception as diagnostic_error:
         numeric = {"diagnostic_error": str(diagnostic_error)}
         summary = f"추가 수치 진단 실패: {diagnostic_error}"
     numeric["runtime_attempts"] = attempts
+    attempt_details = "\n".join(
+        f"{item.get('graph', 'unfused_fp32')}/{item['graph_optimization_level']}/"
+        f"{item['num_threads']} threads/{item.get('probe', 'unknown')}: {item.get('error', '통과')}"
+        for item in attempts)
     log("수치 진단: " + summary)
     raise ExportVerificationError(
         f"최적화·원본 그래프 및 실행 설정 모두 ONNX 검증 실패.\n"
         f"최적화: {optimized_error}\n원본 FP32: {original_error}\n"
-        f"실행 설정 재시도: {attempts[-1]['error']}\n수치 진단: {summary}", numeric
+        f"실행 설정 재시도:\n{attempt_details}\n수치 진단: {summary}", numeric
     ) from original_error
 
 
@@ -835,13 +860,15 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
         if hasattr(error, "numerical_diagnostic"):
             diagnostic["numerical_diagnostic"] = error.numerical_diagnostic
         path = Path(output_path).with_suffix(".export-error.json")
+        report_location = ""
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8")
             report(f"내보내기 진단 저장: {path}")
+            report_location = f"\n상세 진단 파일: {path}"
         except OSError:
             report(json.dumps(diagnostic, ensure_ascii=False))
-        raise ValueError(f"ONNX 내보내기 실패 [{diagnostic['stage']}]: {error}") from error
+        raise ValueError(f"ONNX 내보내기 실패 [{diagnostic['stage']}]: {error}{report_location}") from error
     try:
         Path(output_path).with_suffix(".export-error.json").unlink(missing_ok=True)
     except OSError:

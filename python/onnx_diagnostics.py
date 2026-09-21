@@ -106,6 +106,90 @@ class _StageOutputs(torch.nn.Module):
         return (logits, *values)
 
 
+class _LayerOutputs(torch.nn.Module):
+    def __init__(self, model, names):
+        super().__init__()
+        self.model, self.names = model, names
+
+    def forward(self, images):
+        values, handles = [], []
+        modules = dict(self.model.named_modules())
+        try:
+            for name in self.names:
+                handles.append(modules[name].register_forward_hook(
+                    lambda _m, _a, out: values.append(out)))
+            logits = self.model(images)
+        finally:
+            for handle in handles:
+                handle.remove()
+        return (logits, *values)
+
+
+def diagnose_stage_operators(model, sample, stage, directory, threads, opset):
+    """Separate propagated error from a local operator mismatch on identical input.
+
+    Tensors remain in memory or temporary ONNX files; only scalar summaries leave
+    this function. Exposing outputs can alter execution, so final parity is also
+    recorded. This diagnostic never approves a deployment.
+    """
+    import onnxruntime as ort
+    from export_onnx import export_to_onnx
+
+    modules = dict(model.named_modules())
+    names = [name for name, module in modules.items()
+             if (name == stage or name.startswith(stage + "."))
+             and not list(module.children())]
+    inputs, handles = {}, []
+    try:
+        for name in names:
+            def capture(_module, args, label=name):
+                inputs[label] = args[0].detach().clone()
+            handles.append(modules[name].register_forward_pre_hook(capture))
+        with torch.inference_mode(), torch.autocast(device_type="cpu", enabled=False):
+            model(sample)
+    finally:
+        for handle in handles:
+            handle.remove()
+    names = list(inputs)  # Evaluation can skip stochastic-depth modules.
+    wrapper = _LayerOutputs(model, names).eval()
+    with torch.inference_mode(), torch.autocast(device_type="cpu", enabled=False):
+        expected = [out.detach().numpy().copy() for out in wrapper(sample)]
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = threads
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    path = Path(directory) / "operators.onnx"
+    output_names = ["logits", *[f"operator_{i}" for i in range(len(names))]]
+    export_to_onnx(wrapper, sample, path, opset, output_names=output_names, constant_folding=False)
+    session = ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
+    actual = session.run(None, {session.get_inputs()[0].name: sample.numpy()})
+    del session
+    rows = []
+    for name, ref, out in zip(names, expected[1:], actual[1:]):
+        row = {"layer": name, "operator": type(modules[name]).__name__,
+               "propagated": comparison(ref, out)}
+        # Test every operator in this stage with its original PyTorch input:
+        # a cumulative failure alone does not identify the faulty operation.
+        try:
+            tensor = inputs[name]
+            with torch.inference_mode(), torch.autocast(device_type="cpu", enabled=False):
+                local_expected = modules[name](tensor).detach().numpy().copy()
+            export_to_onnx(modules[name], tensor, path, opset, constant_folding=False)
+            session = ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
+            local_actual = session.run(None, {session.get_inputs()[0].name: tensor.numpy()})[0]
+            del session
+            row["identical_input"] = comparison(local_expected, local_actual)
+        except Exception as exc:
+            row["identical_input"] = {"error": str(exc)}
+        rows.append(row)
+    return {"stage": stage, "operators": rows,
+            "instrumented_final": comparison(expected[0], actual[0], classification=True),
+            "first_propagated_difference": next((row["layer"] for row in rows
+                if not row["propagated"]["passed"]), None),
+            "first_local_difference": next((row["layer"] for row in rows
+                if row["identical_input"].get("passed") is False), None)}
+
+
 def diagnose_efficientnet(model, onnx_path, probe, *, probe_name, opset=17):
     """Compare a failing probe without changing deployment acceptance settings."""
     import onnxruntime as ort
@@ -184,6 +268,12 @@ def diagnose_efficientnet(model, onnx_path, probe, *, probe_name, opset=17):
             report["stages"] = [{"layer": label, **comparison(ref, out)}
                                 for label, ref, out in zip(labels, expected_stages[1:], actual_stages[1:])]
             report["first_divergent_stage"] = next((row["layer"] for row in report["stages"] if not row["passed"]), None)
+            if report["first_divergent_stage"]:
+                try:
+                    report["operator_diagnostic"] = diagnose_stage_operators(
+                        reference_model, sample, report["first_divergent_stage"], temp, threads, opset)
+                except Exception as exc:
+                    report["operator_diagnostic_error"] = str(exc)
     except Exception as exc:
         report["stage_diagnostic_error"] = str(exc)
     report["finding"] = conclusion(report)

@@ -244,7 +244,7 @@ def test_only_a_numerically_verified_onnx_session_is_accepted(checkpoint_factory
             assert "모든 최적화 설정" in failure
             for part in ("all/seeded", "basic/seeded", "disabled/seeded", "PyTorch=", "ONNX=", "출력 범위"):
                 assert part in failure
-            assert attempted == ["all", "basic", "disabled"] * 2 + ["disabled"] * 4
+            assert attempted == ["all", "basic", "disabled"] * 2 + ["disabled"] * 5
             assert engine._onnx_runtime is None
         else:
             engine.prepare()

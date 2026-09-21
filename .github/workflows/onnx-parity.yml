@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "python/efficientnet.py"
+      - "python/efficientnet_precision.py"
+      - "python/onnx_diagnostics.py"
       - "python/export_onnx.py"
       - "python/onnx_session.py"
       - "gui/core/efficientnet_onnx.py"
@@ -14,6 +16,8 @@ on:
   pull_request:
     paths:
       - "python/efficientnet.py"
+      - "python/efficientnet_precision.py"
+      - "python/onnx_diagnostics.py"
       - "python/export_onnx.py"
       - "python/onnx_session.py"
       - "gui/core/efficientnet_onnx.py"
@@ -43,7 +47,7 @@ jobs:
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           python -m pip install pytest numpy onnx onnxruntime==1.29.0 opencv-python-headless pillow cryptography
       - name: Test trained BN statistics, original reference and deployment reload
-        run: python -m pytest tests/test_export_native_bn.py tests/test_export_fallback.py tests/test_export_contracts.py tests/test_onnx_diagnostics.py tests/test_onnx_runtime_settings.py -q --junitxml=onnx-parity.xml
+        run: python -m pytest tests/test_export_native_bn.py tests/test_export_precision.py tests/test_export_fallback.py tests/test_export_contracts.py tests/test_onnx_diagnostics.py tests/test_onnx_runtime_settings.py -q --junitxml=onnx-parity.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
