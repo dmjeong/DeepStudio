@@ -390,10 +390,15 @@ class ExportWidget(QWidget):
         validation = result.get("classification_validation")
         if validation:
             measured = validation["selected"]
-            text += (f"\n실제 이미지 {validation['image_count']}장: 분류 일치·확률 검증 통과 (FP32)"
-                     f"\n전처리+추론+후처리: 중앙값 {measured['pipeline_median_ms']:.2f} / "
-                     f"p95 {measured['pipeline_p95_ms']:.2f} / 최대 {measured['pipeline_max_ms']:.2f} ms"
-                     f"\n8ms 목표: {'측정 이미지 모두 충족' if validation['target_met'] else '미달성 — 내보내기 검증 통과와 별개'}")
+            if validation["policy"] == "classification_dataset_v1":
+                text += (f"\n실제 이미지 {validation['image_count']}장: 분류 일치·확률 검증 통과 (FP32)"
+                         f"\n전처리+추론+후처리: 중앙값 {measured['pipeline_median_ms']:.2f} / "
+                         f"p95 {measured['pipeline_p95_ms']:.2f} / 최대 {measured['pipeline_max_ms']:.2f} ms"
+                         f"\n8ms 목표: {'측정 이미지 모두 충족' if validation['target_met'] else '미달성 — 내보내기 검증 통과와 별개'}")
+            else:
+                text += (f"\n결정론적 합성 입력 {validation['probe_count']}개: top-1·확률·판정 마진 검증 통과 (FP32)"
+                         f"\n현재 PC 모델 추론 중앙값: {measured['model_median_ms']:.2f} ms"
+                         "\n실제 이미지 검증 자료가 없어 합성 입력 범위만 인증했습니다.")
         self.log_text.append(text)
         QMessageBox.information(self, "완료", text)
 

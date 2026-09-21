@@ -75,6 +75,8 @@ def test_b1_100px_precision_fallback_uses_original_reference_and_preserves_faile
         return candidate
 
     with patch.object(export_onnx, "verify_onnx", side_effect=verify), \
+            patch("classification_export_validation.export_validated_synthetic_fp32",
+                  side_effect=ValueError("force precision fallback")), \
             patch("efficientnet_precision.prepare_precision_export", side_effect=factory):
         if corrupt_candidate:
             with pytest.raises(ValueError, match="모두 ONNX 검증 실패"):

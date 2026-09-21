@@ -54,15 +54,17 @@ def validate_classification_outputs(expected, actual, *, atol=None, rtol=None):
         tolerances["atol"] = atol
     if rtol is not None:
         tolerances["rtol"] = rtol
-    validate_outputs(expected, actual, **tolerances)
     expected_array, actual_array = np.asarray(expected), np.asarray(actual)
-    if expected_array.ndim != 2 or actual_array.ndim != 2:
+    if expected_array.shape != actual_array.shape or expected_array.ndim != 2:
         raise ValueError("분류 ONNX 출력은 [batch, classes] 형태여야 합니다.")
+    if not np.isfinite(expected_array).all() or not np.isfinite(actual_array).all():
+        raise ValueError("ONNX 검증 실패: 분류 출력에 NaN 또는 무한대가 있습니다.")
     expected_top = np.argmax(expected_array, axis=1)
     actual_top = np.argmax(actual_array, axis=1)
     if not np.array_equal(expected_top, actual_top):
         raise ValueError(f"ONNX 검증 실패: 분류 top-1 불일치 "
                          f"(PyTorch={expected_top.tolist()}, ONNX={actual_top.tolist()})")
+    validate_outputs(expected_array, actual_array, **tolerances)
     return True
 
 
@@ -671,9 +673,9 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                     try:
                         verify_candidate(model)
                     except ValueError as original_error:
-                        # A diagnostic pass on one probe is insufficient. Validate
-                        # every input again using the exact settings to be shipped.
                         threads = max(1, min(torch.get_num_threads(), 4))
+                        # Keep strict parity first: it is stronger and remains valid
+                        # even when a model has a naturally tiny class margin.
                         for level in ("all", "basic", "disabled"):
                             settings = {"graph_optimization_level": level, "num_threads": threads}
                             log(f"원본 그래프 실행 설정 재시도: 최적화={level}, CPU {threads} threads")
@@ -696,7 +698,6 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                                 log(f"BatchNorm 연산 방식: {graph_name}")
                                 export_to_onnx(model, dummy, staged_model, opset_version, dynamic_batch,
                                                spec["task"], constant_folding=False)
-                                # Preserve operation order; try serial reduction as well.
                                 for count in dict.fromkeys((threads, 1)):
                                     settings = {"graph_optimization_level": "disabled", "num_threads": count}
                                     try:
@@ -712,36 +713,49 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                                         break
                                 if runtime_settings is not None:
                                     break
-                            if runtime_settings is None and allow_precision_fallback:
-                                from efficientnet_precision import prepare_precision_export
-                                log("고정밀 ONNX 재시도: 내부 FP64 계산, 입출력 FP32 유지. 추론 속도는 느려질 수 있습니다")
-                                model = prepare_precision_export(reference_model)
-                                settings = {"graph_optimization_level": "disabled", "num_threads": threads}
-                                try:
-                                    export_to_onnx(model, dummy, staged_model, opset_version,
-                                                   dynamic_batch, spec["task"], constant_folding=False)
-                                    verify_candidate(model, settings)
-                                except Exception as precision_error:
-                                    runtime_attempts.append({**settings, "graph": "portable_fp64",
-                                        "passed": False, "probe": failed_probe_name, "error": str(precision_error)})
-                                else:
-                                    runtime_settings = settings
-                                    runtime_attempts.append({**settings, "graph": "portable_fp64", "passed": True})
-                                    log("고정밀 ONNX: 모든 검사 입력이 원본 FP32 출력 비교 통과")
-                                    from efficientnet_precision_tuning import tune_precision_export
-                                    log("검증을 유지하며 FP64 범위 축소·추론 속도 측정 중")
-                                    model, runtime_settings = tune_precision_export(
-                                        reference_model, model, staged_model, dummy, runtime_settings,
-                                        verify_candidate, opset=opset_version, dynamic_batch=dynamic_batch,
-                                        attempts=runtime_attempts, log=log)
-                            if runtime_settings is None:
-                                # Diagnose the original graph, not a differently
-                                # lowered rescue graph against an altered reference.
-                                export_to_onnx(reference_model, dummy, staged_model, opset_version,
+                        if runtime_settings is None and spec["task"] == "classify":
+                            from classification_export_validation import export_validated_synthetic_fp32
+                            try:
+                                model, runtime_settings, classification_validation = export_validated_synthetic_fp32(
+                                    reference_model, spec, staged_model, dummy, opset=opset_version,
+                                    dynamic_batch=dynamic_batch, log=log)
+                            except Exception as decision_error:
+                                runtime_attempts.append({"graph": "classification_synthetic_probe_v1",
+                                    "passed": False, "error": str(decision_error)})
+                                log(f"분류 판정 기반 FP32 후보 없음: {decision_error}")
+                            else:
+                                runtime_attempts.extend(classification_validation["attempts"])
+                                log("분류 판정 기반 FP32 검증 통과: 선택 그래프와 실행 설정을 배포 JSON에 저장")
+                        if runtime_settings is None and allow_precision_fallback:
+                            from efficientnet_precision import prepare_precision_export
+                            log("고정밀 ONNX 재시도: 내부 FP64 계산, 입출력 FP32 유지. 추론 속도는 느려질 수 있습니다")
+                            model = prepare_precision_export(reference_model)
+                            settings = {"graph_optimization_level": "disabled", "num_threads": threads}
+                            try:
+                                export_to_onnx(model, dummy, staged_model, opset_version,
                                                dynamic_batch, spec["task"], constant_folding=False)
-                                _raise_efficientnet_verification_error(
-                                    reference_model, staged_model, failed_probe, failed_probe_name, opset_version,
-                                    optimized_error, original_error, runtime_attempts, log)
+                                verify_candidate(model, settings)
+                            except Exception as precision_error:
+                                runtime_attempts.append({**settings, "graph": "portable_fp64",
+                                    "passed": False, "probe": failed_probe_name, "error": str(precision_error)})
+                            else:
+                                runtime_settings = settings
+                                runtime_attempts.append({**settings, "graph": "portable_fp64", "passed": True})
+                                log("고정밀 ONNX: 모든 검사 입력이 원본 FP32 출력 비교 통과")
+                                from efficientnet_precision_tuning import tune_precision_export
+                                log("검증을 유지하며 FP64 범위 축소·추론 속도 측정 중")
+                                model, runtime_settings = tune_precision_export(
+                                    reference_model, model, staged_model, dummy, runtime_settings,
+                                    verify_candidate, opset=opset_version, dynamic_batch=dynamic_batch,
+                                    attempts=runtime_attempts, log=log)
+                        if runtime_settings is None:
+                            # Diagnose the original graph, not a differently
+                            # lowered rescue graph against an altered reference.
+                            export_to_onnx(reference_model, dummy, staged_model, opset_version,
+                                           dynamic_batch, spec["task"], constant_folding=False)
+                            _raise_efficientnet_verification_error(
+                                reference_model, staged_model, failed_probe, failed_probe_name, opset_version,
+                                optimized_error, original_error, runtime_attempts, log)
             metadata = {"task": spec["task"], "num_classes": spec["num_classes"],
                         "input_size": [spec["input_height"], spec["input_width"]],
                         "in_channels": spec["in_channels"], "class_names": spec["class_names"],
@@ -829,8 +843,9 @@ def _raise_efficientnet_verification_error(model, path, probe, probe_name, opset
         summary = f"추가 수치 진단 실패: {diagnostic_error}"
     numeric["runtime_attempts"] = attempts
     attempt_details = "\n".join(
-        f"{item.get('graph', 'unfused_fp32')}/{item['graph_optimization_level']}/"
-        f"{item['num_threads']} threads/{item.get('probe', 'unknown')}: {item.get('error', '통과')}"
+        f"{item.get('graph', 'unfused_fp32')}/{item.get('graph_optimization_level', 'n/a')}/"
+        f"{item.get('num_threads', 'n/a')} threads/{item.get('probe', 'unknown')}: "
+        f"{item.get('error', item.get('reason', '통과'))}"
         for item in attempts)
     log("수치 진단: " + summary)
     raise ExportVerificationError(

@@ -39,7 +39,9 @@ def test_retry_verifies_original_graph_or_preserves_existing_files(tmp_path, rej
             raise ValueError("injected output mismatch")
         return real_verify(path, probe, candidate, **kwargs)
 
-    with patch.object(export_onnx, "verify_onnx", side_effect=verify):
+    fallback = patch("classification_export_validation.export_validated_synthetic_fp32",
+                     side_effect=ValueError("injected output mismatch"))
+    with patch.object(export_onnx, "verify_onnx", side_effect=verify), fallback:
         if reject_original:
             with pytest.raises(ValueError, match="모두 ONNX 검증 실패"):
                 export_onnx.export_checkpoint(source, output, dynamic_batch=True)
@@ -134,7 +136,9 @@ def test_one_passing_probe_does_not_publish_fallback(tmp_path):
             raise ValueError("injected zero input mismatch")
         return verify(path, probe, candidate, runtime_settings=runtime_settings, **kwargs)
 
-    with patch.object(export_onnx, "verify_onnx", side_effect=reject_zero):
+    with patch.object(export_onnx, "verify_onnx", side_effect=reject_zero), \
+            patch("classification_export_validation.export_validated_synthetic_fp32",
+                  side_effect=ValueError("injected zero input mismatch")):
         with pytest.raises(ValueError, match="zero input mismatch"):
             export_onnx.export_checkpoint(source, output, log=lambda _: None)
     assert output.read_bytes() == b"previous onnx"

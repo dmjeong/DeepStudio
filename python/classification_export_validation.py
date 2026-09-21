@@ -1,20 +1,23 @@
-"""Classification-specific FP32 acceptance using a local image corpus.
+"""Classification-specific FP32 acceptance using images or deterministic probes.
 
-This is an explicitly named deployment policy, not a relaxation of the strict
-logit comparator. It certifies the inspected images, not every possible input.
+These are explicitly named deployment policies, not a silent relaxation of the
+strict logit comparator. Each report states the exact inputs it certifies.
 """
 import hashlib
 from pathlib import Path
 import shutil
+import time
 
 import numpy as np
 import torch
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 PROBABILITY_ATOL = .001
+MINIMUM_PROBABILITY_MARGIN = 1e-6
 
 
-def compare_classification(reference, actual, probability_atol=PROBABILITY_ATOL):
+def compare_classification(reference, actual, probability_atol=PROBABILITY_ATOL,
+                           minimum_margin=MINIMUM_PROBABILITY_MARGIN):
     ref, out = np.asarray(reference, np.float64), np.asarray(actual, np.float64)
     if ref.shape != out.shape or ref.ndim != 2 or not ref.size:
         raise ValueError("분류 출력 형태 불일치")
@@ -30,12 +33,170 @@ def compare_classification(reference, actual, probability_atol=PROBABILITY_ATOL)
     if np.any(difference > probability_atol):
         raise ValueError(f"분류 확률 차이 초과: {difference.max():.8g} > {probability_atol}")
     if ref.shape[1] > 1:
-        ordered = np.sort(rp, axis=1)
-        margin = ordered[:, -1] - ordered[:, -2]
-        if np.any(margin < 2 * difference):
-            raise ValueError(f"분류 경계 근처 입력: 최소 1·2등 간격={margin.min():.8g}, 최대 확률 오차={difference.max():.8g}")
+        reference_ordered = np.sort(rp, axis=1)
+        actual_ordered = np.sort(ap, axis=1)
+        margin = reference_ordered[:, -1] - reference_ordered[:, -2]
+        actual_margin = actual_ordered[:, -1] - actual_ordered[:, -2]
+        required = np.maximum(2 * difference, minimum_margin)
+        if np.any(margin <= required) or np.any(actual_margin <= minimum_margin):
+            raise ValueError(f"분류 경계 근처 입력: 최소 PyTorch 1·2등 간격={margin.min():.8g}, "
+                             f"최소 ONNX 간격={actual_margin.min():.8g}, 최대 확률 오차={difference.max():.8g}")
+    else:
+        margin = actual_margin = np.ones(ref.shape[0], dtype=np.float64)
     return {"max_probability_error": float(difference.max()),
-            "max_logit_error": float(np.abs(ref - out).max())}
+            "max_logit_error": float(np.abs(ref - out).max()),
+            "min_reference_margin": float(margin.min()),
+            "min_actual_margin": float(actual_margin.min())}
+
+
+def synthetic_classification_probes(dummy, preprocessing):
+    """Build deterministic probes constrained to the declared image domain."""
+    channels, height, width = dummy.shape[1:]
+    mean = np.asarray(preprocessing.get("normalize_mean", preprocessing.get("mean")), np.float32)
+    std = np.asarray(preprocessing.get("normalize_std", preprocessing.get("std")), np.float32)
+    if mean.shape != (channels,) or std.shape != (channels,) or not np.isfinite(std).all() or np.any(std <= 0):
+        raise ValueError("분류 합성 검증용 정규화 메타데이터 오류")
+
+    def normalize(raw):
+        raw = np.asarray(raw, np.float32)
+        if raw.shape == (height, width):
+            raw = np.broadcast_to(raw, (channels, height, width)).copy()
+        return torch.from_numpy((raw - mean[:, None, None]) / std[:, None, None]).unsqueeze(0)
+
+    probes = [("seeded_normal", dummy.detach().cpu().float()),
+              ("normalized_zero", torch.zeros_like(dummy).cpu())]
+    for name, value in (("black", 0.), ("midgray", .5), ("white", 1.)):
+        probes.append((name, normalize(np.full((channels, height, width), value, np.float32))))
+    horizontal = np.linspace(0., 1., width, dtype=np.float32)[None, :]
+    vertical = np.linspace(0., 1., height, dtype=np.float32)[:, None]
+    probes.extend((
+        ("horizontal_gradient", normalize(np.broadcast_to(horizontal, (height, width)))),
+        ("vertical_gradient", normalize(np.broadcast_to(vertical, (height, width)))),
+        ("checkerboard", normalize((np.indices((height, width)).sum(axis=0) % 2).astype(np.float32))),
+    ))
+    for seed in (7, 29, 101, 997):
+        raw = np.random.default_rng(seed).random((channels, height, width), dtype=np.float32)
+        probes.append((f"valid_random_{seed}", normalize(raw)))
+    return probes
+
+
+def export_validated_synthetic_fp32(reference, spec, path, dummy, *, opset,
+                                    dynamic_batch, log):
+    """Select a fast FP32 graph using classification decisions on robust probes.
+
+    This fallback certifies only the deterministic probe suite. A supplied image
+    corpus continues to use ``classification_dataset_v1`` and is stronger.
+    """
+    import copy
+    import onnxruntime as ort
+    from efficientnet import prepare_for_inference, prepare_native_bn_export
+    from export_onnx import export_to_onnx
+    from onnx_session import cpu_session_options
+
+    probes = synthetic_classification_probes(dummy, spec["preprocessing"])
+    if dynamic_batch:
+        probes.append(("dynamic_batch_2", torch.cat((probes[2][1], probes[4][1]), dim=0)))
+    with torch.inference_mode(), torch.autocast(device_type="cpu", enabled=False):
+        expected = [(name, reference(probe).detach().cpu().numpy()) for name, probe in probes]
+    threads = max(1, min(torch.get_num_threads(), 4))
+    thread_counts = list(dict.fromkeys((threads, 1)))
+    candidates = [
+        ("fused_fp32", prepare_for_inference(reference), ("all", "basic", "disabled")),
+        ("unfused_fp32", copy.deepcopy(reference).cpu().float().eval(), ("all", "basic", "disabled")),
+        ("native_batch_norm_affine", prepare_native_bn_export(reference, emulate_fma=False), ("disabled",)),
+        ("native_batch_norm_affine_fma", prepare_native_bn_export(reference, emulate_fma=True), ("disabled",)),
+    ]
+    attempts, winner = [], None
+    best_key = (float("inf"), float("inf"))
+    best_path = Path(path).with_name(".synthetic-validated-fp32.onnx")
+    log(f"분류 판정 기반 FP32 검증: 유효 픽셀 범위의 결정론적 입력 {len(probes)}개, "
+        "top-1·softmax 확률·판정 마진 검사")
+    try:
+        for graph, candidate, levels in candidates:
+            constant_folding = graph == "fused_fp32"
+            try:
+                export_to_onnx(candidate, dummy, path, opset, dynamic_batch,
+                               constant_folding=constant_folding)
+            except Exception as exc:
+                attempts.append({"graph": graph, "passed": False, "reason": str(exc)})
+                continue
+            for level in levels:
+                for count in thread_counts:
+                    settings = {"graph_optimization_level": level, "num_threads": count}
+                    row = {"graph": graph, **settings, "passed": False,
+                           "policy": "classification_synthetic_probe_v1"}
+                    session = None
+                    try:
+                        session = ort.InferenceSession(str(path), cpu_session_options(**settings),
+                                                       providers=["CPUExecutionProvider"])
+                        input_name = session.get_inputs()[0].name
+                        probability_error = logit_error = 0.
+                        reference_margin = actual_margin = float("inf")
+                        for (name, probe), (_, ref) in zip(probes, expected):
+                            row["checking"] = name
+                            out = session.run(None, {input_name: probe.numpy()})[0]
+                            detail = compare_classification(ref, out)
+                            probability_error = max(probability_error, detail["max_probability_error"])
+                            logit_error = max(logit_error, detail["max_logit_error"])
+                            reference_margin = min(reference_margin, detail["min_reference_margin"])
+                            actual_margin = min(actual_margin, detail["min_actual_margin"])
+                        feed = {input_name: dummy.detach().cpu().numpy()}
+                        for _ in range(2):
+                            session.run(None, feed)
+                        timings = []
+                        for _ in range(7):
+                            started = time.perf_counter()
+                            session.run(None, feed)
+                            timings.append((time.perf_counter() - started) * 1000)
+                        latency = float(np.median(timings))
+                        row.update(passed=True, probe_count=len(probes),
+                                   max_probability_error=probability_error,
+                                   max_logit_error=logit_error,
+                                   min_reference_margin=reference_margin,
+                                   min_actual_margin=actual_margin,
+                                   model_median_ms=latency)
+                        row.pop("checking", None)
+                        key = (latency, probability_error)
+                        if key < best_key:
+                            shutil.copyfile(path, best_path)
+                            winner, best_key = (graph, candidate, dict(settings), dict(row)), key
+                        log(f"판정 검증 통과 {graph}/{level}/{count}T: 모델 추론 중앙값 {latency:.2f}ms, "
+                            f"최대 확률 차이 {probability_error:.8g}")
+                    except Exception as exc:
+                        row["reason"] = str(exc)
+                    finally:
+                        session = None
+                        attempts.append(row)
+        if winner is None:
+            raise ValueError("결정론적 분류 판정 검증을 통과한 FP32 후보가 없습니다: " +
+                             " | ".join(row.get("reason", "") for row in attempts if row.get("reason")))
+        graph, model, settings, selected = winner
+        shutil.copyfile(best_path, path)
+        # Reload the exact artifact that will be shipped and repeat all probes.
+        session = ort.InferenceSession(str(path), cpu_session_options(**settings),
+                                       providers=["CPUExecutionProvider"])
+        input_name = session.get_inputs()[0].name
+        for (name, probe), (_, ref) in zip(probes, expected):
+            try:
+                compare_classification(ref, session.run(None, {input_name: probe.numpy()})[0])
+            except ValueError as exc:
+                raise ValueError(f"최종 FP32 후보 재검증 실패 ({name}): {exc}") from exc
+        model = copy.deepcopy(model)
+        model.inference_optimization = {**getattr(model, "inference_optimization", {}),
+            "fallback": graph, "compute_precision": "float32", "io_precision": "float32",
+            "classification_policy": "classification_synthetic_probe_v1"}
+        report = {"policy": "classification_synthetic_probe_v1", "image_count": 0,
+                  "probe_count": len(probes),
+                  "criteria": {"top1_equal": True, "probability_atol": PROBABILITY_ATOL,
+                               "minimum_margin_error_ratio": 2,
+                               "minimum_probability_margin": MINIMUM_PROBABILITY_MARGIN},
+                  "scope": "deterministic_synthetic_probes_only",
+                  "custom_thresholds_validated": False,
+                  "selected": selected, "attempts": attempts}
+        return model, settings, report
+    finally:
+        if best_path.exists():
+            best_path.unlink()
 
 
 def collect_images(directory, class_names):

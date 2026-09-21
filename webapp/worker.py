@@ -567,11 +567,15 @@ def export(context, payload):
     validation = result.get("classification_validation")
     if validation:
         selected = validation["selected"]
-        context.emit("log_message", [
-            f"실제 이미지 {validation['image_count']}장 검증 통과. 전처리+추론+후처리 "
-            f"중앙값 {selected['pipeline_median_ms']:.2f}ms / p95 {selected['pipeline_p95_ms']:.2f}ms / "
-            f"최대 {selected['pipeline_max_ms']:.2f}ms. "
-            f"관측 8ms 목표: {'충족' if validation['target_met'] else '미달'} (파일 디코딩 제외)"])
+        if validation["policy"] == "classification_dataset_v1":
+            message = (f"실제 이미지 {validation['image_count']}장 검증 통과. 전처리+추론+후처리 "
+                       f"중앙값 {selected['pipeline_median_ms']:.2f}ms / p95 {selected['pipeline_p95_ms']:.2f}ms / "
+                       f"최대 {selected['pipeline_max_ms']:.2f}ms. "
+                       f"관측 8ms 목표: {'충족' if validation['target_met'] else '미달'} (파일 디코딩 제외)")
+        else:
+            message = (f"결정론적 합성 입력 {validation['probe_count']}개에서 top-1·확률·판정 마진 검증 통과. "
+                       f"모델 추론 중앙값 {selected['model_median_ms']:.2f}ms. 실제 이미지 자료는 검증하지 않음")
+        context.emit("log_message", [message])
     return {"status": "completed", "output": result}
 
 

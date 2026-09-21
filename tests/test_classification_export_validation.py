@@ -31,6 +31,17 @@ def test_classification_policy_is_distinct_from_strict_logits():
     assert report["max_probability_error"] < 1e-12
 
 
+def test_reported_large_logit_model_has_stable_decision_and_probability():
+    reference = np.array([[103.32628, -179.42242, 0., 24.536543]])
+    actual = np.array([[103.40451, -179.4594, .02, 24.495605]])
+    with pytest.raises(ValueError):
+        export_onnx.validate_classification_outputs(reference, actual)
+    report = compare_classification(reference, actual)
+    assert report["max_logit_error"] == pytest.approx(.07823, abs=1e-5)
+    assert report["max_probability_error"] < 1e-20
+    assert report["min_reference_margin"] > .99
+
+
 @pytest.mark.parametrize("ref,out", [([[1., 0.]], [[0., 1.]]),
                                       ([[1., 0.]], [[3., 0.]]),
                                       ([[.0001, 0.]], [[.0001, -.0002]]),
@@ -99,10 +110,55 @@ def test_no_automatic_whole_fp64_export(tmp_path):
     source = tmp_path / "model.pt"
     torch.save(checkpoint, source)
     with patch.object(export_onnx, "verify_onnx", side_effect=ValueError("mismatch")), \
+            patch("classification_export_validation.export_validated_synthetic_fp32",
+                  side_effect=ValueError("decision mismatch")), \
             patch("efficientnet_precision.prepare_precision_export", side_effect=AssertionError("must not run")) as precision:
         with pytest.raises(ValueError, match="모두 ONNX 검증 실패"):
             export_onnx.export_checkpoint(source, tmp_path / "model.onnx", log=lambda _: None)
         precision.assert_not_called()
+
+
+def test_synthetic_policy_exports_fast_fp32_when_logits_shift_but_decisions_match(tmp_path):
+    from onnx_classifier import OnnxClassifier
+    names = ["a", "b"]
+    model = EfficientNet(num_classes=2).eval()
+    with torch.no_grad():
+        model.classifier[1].weight.zero_()
+        model.classifier[1].bias.copy_(torch.tensor([4., -4.]))
+    checkpoint = make_checkpoint_metadata("classify", 2, names, (32, 32), 1)
+    checkpoint.update(engine="efficientnet", model_config=model.checkpoint_config(),
+                      model_state_dict=model.state_dict())
+    source, output = tmp_path / "model.pt", tmp_path / "model.onnx"
+    torch.save(checkpoint, source)
+    real_export = export_onnx.export_to_onnx
+
+    def shifted_export(candidate, dummy, path, *args, **kwargs):
+        candidate = copy.deepcopy(candidate)
+        target = candidate.model if hasattr(candidate, "model") else candidate
+        with torch.no_grad():
+            target.classifier[1].bias.add_(.02)
+        return real_export(candidate, dummy, path, *args, **kwargs)
+
+    with patch.object(export_onnx, "export_to_onnx", side_effect=shifted_export):
+        result = export_onnx.export_checkpoint(source, output, dynamic_batch=True, log=lambda _: None)
+    report = result["classification_validation"]
+    assert report["policy"] == "classification_synthetic_probe_v1"
+    assert report["probe_count"] == 13
+    assert report["selected"]["max_logit_error"] > .019
+    assert report["selected"]["max_probability_error"] < 1e-6
+    assert report["selected"]["model_median_ms"] > 0
+    manifest = json.loads(output.with_suffix(".json").read_text())
+    assert manifest["export"]["verification_policy"] == "classification_synthetic_probe_v1"
+    assert manifest["export"]["compute_precision"] == "float32"
+    assert manifest["schema_version"] == 6
+    classifier = OnnxClassifier(result["config_path"])
+    sample = torch.zeros(1, 1, 32, 32)
+    assert classifier.logits(sample.numpy()).argmax(axis=1).tolist() == [0]
+
+
+def test_exact_probability_tie_never_passes_relaxed_policy():
+    with pytest.raises(ValueError, match="경계 근처"):
+        compare_classification([[0., 0.]], [[0., 0.]])
 
 
 def test_web_export_worker_uses_complete_project_corpus_and_explicit_options(tmp_path):
