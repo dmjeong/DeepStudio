@@ -99,7 +99,9 @@ jobs:
         run: python -m py_compile gui/build_exe.py
 
   wix-installer-contract:
-    runs-on: windows-latest
+    # The C++ ABI is built with the Visual Studio 2022 generator. Pin the image
+    # instead of following windows-latest when GitHub changes its VS toolchain.
+    runs-on: windows-2022
     defaults:
       run:
         working-directory: .
@@ -136,7 +138,7 @@ jobs:
           $vcpkg = $env:VCPKG_INSTALLATION_ROOT
           $toolchain = Join-Path $vcpkg "scripts\buildsystems\vcpkg.cmake"
           cmake -S cpp -B $build -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_TOOLCHAIN_FILE=$toolchain -DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT `
+            "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT" `
             -DVISION_BUILD_DEMO=OFF -DBUILD_TESTING=OFF
           if ($LASTEXITCODE -ne 0) { throw "C++ configure failed" }
           cmake --build $build --config Release --target vision_runtime --parallel 2
@@ -159,7 +161,7 @@ jobs:
           $build = Join-Path $env:RUNNER_TEMP "vision-example-build"
           $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT "scripts\buildsystems\vcpkg.cmake"
           cmake -S example/cpp -B $build -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_TOOLCHAIN_FILE=$toolchain -DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT
+            "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "Example CMake configure failed" }
           cmake --build $build --config Release --target onnx_cpp_example --parallel 2
           if ($LASTEXITCODE -ne 0) { throw "Example C++ build failed" }
