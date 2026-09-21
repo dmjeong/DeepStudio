@@ -679,22 +679,27 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                         if runtime_settings is None:
                             from efficientnet import prepare_native_bn_export
                             log("BatchNorm 계수 고정 그래프로 재시도: PyTorch 정규화 계수 보존, Conv 융합 제외")
-                            model = prepare_native_bn_export(reference_model)
-                            export_to_onnx(model, dummy, staged_model, opset_version, dynamic_batch,
-                                           spec["task"], constant_folding=False)
-                            # Preserve operation order; try serial reduction as well.
-                            for count in dict.fromkeys((threads, 1)):
-                                settings = {"graph_optimization_level": "disabled", "num_threads": count}
-                                try:
-                                    verify_candidate(model, settings)
-                                except ValueError as runtime_error:
-                                    runtime_attempts.append({**settings, "graph": "native_batch_norm_affine",
-                                                             "passed": False, "probe": failed_probe_name,
-                                                             "error": str(runtime_error)})
-                                else:
-                                    runtime_settings = settings
-                                    runtime_attempts.append({**settings, "graph": "native_batch_norm_affine", "passed": True})
-                                    log("BatchNorm 계수 고정 그래프: 모든 입력 원본 출력 비교 통과")
+                            for emulate_fma in (False, True):
+                                model = prepare_native_bn_export(reference_model, emulate_fma=emulate_fma)
+                                graph_name = model.inference_optimization["fallback"]
+                                log(f"BatchNorm 연산 방식: {graph_name}")
+                                export_to_onnx(model, dummy, staged_model, opset_version, dynamic_batch,
+                                               spec["task"], constant_folding=False)
+                                # Preserve operation order; try serial reduction as well.
+                                for count in dict.fromkeys((threads, 1)):
+                                    settings = {"graph_optimization_level": "disabled", "num_threads": count}
+                                    try:
+                                        verify_candidate(model, settings)
+                                    except ValueError as runtime_error:
+                                        runtime_attempts.append({**settings, "graph": graph_name,
+                                                                 "passed": False, "probe": failed_probe_name,
+                                                                 "error": str(runtime_error)})
+                                    else:
+                                        runtime_settings = settings
+                                        runtime_attempts.append({**settings, "graph": graph_name, "passed": True})
+                                        log("BatchNorm 계수 고정 그래프: 모든 입력 원본 출력 비교 통과")
+                                        break
+                                if runtime_settings is not None:
                                     break
                             if runtime_settings is None:
                                 # Diagnose the original graph, not a differently

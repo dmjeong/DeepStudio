@@ -32,19 +32,27 @@ def test_trained_bn_coefficients_survive_actual_onnx_execution(tmp_path):
         bn.bias.uniform_(-1., 1.)
     sample = torch.randn(1, 3, 8, 8) * .001 + 1000.
     before = copy.deepcopy(bn.state_dict())
-    candidate = _NativeAffineExportBatchNorm(bn).eval()
-    path = tmp_path / "bn.onnx"
-    export_onnx.export_to_onnx(candidate, sample, path, constant_folding=False)
-    graph = onnx.load(path)
-    assert not any(node.op_type == "BatchNormalization" for node in graph.graph.node)
     options = ort.SessionOptions()
     options.intra_op_num_threads = 1
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
-    session = ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
-    actual = session.run(None, {"input_image": sample.numpy()})[0]
     with torch.no_grad():
         expected = bn(sample).numpy()
-    export_onnx.validate_outputs(expected, actual, **export_onnx.verification_tolerances("classify"))
+    failures = []
+    for emulate_fma in (False, True):
+        candidate = _NativeAffineExportBatchNorm(bn, emulate_fma=emulate_fma).eval()
+        path = tmp_path / f"bn-{emulate_fma}.onnx"
+        export_onnx.export_to_onnx(candidate, sample, path, constant_folding=False)
+        graph = onnx.load(path)
+        assert not any(node.op_type == "BatchNormalization" for node in graph.graph.node)
+        session = ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
+        actual = session.run(None, {"input_image": sample.numpy()})[0]
+        try:
+            export_onnx.validate_outputs(expected, actual, **export_onnx.verification_tolerances("classify"))
+        except ValueError as exc:
+            failures.append(str(exc))
+    # CPU kernels use either separate arithmetic or FMA. At least one actual
+    # graph must pass the same gate; neither a skipped test nor relaxed atol.
+    assert len(failures) < 2, failures
     for key, value in bn.state_dict().items():
         torch.testing.assert_close(value, before[key], rtol=0, atol=0)
 
@@ -63,7 +71,8 @@ def test_fusion_cannot_replace_original_reference(tmp_path):
         export_onnx.verify_onnx(path, sample, candidate, reference_model=model)
 
 
-def test_bn_fallback_is_verified_against_original_and_reloaded(tmp_path):
+@pytest.mark.parametrize("emulate_fma", [False, True])
+def test_bn_fallback_is_verified_against_original_and_reloaded(tmp_path, emulate_fma):
     from onnx_classifier import OnnxClassifier
     model = EfficientNet(num_classes=2).eval()
     checkpoint = make_checkpoint_metadata("classify", 2, ["OK", "NG"], (32, 32), 1)
@@ -73,10 +82,11 @@ def test_bn_fallback_is_verified_against_original_and_reloaded(tmp_path):
     torch.save(checkpoint, source)
     real_verify = export_onnx.verify_onnx
     references, batches = [], []
+    expected_graph = "native_batch_norm_affine_fma" if emulate_fma else "native_batch_norm_affine"
 
     def verify(path, probe, candidate, **kwargs):
         references.append(id(kwargs["reference_model"]))
-        if candidate.inference_optimization.get("fallback") != "native_batch_norm_affine":
+        if candidate.inference_optimization.get("fallback") != expected_graph:
             raise ValueError("force BN fallback")
         batches.append((probe.shape[0], bool(torch.count_nonzero(probe) == 0)))
         return real_verify(path, probe, candidate, **kwargs)
@@ -87,7 +97,7 @@ def test_bn_fallback_is_verified_against_original_and_reloaded(tmp_path):
     assert batches == [(1, False), (1, True), (2, False)]
     config = json.loads(output.with_suffix(".json").read_text())
     assert config["export"]["verification_reference"] == "original_checkpoint_pytorch"
-    assert config["export"]["optimization"]["fallback"] == "native_batch_norm_affine"
+    assert config["export"]["optimization"]["fallback"] == expected_graph
     assert config["onnxruntime"]["graph_optimization_level"] == "disabled"
     classifier = OnnxClassifier(result["config_path"])
     sample = torch.randn(2, 1, 32, 32)

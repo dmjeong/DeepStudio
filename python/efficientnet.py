@@ -296,9 +296,10 @@ class _NativeAffineExportBatchNorm(nn.Module):
     The original checkpoint remains the mandatory numerical reference.
     """
 
-    def __init__(self, batch_norm):
+    def __init__(self, batch_norm, *, emulate_fma=False):
         super().__init__()
         self.native = batch_norm
+        self.emulate_fma = emulate_fma
         bn = batch_norm
         channels = bn.running_mean.numel()
         zeros = torch.zeros(1, channels, 1, 1)
@@ -313,10 +314,15 @@ class _NativeAffineExportBatchNorm(nn.Module):
     def forward(self, images):
         if not torch.onnx.is_in_onnx_export():
             return self.native(images)
+        if self.emulate_fma:
+            # x86 native BN uses a single-rounding FMA. DOUBLE pointwise
+            # arithmetic followed by one FLOAT cast reproduces that rounding
+            # without requiring a custom ONNX op or changing Conv precision.
+            return (images.double() * self.scale.double() + self.offset.double()).to(images.dtype)
         return images * self.scale + self.offset
 
 
-def prepare_native_bn_export(model):
+def prepare_native_bn_export(model, *, emulate_fma=False):
     """Create an independent export candidate with native BN coefficients."""
     if not isinstance(model, EfficientNet):
         raise TypeError("EfficientNet 모델 필요")
@@ -327,12 +333,13 @@ def prepare_native_bn_export(model):
             if isinstance(child, nn.BatchNorm2d):
                 if not child.track_running_stats:
                     raise ValueError("ONNX 평가용 BatchNorm running statistics 필요")
-                setattr(module, name, _NativeAffineExportBatchNorm(child))
+                setattr(module, name, _NativeAffineExportBatchNorm(child, emulate_fma=emulate_fma))
                 replaced += 1
     candidate.eval()
     candidate.inference_optimization = {
         "conv_bn_fused": 0, "channels_last": False,
         "constant_folding": False, "simplified": False,
-        "fallback": "native_batch_norm_affine", "native_batch_norms": replaced,
+        "fallback": "native_batch_norm_affine_fma" if emulate_fma else "native_batch_norm_affine",
+        "native_batch_norms": replaced, "bn_single_rounding": emulate_fma,
     }
     return candidate

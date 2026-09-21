@@ -6,6 +6,7 @@
 
 - 기존 재시도가 실패하면 PyTorch의 BatchNorm 평가 계수를 보존하는 Mul/Add 그래프를 검증한다.
   Conv 융합 및 ORT 최적화를 끄고 검증된 스레드 수를 배포 JSON에 기록한다.
+  CPU의 FMA 반올림 차이는 정규화 연산만 DOUBLE로 계산 후 FLOAT로 복귀하는 후보로 별도 검증한다.
 - 모든 EfficientNet 후보를 동일한 원본 체크포인트 출력과 비교한다. 후보 자체와의 비교만으로
   Conv/BN 융합 시 생긴 오차가 가려지던 문제를 수정했다. 허용 오차와 top-1 검사는 유지한다.
 - 기본 초기화 모델 외에 작은 running variance와 큰 running mean을 가진 BatchNorm의 실제 ONNX

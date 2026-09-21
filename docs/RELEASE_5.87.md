@@ -19,6 +19,8 @@ BatchNormalization 연산 자체가 PyTorch와 다른 반올림으로 계수를 
 ONNX Mul/Add로 저장하는 추가 후보를 검증한다. Conv에 계수를 합치지 않고 ORT 최적화를
 끄며, 모든 후보를 동일한 원본 체크포인트에 비교한다. CPU autocast도 내보내기와
 검증에서 비활성화한다. 기존 atol=0.001, rtol=0.0005와 top-1 검사는 그대로다.
+곱셈과 덧셈을 하나의 FMA로 계산하는 CPU 커널을 위해 정규화의 Mul/Add만 DOUBLE로
+계산한 뒤 FLOAT로 한 번 반올림하는 추가 후보도 검사한다. 입력·출력·Conv는 FP32를 유지한다.
 seeded, zero 및 dynamic batch 요청 시 batch 2를 모두 통과해야 배포하며,
 실패하면 기존 ONNX/JSON 파일을 보존한다. 앱의 자동 ONNX 추론에도 같은 변환을 적용했다.
 
@@ -30,7 +32,7 @@ seeded, zero 및 dynamic batch 요청 시 batch 2를 모두 통과해야 배포�
   이는 같은 종류의 수치 문제 재현이며 사용자 체크포인트의 직접 재현은 아니다.
 - 공개 ImageNet EfficientNet B0 가중치의 기본 그래프 및 추가 변환 경로 비교 수행.
 - 회귀 테스트: 학습 통계 BN 실행, 원본 출력 기준 변조 검출, 새 재시도의 모든 probe 검증,
-  배포 JSON 재로딩 및 앱 추론 재시도. 관련 93개 테스트 통과(앱 테스트의 안내 문구 회귀 수정 후 재실행 포함).
+  배포 JSON 재로딩 및 앱 추론 재시도. 별도 FMA 후보의 배포 재로딩도 검사한다.
 - `onnx-parity.yml`은 Windows/Linux에서 설치파일 빌드나 기본 가중치 다운로드 없이
   해당 수치 회귀 검사를 독립 실행한다. 로컬 결과는 Windows 결과를 대신하지 않는다.
 

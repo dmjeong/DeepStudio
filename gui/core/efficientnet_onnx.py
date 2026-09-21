@@ -46,7 +46,8 @@ class EfficientNetOnnx:
                 probes.append((probe_name, tensor.numpy(), expected))
         candidates = (("fused", lambda: prepare_for_inference(reference)),
                       ("unfused", lambda: copy.deepcopy(reference)),
-                      ("native_batch_norm_affine", lambda: prepare_native_bn_export(reference)))
+                      ("native_batch_norm_affine", lambda: prepare_native_bn_export(reference)),
+                      ("native_batch_norm_affine_fma", lambda: prepare_native_bn_export(reference, emulate_fma=True)))
         for graph_name, factory in candidates:
             export_model = factory()
             optimization = getattr(export_model, "inference_optimization", {
@@ -61,7 +62,7 @@ class EfficientNetOnnx:
                                constant_folding=graph_name == "fused")
                 model_bytes = path.read_bytes()
             profiles = [(name, level, threads) for name, level in levels]
-            if graph_name == "native_batch_norm_affine":
+            if graph_name.startswith("native_batch_norm_affine"):
                 profiles = [("disabled", ort.GraphOptimizationLevel.ORT_DISABLE_ALL, count)
                             for count in dict.fromkeys((threads, 1))]
             for name, level, count in profiles:
