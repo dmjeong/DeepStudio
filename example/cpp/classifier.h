@@ -2,6 +2,8 @@
 #pragma once
 #include "vision_inference.h"
 #include <opencv2/imgcodecs.hpp>
+#include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -22,15 +24,31 @@ inline cv::Mat ReadImage(const std::filesystem::path& path) {
     return image;
 }
 
-// Keep one instance for the model lifetime. Call on one thread at a time.
+// Construct once during application startup, before enabling the inference UI.
+// Construction includes one warm-up inference. Call on one thread at a time.
 class Classifier {
 public:
-    explicit Classifier(const std::filesystem::path& model_json) {
+    explicit Classifier(const std::filesystem::path& model_json,
+                        const cv::Mat& startup_image = cv::Mat()) {
         // JSON resolves the companion ONNX path and preserves verified settings.
         if (!model_.InitializeFromJson(model_json.u8string(), "onnxruntime"))
             throw std::runtime_error("Model/JSON load failed: " + model_json.u8string());
         if (model_.GetConfig().task != "classify")
             throw std::runtime_error("Classifier requires a classification export");
+        const auto& config = model_.GetConfig();
+        // Prefer a representative camera frame (same size/type as production).
+        // Without one, exercise the complete pipeline with a model-sized image.
+        const cv::Mat warmup = startup_image.empty()
+            ? cv::Mat(config.input_height, config.input_width,
+                      CV_MAKETYPE(CV_8U, config.input_channels), cv::Scalar::all(0))
+            : startup_image;
+        const auto start = std::chrono::steady_clock::now();
+        const auto result = model_.Classify(warmup);
+        warmup_ms_ = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+        if (result.class_id < 0 || !std::isfinite(result.confidence))
+            throw std::runtime_error("Startup warm-up inference failed");
+        // Discard this prediction. Only successful construction means ready.
     }
 
     ClassifyResult Infer(const cv::Mat& pixels) {
@@ -43,9 +61,11 @@ public:
     }
 
     const InferenceConfig& Config() const { return model_.GetConfig(); }
+    double WarmupMilliseconds() const { return warmup_ms_; }
 
 private:
     VisionInference model_;
+    double warmup_ms_ = 0;
 };
 
 } // namespace example

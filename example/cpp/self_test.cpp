@@ -38,9 +38,21 @@ int main() {
             std::filesystem::copy_file(assets / name, temp.path / name);
         // Loading a Unicode JSON path also verifies relative companion ONNX paths.
         example::Classifier model(temp.path / "test.json");
+        Check(std::isfinite(model.WarmupMilliseconds()) && model.WarmupMilliseconds() >= 0,
+              "Invalid startup warm-up timing");
         Check(model.Config().ort_graph_optimization_level == "disabled" &&
               model.Config().num_threads == 1, "Saved runtime settings lost");
         CheckWhite(model.InferFile(temp.path / "white.pgm"));
+        {
+            const auto image = example::ReadImage(temp.path / "white.pgm");
+            example::Classifier prewarmed(temp.path / "test.json", image);
+            CheckWhite(prewarmed.Infer(image));
+        }
+        // Invalid startup pixels fail during initialization, before UI readiness.
+        MustThrow([&] {
+            example::Classifier invalid(temp.path / "test.json",
+                                        cv::Mat(224, 224, CV_32FC1, cv::Scalar(0)));
+        });
         for (int channels : {1, 3, 4}) {
             const cv::Mat pixels(240, 320, CV_MAKETYPE(CV_8U, channels), cv::Scalar::all(255));
             // Non-contiguous camera ROI: checks stride handling, resize and reuse.
@@ -57,7 +69,7 @@ int main() {
         MustThrow([&] { model.InferFile(temp.path / "invalid.png"); });
         MustThrow([&] { example::Classifier invalid(temp.path / "missing.json"); });
         CheckWhite(model.InferFile(temp.path / "white.pgm"));
-        std::cout << "PASS: ONNX load, repeated inference, Unicode paths, camera ROI, error recovery\n";
+        std::cout << "PASS: startup warm-up, ONNX load, repeated inference, Unicode paths, camera ROI, error recovery\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

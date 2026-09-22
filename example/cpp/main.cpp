@@ -21,11 +21,19 @@ int main() {
         if (runs < 1 || runs > 10000) throw std::invalid_argument("runs must be 1..10000");
         const auto base = example::ExecutableDirectory();
         std::cout << "ONNX Runtime " << OrtGetApiBase()->GetVersionString() << std::endl;
-        example::Classifier session(base / model_json); // load once
+        // Application startup: read a representative frame, load the model,
+        // and execute one warm-up before accepting inference requests.
         const cv::Mat image = example::ReadImage(base / image_file);
-        // Supply original GRAY/BGR/BGRA pixels; the SDK resizes and normalizes.
-        for (int i = 0; i < 3; ++i) session.Infer(image);
+        const auto startup = std::chrono::steady_clock::now();
+        example::Classifier session(base / model_json, image);
+        std::cout << "READY: model_load_and_warmup_ms="
+                  << std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - startup).count()
+                  << " warmup_ms=" << session.WarmupMilliseconds() << std::endl;
+        // In a GUI, enable the inference button here. Keep session alive.
+        // No extra warm-up or model reload belongs in the button handler.
         std::vector<double> times;
+        double first_call_ms = 0;
         double pre = 0, model = 0, post = 0;
         ClassifyResult result;
         for (int i = 0; i < runs; ++i) {
@@ -33,6 +41,7 @@ int main() {
             result = session.Infer(image);
             times.push_back(std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - start).count());
+            if (i == 0) first_call_ms = times.back();
             if (result.class_id < 0 || !std::isfinite(result.confidence))
                 throw std::runtime_error("Invalid inference result");
             pre += result.preprocess_ms;
@@ -45,6 +54,7 @@ int main() {
                   << " confidence=" << result.confidence << '\n'
                   << "runs=" << runs << " preprocess_ms=" << pre / runs
                   << " model_ms=" << model / runs << " postprocess_ms=" << post / runs
+                  << " first_call_ms=" << first_call_ms
                   << " call_p50_ms=" << times[(runs - 1) / 2]
                   << " call_p95_ms=" << times[static_cast<int>(std::ceil(runs * .95)) - 1] << '\n';
         return 0;

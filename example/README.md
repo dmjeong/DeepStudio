@@ -11,7 +11,9 @@ EfficientNet B0/B1, ResNet, ConvNeXt 등 Studio 분류 export를 사용한다.
 - [테스트 데이터](assets): 224×224 합성 이미지와 작은 ONNX. 학습 가중치나 외부 이미지가 없다.
 
 앱/Python/PyTorch/Docker를 띄울 필요 없이 프로그램 내부 함수로 호출한다.
-세션은 한 번 열고 재사용한다. 이 SDK의 같은 세션을 여러 스레드에서 동시에 호출하지 않는다.
+프로그램 시작 시 `Classifier`를 생성하면 모델 로드와 준비 추론 1회를 끝낸 뒤 반환한다.
+생성이 성공한 뒤에만 추론 버튼을 활성화하고, 해당 객체를 계속 재사용한다.
+이 SDK의 같은 세션을 여러 스레드에서 동시에 호출하지 않는다.
 비동기 큐가 필요하면 설치된 `cpp/vision-runtime/include/classification_worker.h`의
 `ClassificationWorker`를 사용한다.
 
@@ -88,8 +90,9 @@ cmake --build example/build --config Release --target onnx_cpp_example
 ```cpp
 #include "classifier.h"
 
+// 프로그램 시작 시 실행한다. 모델 로드 + 준비 추론 1회가 완료된 후 반환한다.
 example::Classifier classifier(std::filesystem::u8path(u8"C:/모델/model.json"));
-// 위 생성은 한 번만 수행한다. 아래 호출은 이미지마다 반복한다.
+// 여기서부터 추론 버튼을 활성화한다. 아래 호출은 이미지마다 반복한다.
 cv::Mat pixels = example::ReadImage(std::filesystem::u8path(u8"C:/이미지/test.png"));
 ClassifyResult result = classifier.Infer(pixels);
 // 파일을 바로 처리할 경우: classifier.InferFile(image_path)
@@ -97,6 +100,13 @@ ClassifyResult result = classifier.Infer(pixels);
 std::cout << result.class_name << " " << result.confidence
           << " " << result.inference_ms << " ms\n";
 ```
+
+카메라 프레임을 시작 시 확보할 수 있다면 `Classifier(model_json, startup_frame)`처럼
+실제 입력과 같은 크기·자료형의 이미지를 전달한다. 생략하면 모델 입력 크기의 검은 이미지로
+준비 추론한다. 준비 추론 결과는 버리며 사용자 판정 결과에 포함하지 않는다.
+준비 추론에 실패하면 생성자가 예외를 발생시키므로 준비 완료로 표시하지 않는다.
+초기화가 UI를 막지 않도록 하려면 앱의 작업 스레드에서 생성하고, 완료 후 버튼을 활성화한다.
+모델을 바꿀 때도 새 객체의 준비 추론이 끝난 뒤 사용한다.
 
 전처리·ONNX 실행·softmax는 내부에서 수행한다. `result.inference_ms`는 이 세 단계의
 합계이며 파일 읽기·디코딩은 제외한다. 실패는 `std::exception`을 잡아 프로그램에서 표시한다.
@@ -151,11 +161,16 @@ C++ 런타임은 Visual C++ 2015–2022 x64 재배포 패키지 또는 회사 �
 
 ## 시간과 다른 태스크
 
-예제는 모델 로드와 파일 디코딩 후 3회 준비 추론을 하고, 지정한 횟수로 반복한다.
+C++ 예제는 시작 시 모델 로드와 준비 추론 **1회**를 끝낸 뒤 `READY`를 출력하고,
+사용자 추론을 지정한 횟수로 반복한다. `model_load_and_warmup_ms`와 `warmup_ms`는
+시작 비용이고, `first_call_ms`는 준비 완료 후 첫 사용자 추론의 호출 시간이다.
+C# 예제는 파일 디코딩 후 3회 준비 추론을 한다.
 `preprocess_ms`, `model_ms`, `postprocess_ms`는 각 단계 평균이며,
 `call_p50_ms`/`call_p95_ms`는 호출 전체 시간의 중앙값/95백분위다.
 C# 호출 시간에는 P/Invoke와 결과 복사도 포함된다. 디스크 읽기·모델 로드·첫 추론은 제외된다.
 합성 모델의 시간은 EfficientNet 속도가 아니므로 실제 내보낸 모델로 측정해야 한다.
+준비 추론은 최초 런타임 초기화 비용을 시작 단계에서 치르도록 한다. 이후 입력 크기·자료형이
+바뀌거나 CPU 절전·OS 스케줄링이 개입하면 추가 지연은 생길 수 있으므로 0ms 지연을 보장하지 않는다.
 
 이 실행 예제의 결과 처리는 **분류 전용**이다. 분할·검출·PatchCore·SAM2 API는
 설치된 `cpp/vision-runtime/include/vision_runtime_c.h`와
