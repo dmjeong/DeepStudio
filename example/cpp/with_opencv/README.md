@@ -12,7 +12,7 @@ example::Classifier model("C:/models/model.json");
 auto result = model.Infer(image);
 ```
 
-빌드 의존성은 OpenCV, ONNX Runtime, nlohmann-json이다. 저장소 루트에서:
+OpenCV와 ONNX Runtime은 별도로 준비한다. nlohmann-json은 상위 `nlohmann` 폴더에 포함돼 있다. 수동 프로젝트에는 그 폴더도 복사하고 추가 포함 디렉터리에 그 상위 폴더를 등록한다. 저장소 루트에서:
 
 VS2017은 **15.9 최신 업데이트 + C++17 + x64**를 사용한다. 아래 생성기를
 `"Visual Studio 15 2017"`로 바꾸고 새 빌드 폴더를 지정하면 ONNX Runtime의

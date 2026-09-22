@@ -28,3 +28,9 @@ not committed to this repository. A user-added `.dvmodel` must carry its own `li
 revision, asset hashes, and required notices before release signing.
 Every bundled pretrained weight requires review against its exact model card
 before redistribution.
+
+## C++ example bundled JSON header
+
+`example/cpp/nlohmann/json.hpp`: nlohmann/json v3.12.0, unmodified single header.
+Copyright (c) 2013-2025 Niels Lohmann. MIT license included at
+`example/cpp/nlohmann/LICENSE.MIT`. Source: https://github.com/nlohmann/json/tree/v3.12.0

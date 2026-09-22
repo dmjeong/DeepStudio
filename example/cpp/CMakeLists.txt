@@ -21,6 +21,7 @@ endif()
 # Import OpenCV targets in this directory as well: imported targets created only
 # in the runtime subdirectory are not visible to the app-local copy commands.
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/nlohmann" nlohmann)
 add_subdirectory("${DEEPVISION_RUNTIME_SOURCE}" vision EXCLUDE_FROM_ALL)
 add_executable(onnx_cpp_example main.cpp)
 add_executable(onnx_cpp_self_test self_test.cpp)

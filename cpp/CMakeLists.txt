@@ -42,7 +42,9 @@ endif()
 # Toolchain Release defaults apply (MSVC /O2, GCC/Clang -O3).
 
 # Install with apt install nlohmann-json3-dev or vcpkg install nlohmann-json:x64-windows.
-find_package(nlohmann_json 3.2.0 CONFIG REQUIRED)
+if(NOT TARGET nlohmann_json::nlohmann_json)
+    find_package(nlohmann_json 3.2.0 CONFIG REQUIRED)
+endif()
 
 # ── OpenCV 찾기 ──────────────────────────────────────
 set(VISION_OPENCV_COMPONENTS core imgproc imgcodecs)

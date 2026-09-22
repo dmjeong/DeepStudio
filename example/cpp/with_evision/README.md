@@ -6,7 +6,7 @@
 ## 기존 프로그램에 넣기
 
 1. 이 폴더의 **`classifier.h`, `bw8_preprocess.h` 두 파일**을 프로젝트에 복사한다.
-2. ONNX Runtime 1.29.0의 `include`와 nlohmann-json의 `include`를 포함 경로에 추가한다.
+2. 상위 폴더의 **`nlohmann` 폴더 전체**를 `classifier.h` 옆에 복사한다. `json.hpp`가 포함돼 있다. VS 추가 포함 디렉터리에 그 프로젝트 폴더와 ONNX Runtime 1.29.0의 `include`를 추가한다.
 3. ONNX Runtime의 `lib`를 라이브러리 경로에 추가하고 `onnxruntime.lib`를 링크한다.
 4. x64 / C++17 / UTF-8 소스(`/utf-8`), 정확한 부동소수점(`/fp:precise`)으로 빌드한다.
 5. `onnxruntime.dll`은 프로그램 EXE 옆에 둔다. 모델 JSON과 ONNX도 함께 준비한다.
@@ -68,8 +68,7 @@ Python 3.8 이상이 필요하며, CMake나 PowerShell은 필요 없다. 배치�
 
 ### 빌드 명령
 
-저장소 루트에서 PowerShell로 실행한다. ONNX Runtime SDK와 nlohmann-json은 준비돼 있어야 한다.
-nlohmann-json만 vcpkg로 설치한다면 `vcpkg install nlohmann-json:x64-windows`를 사용한다.
+저장소 루트에서 PowerShell로 실행한다. ONNX Runtime SDK가 필요하다. nlohmann-json은 예제에 포함돼 있어 별도 설치가 필요 없다.
 
 ```powershell
 cmake -S example/cpp/with_evision -B example/build-evision -G "Visual Studio 17 2022" -A x64 `

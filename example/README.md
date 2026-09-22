@@ -29,7 +29,7 @@ EfficientNet B0/B1, ResNet, ConvNeXt 등 Studio 분류 export를 사용한다.
 ## Windows 준비
 
 빌드 PC: Windows x64, Visual Studio 2022의 C++ 데스크톱 개발 도구, CMake,
-vcpkg의 `opencv4:x64-windows`와 `nlohmann-json:x64-windows`,
+vcpkg의 `opencv4:x64-windows`,
 [ONNX Runtime 1.29.0 win-x64](https://github.com/microsoft/onnxruntime/releases/tag/v1.29.0),
 C#용 .NET 8 SDK가 필요하다. 아래 명령은 **저장소 루트의 PowerShell**에서 실행한다.
 `build.bat`으로 학습툴 전체를 다시 만들 필요가 없다.
@@ -37,7 +37,7 @@ C#용 .NET 8 SDK가 필요하다. 아래 명령은 **저장소 루트의 PowerSh
 ```powershell
 $env:VCPKG_ROOT = 'C:\vcpkg'
 $env:ONNXRUNTIME_ROOT = 'C:\libs\onnxruntime-win-x64-1.29.0'
-& "$env:VCPKG_ROOT\vcpkg.exe" install opencv4:x64-windows nlohmann-json:x64-windows
+& "$env:VCPKG_ROOT\vcpkg.exe" install opencv4:x64-windows
 
 cmake -S example/cpp -B example/build -G "Visual Studio 17 2022" -A x64 `
   "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
@@ -188,3 +188,5 @@ C# 호출 시간에는 P/Invoke와 결과 복사도 포함된다. 디스크 읽�
 
 테스트 파일을 재생성할 때만 `python example/generate_test_assets.py`를 실행한다 (`onnx` 필요).
 이미 파일이 들어 있으므로 일반 빌드·실행에는 재생성이 필요 없다.
+
+C++ 예제의 JSON 헤더는 `cpp/nlohmann/json.hpp`에 포함되어 있다. 별도 다운로드나 설치가 필요 없다. 수동 프로젝트로 옮길 때 `nlohmann` 폴더도 함께 복사한다.
