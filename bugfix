@@ -1,30 +1,273 @@
-체크포인트 및 ONNX 의존성 로드
-내보내기 시작: efficientnet
-추론 최적화: {'conv_bn_fused': 69, 'channels_last': False}
-ONNX 그래프 생성: opset=17, 입력=(1, 3, 100, 100)
-ONNX Runtime 검증: 원본 체크포인트 PyTorch 출력과 비교 (atol=0.001, rtol=0.0005, probes=seeded+zero)
-고속 FP32 후보 제외 — 다른 실행 방식 검사 중: ONNX 검증 실패: 최대 오차 0.26841736 (atol=0.001, rtol=0.0005); 실패 원소 (0, 3): PyTorch=24.536543, ONNX=24.39299, 허용 오차의 10.88배; 출력 범위 PyTorch=[-179.42242, 103.32628], ONNX=[-179.50633, 103.5947]
-원본 FP32 그래프로 재시도: Conv/BN 사전 융합·상수 폴딩·단순화 제외
-원본 그래프 실행 설정 재시도: 최적화=all, CPU 4 threads
-원본 그래프 실행 설정 재시도: 최적화=basic, CPU 4 threads
-원본 그래프 실행 설정 재시도: 최적화=disabled, CPU 4 threads
-BatchNorm 계수 고정 그래프로 재시도: PyTorch 정규화 계수 보존, Conv 융합 제외
-BatchNorm 연산 방식: native_batch_norm_affine
-BatchNorm 연산 방식: native_batch_norm_affine_fma
-ONNX 수치 원인 진단: 실행 최적화·FP64·중간 레이어 비교 중
-수치 진단: PyTorch 자체도 FP32·FP64 출력이 다름. 수치 민감도 확인, 재학습 필요 여부는 미확정; 진단 그래프 최초 차이: features.4; 누적 차이 관측: features.4.2.block.0.0 (단일 연산 원인 미확정)
-내보내기 진단 저장: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\model_classify.export-error.json
+1>------ 모두 다시 빌드 시작: 프로젝트: HVision, 구성: Release x64 ------
+1>pch.cpp
+1>HandlerInterface.cpp
+1>ClientSocket.cpp
+1>CommDA.cpp
+1>CommDrv.cpp
+1>EventSocket.cpp
+1>InterfaceEthernet.cpp
+1>ListenSocket.cpp
+1>TcpipLib.cpp
+1>Lib.cpp
+1>Log.cpp
+1>Timer.cpp
+1>ParamManage.cpp
+1>SysCfg.cpp
+1>VisionParam.cpp
+1>Recipe.cpp
+1>ButtonST.cpp
+1>CeXDib.cpp
+1>ClockST.cpp
+1>CtrlComboIn.cpp
+1>CtrlEditIn.cpp
+1>CtrlGridCtrl.cpp
+1>CtrlTitleTip.cpp
+1>CxStatic.cpp
+1>DropBtn.cpp
+1>ExtendGroupBox.cpp
+1>d:\svm\src\hvision_260917\lib\communication\eventsocket.cpp(134): warning C4996: 'inet_addr': Use inet_pton() or InetPton() instead or define _WINSOCK_DEPRECATED_NO_WARNINGS to disable deprecated API warnings
+1>c:\program files (x86)\windows kits\10\include\10.0.26100.0\um\winsock2.h(1839): note: 'inet_addr' 선언을 참조하십시오.
+1>d:\svm\src\hvision_260917\lib\communication\eventsocket.cpp(143): warning C4996: 'gethostbyname': Use getaddrinfo() or GetAddrInfoW() instead or define _WINSOCK_DEPRECATED_NO_WARNINGS to disable deprecated API warnings
+1>GdipButton.cpp
+1>c:\program files (x86)\windows kits\10\include\10.0.26100.0\um\winsock2.h(2227): note: 'gethostbyname' 선언을 참조하십시오.
+1>d:\svm\src\hvision_260917\lib\communication\eventsocket.cpp(247): warning C4996: 'inet_addr': Use inet_pton() or InetPton() instead or define _WINSOCK_DEPRECATED_NO_WARNINGS to disable deprecated API warnings
+1>c:\program files (x86)\windows kits\10\include\10.0.26100.0\um\winsock2.h(1839): note: 'inet_addr' 선언을 참조하십시오.
+1>MemDC.cpp
+1>MenuBtnBarStdUI.cpp
+1>PictureEx.cpp
+1>StatBarStdUI.cpp
+1>TextProgressCtrl.cpp
+1>ThemeHelperST.cpp
+1>ToggleButton.cpp
+1>UserMemDC.cpp
+1>xSkinButton.cpp
+1>Coaxlink.cpp
+1>FGCameraLink.cpp
+1>FG_Gocator.cpp
+1>gigecamera.cpp
+1>GocatorLMI.cpp
+1>VisionLight.cpp
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\HANDLER_IF\HandlerInterface.cpp)
+1>SeVision.cpp
+1>SeVision_Learn.cpp
+1>SeVision_Lib.cpp
+1>SeVision_Recog.cpp
+1>SeVision_ROI.cpp
+1>SeVision_Thread.cpp
+1>DisplayWrapper.cpp
+1>EasyDraw.cpp
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\LIB\Communication\InterfaceEthernet.cpp)
+1>EasyRoi.cpp
+1>HandlerDraw.cpp
+1>ImgView.cpp
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\SeVision_Recog.cpp)
+1>RullerDraw.cpp
+1>ChildView.cpp
+1>DlgAlarm.cpp
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\RECIPE\Recipe.cpp)
+1>DlgBinarization.cpp
+1>DlgChangeMode.cpp
+1>DlgContentHistory.cpp
+1>DlgContentMain.cpp
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\Camera\Coaxlink.cpp)
+1>DlgContentParam.cpp
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\SeVision_ROI.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 DlgBinarization.cpp)
+1>DlgContentRecipe.cpp
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 DlgContentMain.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 DlgChangeMode.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\SeVision_Learn.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\View\EasyRoi.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\SeVision.cpp)
+1>DlgContentTeach.cpp
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\View\ImgView.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\SeVision_Thread.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\SeVision_Lib.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 DlgContentRecipe.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\View\DisplayWrapper.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 DlgContentTeach.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ChildView.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 DlgContentParam.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\Camera\FG_Gocator.cpp)
+1>c:\program files\basler\pylon 7\development\include\pylon\_basleruniversalstreamparams.h : warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\Camera\FGCameraLink.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\Camera\GocatorLMI.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\Camera\FGCameraLink.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\Camera\gigecamera.cpp)
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(511): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(514): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(515): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(516): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(517): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(518): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(519): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(521): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(522): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(523): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(525): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(543): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(568): warning C4244: '=': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1233): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1233): warning C4244: '초기화 중': 'float'에서 'const int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1234): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1234): warning C4244: '초기화 중': 'float'에서 'const int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1357): warning C4244: '=': 'int'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1358): warning C4244: '=': 'int'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1359): warning C4244: '=': 'int'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1360): warning C4244: '=': 'int'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1489): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1490): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1491): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1492): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1524): warning C4244: '인수': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1525): warning C4244: '인수': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1532): warning C4244: '=': 'int'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1533): warning C4244: '=': 'int'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1562): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1563): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1564): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1567): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1568): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1569): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1572): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1573): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1576): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1577): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1578): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1579): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1581): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1582): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1583): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1584): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1706): warning C4244: '=': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1725): warning C4244: '=': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(2215): warning C4129: 'm': 문자 이스케이프 시퀀스를 인식할 수 없습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(1258): warning C4101: 'nDeviationShift' :참조되지 않은 지역 변수입니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(2957): warning C4305: '=': 'double'에서 'float'(으)로 잘립니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3550): warning C4244: '인수': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3673): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3674): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3675): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3676): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3678): warning C4244: '인수': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3679): warning C4244: '인수': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3756): warning C4244: '=': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3757): warning C4244: '=': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3776): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3777): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3778): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3880): warning C4244: '인수': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3881): warning C4244: '인수': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3953): warning C4244: '=': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3985): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(3548): warning C4101: 'eFirstSocketPosition' :참조되지 않은 지역 변수입니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5110): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5111): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5112): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5113): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5114): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5115): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5116): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5117): warning C4244: '=': 'float'에서 'LONG'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5394): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5395): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5403): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5404): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5796): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5797): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5805): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5806): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5882): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5883): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5891): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_recog.cpp(5892): warning C4244: '=': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\camera\fg_gocator.cpp(1229): warning C4244: '초기화 중': 'kSize'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\camera\fg_gocator.cpp(1230): warning C4244: '초기화 중': 'kSize'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(115): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(147): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(148): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(149): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(151): warning C4244: '초기화 중': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(152): warning C4244: '초기화 중': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(153): warning C4244: '초기화 중': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(154): warning C4244: '초기화 중': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(163): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(244): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(245): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(259): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(260): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(261): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(262): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(265): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(266): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(267): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(337): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(338): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(339): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(340): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(381): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(382): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(383): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(384): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(386): warning C4244: '초기화 중': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(387): warning C4244: '초기화 중': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(388): warning C4244: '초기화 중': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(389): warning C4244: '초기화 중': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(398): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(399): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(400): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(401): warning C4244: '초기화 중': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(451): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(452): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(695): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(696): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3187): warning C4244: '인수': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3196): warning C4244: '인수': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3197): warning C4244: '인수': 'float'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3217): warning C4244: '=': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3138): warning C4101: 'fRStartX' :참조되지 않은 지역 변수입니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3137): warning C4101: 'ChipSize_X' :참조되지 않은 지역 변수입니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3137): warning C4101: 'ChipSize_Y' :참조되지 않은 지역 변수입니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3138): warning C4101: 'fRStartY' :참조되지 않은 지역 변수입니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3664): warning C4244: '초기화 중': 'int'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3665): warning C4244: '초기화 중': 'int'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3820): warning C4244: '초기화 중': 'double'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(3946): warning C4267: '초기화 중': 'size_t'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(4121): warning C4267: '초기화 중': 'size_t'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(4352): warning C4244: '초기화 중': 'double'에서 'int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>d:\svm\src\hvision_260917\vision\sevision_lib.cpp(4580): warning C4244: '초기화 중': '_Ty'에서 'float'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+1>        with
+1>        [
+1>            _Ty=int
+1>        ]
+1>c:\program files\basler\pylon 7\development\include\pylon\_basleruniversalstreamparams.h : warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\SeVision.cpp)
+1>c:\program files\basler\pylon 7\development\include\pylon\_basleruniversalstreamparams.h : warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 ..\VISION\SeVision_Thread.cpp)
+1>d:\svm\src\hvision_260917\vision\sevision.cpp(1549): warning C4101: 'tVisParam' :참조되지 않은 지역 변수입니다.
+1>d:\svm\src\hvision_260917\vision\sevision.cpp(1550): warning C4101: 'tLineScanVisParam' :참조되지 않은 지역 변수입니다.
+1>d:\svm\src\hvision_260917\vision\sevision.cpp(7039): warning C4101: 'e' :참조되지 않은 지역 변수입니다.
+1>DlgContentTeachSubTrayInspResult.cpp
+1>DlgInfoMsg.cpp
+1>DlgInputPPID.cpp
+1>DlgKeyBoard.cpp
+1>DlgKeypad.cpp
+1>DlgMainMenu.cpp
+1>DlgPatternSelect.cpp
+1>DlgStatusBar.cpp
+1>DlgTeachResult.cpp
+1>DlgWaitProgress.cpp
+1>HVision.cpp
+1>MainFrm.cpp
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 DlgPatternSelect.cpp)
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 DlgMainMenu.cpp)
+1>SplashScreenEx.cpp
+1>d:\svm\src\hvision_260917\onnx\include\onnxruntime_ep_c_api.h(2871): warning C4819: 현재 코드 페이지(949)에서 표시할 수 없는 문자가 파일에 들어 있습니다. 데이터가 손실되지 않게 하려면 해당 파일을 유니코드 형식으로 저장하십시오. (소스 파일 컴파일 중 DlgStatusBar.cpp)
+1>LINK : warning LNK4075: '/INCREMENTAL'이(가) '/LTCG' 사양으로 인해 무시됩니다.
+1>SeVision_Recog.obj : error LNK2001: OrtGetApiBase 외부 기호를 확인할 수 없습니다.
+1>D:\SVM\CLT\BIN\HVision.exe : fatal error LNK1120: 1개의 확인할 수 없는 외부 참조입니다.
+1>"HVision.vcxproj" 프로젝트를 빌드했습니다. - 실패
+========== 모두 다시 빌드: 성공 0, 실패 1, 생략 0 ==========
 
-오류: ONNX 내보내기 실패 [수치 진단: PyTorch 자체도 FP32·FP64 출력이 다름. 수치 민감도 확인, 재학습 필요 여부는 미확정; 진단 그래프 최초 차이: features.4; 누적 차이 관측: features.4.2.block.0.0 (단일 연산 원인 미확정)]: 최적화·원본 그래프 및 실행 설정 모두 ONNX 검증 실패.
-최적화: ONNX 검증 실패: 최대 오차 0.26841736 (atol=0.001, rtol=0.0005); 실패 원소 (0, 3): PyTorch=24.536543, ONNX=24.39299, 허용 오차의 10.88배; 출력 범위 PyTorch=[-179.42242, 103.32628], ONNX=[-179.50633, 103.5947]
-원본 FP32: ONNX 검증 실패: 최대 오차 0.48661804 (atol=0.001, rtol=0.0005); 실패 원소 (0, 3): PyTorch=24.536543, ONNX=24.27272, 허용 오차의 20.08배; 출력 범위 PyTorch=[-179.42242, 103.32628], ONNX=[-179.5941, 103.8129]
-실행 설정 재시도:
-unfused_fp32/all/4 threads/seeded: ONNX 검증 실패: 최대 오차 0.48661804 (atol=0.001, rtol=0.0005); 실패 원소 (0, 3): PyTorch=24.536543, ONNX=24.27272, 허용 오차의 20.08배; 출력 범위 PyTorch=[-179.42242, 103.32628], ONNX=[-179.5941, 103.8129]
-unfused_fp32/basic/4 threads/seeded: ONNX 검증 실패: 최대 오차 0.25367737 (atol=0.001, rtol=0.0005); 실패 원소 (0, 3): PyTorch=24.536543, ONNX=24.405518, 허용 오차의 9.924배; 출력 범위 PyTorch=[-179.42242, 103.32628], ONNX=[-179.52577, 103.57996]
-unfused_fp32/disabled/4 threads/seeded: ONNX 검증 실패: 최대 오차 0.078231812 (atol=0.001, rtol=0.0005); 실패 원소 (0, 3): PyTorch=24.536543, ONNX=24.495605, 허용 오차의 3.09배; 출력 범위 PyTorch=[-179.42242, 103.32628], ONNX=[-179.4594, 103.40451]
-native_batch_norm_affine/disabled/4 threads/seeded: ONNX 검증 실패: 최대 오차 0.078231812 (atol=0.001, rtol=0.0005); 실패 원소 (0, 3): PyTorch=24.536543, ONNX=24.495605, 허용 오차의 3.09배; 출력 범위 PyTorch=[-179.42242, 103.32628], ONNX=[-179.4594, 103.40451]
-native_batch_norm_affine/disabled/1 threads/seeded: ONNX 검증 실패: 최대 오차 0.16532898 (atol=0.001, rtol=0.0005); 실패 원소 (0, 3): PyTorch=24.536543, ONNX=24.443298, 허용 오차의 7.052배; 출력 범위 PyTorch=[-179.42242, 103.32628], ONNX=[-179.48869, 103.49161]
-native_batch_norm_affine_fma/disabled/4 threads/seeded: ONNX 검증 실패: 최대 오차 0.22941589 (atol=0.001, rtol=0.0005); 실패 원소 (0, 3): PyTorch=24.536543, ONNX=24.401474, 허용 오차의 10.23배; 출력 범위 PyTorch=[-179.42242, 103.32628], ONNX=[-179.51086, 103.55569]
-native_batch_norm_affine_fma/disabled/1 threads/seeded: ONNX 검증 실패: 최대 오차 0.20674133 (atol=0.001, rtol=0.0005); 실패 원소 (0, 3): PyTorch=24.536543, ONNX=24.405777, 허용 오차의 9.904배; 출력 범위 PyTorch=[-179.42242, 103.32628], ONNX=[-179.49721, 103.53302]
-수치 진단: PyTorch 자체도 FP32·FP64 출력이 다름. 수치 민감도 확인, 재학습 필요 여부는 미확정; 진단 그래프 최초 차이: features.4; 누적 차이 관측: features.4.2.block.0.0 (단일 연산 원인 미확정)
-상세 진단 파일: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\model_classify.export-error.json
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
++++                 Please consider donating to VSColorOutput                    +++
++++                        http://mike-ward.net/donate/                          +++
++++            (this message can be turned off in the settings panel)            +++
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
