@@ -1,6 +1,6 @@
-// C++17: one session, repeated classification, and a real ONNX self-test.
-#include "vision_inference.h"
-#include <opencv2/imgcodecs.hpp>
+// C++17: no command-line arguments. Edit these settings, then run the EXE.
+#include "example_paths.h"
+#include "classifier.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -11,51 +11,30 @@
 #include <string>
 #include <vector>
 
-int main(int argc, char** argv) {
+int main() {
     try {
-        const bool self_test = argc == 3 && std::string(argv[1]) == "--self-test";
-        if (!self_test && (argc < 3 || argc > 4)) {
-            std::cerr << "Usage: onnx_cpp_example <model.json> <image> [runs=20]\n"
-                         "       onnx_cpp_example --self-test <example/assets>\n";
-            return 2;
-        }
-        const auto assets = std::filesystem::u8path(argv[2]);
-        const auto config = self_test ? (assets / "test.json").u8string() : argv[1];
-        const auto image_path = self_test ? (assets / "white.pgm").u8string() : argv[2];
-        int runs = 20;
-        if (!self_test && argc == 4) {
-            std::size_t used = 0;
-            runs = std::stoi(argv[3], &used);
-            if (used != std::string(argv[3]).size()) throw std::invalid_argument("Invalid runs");
-        }
+        // Change only these three values for your exported classification model.
+        // Absolute paths also work: std::filesystem::u8path(u8"C:/모델/model.json")
+        const auto model_json = std::filesystem::u8path(u8"assets/test.json");
+        const auto image_file = std::filesystem::u8path(u8"assets/white.pgm");
+        const int runs = 20;
         if (runs < 1 || runs > 10000) throw std::invalid_argument("runs must be 1..10000");
-
-        // Open JSON beside the ONNX. It carries preprocessing, classes and the
-        // graph optimization/thread settings that passed export verification.
-        VisionInference session;
-        if (!session.InitializeFromJson(config, "onnxruntime"))
-            throw std::runtime_error("Model/JSON load failed (see native error above)");
-        if (session.GetConfig().task != "classify")
-            throw std::runtime_error("This example expects a classification export");
-        const cv::Mat image = cv::imread(image_path, cv::IMREAD_UNCHANGED);
-        if (image.empty()) throw std::runtime_error("Image load failed: " + image_path);
-        if (image.depth() != CV_8U) throw std::runtime_error("Use an 8-bit image");
+        const auto base = example::ExecutableDirectory();
+        std::cout << "ONNX Runtime " << OrtGetApiBase()->GetVersionString() << std::endl;
+        example::Classifier session(base / model_json); // load once
+        const cv::Mat image = example::ReadImage(base / image_file);
         // Supply original GRAY/BGR/BGRA pixels; the SDK resizes and normalizes.
-        for (int i = 0; i < 3; ++i) session.Classify(image);
+        for (int i = 0; i < 3; ++i) session.Infer(image);
         std::vector<double> times;
         double pre = 0, model = 0, post = 0;
         ClassifyResult result;
         for (int i = 0; i < runs; ++i) {
             const auto start = std::chrono::steady_clock::now();
-            result = session.Classify(image);
+            result = session.Infer(image);
             times.push_back(std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - start).count());
             if (result.class_id < 0 || !std::isfinite(result.confidence))
                 throw std::runtime_error("Invalid inference result");
-            if (self_test && (result.class_id != 0 || result.probabilities.size() != 2 ||
-                std::abs(result.probabilities[0] - 0.88079708f) > 0.00001f ||
-                std::abs(result.probabilities[1] - 0.11920292f) > 0.00001f))
-                throw std::runtime_error("Self-test output mismatch; check SDK/runtime settings");
             pre += result.preprocess_ms;
             model += result.model_ms;
             post += result.postprocess_ms;
@@ -68,7 +47,6 @@ int main(int argc, char** argv) {
                   << " model_ms=" << model / runs << " postprocess_ms=" << post / runs
                   << " call_p50_ms=" << times[(runs - 1) / 2]
                   << " call_p95_ms=" << times[static_cast<int>(std::ceil(runs * .95)) - 1] << '\n';
-        if (self_test) std::cout << "PASS: ONNX load, inference and saved runtime settings\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

@@ -263,7 +263,7 @@ jobs:
       - name: Build and execute the public C++17 example
         run: |
           cmake -S example/cpp -B example/build -DCMAKE_BUILD_TYPE=Release -DONNXRUNTIME_ROOT="$RUNNER_TEMP/onnxruntime-linux-x64-1.29.0"
-          cmake --build example/build --target onnx_cpp_example --parallel 2
+          cmake --build example/build --target onnx_cpp_example onnx_cpp_self_test --parallel 2
           ctest --test-dir example/build --output-on-failure
 
   tag-release:

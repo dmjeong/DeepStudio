@@ -20,10 +20,35 @@ if(NOT EXISTS "${DEEPVISION_RUNTIME_SOURCE}/CMakeLists.txt")
 endif()
 add_subdirectory("${DEEPVISION_RUNTIME_SOURCE}" vision EXCLUDE_FROM_ALL)
 add_executable(onnx_cpp_example main.cpp)
-target_link_libraries(onnx_cpp_example PRIVATE vision_inference)
-if(MSVC)
-    target_compile_options(onnx_cpp_example PRIVATE /utf-8)
+add_executable(onnx_cpp_self_test self_test.cpp)
+if(WIN32)
+    # PATH is searched after Windows system directories. Put the matching ORT
+    # DLL next to each EXE so a system/other application's ORT is never selected.
+    get_filename_component(_ort_lib_dir "${ONNXRUNTIME_LIB}" DIRECTORY)
+    find_file(EXAMPLE_ORT_DLL NAMES onnxruntime.dll
+        PATHS "${_ort_lib_dir}" "${_ort_lib_dir}/../bin"
+              "${ONNXRUNTIME_ROOT}/lib" "${ONNXRUNTIME_ROOT}/bin" NO_DEFAULT_PATH)
+    if(NOT EXAMPLE_ORT_DLL)
+        message(FATAL_ERROR "Matching onnxruntime.dll not found. Set ONNXRUNTIME_ROOT to the extracted Windows SDK.")
+    endif()
 endif()
+foreach(target onnx_cpp_example onnx_cpp_self_test)
+    target_link_libraries(${target} PRIVATE vision_inference)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /utf-8)
+    endif()
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_LIST_DIR}/../assets"
+            "$<TARGET_FILE_DIR:${target}>/assets")
+    if(WIN32)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${EXAMPLE_ORT_DLL}"
+                "$<TARGET_FILE_DIR:${target}>/onnxruntime.dll")
+    endif()
+endforeach()
 enable_testing()
-add_test(NAME onnx_example_self_test COMMAND onnx_cpp_example
-    --self-test "${CMAKE_CURRENT_LIST_DIR}/../assets")
+add_test(NAME onnx_example_no_args COMMAND onnx_cpp_example)
+add_test(NAME onnx_example_self_test COMMAND onnx_cpp_self_test)
+# Intentionally run away from the EXE/assets directory, just like a host app/IDE.
+set_tests_properties(onnx_example_no_args onnx_example_self_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}" TIMEOUT 60)
