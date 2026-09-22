@@ -1,5 +1,14 @@
 # C++17 / C# ONNX 로딩·추론 예제
 
+**C++ 입력 방식에 따라 둘 중 하나를 선택한다.** 둘 다 시작 시 준비 추론을 1회 수행한다.
+
+| 버전 | 입력 | OpenCV 필요 | 사용법 |
+|---|---|---|---|
+| `cpp/with_opencv` | `cv::Mat` / 이미지 파일 | 예 | [OpenCV용](cpp/with_opencv/README.md) |
+| `cpp/with_evision` | eVision BW8 객체 / 버퍼 포인터 | 아니요 | [eVision용](cpp/with_evision/README.md) |
+
+**아래 기존 C++ 설명은 OpenCV 버전이다. eVision은 위 전용 사용법을 따른다.**
+
 앱에서 내보낸 **분류 모델의 `.json`** 경로로 시작한다. 같은 폴더의 `.onnx`를 자동으로
 읽고 전처리·클래스 이름·검증된 ONNX Runtime 최적화 및 스레드 설정을 적용한다.
 EfficientNet B0/B1, ResNet, ConvNeXt 등 Studio 분류 export를 사용한다.

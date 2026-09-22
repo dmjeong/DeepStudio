@@ -1,0 +1,44 @@
+{
+  "schema_version": 6,
+  "backend": "custom",
+  "task": "classify",
+  "model_path": "bw8_rgb.onnx",
+  "num_classes": 2,
+  "class_names": [
+    "white",
+    "other"
+  ],
+  "input_channels": 3,
+  "input_height": 224,
+  "input_width": 224,
+  "input_name": "input_image",
+  "output_name": "class_logits",
+  "normalize_mean": [
+    0.1,
+    0.2,
+    0.3
+  ],
+  "normalize_std": [
+    0.5,
+    0.6,
+    0.7
+  ],
+  "num_threads": 1,
+  "onnxruntime": {
+    "graph_optimization_level": "disabled"
+  },
+  "cpp_supported": true,
+  "preprocessing": {
+    "resize_implementation": "opencv_linear_exact_v1",
+    "resize": "bilinear",
+    "interpolation": "INTER_LINEAR_EXACT",
+    "antialias": false,
+    "layout": "NCHW",
+    "value_scale": 255.0,
+    "color_order": "RGB",
+    "center_crop": {
+      "width": 17,
+      "height": 13
+    }
+  }
+}

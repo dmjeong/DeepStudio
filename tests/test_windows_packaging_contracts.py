@@ -111,6 +111,11 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     (examples / "cpp" / "main.cpp").write_text("int main() {}", encoding="utf-8")
     for name in ("classifier.h", "example_paths.h", "self_test.cpp"):
         (examples / "cpp" / name).write_text("example code", encoding="utf-8")
+    for name in ("with_opencv/CMakeLists.txt", "with_evision/CMakeLists.txt",
+                 "with_evision/classifier.h", "with_evision/bw8_preprocess.h"):
+        path = examples / "cpp" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("example code", encoding="utf-8")
     (examples / "csharp" / "OnnxExample.csproj").write_text("project", encoding="utf-8")
     (examples / "csharp" / "Program.cs").write_text("code", encoding="utf-8")
     (cpp / "CMakeLists.txt").write_text("runtime", encoding="utf-8")
@@ -127,6 +132,8 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     )
     assert {item.name for item in payload.iterdir()} == {"app", "Examples", "THIRD_PARTY_NOTICES.md"}
     assert (payload / "Examples/cpp/vision-runtime/src/vision_inference.cpp").is_file()
+    assert (payload / "Examples/cpp/with_evision/bw8_preprocess.h").is_file()
+    assert (payload / "Examples/cpp/with_opencv/CMakeLists.txt").is_file()
     for name in ("classifier.h", "example_paths.h", "self_test.cpp"):
         assert (payload / "Examples/cpp" / name).read_text(encoding="utf-8") == "example code"
     assert (payload / "Examples/csharp/vision-runtime/VisionRuntime.cs").is_file()

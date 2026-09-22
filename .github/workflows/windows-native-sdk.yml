@@ -114,7 +114,7 @@ jobs:
         shell: pwsh
         run: |
           $deps = $env:EXAMPLE_DEPS
-          cmake -S example/cpp -B example/build -G "Visual Studio 17 2022" -A x64 `
+          cmake -S example/cpp/with_opencv -B example/build -G "Visual Studio 17 2022" -A x64 `
             "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" `
             "-DOpenCV_DIR=$deps/opencv/build" "-DCMAKE_PREFIX_PATH=$deps/json-install"
           if ($LASTEXITCODE -ne 0) { throw "Example configure failed" }
@@ -123,6 +123,28 @@ jobs:
           # No DLL PATH override: the EXE must work with its own runtime files.
           ctest --test-dir example/build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "Argument-free ONNX execution failed" }
+      - name: Build BW8 pointer example without OpenCV
+        shell: pwsh
+        run: |
+          $deps = $env:EXAMPLE_DEPS
+          cmake -S example/cpp/with_evision -B example/build-bw8 -G "Visual Studio 17 2022" -A x64 `
+            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" "-DCMAKE_PREFIX_PATH=$deps/json-install"
+          if ($LASTEXITCODE -ne 0) { throw "BW8 configure failed" }
+          cmake --build example/build-bw8 --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "BW8 build failed" }
+          if (Get-ChildItem example/build-bw8/Release -Filter '*opencv*.dll') { throw "BW8 must not deploy OpenCV" }
+          ctest --test-dir example/build-bw8 -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "BW8 inference failed" }
+      - name: Compare BW8 preprocessing against OpenCV on Windows
+        shell: pwsh
+        run: |
+          cmake -S example/cpp/with_evision -B example/build-bw8 -DEVISION_CHECK_OPENCV_PARITY=ON `
+            "-DOpenCV_DIR=$env:EXAMPLE_DEPS/opencv/build"
+          if ($LASTEXITCODE -ne 0) { throw "Parity configure failed" }
+          cmake --build example/build-bw8 --config Release --target evision_preprocess_parity --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Parity build failed" }
+          ctest --test-dir example/build-bw8 -C Release -R evision_preprocessing_parity --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "BW8 preprocessing differs from export contract" }
 
   csharp-sdk:
     runs-on: windows-latest
