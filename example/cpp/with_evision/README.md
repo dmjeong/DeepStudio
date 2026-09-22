@@ -53,19 +53,18 @@ auto result = model.InferBW8(
 아래 CMake 빌드 명령의 생성기를 `"Visual Studio 15 2017"`로 바꾸고 **새 빌드 폴더**를
 사용하면 호환용 헤더가 자동 생성된다. SDK 원본이나 DLL은 수정하지 않는다.
 
-**기존 VS 프로젝트에 두 헤더를 직접 복사해서 사용하는 경우**, 저장소 루트에서 한 번 실행한다.
-경로는 자신의 SDK 위치로 바꾼다. CMake가 PATH에 있어야 한다.
+**기존 VS 프로젝트에서는 명령어를 입력할 필요 없이 다음 순서로 진행한다.**
 
-```powershell
-cmake "-DORT_INCLUDE=C:/libs/onnxruntime-win-x64-1.29.0/include" `
-  "-DORT_OUTPUT=C:/libs/ort-v141-include" -P cpp/include/ort_vs2017.cmake
-```
+1. `example/cpp/setup_vs2017.bat`을 더블클릭한다.
+2. ONNX Runtime SDK 폴더(예: `C:/libs/onnxruntime-win-x64-1.29.0`)를 붙여넣고 Enter를 누른다. `include` 폴더를 넣어도 된다.
+3. 생성이 완료되면 화면에 표시되는 `include-vs2017` 경로를 복사한다.
+4. VS의 **C/C++ → 일반 → 추가 포함 디렉터리**에 기존 ONNX include보다 앞에 넣고 **솔루션 다시 빌드**한다.
 
-VS의 **C/C++ → 일반 → 추가 포함 디렉터리**에서 ONNX Runtime include 경로를
-`C:/libs/ort-v141-include`로 바꾼다. 기존 SDK include 경로보다 반드시 앞에 둔다.
-미리 컴파일된 헤더를 포함해 **솔루션 다시 빌드**한다. `onnxruntime.lib`와 DLL은
-같은 SDK의 기존 파일을 계속 사용한다. 설치본에서는 스크립트가
-`Examples/cpp/vision-runtime/include/ort_vs2017.cmake`에 있다.
+Python 3.8 이상이 필요하며, CMake나 PowerShell은 필요 없다. 배치파일은 같은 폴더의
+`setup_vs2017.py`를 실행한다. Python 실행 환경이 이미 있으면 `.py`를 직접 실행해도 된다.
+원본 SDK를 보존하고 같은 SDK 안의 별도 `include-vs2017` 폴더에 호환용 헤더를 만든다.
+`onnxruntime.lib`와 DLL은 기존 SDK 파일을 사용한다. 설치본에서도
+`Examples/cpp/setup_vs2017.bat`과 `.py`를 함께 제공한다.
 
 ### 빌드 명령
 

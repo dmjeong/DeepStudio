@@ -109,7 +109,7 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     (examples / "assets" / "test.onnx").write_bytes(b"onnx")
     (examples / "cpp" / "CMakeLists.txt").write_text("cmake", encoding="utf-8")
     (examples / "cpp" / "main.cpp").write_text("int main() {}", encoding="utf-8")
-    for name in ("classifier.h", "example_paths.h", "self_test.cpp"):
+    for name in ("classifier.h", "example_paths.h", "self_test.cpp", "setup_vs2017.bat", "setup_vs2017.py"):
         (examples / "cpp" / name).write_text("example code", encoding="utf-8")
     for name in ("with_opencv/CMakeLists.txt", "with_evision/CMakeLists.txt",
                  "with_evision/classifier.h", "with_evision/bw8_preprocess.h"):
@@ -136,7 +136,7 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     assert (payload / "Examples/cpp/with_evision/bw8_preprocess.h").is_file()
     assert (payload / "Examples/cpp/with_opencv/CMakeLists.txt").is_file()
     assert (payload / "Examples/cpp/vision-runtime/include/ort_vs2017.cmake").read_text(encoding="utf-8") == "compatibility script"
-    for name in ("classifier.h", "example_paths.h", "self_test.cpp"):
+    for name in ("classifier.h", "example_paths.h", "self_test.cpp", "setup_vs2017.bat", "setup_vs2017.py"):
         assert (payload / "Examples/cpp" / name).read_text(encoding="utf-8") == "example code"
     assert (payload / "Examples/csharp/vision-runtime/VisionRuntime.cs").is_file()
     simple["validate_simple_payload"](payload)
