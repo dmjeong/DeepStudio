@@ -1,5 +1,7 @@
 #pragma once
 #if defined(_MSC_VER)
+// Manual VS projects must also add the SDK lib folder to the library search path.
+#pragma comment(lib, "onnxruntime.lib")
 #if _MSC_VER < 1916
 #error Use Visual Studio 2017 15.9 (v141 14.16) or newer.
 #endif

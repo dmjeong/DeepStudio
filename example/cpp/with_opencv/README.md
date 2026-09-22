@@ -30,3 +30,15 @@ ctest --test-dir example/build-opencv -C Release --output-on-failure
 
 모델/이미지 경로는 상위 `cpp/main.cpp`에서 지정하며 실행 인자는 없다.
 EXE 옆에 복사된 DLL들과 JSON/ONNX를 함께 배포한다.
+
+## 기존 Visual Studio 프로젝트에서 LNK2001: OrtGetApiBase가 나올 때
+
+프로젝트 속성 위쪽에서 **모든 구성**, 플랫폼 **x64**를 선택한다.
+- **링커 → 일반 → 추가 라이브러리 디렉터리**: `onnxruntime.lib`가 실제 들어 있는 폴더를 추가한다.
+- **링커 → 입력 → 추가 종속성**: `onnxruntime.lib`를 추가한다. 최신 classifier.h에는 자동 지정도 들어 있다.
+- 기존 항목을 지우지 말고 추가하고, Debug와 Release를 각각 다시 빌드한다.
+
+예를 들어 파일이 `D:/SVM/SRC/HVision_260917/onnx/lib/onnxruntime.lib`라면 추가할 폴더는
+`D:/SVM/SRC/HVision_260917/onnx/lib`다. 실제 파일 위치가 다르면 그 위치를 사용한다.
+Debug/Release 모두 같은 공식 x64 ONNX Runtime import library를 사용한다.
+실행 시에는 같은 SDK의 `onnxruntime.dll`을 EXE 옆에 둔다. DLL을 두는 것만으로 링크 오류는 해결되지 않는다.
