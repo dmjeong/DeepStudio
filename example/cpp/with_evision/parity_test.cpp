@@ -24,11 +24,16 @@ int main() {
                 pre.Run({pixels.data(), w, h, stride}, actual);
                 cv::Mat src(h, w, CV_8UC1, pixels.data(), stride), resized;
                 if (cw) src = src(cv::Rect((w - cw) / 2, (h - ch) / 2, cw, ch));
+                if (channels == 3) {
+                    cv::Mat rgb;
+                    cv::cvtColor(src, rgb, cv::COLOR_GRAY2RGB);
+                    src = rgb;
+                }
                 cv::resize(src, resized, cv::Size(dw, dh), 0, 0, cv::INTER_LINEAR_EXACT);
                 for (int c = 0; c < channels; ++c)
                     for (int y = 0; y < dh; ++y)
                         for (int x = 0; x < dw; ++x) {
-                            const float expected = (resized.at<uint8_t>(y, x) / 255.0f - mean[c]) / stddev[c];
+                            const float expected = (resized.ptr<uint8_t>(y)[x * channels + c] / 255.0f - mean[c]) / stddev[c];
                             if (std::abs(expected - actual[(c * dh + y) * dw + x]) > 1e-6f)
                                 throw std::runtime_error("Preprocess mismatch at case " + std::to_string(k));
                         }
