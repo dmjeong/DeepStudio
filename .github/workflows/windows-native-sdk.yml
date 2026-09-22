@@ -77,27 +77,32 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare official C++ SDK dependencies
+      - name: Download official C++ SDK dependencies
         shell: pwsh
         run: |
           $deps = Join-Path $env:RUNNER_TEMP "example-deps"
           New-Item -ItemType Directory -Force $deps | Out-Null
           curl.exe --fail --location --retry 3 "https://github.com/opencv/opencv/releases/download/4.12.0/opencv-4.12.0-windows.exe" -o "$deps\opencv.exe"
           if ($LASTEXITCODE -ne 0) { throw "OpenCV download failed" }
-          7z x "$deps\opencv.exe" "-o$deps" -y | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "OpenCV extraction failed" }
           curl.exe --fail --location --retry 3 "https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-win-x64-1.29.0.zip" -o "$deps\ort.zip"
           if ($LASTEXITCODE -ne 0) { throw "ONNX Runtime download failed" }
-          Expand-Archive "$deps\ort.zip" -DestinationPath $deps
           curl.exe --fail --location --retry 3 "https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz" -o "$deps\json.tar.xz"
           if ($LASTEXITCODE -ne 0) { throw "JSON SDK download failed" }
+          "EXAMPLE_DEPS=$deps" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Extract and configure C++ SDK dependencies
+        shell: pwsh
+        run: |
+          $deps = $env:EXAMPLE_DEPS
+          # Skip the large source/docs tree; this job only needs the binary SDK.
+          7z x "$deps\opencv.exe" "-o$deps" "opencv/build/*" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "OpenCV extraction failed" }
+          Expand-Archive "$deps\ort.zip" -DestinationPath $deps
           tar -xf "$deps\json.tar.xz" -C $deps
           if ($LASTEXITCODE -ne 0) { throw "JSON SDK extraction failed" }
           cmake -S "$deps\json" -B "$deps\json-build" -DJSON_BuildTests=OFF "-DCMAKE_INSTALL_PREFIX=$deps/json-install"
           if ($LASTEXITCODE -ne 0) { throw "JSON SDK configure failed" }
           cmake --install "$deps\json-build"
           if ($LASTEXITCODE -ne 0) { throw "JSON SDK install failed" }
-          "EXAMPLE_DEPS=$deps" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Build and run C++17 ONNX without arguments
         shell: pwsh
         run: |
