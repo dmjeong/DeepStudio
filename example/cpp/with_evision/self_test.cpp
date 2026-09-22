@@ -18,12 +18,23 @@ struct BW8View {
     int GetColPitch() const { return 1; }
     int bits = 8;
 };
+// ROI beginning inside the parent image; row pitch remains the parent's pitch.
+struct ROIView : BW8View {
+    int GetWidth() const { return 53; }
+    int GetHeight() const { return 31; }
+    void* GetImagePtr(int x, int y) { return data.data() + (7 + y) * 240 + 13 + x; }
+};
 int main() {
     try {
         const auto path = example::ExecutableDirectory() / "assets/test.json";
         BW8View image;
         dvs_bw8::Classifier model(path);
         Check(std::isfinite(model.WarmupMilliseconds()));
+        ROIView roi;
+        std::fill(roi.data.begin(), roi.data.end(), 0);
+        for (int y = 0; y < roi.GetHeight(); ++y)
+            std::fill_n(static_cast<uint8_t*>(roi.GetImagePtr(0, y)), roi.GetWidth(), 255);
+        Check(model.InferEvision(roi).class_id == 0);
         for (int i = 0; i < 20; ++i) {
             const auto result = model.InferEvision(image);
             Check(result.class_id == 0 && result.class_name == "white" &&

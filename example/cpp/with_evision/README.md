@@ -5,6 +5,42 @@
 
 ## 기존 프로그램에 넣기
 
+### 이미 있는 EROIBW8을 입력하기
+
+`roi_example.h`는 실제 Open eVision의 **EROIBW8 참조를 받는 예제**다.
+기존 eVision 프로젝트에 `classifier.h`, `bw8_preprocess.h`, `roi_example.h`와
+상위 폴더의 `nlohmann` 폴더를 함께 복사한다. 기존 eVision 헤더·라이브러리 설정은 필요하다.
+
+```cpp
+#include "roi_example.h"
+
+// 프로그램 시작 시 생성하고 멤버 변수 등으로 계속 보관한다.
+// 생성자에서 모델 로드와 준비 추론 1회를 완료한다.
+EvisionRoiExample inspector(L"C:/models/model.json");
+
+// 검사할 때: myRoi는 프로그램에서 이미 사용하는 EROIBW8 객체다.
+auto result = inspector.Inspect(myRoi);
+// 클래스 번호: result.class_id
+// 클래스 이름: result.class_name
+// 신뢰도(0~1): result.confidence
+// 전처리 + 추론 + 후처리 시간(ms): result.inference_ms
+```
+
+`EROIBW8*` 포인터라면 null 여부를 확인한 후 `inspector.Inspect(*myRoi)`로 호출한다.
+ROI 위치와 크기는 전달한 객체의 값을 그대로 사용하며, ROI의 첫 픽셀과 실제 행 간격으로
+읽는다. 호출이 끝날 때까지 부모 이미지가 유효하고 카메라가 버퍼를 덮어쓰지 않아야 한다.
+ROI를 모델 입력 크기로 직접 바꿀 필요는 없다. 내보낸 JSON에 맞춰 내부에서 전처리한다.
+
+`roi_example.cpp`는 **이미지 로드 → ROI Attach/SetPlacement → ROI 추론**까지 포함한
+별도 실행 예제다. 경로와 ROI 좌표를 바꿔 사용한다. 기존 MFC 프로젝트에는 이 파일의
+`main()`을 추가하지 말고 위의 생성·검사 호출을 옮긴다. `main.cpp`는 SDK 없이 실행하는
+합성 버퍼 테스트이며 실제 ROI 사용 예제는 `roi_example.cpp`다.
+
+실제 Open eVision SDK가 없는 자동 테스트 환경에서는 이 두 파일의 SDK 빌드를 검증하지 않는다.
+API 사용은 [Euresys 공식 예제](https://documentation.euresys.com/products/open_evision/open_evision_22_04/en-us/content/11_Pdf/D124ET-Using_Matching_and_Measurement_Tools_C%2B%2B-Open_eVision-22.04.0.1166.pdf)의 ROI 연결 방식을 따른다.
+
+### 공통 파일과 링크 설정
+
 1. 이 폴더의 **`classifier.h`, `bw8_preprocess.h` 두 파일**을 프로젝트에 복사한다.
 2. 상위 폴더의 **`nlohmann` 폴더 전체**를 `classifier.h` 옆에 복사한다. `json.hpp`가 포함돼 있다. VS 추가 포함 디렉터리에 그 프로젝트 폴더와 ONNX Runtime 1.29.0의 `include`를 추가한다.
 3. ONNX Runtime의 `lib`를 라이브러리 경로에 추가하고 `onnxruntime.lib`를 링크한다.

@@ -38,6 +38,8 @@ _REQUIRED_FILES = frozenset({
     "Examples/cpp/with_opencv/CMakeLists.txt",
     "Examples/cpp/with_evision/classifier.h",
     "Examples/cpp/with_evision/bw8_preprocess.h",
+    "Examples/cpp/with_evision/roi_example.h",
+    "Examples/cpp/with_evision/roi_example.cpp",
     "Examples/cpp/with_evision/CMakeLists.txt",
     "Examples/cpp/vision-runtime/CMakeLists.txt",
     "Examples/cpp/vision-runtime/include/vision_inference.h",
