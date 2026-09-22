@@ -44,6 +44,18 @@ foreach(target onnx_cpp_example onnx_cpp_self_test)
         add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${EXAMPLE_ORT_DLL}"
                 "$<TARGET_FILE_DIR:${target}>/onnxruntime.dll")
+        # Also support the official prebuilt OpenCV SDK without vcpkg's app-local
+        # hook. Its component targets resolve to the shared opencv_world DLL.
+        foreach(opencv_target IN LISTS OpenCV_LIBS)
+            if(TARGET ${opencv_target})
+                get_target_property(_opencv_type ${opencv_target} TYPE)
+                if(_opencv_type STREQUAL "SHARED_LIBRARY")
+                    add_custom_command(TARGET ${target} POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "$<TARGET_FILE:${opencv_target}>" "$<TARGET_FILE_DIR:${target}>")
+                endif()
+            endif()
+        endforeach()
     endif()
 endforeach()
 enable_testing()

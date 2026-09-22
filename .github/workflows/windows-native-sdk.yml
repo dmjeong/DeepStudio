@@ -70,6 +70,48 @@ permissions:
   contents: read
 
 jobs:
+  cpp-example-windows:
+    # The public example must not wait for the 40+ minute vcpkg/full GUI build.
+    # Use official binary SDKs, with the same ORT/OpenCV versions as that build.
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare official C++ SDK dependencies
+        shell: pwsh
+        run: |
+          $deps = Join-Path $env:RUNNER_TEMP "example-deps"
+          New-Item -ItemType Directory -Force $deps | Out-Null
+          curl.exe --fail --location --retry 3 "https://github.com/opencv/opencv/releases/download/4.12.0/opencv-4.12.0-windows.exe" -o "$deps\opencv.exe"
+          if ($LASTEXITCODE -ne 0) { throw "OpenCV download failed" }
+          7z x "$deps\opencv.exe" "-o$deps" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "OpenCV extraction failed" }
+          curl.exe --fail --location --retry 3 "https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-win-x64-1.29.0.zip" -o "$deps\ort.zip"
+          if ($LASTEXITCODE -ne 0) { throw "ONNX Runtime download failed" }
+          Expand-Archive "$deps\ort.zip" -DestinationPath $deps
+          curl.exe --fail --location --retry 3 "https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz" -o "$deps\json.tar.xz"
+          if ($LASTEXITCODE -ne 0) { throw "JSON SDK download failed" }
+          tar -xf "$deps\json.tar.xz" -C $deps
+          if ($LASTEXITCODE -ne 0) { throw "JSON SDK extraction failed" }
+          cmake -S "$deps\json" -B "$deps\json-build" -DJSON_BuildTests=OFF "-DCMAKE_INSTALL_PREFIX=$deps/json-install"
+          if ($LASTEXITCODE -ne 0) { throw "JSON SDK configure failed" }
+          cmake --install "$deps\json-build"
+          if ($LASTEXITCODE -ne 0) { throw "JSON SDK install failed" }
+          "EXAMPLE_DEPS=$deps" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build and run C++17 ONNX without arguments
+        shell: pwsh
+        run: |
+          $deps = $env:EXAMPLE_DEPS
+          cmake -S example/cpp -B example/build -G "Visual Studio 17 2022" -A x64 `
+            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" `
+            "-DOpenCV_DIR=$deps/opencv/build" "-DCMAKE_PREFIX_PATH=$deps/json-install"
+          if ($LASTEXITCODE -ne 0) { throw "Example configure failed" }
+          cmake --build example/build --config Release --target onnx_cpp_example onnx_cpp_self_test --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Example build failed" }
+          # No DLL PATH override: the EXE must work with its own runtime files.
+          ctest --test-dir example/build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "Argument-free ONNX execution failed" }
+
   csharp-sdk:
     runs-on: windows-latest
     defaults:
