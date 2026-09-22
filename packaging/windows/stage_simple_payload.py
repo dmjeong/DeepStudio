@@ -36,6 +36,7 @@ _REQUIRED_FILES = frozenset({
     "Examples/cpp/with_evision/CMakeLists.txt",
     "Examples/cpp/vision-runtime/CMakeLists.txt",
     "Examples/cpp/vision-runtime/include/vision_inference.h",
+    "Examples/cpp/vision-runtime/include/ort_vs2017.cmake",
     "Examples/cpp/vision-runtime/src/vision_inference.cpp",
     "Examples/csharp/OnnxExample.csproj",
     "Examples/csharp/Program.cs",

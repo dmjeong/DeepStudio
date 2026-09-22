@@ -77,6 +77,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Install Visual Studio 2017 v141 compiler
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          $install = Start-Process -FilePath $installer -ArgumentList @('modify', '--installPath', "`"$vs`"", '--add', 'Microsoft.VisualStudio.Component.VC.v141.x86.x64', '--quiet', '--norestart') -Wait -PassThru
+          if ($install.ExitCode -notin @(0, 3010)) { throw "v141 installation failed: $($install.ExitCode)" }
       - name: Download official C++ SDK dependencies
         shell: pwsh
         run: |
@@ -145,14 +153,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Parity build failed" }
           ctest --test-dir example/build-bw8 -C Release -R evision_preprocessing_parity --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "BW8 preprocessing differs from export contract" }
-      - name: Install Visual Studio 2017 v141 compiler
-        shell: pwsh
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -products '*' -property installationPath
-          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
-          $install = Start-Process -FilePath $installer -ArgumentList @('modify', '--installPath', "`"$vs`"", '--add', 'Microsoft.VisualStudio.Component.VC.v141.x86.x64', '--quiet', '--norestart') -Wait -PassThru
-          if ($install.ExitCode -notin @(0, 3010)) { throw "v141 installation failed: $($install.ExitCode)" }
       - name: Build and execute both examples with VS2017 compiler
         shell: pwsh
         run: |
