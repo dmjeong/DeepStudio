@@ -89,7 +89,7 @@ jobs:
           curl.exe --fail --location --retry 3 "https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz" -o "$deps\json.tar.xz"
           if ($LASTEXITCODE -ne 0) { throw "JSON SDK download failed" }
           "EXAMPLE_DEPS=$deps" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Extract and configure C++ SDK dependencies
+      - name: Extract C++ SDK dependencies
         shell: pwsh
         run: |
           $deps = $env:EXAMPLE_DEPS
@@ -97,9 +97,16 @@ jobs:
           7z x "$deps\opencv.exe" "-o$deps" "opencv/build/*" -y | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "OpenCV extraction failed" }
           Expand-Archive "$deps\ort.zip" -DestinationPath $deps
-          tar -xf "$deps\json.tar.xz" -C $deps
+          7z x "$deps\json.tar.xz" "-o$deps" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "JSON SDK decompression failed" }
+          7z x "$deps\json.tar" "-o$deps" -y | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "JSON SDK extraction failed" }
-          cmake -S "$deps\json" -B "$deps\json-build" -DJSON_BuildTests=OFF "-DCMAKE_INSTALL_PREFIX=$deps/json-install"
+      - name: Configure header-only JSON SDK
+        shell: pwsh
+        run: |
+          $deps = $env:EXAMPLE_DEPS
+          cmake -S "$deps\json" -B "$deps\json-build" -G "Visual Studio 17 2022" -A x64 `
+            -DJSON_BuildTests=OFF "-DCMAKE_INSTALL_PREFIX=$deps/json-install"
           if ($LASTEXITCODE -ne 0) { throw "JSON SDK configure failed" }
           cmake --install "$deps\json-build"
           if ($LASTEXITCODE -ne 0) { throw "JSON SDK install failed" }
