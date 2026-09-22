@@ -128,7 +128,7 @@ class PatchCoreWorker(TrainingEngine):
 
     def _run_patchcore(self):
         from core.training_time import TrainingClock, record_epoch_time, log_total_time
-        from core.training_artifacts import publish_best
+        from core.training_artifacts import publish_best, training_hyperparameters
         self._training_clock = TrainingClock()
         cfg, data_cfg = self.project.training, self.project.data
         self._stage = "설정 검증"
@@ -212,7 +212,14 @@ class PatchCoreWorker(TrainingEngine):
             checkpoint, run_dir, history, epoch=1, metric="auroc" if auroc is not None else "unavailable",
             value=auroc, direction="single_fit", engine="patchcore", task="anomaly",
             policy="single_memory_bank_snapshot_auroc_is_evaluation_only", timing=self._training_clock,
-            evaluation_metrics=evaluation)
+            evaluation_metrics=evaluation,
+            hyperparameters=training_hyperparameters(
+                self.project, engine="patchcore",
+                effective={"device": str(device), "use_amp": False, "model_id": model_name},
+                applied={"training_metadata": pc.training_metadata,
+                         "weight_source": pc.weight_source,
+                         "center_crop": list(pc.center_crop) if pc.center_crop else None},
+            ))
         record.finished_at = datetime.now().isoformat()
         record.status, record.epochs_done, record.best_epoch = "completed", 1, 1
         record.best_metric, record.best_metric_name = auroc if auroc is not None else 0., "auroc" if auroc is not None else "unavailable"

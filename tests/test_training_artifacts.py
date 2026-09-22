@@ -1,6 +1,7 @@
 """CSV의 최종 Best 행과 실제 가중치의 이름/내용 일치 검증."""
 
 import csv
+from dataclasses import asdict
 import json
 from pathlib import Path
 import sys
@@ -9,7 +10,8 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gui"))
-from core.training_artifacts import publish_best
+from core.project import ProjectManager
+from core.training_artifacts import publish_best, training_hyperparameters
 
 
 class TrainingArtifactsTests(unittest.TestCase):
@@ -44,6 +46,40 @@ class TrainingArtifactsTests(unittest.TestCase):
         self.assertEqual(details["value"], .8123456789)
         with (self.root / "best_selection.json").open(encoding="utf-8-sig") as stream:
             self.assertEqual(json.load(stream), details)
+
+    def test_every_training_setting_is_written_to_result_csvs(self):
+        project = ProjectManager.create_new("csv", "classify", str(self.root / "project"), ["ok", "ng"])
+        project.model.model_id = "efficientnet_b1"
+        project.model.freeze_backbone = True
+        project.training.epochs = 37
+        project.training.batch_size = 13
+        project.training.learning_rate = .0007
+        project.training.augmentation.vertical_flip = .25
+        parameters = training_hyperparameters(
+            project, engine="efficientnet",
+            effective={"device": "cuda:0", "use_amp": True, "num_workers": 4},
+            applied={"pin_memory": True},
+        )
+        _, details = self.publish(hyperparameters=parameters)
+        best, epoch = self.rows("best_result.csv")[0], self.rows("results.csv")[0]
+
+        def expected_columns(prefix, value):
+            if isinstance(value, dict):
+                result = set()
+                for key, item in value.items():
+                    result |= expected_columns(f"{prefix}_{key}", item)
+                return result
+            return {"hp" + prefix}
+
+        expected = expected_columns("_training", asdict(project.training))
+        expected |= expected_columns("_model", asdict(project.model))
+        self.assertLessEqual(expected, set(best))
+        self.assertLessEqual(expected, set(epoch))
+        self.assertEqual(best["hp_training_epochs"], "37")
+        self.assertEqual(best["hp_training_augmentation_vertical_flip"], "0.25")
+        self.assertEqual(best["hp_effective_device"], "cuda:0")
+        self.assertEqual(best["hp_applied_pin_memory"], "True")
+        self.assertEqual(details["hyperparameters"], parameters)
 
 
     def test_zero_score_and_unavailable_patchcore_are_distinct(self):

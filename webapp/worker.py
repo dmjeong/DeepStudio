@@ -87,7 +87,7 @@ def _container_model_spec(project):
 def _train_builtin_project(context, project, device):
     """Train a registered adapter with the selected weight source."""
     from core.project import ProjectManager, RunRecord
-    from core.training_artifacts import publish_best
+    from core.training_artifacts import publish_best, training_hyperparameters
     from train_builtin import train_builtin
 
     model_id = project.model.model_id
@@ -202,7 +202,13 @@ def _train_builtin_project(context, project, device):
     named_checkpoint, selection = publish_best(
         best, run_dir, metrics_history, epoch=best_epoch, metric=metric_name, value=metric,
         direction=policy.direction, engine="builtin", task=project.task,
-        policy="native_adapter_strict_improvement", formula=policy.formula)
+        policy="native_adapter_strict_improvement", formula=policy.formula,
+        hyperparameters=training_hyperparameters(
+            project, engine="builtin",
+            effective={"device": str(device), "model_id": model_id,
+                       "center_crop": list(crop) if crop else None},
+            applied=training_state.get("training_config", {}),
+        ))
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status=(
                            "cancelled" if context.cancelled() else "completed"),
@@ -224,7 +230,7 @@ def _train_upstream_project(context, project, device):
     if model_id not in upstream_model_ids():
         return None
     from core.project import ProjectManager, RunRecord
-    from core.training_artifacts import publish_best
+    from core.training_artifacts import publish_best, training_hyperparameters
     cfg, data = project.training, project.data
     run_id = ProjectManager.new_run_id(task=project.task, model_name=model_id,
                                        input_size=cfg.input_size, project_dir=project.project_dir)
@@ -295,7 +301,15 @@ def _train_upstream_project(context, project, device):
     named_checkpoint, selection = publish_best(
         checkpoint, run_dir, metrics_history, epoch=best_epoch, metric=metric_name, value=best_metric,
         direction=direction, engine="upstream", task=project.task,
-        policy="upstream_native_is_best", formula=metric_name)
+        policy="upstream_native_is_best", formula=metric_name,
+        hyperparameters=training_hyperparameters(
+            project, engine="upstream",
+            effective={"device": str(device), "model_id": model_id,
+                       "input_size": spec.input_size, "use_amp": cfg.use_amp},
+            applied={"pretrained": mode == "upstream_finetune",
+                     "resume": mode == "upstream_resume", "val_split": data.val_split,
+                     "seed": 0},
+        ))
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status="completed",
                        epochs_done=len(history), best_metric=best_metric, best_epoch=best_epoch,
@@ -312,7 +326,7 @@ def _train_upstream_project(context, project, device):
 def _train_sam2_project(context, project, device):
     """Run the shipped SAM2 prompt-mask adapter instead of Custom CSP."""
     from core.training_modes import SAM2_ADAPTER_IDS
-    from core.training_artifacts import publish_best
+    from core.training_artifacts import publish_best, training_hyperparameters
     model_id = project.model.model_id
     if model_id not in SAM2_ADAPTER_IDS:
         return None
@@ -377,7 +391,14 @@ def _train_sam2_project(context, project, device):
     named_checkpoint, selection = publish_best(
         checkpoint, run_dir, metrics_history, epoch=int(result.get("best_epoch") or 0),
         metric=metric_name, value=float(result.get("best_metric") or 0.0), direction="max",
-        engine="sam2", task="segment", policy="prompt_dice_strict_improvement", formula="Prompt Dice")
+        engine="sam2", task="segment", policy="prompt_dice_strict_improvement", formula="Prompt Dice",
+        hyperparameters=training_hyperparameters(
+            project, engine="sam2",
+            effective={"device": str(device), "model_id": model_id,
+                       "input_size": 1024, "use_amp": cfg.use_amp},
+            applied={"image_encoder_frozen": True,
+                     "trained_modules": ["prompt_encoder", "mask_decoder"]},
+        ))
     record = RunRecord(
         run_id=run_id, started_at=datetime.now().isoformat(), finished_at=datetime.now().isoformat(),
         status="cancelled" if result.get("cancelled") else "completed", epochs_done=len(history),

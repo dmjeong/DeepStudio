@@ -433,13 +433,21 @@ class TrainWorker(TrainingEngine):
                 eval_for_save[k] = v
         run_record.eval_results = eval_for_save
 
-        from core.training_artifacts import publish_best
+        from core.training_artifacts import publish_best, training_hyperparameters
+        hyperparameters = training_hyperparameters(
+            self.project, engine=self.engine_name,
+            effective={"device": str(device), "use_amp": use_amp,
+                       "num_workers": num_workers, "pin_memory": pin_memory,
+                       "pretrained_loaded": pretrained_loaded},
+            applied={"class_weight_details": getattr(self, "_class_weight_details", None)},
+        )
         ckpt_path, selection = publish_best(
             ckpt_path, run_dir, run_record.metrics_history, epoch=best_epoch,
             metric=primary_metric_name, value=best_metric,
             direction="min" if minimize_metric else "max", engine=self.engine_name, task=task,
             policy="strict_improvement_first_tie", timing=self._training_clock,
-            formula=selected_policy.formula, evaluation_metrics=eval_for_save)
+            formula=selected_policy.formula, evaluation_metrics=eval_for_save,
+            hyperparameters=hyperparameters)
         run_record.checkpoint_path = ckpt_path
         run_record.config_snapshot["best_selection"] = selection
         log_total_time(self.signals.log_message.emit, selection["total_seconds"])
