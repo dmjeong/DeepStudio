@@ -46,12 +46,12 @@ export function Export({ state, run, act, busy }: PageProps) {
             </Field>
           </div>
           {efficientnet && <>
-            <Check label="실제 이미지로 FP32 분류 검증: 판정 일치·확률 오차 0.1%p 이하"
+            <Check label="실제 이미지 추가 검증: PyTorch·ONNX 판정 일치·확률 오차 0.1%p 이하"
               value={datasetValidation} onChange={setDatasetValidation} />
             {datasetValidation ? <>
               <PathField label="비교 이미지 폴더 (비우면 프로젝트 val → test → train에서 자동 선택)"
                 value={validationDir} onChange={setValidationDir} home={state.home} directory />
-              <p className="muted">모든 클래스의 이미지가 필요합니다. 이미지와 가중치는 이 PC에서만 검사합니다.</p>
+              <p className="muted">평면 폴더와 클래스별 하위 폴더를 모두 지원합니다. 이미지 0장 클래스는 제외하며, 정답률이 아닌 PyTorch·ONNX 출력 일치를 검사합니다.</p>
             </> : <Check label="고정밀 호환 재시도 허용 (추론이 느려질 수 있음)"
               value={precisionFallback} onChange={setPrecisionFallback} />}
           </>}

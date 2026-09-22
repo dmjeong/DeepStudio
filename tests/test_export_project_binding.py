@@ -63,6 +63,26 @@ def test_efficientnet_project_binds_local_images_and_never_enables_fp64_by_defau
         app.processEvents()
 
 
+def test_efficientnet_project_accepts_training_folder_with_empty_class(tmp_path):
+    import cv2
+    import numpy as np
+    app = QApplication.instance() or QApplication([])
+    project = ProjectManager.create_new("partial", "classify", str(tmp_path / "project"), ["ok", "double"])
+    project.model.model_id = "efficientnet_b0"
+    os.makedirs(os.path.join(project.data.train_dir, "ok"), exist_ok=True)
+    os.makedirs(os.path.join(project.data.train_dir, "double"), exist_ok=True)
+    cv2.imwrite(os.path.join(project.data.train_dir, "ok", "sample.png"), np.zeros((16, 16), np.uint8))
+    widget = ExportWidget()
+    try:
+        widget.set_project(project)
+        assert widget.dataset_verify_check.isChecked()
+        assert widget.validation_edit.text() == project.data.train_dir
+    finally:
+        widget.close()
+        widget.deleteLater()
+        app.processEvents()
+
+
 def test_export_worker_passes_explicit_validation_options(monkeypatch):
     from widgets import export_widget
     captured = {}

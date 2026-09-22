@@ -145,17 +145,24 @@ class ExportWidget(QWidget):
         self.verify_check.setChecked(True)
         opt_layout.addRow("", self.verify_check)
 
-        self.dataset_verify_check = QCheckBox("실제 이미지로 FP32 분류 검증 (판정 일치·확률 차이 0.1%p 이하)")
+        self.dataset_verify_check = QCheckBox("실제 이미지 추가 검증 (PyTorch·ONNX 판정 일치·확률 차이 0.1%p 이하)")
         self.dataset_verify_check.setChecked(False)
         opt_layout.addRow("", self.dataset_verify_check)
         self.validation_edit = QLineEdit()
-        self.validation_edit.setPlaceholderText("클래스별 이미지 폴더가 들어 있는 비교 데이터 경로")
+        self.validation_edit.setPlaceholderText("이미지가 있는 폴더 (평면 또는 클래스별 하위 폴더)")
         validation_row = QHBoxLayout()
         validation_row.addWidget(self.validation_edit)
         validation_browse = QPushButton("찾아보기...")
         validation_browse.clicked.connect(self._browse_validation)
         validation_row.addWidget(validation_browse)
         opt_layout.addRow("비교 이미지:", validation_row)
+        validation_hint = QLabel(
+            "정답률을 측정하는 기능이 아니라, 같은 이미지에서 PyTorch와 ONNX 출력이 "
+            "같은지 확인합니다. 이미지 0장 클래스는 자동 제외됩니다."
+        )
+        validation_hint.setWordWrap(True)
+        validation_hint.setStyleSheet("color: #8A92A4;")
+        opt_layout.addRow("", validation_hint)
         self.precision_check = QCheckBox("고정밀 호환 내보내기 허용 (느려질 수 있음, 실제 이미지 검증 모드에서는 미사용)")
         opt_layout.addRow("", self.precision_check)
 
@@ -294,7 +301,7 @@ class ExportWidget(QWidget):
         if self.dataset_verify_check.isChecked() and self.verify_check.isChecked():
             validation_dir = self.validation_edit.text().strip()
             if not validation_dir or not os.path.isdir(validation_dir):
-                QMessageBox.warning(self, "비교 이미지 필요", "클래스별 이미지 폴더가 있는 비교 데이터 경로를 선택하세요. 이미지와 가중치는 이 PC에서만 검사합니다.")
+                QMessageBox.warning(self, "비교 이미지 필요", "이미지가 1장 이상 있는 폴더를 선택하세요. 평면 폴더와 클래스별 하위 폴더 모두 지원하며, 이미지와 가중치는 이 PC에서만 검사합니다.")
                 return
 
         if getattr(self, "worker", None) is not None and self.worker.isRunning():

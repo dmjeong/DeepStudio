@@ -8,7 +8,7 @@ import pytest
 import torch
 
 import export_onnx
-from classification_export_validation import compare_classification, collect_images
+from classification_export_validation import compare_classification, collect_image_corpus
 from checkpoint import make_checkpoint_metadata
 from efficientnet import EfficientNet
 
@@ -85,6 +85,10 @@ def test_real_images_choose_fp32_and_reload_or_preserve_existing_file(tmp_path, 
         result = export_onnx.export_checkpoint(source, output, validation_dir=data, dynamic_batch=True, log=lambda _: None)
     report = result["classification_validation"]
     assert report["image_count"] == 2 and report["selected"]["passed"]
+    assert report["corpus_coverage"] == {
+        "class_image_counts": {"a": 1, "b": 1}, "unrepresented_classes": [],
+        "unlabeled_image_count": 0, "layout": "class_folders",
+    }
     assert report["selected"]["max_logit_error"] > .019
     assert report["selected"]["max_probability_error"] < .001
     config = json.loads(output.with_suffix(".json").read_text())
@@ -96,11 +100,23 @@ def test_real_images_choose_fp32_and_reload_or_preserve_existing_file(tmp_path, 
     assert str(data) not in json.dumps(report)
 
 
-def test_missing_class_cannot_silently_certify_partial_corpus(tmp_path):
+def test_empty_class_is_reported_and_excluded_from_image_corpus(tmp_path):
     (tmp_path / "a").mkdir()
     cv2.imwrite(str(tmp_path / "a" / "sample.png"), np.zeros((8, 8), np.uint8))
-    with pytest.raises(ValueError, match="클래스 하위"):
-        collect_images(tmp_path, ["a", "b"])
+    files, coverage = collect_image_corpus(tmp_path, ["a", "b"])
+    assert files == [tmp_path / "a" / "sample.png"]
+    assert coverage["class_image_counts"] == {"a": 1, "b": 0}
+    assert coverage["unrepresented_classes"] == ["b"]
+
+
+def test_flat_image_folder_is_valid_for_output_parity(tmp_path):
+    image = tmp_path / "sample.png"
+    cv2.imwrite(str(image), np.zeros((8, 8), np.uint8))
+    files, coverage = collect_image_corpus(tmp_path, ["a", "b"])
+    assert files == [image]
+    assert coverage["unrepresented_classes"] == ["a", "b"]
+    assert coverage["unlabeled_image_count"] == 1
+    assert coverage["layout"] == "flat_or_unlabeled"
 
 
 def test_no_automatic_whole_fp64_export(tmp_path):

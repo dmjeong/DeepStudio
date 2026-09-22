@@ -566,7 +566,7 @@ def export(context, payload):
                 validation_dir = folder
                 break
         if not validation_dir:
-            raise ValueError("실제 이미지 분류 검증에는 모든 클래스의 이미지 하위 폴더가 있는 비교 경로가 필요합니다")
+            raise ValueError("실제 이미지 ONNX 출력 검증에는 이미지가 1장 이상 있는 비교 경로가 필요합니다")
         context.emit("log_message", [f"실제 이미지 비교 폴더: {validation_dir}"])
     result = export_checkpoint(payload["weights"], payload["output"],
                                opset_version=payload.get("opset", 17),

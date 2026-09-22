@@ -199,23 +199,46 @@ def export_validated_synthetic_fp32(reference, spec, path, dummy, *, opset,
             best_path.unlink()
 
 
-def collect_images(directory, class_names):
+def collect_image_corpus(directory, class_names):
+    """Collect local comparison images without pretending they are accuracy labels.
+
+    ONNX export compares the PyTorch and ONNX outputs for the same pixels.  It
+    does not score the prediction against the directory name, so a flat image
+    folder is valid and a class with no project data cannot be required here.
+    Class-shaped folders are still counted and recorded as validation scope.
+    """
     root = Path(directory)
     if not root.is_dir():
         raise ValueError("실제 이미지 검증 폴더가 없습니다")
-    records = []
-    for name in class_names:
-        # Require the entire set of model classes; never silently certify one class.
-        folder = root / name
-        if Path(name).name != name or not folder.is_dir():
-            raise ValueError(f"검증 폴더에 클래스 하위 폴더가 필요합니다: {name}")
-        files = sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
-        if not files:
-            raise ValueError(f"검증 이미지가 없는 클래스: {name}")
-        records.extend(files)
+    names = list(class_names or [])
+    if any(not isinstance(name, str) or not name or Path(name).name != name for name in names):
+        raise ValueError("검증 클래스 이름이 잘못되었습니다")
+    records = sorted(
+        p for p in root.rglob("*")
+        if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES
+    )
     if not records:
         raise ValueError("검증 이미지가 없습니다")
-    return records
+    counts = {name: 0 for name in names}
+    unlabeled = 0
+    for file in records:
+        folders = set(file.relative_to(root).parts[:-1])
+        matched = [name for name in names if name in folders]
+        if matched:
+            counts[matched[0]] += 1
+        else:
+            unlabeled += 1
+    return records, {
+        "class_image_counts": counts,
+        "unrepresented_classes": [name for name, count in counts.items() if count == 0],
+        "unlabeled_image_count": unlabeled,
+        "layout": "flat_or_unlabeled" if unlabeled == len(records) else "class_folders",
+    }
+
+
+def collect_images(directory, class_names):
+    """Backward-compatible file-only view used by GUI folder discovery."""
+    return collect_image_corpus(directory, class_names)[0]
 
 
 def export_validated_fp32(reference, spec, path, dummy, *, validation_dir,
@@ -227,7 +250,7 @@ def export_validated_fp32(reference, spec, path, dummy, *, validation_dir,
     from onnx_session import cpu_session_options
     from opencv_preprocess import read_image
 
-    files = collect_images(validation_dir, spec["class_names"])
+    files, corpus = collect_image_corpus(validation_dir, spec["class_names"])
     config = create_inference_config(Path(path).parent, "classify", spec["num_classes"],
         (spec["input_height"], spec["input_width"]), spec["in_channels"], Path(path).name,
         class_names=spec["class_names"], preprocessing=spec["preprocessing"], backend="efficientnet",
@@ -235,7 +258,13 @@ def export_validated_fp32(reference, spec, path, dummy, *, validation_dir,
         model_config=reference.checkpoint_config())
     processor = ImageClassifier(config)
     expected, hashes = [], []
-    log(f"실제 이미지 분류 검증: {len(files)}장, 모든 클래스 포함. 판정 일치·확률 오차 0.1%p 이하 검사")
+    missing = corpus["unrepresented_classes"]
+    if corpus["layout"] == "flat_or_unlabeled":
+        scope = " | 평면 폴더: 클래스별 장수는 구분하지 않음"
+    else:
+        scope = (f" | 비교 이미지 0장 클래스 제외: {', '.join(missing)}" if missing else "")
+    log(f"실제 이미지 ONNX 출력 검증: {len(files)}장{scope}. "
+        "PyTorch·ONNX 판정 일치·확률 오차 0.1%p 이하 검사")
     with torch.inference_mode(), torch.autocast(device_type="cpu", enabled=False):
         for file in files:
             pixels = read_image(file, spec["in_channels"])
@@ -324,6 +353,7 @@ def export_validated_fp32(reference, spec, path, dummy, *, validation_dir,
               "criteria": {"top1_equal": True, "probability_atol": PROBABILITY_ATOL,
                            "minimum_margin_error_ratio": 2},
               "dataset_sha256": hashlib.sha256("".join(hashes).encode()).hexdigest(),
+              "corpus_coverage": corpus,
               "scope": "provided_images_and_synthetic_probes", "custom_thresholds_validated": False,
               "selected": result, "attempts": attempts,
               "latency_scope": "preprocess_inference_postprocess_excluding_file_decode",
