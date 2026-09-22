@@ -1,4 +1,15 @@
 #pragma once
+#if defined(_MSC_VER)
+#if _MSC_VER < 1916
+#error Use Visual Studio 2017 15.9 (v141 14.16) or newer.
+#endif
+#if !defined(_MSVC_LANG) || _MSVC_LANG < 201703L
+#error Enable C++17: Project Properties > C/C++ > Language > /std:c++17.
+#endif
+#if !defined(__cpp_noexcept_function_type)
+#error Enable /Zc:noexceptTypes and remove /Zc:noexceptTypes- before including ONNX Runtime.
+#endif
+#endif
 #include "bw8_preprocess.h"
 #include <onnxruntime_cxx_api.h>
 #include <nlohmann/json.hpp>

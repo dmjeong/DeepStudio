@@ -122,6 +122,12 @@ endif()
 message(STATUS "ONNX Runtime 헤더: ${ONNXRUNTIME_INCLUDE_DIR}")
 message(STATUS "ONNX Runtime 라이브러리: ${ONNXRUNTIME_LIB}")
 
+if(MSVC AND MSVC_VERSION LESS 1920)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/include/ort_vs2017.cmake")
+    dvs_ort_vs2017_headers("${ONNXRUNTIME_INCLUDE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/ort-v141-include")
+    set(ONNXRUNTIME_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/ort-v141-include")
+endif()
+
 # ── 정적 라이브러리 빌드 (다른 프로젝트에서 사용 가능) ──
 add_library(vision_inference STATIC
     src/vision_inference.cpp
@@ -134,7 +140,10 @@ add_library(vision_inference STATIC
 set_target_properties(vision_inference PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(vision_inference PUBLIC cxx_std_17)
 if(MSVC)
-    target_compile_options(vision_inference PUBLIC /utf-8 /Zc:__cplusplus)
+    if(MSVC_VERSION LESS 1916)
+        message(FATAL_ERROR "Use Visual Studio 2017 15.9 (v141 14.16) or newer")
+    endif()
+    target_compile_options(vision_inference PUBLIC /utf-8 /Zc:__cplusplus /Zc:noexceptTypes)
 endif()
 
 target_include_directories(vision_inference PUBLIC

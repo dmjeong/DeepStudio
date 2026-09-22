@@ -44,6 +44,31 @@ auto result = model.InferBW8(
 
 ## 예제 자체 빌드·테스트
 
+### Visual Studio 2017 사용 시
+
+**VS2017 15.9 최신 업데이트, x64, C++17(`/std:c++17`)**을 사용한다.
+`/Zc:noexceptTypes`를 켜고 `/Zc:noexceptTypes-` 옵션은 제거한다.
+`Float16_t`/`BFloat16_t`의 C3615는 C++17만 켜서는 해결되지 않는 SDK 헤더 호환성 오류다.
+
+아래 CMake 빌드 명령의 생성기를 `"Visual Studio 15 2017"`로 바꾸고 **새 빌드 폴더**를
+사용하면 호환용 헤더가 자동 생성된다. SDK 원본이나 DLL은 수정하지 않는다.
+
+**기존 VS 프로젝트에 두 헤더를 직접 복사해서 사용하는 경우**, 저장소 루트에서 한 번 실행한다.
+경로는 자신의 SDK 위치로 바꾼다. CMake가 PATH에 있어야 한다.
+
+```powershell
+cmake "-DORT_INCLUDE=C:/libs/onnxruntime-win-x64-1.29.0/include" `
+  "-DORT_OUTPUT=C:/libs/ort-v141-include" -P cpp/include/ort_vs2017.cmake
+```
+
+VS의 **C/C++ → 일반 → 추가 포함 디렉터리**에서 ONNX Runtime include 경로를
+`C:/libs/ort-v141-include`로 바꾼다. 기존 SDK include 경로보다 반드시 앞에 둔다.
+미리 컴파일된 헤더를 포함해 **솔루션 다시 빌드**한다. `onnxruntime.lib`와 DLL은
+같은 SDK의 기존 파일을 계속 사용한다. 설치본에서는 스크립트가
+`Examples/cpp/vision-runtime/include/ort_vs2017.cmake`에 있다.
+
+### 빌드 명령
+
 저장소 루트에서 PowerShell로 실행한다. ONNX Runtime SDK와 nlohmann-json은 준비돼 있어야 한다.
 nlohmann-json만 vcpkg로 설치한다면 `vcpkg install nlohmann-json:x64-windows`를 사용한다.
 

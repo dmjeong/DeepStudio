@@ -14,6 +14,11 @@ auto result = model.Infer(image);
 
 빌드 의존성은 OpenCV, ONNX Runtime, nlohmann-json이다. 저장소 루트에서:
 
+VS2017은 **15.9 최신 업데이트 + C++17 + x64**를 사용한다. 아래 생성기를
+`"Visual Studio 15 2017"`로 바꾸고 새 빌드 폴더를 지정하면 ONNX Runtime의
+Float16/BFloat16 헤더 호환성 보정이 자동 적용된다. 기존 VS 프로젝트에 수동으로
+넣을 때는 [VS2017 헤더 생성 및 포함 경로 설정](../with_evision/README.md#visual-studio-2017-사용-시)을 따른다.
+
 ```powershell
 cmake -S example/cpp/with_opencv -B example/build-opencv -G "Visual Studio 17 2022" -A x64 `
   "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `

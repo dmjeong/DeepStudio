@@ -74,7 +74,7 @@ jobs:
     # The public example must not wait for the 40+ minute vcpkg/full GUI build.
     # Use official binary SDKs, with the same ORT/OpenCV versions as that build.
     runs-on: windows-2022
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Download official C++ SDK dependencies
@@ -145,6 +145,32 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Parity build failed" }
           ctest --test-dir example/build-bw8 -C Release -R evision_preprocessing_parity --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "BW8 preprocessing differs from export contract" }
+      - name: Install Visual Studio 2017 v141 compiler
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          $install = Start-Process -FilePath $installer -ArgumentList @('modify', '--installPath', "`"$vs`"", '--add', 'Microsoft.VisualStudio.Component.VC.v141.x86.x64', '--quiet', '--norestart') -Wait -PassThru
+          if ($install.ExitCode -notin @(0, 3010)) { throw "v141 installation failed: $($install.ExitCode)" }
+      - name: Build and execute both examples with VS2017 compiler
+        shell: pwsh
+        run: |
+          $deps = $env:EXAMPLE_DEPS
+          cmake -S example/cpp/with_evision -B example/build-v141-bw8 -G "Visual Studio 17 2022" -A x64 -T v141 `
+            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" "-DCMAKE_PREFIX_PATH=$deps/json-install"
+          if ($LASTEXITCODE -ne 0) { throw "v141 BW8 configure failed" }
+          cmake --build example/build-v141-bw8 --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "v141 BW8 build failed" }
+          ctest --test-dir example/build-v141-bw8 -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "v141 BW8 execution failed" }
+          cmake -S example/cpp/with_opencv -B example/build-v141-opencv -G "Visual Studio 17 2022" -A x64 -T v141 `
+            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" "-DCMAKE_PREFIX_PATH=$deps/json-install" "-DOpenCV_DIR=$deps/opencv/build"
+          if ($LASTEXITCODE -ne 0) { throw "v141 OpenCV configure failed" }
+          cmake --build example/build-v141-opencv --config Release --target onnx_cpp_example onnx_cpp_self_test --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "v141 OpenCV build failed" }
+          ctest --test-dir example/build-v141-opencv -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "v141 OpenCV execution failed" }
 
   csharp-sdk:
     runs-on: windows-latest

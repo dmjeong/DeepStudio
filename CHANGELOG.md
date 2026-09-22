@@ -2,6 +2,12 @@
 
 기준 버전은 0.0이다. 버그 수정 릴리스는 +0.01, 간단한 기능 추가 릴리스는 +0.1, 신규 기능 또는 모델 추가 릴리스는 +1.0씩 증가한다. 릴리스 하나에 포함된 개별 수정 개수로 버전을 반복 증가시키지 않는다. 버전의 단일 원본은 `gui/core/version.py`다.
 
+**7.02 — VS2017 ONNX Runtime 헤더 호환성 수정**
+
+- VS2017 15.9(v141)의 C2279/C3615 오류를 위해 C++17 옵션을 명시하고 Float16/BFloat16 선언 4개의 constexpr를 호환용 헤더 사본에서만 제거한다.
+- 원본 SDK와 ONNX Runtime DLL, 모델 연산은 변경하지 않는다. OpenCV/eVision 양쪽 CMake에 자동 적용하며 기존 VS 프로젝트용 생성 명령도 제공한다.
+- Windows CI에 실제 v141 컴파일러 빌드와 양쪽 ONNX 추론 테스트를 추가한다.
+
 **7.01 — OpenCV/eVision BW8 C++ 예제 분리**
 
 - `with_opencv`는 기존 cv::Mat 엔진을 사용하며, `with_evision`은 OpenCV 없이 BW8 포인터를 받는 독립 ONNX Runtime 분류 엔진을 제공한다.
