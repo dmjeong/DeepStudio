@@ -55,12 +55,17 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
     if metrics_out is not None:
         counts = confusion.double()
         tp = counts.diag()
+        support = counts.sum(1)
+        evaluated = support > 0
+        if not evaluated.any():
+            raise ValueError("classification validation contains no labeled samples")
         precision = tp / counts.sum(0).clamp(min=1)
-        recall = tp / counts.sum(1).clamp(min=1)
-        f1 = 2 * tp / (counts.sum(0) + counts.sum(1)).clamp(min=1)
-        metrics_out.update(accuracy=correct / samples, precision_macro=float(precision.mean()),
-                           recall_macro=float(recall.mean()),
-                           f1_macro=float(f1.mean()), val_loss=total_loss / samples)
+        recall = tp / support.clamp(min=1)
+        f1 = 2 * tp / (counts.sum(0) + support).clamp(min=1)
+        metrics_out.update(accuracy=correct / samples,
+                           precision_macro=float(precision[evaluated].mean()),
+                           recall_macro=float(recall[evaluated].mean()),
+                           f1_macro=float(f1[evaluated].mean()), val_loss=total_loss / samples)
     return total_loss / samples, correct / samples
 
 
@@ -71,6 +76,7 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
     samples = 0
     intersection = None
     union = None
+    gt_area = None
     non_blocking = torch.device(device).type == "cuda"
     context = torch.enable_grad() if training else torch.inference_mode()
     with context:
@@ -91,17 +97,22 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
             if intersection is None:
                 intersection = torch.zeros(classes, dtype=torch.float64)
                 union = torch.zeros(classes, dtype=torch.float64)
+                gt_area = torch.zeros(classes, dtype=torch.float64)
             for cls in range(classes):
                 truth = valid & (masks == cls)
                 guess = valid & (predicted == cls)
                 intersection[cls] += (truth & guess).sum().item()
                 union[cls] += (truth | guess).sum().item()
+                gt_area[cls] += truth.sum().item()
     if samples == 0 or intersection is None:
         raise ValueError("segmentation loader contains no samples")
-    iou = torch.where(union > 0, intersection / union, torch.ones_like(union))
+    evaluated = gt_area > 0
+    if not evaluated.any():
+        raise ValueError("segmentation validation contains no labeled pixels")
+    iou = intersection[evaluated] / union[evaluated].clamp(min=1)
     if metrics_out is not None:
-        dice_denominator = union + intersection
-        dice = torch.where(dice_denominator > 0, 2 * intersection / dice_denominator, torch.ones_like(union))
+        dice_denominator = union[evaluated] + intersection[evaluated]
+        dice = 2 * intersection[evaluated] / dice_denominator.clamp(min=1)
         metrics_out.update(mIoU=float(iou.mean()), dice_score=float(dice.mean()), val_loss=total_loss / samples)
     return total_loss / samples, float(iou.mean())
 

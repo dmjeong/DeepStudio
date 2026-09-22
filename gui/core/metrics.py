@@ -101,6 +101,9 @@ class ClassificationMetrics:
         accuracy = cm.trace() / max(total, 1)
 
         # ── 클래스별 Precision / Recall / F1 ──
+        # 정답 샘플이 없는 클래스는 평가할 수 없으므로 macro 평균에서 제외한다.
+        # 다른 클래스 샘플을 빈 클래스로 오예측한 경우는 전체 accuracy와
+        # 해당 실제 클래스의 recall/F1에 그대로 반영된다.
         per_class = []
         precisions, recalls, f1s = [], [], []
 
@@ -110,22 +113,24 @@ class ClassificationMetrics:
             fn = cm[i, :].sum() - tp             # False Negative (행 합 - TP)
             support = cm[i, :].sum()             # 실제 샘플 수
 
-            # Precision = TP / (TP + FP)
-            prec = tp / max(tp + fp, 1)
-            # Recall = TP / (TP + FN)
-            rec = tp / max(tp + fn, 1)
-            # F1 = 2 * P * R / (P + R)
-            f1 = 2 * prec * rec / max(prec + rec, 1e-8)
-
-            precisions.append(prec)
-            recalls.append(rec)
-            f1s.append(f1)
+            if support > 0:
+                # Precision = TP / (TP + FP)
+                prec = tp / max(tp + fp, 1)
+                # Recall = TP / (TP + FN)
+                rec = tp / (tp + fn)
+                # F1 = 2 * P * R / (P + R)
+                f1 = 2 * prec * rec / max(prec + rec, 1e-8)
+                precisions.append(prec)
+                recalls.append(rec)
+                f1s.append(f1)
+            else:
+                prec = rec = f1 = None
 
             per_class.append({
                 "name": self.class_names[i] if i < len(self.class_names) else f"Class {i}",
-                "precision": float(prec),
-                "recall": float(rec),
-                "f1": float(f1),
+                "precision": None if prec is None else float(prec),
+                "recall": None if rec is None else float(rec),
+                "f1": None if f1 is None else float(f1),
                 "support": int(support),
             })
 
@@ -228,15 +233,18 @@ class SegmentationMetrics:
             # Dice = 2 * Intersection / (|Pred| + |GT|)
             dice = 2 * self.intersection[c] / max(self.pred_area[c] + self.gt_area[c], 1)
 
-            # 예측과 정답 양쪽 모두 없는 클래스는 macro 평균에서 제외한다.
-            if self.union[c] > 0:
+            # 정답 픽셀이 없는 클래스는 평가 대상이 아니므로 macro에서 제외한다.
+            # 그 클래스로의 오예측은 해당 픽셀의 pixel accuracy와 실제 클래스
+            # IoU/Dice에는 오류로 반영된다.
+            present = self.gt_area[c] > 0
+            if present:
                 ious.append(iou)
                 dices.append(dice)
 
             per_class.append({
                 "name": self.class_names[c] if c < len(self.class_names) else f"Class {c}",
-                "iou": float(iou),
-                "dice": float(dice),
+                "iou": float(iou) if present else None,
+                "dice": float(dice) if present else None,
             })
 
         mIoU = float(np.mean(ious)) if ious else 0.0
@@ -434,6 +442,8 @@ class DetectionMetrics:
         # mAP@0.5
         per_class = []
         aps_50 = []
+        aps_50_95 = []
+        present = {int(gt[0]) for gt in self.all_gts}
 
         for c in range(self.num_classes):
             ap_50, precs, recs = self._compute_class_ap(c, iou_threshold=0.5)
@@ -445,16 +455,16 @@ class DetectionMetrics:
                 ap_at_thr, _, _ = self._compute_class_ap(c, iou_threshold=iou_thr)
                 aps_multi.append(ap_at_thr)
             ap_50_95 = float(np.mean(aps_multi)) if aps_multi else 0.0
+            aps_50_95.append(ap_50_95)
 
             per_class.append({
                 "name": self.class_names[c] if c < len(self.class_names) else f"Class {c}",
-                "ap_50": float(ap_50),
-                "ap_50_95": ap_50_95,
+                "ap_50": float(ap_50) if c in present else None,
+                "ap_50_95": ap_50_95 if c in present else None,
             })
 
-        present = {int(gt[0]) for gt in self.all_gts}
         mAP_50 = float(np.mean([aps_50[c] for c in present])) if present else 0.0
-        mAP_50_95 = float(np.mean([per_class[c]["ap_50_95"] for c in present])) if present else 0.0
+        mAP_50_95 = float(np.mean([aps_50_95[c] for c in present])) if present else 0.0
 
         # 전체 Precision/Recall @IoU=0.5 (모든 예측 합산)
         total_tp = 0

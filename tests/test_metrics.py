@@ -107,6 +107,37 @@ class OtherMetricTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 metrics.ClassificationMetrics(2).update(np.array(prediction), np.array(target))
 
+    def test_classification_excludes_zero_support_class_from_macro_metrics(self):
+        meter = metrics.ClassificationMetrics(3, ["a", "b", "empty"])
+        meter.update(np.array([0, 0, 0, 1]), np.array([0, 0, 1, 1]))
+        result = meter.compute()
+        self.assertEqual(result["accuracy"], .75)
+        self.assertAlmostEqual(result["precision_macro"], (2 / 3 + 1) / 2)
+        self.assertEqual(result["recall_macro"], .75)
+        self.assertAlmostEqual(result["f1_macro"], (.8 + 2 / 3) / 2)
+        self.assertEqual(result["per_class"][2], {
+            "name": "empty", "precision": None, "recall": None, "f1": None, "support": 0,
+        })
+
+    def test_segmentation_excludes_class_without_ground_truth_even_if_predicted(self):
+        meter = metrics.SegmentationMetrics(3, ["a", "b", "empty"])
+        meter.update(np.array([[0, 2]]), np.array([[0, 1]]))
+        result = meter.compute()
+        self.assertEqual(result["pixel_accuracy"], .5)
+        self.assertEqual(result["mIoU"], .5)
+        self.assertEqual(result["dice_score"], .5)
+        self.assertIsNone(result["per_class"][2]["iou"])
+        self.assertIsNone(result["per_class"][2]["dice"])
+
+    def test_detection_reports_absent_class_as_unavailable(self):
+        meter = metrics.DetectionMetrics(2, ["object", "empty"])
+        gt = {"class_id": 0, "bbox": [0, 0, 1, 1]}
+        meter.update([{**gt, "confidence": .9}], [gt])
+        result = meter.compute()
+        self.assertEqual(result["mAP_50"], 1)
+        self.assertIsNone(result["per_class"][1]["ap_50"])
+        self.assertIsNone(result["per_class"][1]["ap_50_95"])
+
 
 if __name__ == "__main__":
     unittest.main()

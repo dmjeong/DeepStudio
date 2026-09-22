@@ -1175,23 +1175,25 @@ class TrainWorker(TrainingEngine):
         # per_class 로그
         if "per_class" in results:
             self.signals.log_message.emit("  ─── 클래스별 ───")
+            def shown(value):
+                return f"{value:.3f}" if isinstance(value, (int, float)) and math.isfinite(value) else "N/A"
             for pc in results["per_class"]:
                 name = pc["name"]
                 if task == "classify":
                     self.signals.log_message.emit(
-                        f"  {name}: P={pc['precision']:.3f} "
-                        f"R={pc['recall']:.3f} F1={pc['f1']:.3f} "
+                        f"  {name}: P={shown(pc.get('precision'))} "
+                        f"R={shown(pc.get('recall'))} F1={shown(pc.get('f1'))} "
                         f"(n={pc['support']})"
                     )
                 elif task == "segment":
                     self.signals.log_message.emit(
-                        f"  {name}: IoU={pc['iou']:.3f} "
-                        f"Dice={pc['dice']:.3f}"
+                        f"  {name}: IoU={shown(pc.get('iou'))} "
+                        f"Dice={shown(pc.get('dice'))}"
                     )
                 elif task == "detect":
                     self.signals.log_message.emit(
-                        f"  {name}: AP@0.5={pc['ap_50']:.3f} "
-                        f"AP@.5:.95={pc['ap_50_95']:.3f}"
+                        f"  {name}: AP@0.5={shown(pc.get('ap_50'))} "
+                        f"AP@.5:.95={shown(pc.get('ap_50_95'))}"
                     )
 
         # 태스크 이름 추가

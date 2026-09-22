@@ -46,3 +46,16 @@ def test_separate_predictions_produce_separate_metrics_and_saved_best_values(tmp
         saved.append(displayed)
     assert saved[0]["precision_macro"] != saved[1]["precision_macro"]
     assert saved[0]["recall_macro"] != saved[1]["recall_macro"]
+
+
+def test_builtin_epoch_excludes_class_without_validation_samples():
+    targets = torch.tensor([0, 0, 1, 1])
+    predictions = torch.tensor([0, 0, 0, 1])
+    logits = torch.nn.functional.one_hot(predictions, 3).float() * 4
+    actual = {}
+    _classification_epoch(torch.nn.Identity(), [(logits, targets)],
+                          torch.nn.CrossEntropyLoss(), metrics_out=actual)
+    assert actual["accuracy"] == pytest.approx(.75)
+    assert actual["precision_macro"] == pytest.approx((2 / 3 + 1) / 2)
+    assert actual["recall_macro"] == pytest.approx(.75)
+    assert actual["f1_macro"] == pytest.approx((.8 + 2 / 3) / 2)
