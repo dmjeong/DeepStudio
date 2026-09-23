@@ -1,313 +1,63 @@
-#pragma once
-#if defined(_MSC_VER)
-#if _MSC_VER < 1916
-#error Use Visual Studio 2017 15.9 (v141 14.16) or newer.
-#endif
-#if !defined(_MSVC_LANG) || _MSVC_LANG < 201703L
-#error Enable C++17: Project Properties > C/C++ > Language > /std:c++17.
-#endif
-#if !defined(__cpp_noexcept_function_type)
-#error Enable /Zc:noexceptTypes and remove /Zc:noexceptTypes- before including ONNX Runtime.
-#endif
-#endif
-#include "bw8_preprocess.h"
-#include <onnxruntime_cxx_api.h>
-#include <nlohmann/json.hpp>
-#include <array>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <memory>
-#include <optional>   // [수정 #6] std::optional 사용
-#include <stdexcept>  // [수정] std::runtime_error — 명시적 include
-#include <string>
-#include <vector>
+'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\HVision.exe'을(를) 로드했습니다. 기호가 로드되었습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\ntdll.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\kernel32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\KernelBase.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\user32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\win32u.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\gdi32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\gdi32full.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\msvcp_win.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\ucrtbase.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\advapi32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\msvcrt.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\sechost.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\rpcrt4.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\shell32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\shlwapi.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\ole32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\combase.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\oleaut32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\ws2_32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\GoSdk.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\kApi.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\onnxruntime.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\setupapi.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\mfc140.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\imm32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_5.82.26100.8328_none_87eede957a2ccddd\comctl32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\WinSxS\amd64_microsoft.windows.gdiplus_6595b64144ccf1df_1.1.26100.9168_none_6ef70e683dc39227\GdiPlus.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\msvcp140.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\winmm.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\MultiCam.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\GCBase_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\GenApi_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\PylonBase_v7_3.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\version.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\vcruntime140.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\vcruntime140d.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\ucrtbased.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\IPHLPAPI.DLL'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\dbghelp.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\msvcp140_1.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\dxgi.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\vcruntime140_1.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\uxtheme.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\MathParser_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\XmlParser_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\Log_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\NodeMapData_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\bcrypt.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\powrprof.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+'HVision.exe'(Win32): 'C:\Windows\System32\umpdc.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
+예외 발생(0x00007FFA02328644(msvcp140.dll), HVision.exe): 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
 
-namespace dvs_bw8 {
-struct Result {
-    int class_id = 0;
-    std::string class_name;
-    float confidence = 0.f;
-    std::vector<float> probabilities;
-    double preprocess_ms = 0, model_ms = 0, postprocess_ms = 0, inference_ms = 0;
-};
+0x00007FFA02328644(msvcp140.dll)에(HVision.exe의) 처리되지 않은 예외가 있습니다. 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
 
-// JSON에서 파싱·검증된 모델 구성. Classifier의 단일 진실 공급원으로
-// 멤버로 보관되므로, 파싱된 값과 실제 사용 값이 어긋날 여지가 없다.
-struct ModelConfig {
-    int width = 0, height = 0, channels = 0, classes = 0;
-    int crop_width = 0, crop_height = 0;
-    std::vector<float> mean, stddev;
-    std::vector<std::string> class_names;
-    std::string input_name, output_name;
-    std::filesystem::path model_path;
-    int num_threads = 0;
-    GraphOptimizationLevel optimization = ORT_ENABLE_ALL;
-    std::optional<bool> allow_spinning;      // "키 없음"과 false를 구분
-    std::optional<int>  dynamic_block_base;  // "키 없음"과 0을 구분
-};
+예외 발생(0x00007FFA02328644(msvcp140.dll), HVision.exe): 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
 
-// No OpenCV, Python, or application SDK dependency. An EImageBW8 remains owned
-// by the caller. Keep its pixels alive and unchanged until InferBW8 returns.
-// Create once at startup; do not call the same instance concurrently.
-class Classifier {
-public:
-    explicit Classifier(const std::filesystem::path& json_path,
-                        Image startup_image = {nullptr, 0, 0, 0}) {
-        const auto doc = LoadJson(json_path);
-        config_ = ParseConfig(doc, json_path);
-        // [수정 #1] 원본에 있던 Preprocessor 생성이 누락되었었다.
-        // mean/stddev는 config_에 복사본이 유지되므로 Preprocessor가 move해도 안전.
-        preprocess_ = std::make_unique<Preprocessor>(
-            config_.width, config_.height, config_.mean, config_.stddev,
-            config_.crop_width, config_.crop_height);
-        CreateSession();
-        ValidateSession();
-        CreateTensors();
-        Warmup();
-    }
+0x00007FFA02328644(msvcp140.dll)에(HVision.exe의) 처리되지 않은 예외가 있습니다. 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
 
-    Result InferBW8(const void* pixels, int width, int height, size_t row_pitch) {
-        const auto start    = Clock::now();
-        preprocess_->Run({pixels, width, height, row_pitch}, input_);
-        const auto prepared = Clock::now();
-        RunSession();
-        const auto inferred = Clock::now();
-        Result result = Postprocess();
-        const auto end      = Clock::now();
-        result.preprocess_ms  = Milliseconds(prepared - start);
-        result.model_ms       = Milliseconds(inferred - prepared);
-        result.postprocess_ms = Milliseconds(end - inferred);
-        result.inference_ms   = Milliseconds(end - start);
-        return result;
-    }
+예외 발생(0x00007FFA02328644(msvcp140.dll), HVision.exe): 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
 
-    // Instantiated in the user's eVision project; accepts EImageBW8/EROIBW8.
-    template<class EROIBW8>
-    Result InferEvision(EROIBW8& image) {
-        if (image.GetBitsPerPixel() != 8 || image.GetColPitch() != 1)
-            throw std::invalid_argument("InferEvision requires BW8, not a color or BW16 image");
-        return InferBW8(image.GetImagePtr(0, 0), image.GetWidth(), image.GetHeight(),
-                        image.GetRowPitch());
-    }
+0x00007FFA02328644(msvcp140.dll)에(HVision.exe의) 처리되지 않은 예외가 있습니다. 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
 
-    double WarmupMilliseconds() const { return warmup_ms_; }
-
-private:
-    using Clock = std::chrono::steady_clock;
-    static double Milliseconds(Clock::duration duration) {
-        return std::chrono::duration<double, std::milli>(duration).count();
-    }
-
-    // ---- 파싱 계층 (static: 상태 없음 → 순수 함수, 단위 테스트 가능) ----
-
-    static nlohmann::json LoadJson(const std::filesystem::path& path) {
-        std::ifstream file(path);
-        if (!file) throw std::runtime_error("Cannot open model JSON: " + path.u8string());
-        return nlohmann::json::parse(file);
-    }
-
-    // 중복 제거: 원본의 람다 integer / dynamic_block_base 검사 / center crop 검사 3곳 통합
-    static int RequireInteger(const nlohmann::json& node, const char* name) {
-        const auto& v = node.at(name);
-        if (!v.is_number_integer())
-            throw std::invalid_argument(std::string("Not an integer: ") + name);
-        const double value = v.get<double>();
-        if (value < 0 || value > INT32_MAX)
-            throw std::invalid_argument(std::string("Out of range: ") + name);
-        return static_cast<int>(value);
-    }
-
-    static ModelConfig ParseConfig(const nlohmann::json& doc,
-                                   const std::filesystem::path& json_path) {
-        const int schema = RequireInteger(doc, "schema_version");
-        if ((schema != 5 && schema != 6) || doc.at("task") != "classify")
-            throw std::invalid_argument("Expected Studio schema 5/6 classification JSON");
-
-        ModelConfig c;
-        c.width    = RequireInteger(doc, "input_width");
-        c.height   = RequireInteger(doc, "input_height");
-        c.channels = RequireInteger(doc, "input_channels");
-        c.classes  = RequireInteger(doc, "num_classes");
-        if (c.width < 1 || c.height < 1 || c.width > 65536 || c.height > 65536 ||
-            (c.channels != 1 && c.channels != 3) || c.classes < 1)
-            throw std::invalid_argument("Invalid model dimensions");
-
-        ValidatePreprocessingContract(doc, c);
-
-        c.mean   = doc.at("normalize_mean").get<std::vector<float>>();
-        c.stddev = doc.at("normalize_std").get<std::vector<float>>();
-        if (c.mean.size() != static_cast<size_t>(c.channels))
-            throw std::invalid_argument("Wrong normalization channels");
-
-        c.class_names = doc.value("class_names", std::vector<std::string>{});
-        if (!c.class_names.empty() &&
-            c.class_names.size() != static_cast<size_t>(c.classes))
-            throw std::invalid_argument("Wrong class names count");
-
-        c.input_name  = doc.at("input_name").get<std::string>();
-        c.output_name = doc.at("output_name").get<std::string>();
-
-        ParseRuntimeOptions(doc, schema, c);
-
-        c.model_path = std::filesystem::u8path(doc.at("model_path").get<std::string>());
-        if (c.model_path.is_relative())
-            c.model_path = json_path.parent_path() / c.model_path;
-        return c;
-    }
-
-    static void ValidatePreprocessingContract(const nlohmann::json& doc, ModelConfig& c) {
-        const auto& prep = doc.at("preprocessing");
-        const bool gray = (c.channels == 1);
-        if (prep.at("resize_implementation") != "opencv_linear_exact_v1" ||
-            prep.at("interpolation") != "INTER_LINEAR_EXACT" ||
-            prep.at("antialias") != false ||
-            prep.value("layout", std::string("NCHW")) != "NCHW" ||
-            prep.value("value_scale", 255.0) != 255.0 ||
-            prep.value("resize", std::string("bilinear")) != "bilinear" ||
-            prep.value("color_order", gray ? std::string("GRAY") : std::string("RGB")) !=
-                (gray ? "GRAY" : "RGB"))
-            throw std::invalid_argument("Unsupported preprocessing contract; re-export from Studio");
-
-        if (doc.contains("postprocessing") &&
-            doc.at("postprocessing").value("output", std::string("logits")) != "logits")
-            throw std::invalid_argument("Expected classification logits");
-
-        if (prep.contains("center_crop") && !prep.at("center_crop").is_null()) {
-            const auto& crop = prep.at("center_crop");
-            c.crop_width  = RequireInteger(crop, "width");
-            c.crop_height = RequireInteger(crop, "height");
-            if (c.crop_width < 1 || c.crop_width > 65536 ||
-                c.crop_height < 1 || c.crop_height > 65536)
-                throw std::invalid_argument("Invalid center crop");
-        }
-    }
-
-    static void ParseRuntimeOptions(const nlohmann::json& doc, int schema, ModelConfig& c) {
-        const auto tuning = doc.value("onnxruntime", nlohmann::json::object());
-        if (schema == 6 && (!tuning.contains("graph_optimization_level") ||
-                            !doc.contains("num_threads")))
-            throw std::invalid_argument("Missing verified ONNX Runtime settings");
-
-        const auto level = tuning.value("graph_optimization_level", std::string("all"));
-        if      (level == "all")      c.optimization = ORT_ENABLE_ALL;
-        else if (level == "basic")    c.optimization = ORT_ENABLE_BASIC;
-        else if (level == "disabled") c.optimization = ORT_DISABLE_ALL;
-        else throw std::invalid_argument("Unsupported graph optimization level");
-
-        if (doc.contains("num_threads"))
-            c.num_threads = RequireInteger(doc, "num_threads");
-        if (tuning.contains("allow_spinning"))
-            c.allow_spinning = tuning.at("allow_spinning").get<bool>();
-        if (tuning.contains("dynamic_block_base"))
-            c.dynamic_block_base = RequireInteger(tuning, "dynamic_block_base");
-    }
-
-    // ---- 실행 계층 (멤버 상태 사용) ----
-
-    void CreateSession() {
-        Ort::SessionOptions options;
-        options.SetGraphOptimizationLevel(config_.optimization);
-        options.SetExecutionMode(ORT_SEQUENTIAL);
-        if (config_.num_threads)
-            options.SetIntraOpNumThreads(config_.num_threads);
-        if (config_.allow_spinning)
-            options.AddConfigEntry("session.intra_op.allow_spinning",
-                                   *config_.allow_spinning ? "1" : "0");
-        if (config_.dynamic_block_base)
-            options.AddConfigEntry("session.dynamic_block_base",
-                                   std::to_string(*config_.dynamic_block_base).c_str());
-        session_ = std::make_unique<Ort::Session>(env_, config_.model_path.c_str(), options);
-    }
-
-    void ValidateSession() {
-        if (session_->GetInputCount() != 1 || session_->GetOutputCount() != 1)
-            throw std::invalid_argument("Expected one input and one output");
-        Ort::AllocatorWithDefaultOptions allocator;
-        if (config_.input_name != session_->GetInputNameAllocated(0, allocator).get() ||
-            config_.output_name != session_->GetOutputNameAllocated(0, allocator).get())
-            throw std::invalid_argument("Tensor names do not match JSON");
-
-        const auto input_info  = session_->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
-        const auto output_info = session_->GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo();
-        const auto shape = input_info.GetShape(), out_shape = output_info.GetShape();
-        if (input_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
-            output_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
-            shape.size() != 4 || (shape[0] > 0 && shape[0] != 1) ||
-            shape[1] != config_.channels ||
-            (shape[2] > 0 && shape[2] != config_.height) ||
-            (shape[3] > 0 && shape[3] != config_.width) ||
-            out_shape.size() != 2 || (out_shape[0] > 0 && out_shape[0] != 1) ||
-            (out_shape[1] > 0 && out_shape[1] != config_.classes))
-            throw std::invalid_argument("Tensor shape/type does not match JSON");
-    }
-
-    void CreateTensors() {
-        input_.resize(static_cast<size_t>(config_.width) * config_.height * config_.channels);
-        output_.resize(config_.classes);
-        const std::array<int64_t, 4> input_shape{1, config_.channels, config_.height, config_.width};
-        const std::array<int64_t, 2> result_shape{1, config_.classes};
-        const auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        input_tensor_  = Ort::Value::CreateTensor<float>(memory, input_.data(), input_.size(),
-                                                         input_shape.data(), 4);
-        output_tensor_ = Ort::Value::CreateTensor<float>(memory, output_.data(), output_.size(),
-                                                         result_shape.data(), 2);
-    }
-
-    void Warmup() {
-        std::vector<uint8_t> zero;
-        Image startup_image{nullptr, 0, 0, 0};
-        if (true) {  // 기본 생성자 경로: 외부 startup_image 미제공 시 0으로 채운 이미지 사용
-            const int w = (std::max)(config_.width, config_.crop_width);
-            const int h = (std::max)(config_.height, config_.crop_height);
-            zero.resize(static_cast<size_t>(w) * h);
-            startup_image = {zero.data(), w, h, static_cast<size_t>(w)};
-        }
-        warmup_ms_ = InferBW8(startup_image.data, startup_image.width,
-                              startup_image.height, startup_image.stride).inference_ms;
-    }
-
-    void RunSession() {
-        const char* input_names[]  = {config_.input_name.c_str()};
-        const char* output_names[] = {config_.output_name.c_str()};
-        session_->Run(Ort::RunOptions{nullptr}, input_names, &input_tensor_, 1,
-                      output_names, &output_tensor_, 1);
-    }
-
-    Result Postprocess() {
-        for (float value : output_)
-            if (!std::isfinite(value)) throw std::runtime_error("Non-finite model output");
-
-        Result result{};
-        result.class_id = static_cast<int>(
-            std::max_element(output_.begin(), output_.end()) - output_.begin());
-        result.class_name = config_.class_names.empty()
-            ? "class_" + std::to_string(result.class_id)
-            : config_.class_names[result.class_id];
-
-        // 수치 안정 소프트맥스 (최댓값 기준). 최댓값 항 = exp(0) = 1이므로 sum >= 1 보장.
-        const float max_logit = output_[result.class_id];
-        result.probabilities.resize(output_.size());
-        float sum = 0.f;
-        for (size_t i = 0; i < output_.size(); ++i) {
-            result.probabilities[i] = std::exp(output_[i] - max_logit);
-            sum += result.probabilities[i];
-        }
-        const float inv_sum = 1.f / sum;   // 나눗셈 1회 → 곱셈 N회
-        for (auto& value : result.probabilities) value *= inv_sum;
-        result.confidence = result.probabilities[result.class_id];
-        return result;
-    }
-
-    // ---- 상태 ----
-    // [수정 #2, #5] 중복 멤버(width_, height_, input_name_, output_name_, names_)를
-    // 전부 제거하고 config_ 하나만 유지 → 파싱값/사용값 불일치 버그 클래스 원천 차단.
-    Ort::Env env_{ORT_LOGGING_LEVEL_WARNING, "BW8"};
-    ModelConfig config_;
-    std::unique_ptr<Ort::Session> session_;
-    std::unique_ptr<Preprocessor> preprocess_;
-    std::vector<float> input_, output_;
-    Ort::Value input_tensor_{nullptr}, output_tensor_{nullptr};
-    double warmup_ms_ = 0;
-};
-} // namespace dvs_bw8
