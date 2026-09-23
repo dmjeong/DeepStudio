@@ -1,9 +1,625 @@
->	msvcp140.dll!00007ff9d37b8644()	알 수 없음
- 	[인라인 프레임] onnxruntime.dll!std::_Mutex_base::lock() 줄 52	C++
- 	[인라인 프레임] onnxruntime.dll!google::protobuf::internal::CallOnceInitializedMutex<std::mutex>::lock() 줄 103	C++
- 	[인라인 프레임] onnxruntime.dll!google::protobuf::internal::WrappedMutex::Lock() 줄 126	C++
- 	[인라인 프레임] onnxruntime.dll!google::protobuf::internal::MutexLock::{ctor}(google::protobuf::internal::WrappedMutex *) 줄 148	C++
- 	onnxruntime.dll!google::protobuf::internal::OnShutdownRun(void(*)(const void *) f, const void * arg) 줄 583	C++
- 	[인라인 프레임] onnxruntime.dll!google::protobuf::internal::OnShutdownDestroyString(const std::basic_string<char,std::char_traits<char>,std::allocator<char> > *) 줄 205	C++
- 	[인라인 프레임] onnxruntime.dll!google::protobuf::internal::InitProtobufDefaultsImpl() 줄 75	C++
- 	onnxruntime.dll!google::protobuf::internal::InitProtobufDefaultsSlow() 줄 83	C++
+*** WARNING: Unable to verify timestamp for HVision.exe
+
+KEY_VALUES_STRING: 1
+
+    Key  : AV.Type
+    Value: Write
+
+    Key  : Analysis.CPU.mSec
+    Value: 515
+
+    Key  : Analysis.Elapsed.mSec
+    Value: 2838
+
+    Key  : Analysis.IO.Other.Mb
+    Value: 78
+
+    Key  : Analysis.IO.Read.Mb
+    Value: 34
+
+    Key  : Analysis.IO.Write.Mb
+    Value: 422
+
+    Key  : Analysis.Init.CPU.mSec
+    Value: 9562
+
+    Key  : Analysis.Init.Elapsed.mSec
+    Value: 392174
+
+    Key  : Analysis.Memory.CommitPeak.Mb
+    Value: 558
+
+    Key  : Analysis.Version.DbgEng
+    Value: 10.0.29617.1000
+
+    Key  : Analysis.Version.Description
+    Value: 10.2604.29.1 amd64fre
+
+    Key  : Analysis.Version.Ext
+    Value: 1.2604.29.1
+
+    Key  : Failure.Bucket
+    Value: INVALID_POINTER_WRITE_c0000005_HVision.exe!Unknown
+
+    Key  : Failure.Exception.Code
+    Value: 0xc0000005
+
+    Key  : Failure.Exception.IP.Address
+    Value: 0x7ffdce8af6a3
+
+    Key  : Failure.Exception.IP.Module
+    Value: ntdll
+
+    Key  : Failure.Exception.IP.Offset
+    Value: 0x2f6a3
+
+    Key  : Failure.Hash
+    Value: {23f98d54-dfa8-6e88-4f62-96eea7f5a0c0}
+
+    Key  : Failure.ProblemClass.Primary
+    Value: INVALID_POINTER_WRITE
+
+    Key  : Faulting.IP.Type
+    Value: Paged
+
+    Key  : Timeline.OS.Boot.DeltaSec
+    Value: 6374
+
+    Key  : Timeline.Process.Start.DeltaSec
+    Value: 39
+
+    Key  : WER.OS.Branch
+    Value: ge_release
+
+    Key  : WER.OS.Version
+    Value: 10.0.26100.1
+
+    Key  : WER.Process.Version
+    Value: 11.15.0.0
+
+
+FILE_IN_CAB:  HVision.exe.27724.dmp
+
+NTGLOBALFLAG:  0
+
+APPLICATION_VERIFIER_FLAGS:  0
+
+CONTEXT:  (.ecxr)
+rax=0000000000000000 rbx=0000000000000000 rcx=00007ff6a36625a8
+rdx=00000000fffffffa rsi=0000000000000000 rdi=00007ff6a36625a8
+rip=00007ffdce8af6a3 rsp=0000007f5dcfeb00 rbp=0000007f5dcfeb99
+ r8=0000000000000000  r9=00007ff6a36625b0 r10=0000000000000001
+r11=0000000000000001 r12=00000000ff000000 r13=0000000000000000
+r14=00000000fffffffa r15=000000007ffe036a
+iopl=0         nv up ei pl nz ac po cy
+cs=0033  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00010213
+ntdll!RtlpWaitOnCriticalSection+0xb3:
+00007ffd`ce8af6a3 ff4024          inc     dword ptr [rax+24h] ds:00000000`00000024=????????
+Resetting default scope
+
+EXCEPTION_RECORD:  (.exr -1)
+ExceptionAddress: 00007ffdce8af6a3 (ntdll!RtlpWaitOnCriticalSection+0x00000000000000b3)
+   ExceptionCode: c0000005 (Access violation)
+  ExceptionFlags: 00000000
+NumberParameters: 2
+   Parameter[0]: 0000000000000001
+   Parameter[1]: 0000000000000024
+Attempt to write to address 0000000000000024
+
+PROCESS_NAME:  HVision.exe
+
+WRITE_ADDRESS:  0000000000000024 
+
+ERROR_CODE: (NTSTATUS) 0xc0000005 - 0x%p               0x%p                        .          %s              .
+
+EXCEPTION_CODE_STR:  c0000005
+
+EXCEPTION_PARAMETER1:  0000000000000001
+
+EXCEPTION_PARAMETER2:  0000000000000024
+
+STACK_TEXT:  
+0000007f`5dcfeb00 00007ffd`ce8c016f     : 000001bf`86452c10 00000000`00000000 0000007f`5dcff600 00000000`00000000 : ntdll!RtlpWaitOnCriticalSection+0xb3
+0000007f`5dcfec00 00007ffd`ce8c13e2     : 00007ff6`a36625a8 000001bf`c51b0a00 0000007f`5dcfed00 000001bf`86452c28 : ntdll!RtlpEnterCriticalSectionContended+0x1ef
+0000007f`5dcfec80 00007ff6`a33c034a     : 0000007f`5dcfed50 00007ff6`a35295f8 00000000`00000008 00000000`0000003a : ntdll!RtlEnterCriticalSection+0xf2
+0000007f`5dcfecc0 0000007f`5dcfed50     : 00007ff6`a35295f8 00000000`00000008 00000000`0000003a 00000000`0000002c : HVision+0x1034a
+0000007f`5dcfecc8 00007ff6`a35295f8     : 00000000`00000008 00000000`0000003a 00000000`0000002c 00000000`00000249 : 0x0000007f`5dcfed50
+0000007f`5dcfecd0 00000000`00000008     : 00000000`0000003a 00000000`0000002c 00000000`00000249 0000007f`5dcfed80 : HVision+0x1795f8
+0000007f`5dcfecd8 00000000`0000003a     : 00000000`0000002c 00000000`00000249 0000007f`5dcfed80 00007ffd`00000002 : 0x8
+0000007f`5dcfece0 00000000`0000002c     : 00000000`00000249 0000007f`5dcfed80 00007ffd`00000002 ffffffff`fffffffe : 0x3a
+0000007f`5dcfece8 00000000`00000249     : 0000007f`5dcfed80 00007ffd`00000002 ffffffff`fffffffe 000001bf`cb84d788 : 0x2c
+0000007f`5dcfecf0 0000007f`5dcfed80     : 00007ffd`00000002 ffffffff`fffffffe 000001bf`cb84d788 00007ffc`29ffb460 : 0x249
+0000007f`5dcfecf8 00007ffd`00000002     : ffffffff`fffffffe 000001bf`cb84d788 00007ffc`29ffb460 000001bf`86452be8 : 0x0000007f`5dcfed80
+0000007f`5dcfed00 ffffffff`fffffffe     : 000001bf`cb84d788 00007ffc`29ffb460 000001bf`86452be8 000001bf`cb84d848 : 0x00007ffd`00000002
+0000007f`5dcfed08 000001bf`cb84d788     : 00007ffc`29ffb460 000001bf`86452be8 000001bf`cb84d848 000001bf`923f0f48 : 0xffffffff`fffffffe
+0000007f`5dcfed10 00007ffc`29ffb460     : 000001bf`86452be8 000001bf`cb84d848 000001bf`923f0f48 0000007f`5dcff668 : 0x000001bf`cb84d788
+0000007f`5dcfed18 000001bf`86452be8     : 000001bf`cb84d848 000001bf`923f0f48 0000007f`5dcff668 00007ff6`a3661de8 : mfc140!afxStringManager+0x20
+0000007f`5dcfed20 000001bf`cb84d848     : 000001bf`923f0f48 0000007f`5dcff668 00007ff6`a3661de8 00007ff6`a3661e00 : 0x000001bf`86452be8
+0000007f`5dcfed28 000001bf`923f0f48     : 0000007f`5dcff668 00007ff6`a3661de8 00007ff6`a3661e00 00007ff6`a33c01aa : 0x000001bf`cb84d848
+0000007f`5dcfed30 0000007f`5dcff668     : 00007ff6`a3661de8 00007ff6`a3661e00 00007ff6`a33c01aa 000001bf`cb84d848 : 0x000001bf`923f0f48
+0000007f`5dcfed38 00007ff6`a3661de8     : 00007ff6`a3661e00 00007ff6`a33c01aa 000001bf`cb84d848 00007ff6`a3570920 : 0x0000007f`5dcff668
+0000007f`5dcfed40 00007ff6`a3661e00     : 00007ff6`a33c01aa 000001bf`cb84d848 00007ff6`a3570920 00000000`00000029 : HVision+0x2b1de8
+0000007f`5dcfed48 00007ff6`a33c01aa     : 000001bf`cb84d848 00007ff6`a3570920 00000000`00000029 00007ff6`00000001 : HVision+0x2b1e00
+0000007f`5dcfed50 000001bf`cb84d848     : 00007ff6`a3570920 00000000`00000029 00007ff6`00000001 0000007f`5dcfed80 : HVision+0x101aa
+0000007f`5dcfed58 00007ff6`a3570920     : 00000000`00000029 00007ff6`00000001 0000007f`5dcfed80 0000007f`5dcff5f0 : 0x000001bf`cb84d848
+0000007f`5dcfed60 00000000`00000029     : 00007ff6`00000001 0000007f`5dcfed80 0000007f`5dcff5f0 205d5448`47494c5b : HVision+0x1c0920
+0000007f`5dcfed68 00007ff6`00000001     : 0000007f`5dcfed80 0000007f`5dcff5f0 205d5448`47494c5b 206f7420`6c696146 : 0x29
+0000007f`5dcfed70 0000007f`5dcfed80     : 0000007f`5dcff5f0 205d5448`47494c5b 206f7420`6c696146 65732079`72746572 : 0x00007ff6`00000001
+0000007f`5dcfed78 0000007f`5dcff5f0     : 205d5448`47494c5b 206f7420`6c696146 65732079`72746572 20746867`696c2074 : 0x0000007f`5dcfed80
+0000007f`5dcfed80 205d5448`47494c5b     : 206f7420`6c696146 65732079`72746572 20746867`696c2074 7469736e`65746e69 : 0x0000007f`5dcff5f0
+0000007f`5dcfed88 206f7420`6c696146     : 65732079`72746572 20746867`696c2074 7469736e`65746e69 34312848`43203b79 : 0x205d5448`47494c5b
+0000007f`5dcfed90 65732079`72746572     : 20746867`696c2074 7469736e`65746e69 34312848`43203b79 30284c41`56203b29 : 0x206f7420`6c696146
+0000007f`5dcfed98 20746867`696c2074     : 7469736e`65746e69 34312848`43203b79 30284c41`56203b29 2845444f`43203b29 : 0x65732079`72746572
+0000007f`5dcfeda0 7469736e`65746e69     : 34312848`43203b79 30284c41`56203b29 2845444f`43203b29 52544552`203b2930 : 0x20746867`696c2074
+0000007f`5dcfeda8 34312848`43203b79     : 30284c41`56203b29 2845444f`43203b29 52544552`203b2930 29312854`4e435f59 : 0x7469736e`65746e69
+0000007f`5dcfedb0 30284c41`56203b29     : 2845444f`43203b29 52544552`203b2930 29312854`4e435f59 00000000`0000003b : 0x34312848`43203b79
+0000007f`5dcfedb8 2845444f`43203b29     : 52544552`203b2930 29312854`4e435f59 00000000`0000003b 00000000`00000000 : 0x30284c41`56203b29
+0000007f`5dcfedc0 52544552`203b2930     : 29312854`4e435f59 00000000`0000003b 00000000`00000000 00000000`00000000 : 0x2845444f`43203b29
+0000007f`5dcfedc8 29312854`4e435f59     : 00000000`0000003b 00000000`00000000 00000000`00000000 00000000`00000000 : 0x52544552`203b2930
+0000007f`5dcfedd0 00000000`0000003b     : 00000000`00000000 00000000`00000000 00000000`00000000 00000000`00000000 : 0x29312854`4e435f59
+0000007f`5dcfedd8 00000000`00000000     : 00000000`00000000 00000000`00000000 00000000`00000000 00000000`00000000 : 0x3b
+
+
+IP_IN_PAGED_CODE: 
+ntdll!RtlpWaitOnCriticalSection+b3
+00007ffd`ce8af6a3 ff4024          inc     dword ptr [rax+24h]
+
+SYMBOL_NAME:  HVision+1034a
+
+MODULE_NAME: HVision
+
+IMAGE_NAME:  HVision.exe
+
+STACK_COMMAND: ~17s; .ecxr ; kb
+
+FAILURE_BUCKET_ID:  INVALID_POINTER_WRITE_c0000005_HVision.exe!Unknown
+
+OS_VERSION:  10.0.26100.1
+
+BUILDLAB_STR:  ge_release
+
+OSPLATFORM_TYPE:  x64
+
+OSNAME:  Windows 10
+
+IMAGE_VERSION:  2.1.0.53506
+
+FAILURE_ID_HASH:  {23f98d54-dfa8-6e88-4f62-96eea7f5a0c0}
+
+Followup:     MachineOwner
+---------
+
+0:017> .ecxr
+rax=0000000000000000 rbx=0000000000000000 rcx=00007ff6a36625a8
+rdx=00000000fffffffa rsi=0000000000000000 rdi=00007ff6a36625a8
+rip=00007ffdce8af6a3 rsp=0000007f5dcfeb00 rbp=0000007f5dcfeb99
+ r8=0000000000000000  r9=00007ff6a36625b0 r10=0000000000000001
+r11=0000000000000001 r12=00000000ff000000 r13=0000000000000000
+r14=00000000fffffffa r15=000000007ffe036a
+iopl=0         nv up ei pl nz ac po cy
+cs=0033  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00010213
+ntdll!RtlpWaitOnCriticalSection+0xb3:
+00007ffd`ce8af6a3 ff4024          inc     dword ptr [rax+24h] ds:00000000`00000024=????????
+0:017> dt ntdll!_RTL_CRITICAL_SECTION 00007ff6a36625a8
+   +0x000 DebugInfo        : (null) 
+   +0x008 LockCount        : 0n-6
+   +0x00c RecursionCount   : 0n0
+   +0x010 OwningThread     : (null) 
+   +0x018 LockSemaphore    : 0xffffffff`ffffffff Void
+   +0x020 SpinCount        : 0
+0:017> ~*k 40
+
+   0  Id: 6c4c.4434 Suspend: 0 Teb: 0000007f`5b225000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5b1ffa68 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5b1ffa70 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5b1ffaa0 00007ff6`a345716a     KERNELBASE!SleepEx+0x91
+03 0000007f`5b1ffb30 00007ff6`a3670c5c     HVision+0xa716a
+04 0000007f`5b1ffb38 000001bf`00000000     HVision+0x2c0c5c
+05 0000007f`5b1ffb40 ffffffff`fffe7960     0x000001bf`00000000
+06 0000007f`5b1ffb48 00007ff6`a350c496     0xffffffff`fffe7960
+07 0000007f`5b1ffb50 000001bf`c7dc0f20     HVision+0x15c496
+08 0000007f`5b1ffb58 0000007f`5b1ffc88     0x000001bf`c7dc0f20
+09 0000007f`5b1ffb60 00007ff6`a3667990     0x0000007f`5b1ffc88
+0a 0000007f`5b1ffb68 00007ff6`a3455b68     HVision+0x2b7990
+0b 0000007f`5b1ffb70 00007ff6`a3667a18     HVision+0xa5b68
+0c 0000007f`5b1ffb78 00000000`00000000     HVision+0x2b7a18
+
+   1  Id: 6c4c.58cc Suspend: 0 Teb: 0000007f`5b227000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5b4ff8f8 00007ffd`cbbfc11f     ntdll!NtWaitForSingleObject+0x14
+01 0000007f`5b4ff900 00007ffd`9a2a43db     KERNELBASE!WaitForSingleObjectEx+0xaf
+02 0000007f`5b4ff9a0 00007ffd`9a2e0a67     NSCCOR0364+0x343db
+03 0000007f`5b4ffc30 00007ffd`9a2e0afb     NSCCOR0364+0x70a67
+04 0000007f`5b4ffc60 00007ffd`cdbeccb7     NSCCOR0364+0x70afb
+05 0000007f`5b4ffc90 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+06 0000007f`5b4ffcc0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   2  Id: 6c4c.bb0 Suspend: 0 Teb: 0000007f`5b229000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5b5fee38 00007ffd`cbc029f3     ntdll!NtWaitForMultipleObjects+0x14
+01 0000007f`5b5fee40 00007ffd`9a2b0f49     KERNELBASE!WaitForMultipleObjectsEx+0x123
+02 0000007f`5b5ff130 00007ffd`9a2e0a67     NSCCOR0364+0x40f49
+03 0000007f`5b5ff8a0 00007ffd`9a2e0afb     NSCCOR0364+0x70a67
+04 0000007f`5b5ff8d0 00007ffd`cdbeccb7     NSCCOR0364+0x70afb
+05 0000007f`5b5ff900 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+06 0000007f`5b5ff930 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   3  Id: 6c4c.5798 Suspend: 0 Teb: 0000007f`5b22b000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5b6ff8d8 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5b6ff8e0 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5b6ff910 00007ff6`a33b846f     KERNELBASE!SleepEx+0x91
+03 0000007f`5b6ff9a0 00007ff6`a3667990     HVision+0x846f
+04 0000007f`5b6ff9a8 0000007f`00000000     HVision+0x2b7990
+05 0000007f`5b6ff9b0 ffffffff`fffe7960     0x0000007f`00000000
+06 0000007f`5b6ff9b8 00007ffc`2a00ce40     0xffffffff`fffe7960
+07 0000007f`5b6ff9c0 00007ffc`2a007068     mfc140!_afxThreadState
+08 0000007f`5b6ff9c8 00007ffd`ad3fa626     mfc140!__afxThreadData+0x28
+09 0000007f`5b6ff9d0 00000000`00000000     esscnl64+0x7a626
+
+   4  Id: 6c4c.20d8 Suspend: 0 Teb: 0000007f`5b22d000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5b7ff708 00007ffd`cace6b1f     ntdll!NtRemoveIoCompletion+0x14
+01 0000007f`5b7ff710 00007ffd`cdbeccb7     mswsock!SockAsyncThread+0xaf
+02 0000007f`5b7ff770 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+03 0000007f`5b7ff7a0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   5  Id: 6c4c.3fc0 Suspend: 0 Teb: 0000007f`5b243000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5c2ff9c8 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5c2ff9d0 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+*** WARNING: Unable to verify checksum for Open_eVision_FNP_22_08.dll
+02 0000007f`5c2ffa00 00007ffc`2749013c     KERNELBASE!SleepEx+0x91
+03 0000007f`5c2ffa90 00007ffc`2755bc8a     Open_eVision_FNP_22_08+0x18013c
+04 0000007f`5c2ffc00 00007ffc`276a5b97     Open_eVision_FNP_22_08+0x24bc8a
+05 0000007f`5c2ffc40 00007ffc`276a5c2b     Open_eVision_FNP_22_08+0x395b97
+06 0000007f`5c2ffc70 00007ffd`cdbeccb7     Open_eVision_FNP_22_08+0x395c2b
+07 0000007f`5c2ffca0 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+08 0000007f`5c2ffcd0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   6  Id: 6c4c.7820 Suspend: 0 Teb: 0000007f`5b24b000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5b8ff738 00007ffd`cbc029f3     ntdll!NtWaitForMultipleObjects+0x14
+01 0000007f`5b8ff740 00007ffd`cc72860e     KERNELBASE!WaitForMultipleObjectsEx+0x123
+02 (Inline Function) --------`--------     combase!WaitCoalesced+0x79 [onecore\com\published\comutils\coalescedwait.cxx @ 70] 
+03 0000007f`5b8ffa30 00007ffd`cc7f4baf     combase!CROIDTable::WorkerThreadLoop+0xae [onecore\com\combase\dcomrem\refcache.cxx @ 1716] 
+04 0000007f`5b8ffca0 00007ffd`cc7f4abf     combase!CRpcThread::WorkerLoop+0x5b [onecore\com\combase\dcomrem\threads.cxx @ 283] 
+05 0000007f`5b8ffd10 00007ffd`cdbeccb7     combase!CRpcThreadCache::RpcWorkerThreadEntry+0x4f [onecore\com\combase\dcomrem\threads.cxx @ 77] 
+06 0000007f`5b8ffd40 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+07 0000007f`5b8ffd70 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   7  Id: 6c4c.7980 Suspend: 0 Teb: 0000007f`5b24d000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5b9ff768 00007ffd`ce8d064e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 0000007f`5b9ff770 00007ffd`cdbeccb7     ntdll!TppWorkerThread+0x37e
+02 0000007f`5b9ffad0 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+03 0000007f`5b9ffb00 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   8  Id: 6c4c.7e60 Suspend: 0 Teb: 0000007f`5b24f000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5baff898 00007ffd`ce8d064e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 0000007f`5baff8a0 00007ffd`cdbeccb7     ntdll!TppWorkerThread+0x37e
+02 0000007f`5baffc00 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+03 0000007f`5baffc30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+   9  Id: 6c4c.756c Suspend: 0 Teb: 0000007f`5b251000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5bbffa68 00007ffd`ce8d064e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 0000007f`5bbffa70 00007ffd`cdbeccb7     ntdll!TppWorkerThread+0x37e
+02 0000007f`5bbffdd0 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+03 0000007f`5bbffe00 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  10  Id: 6c4c.5904 Suspend: 0 Teb: 0000007f`5b253000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5bcff748 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5bcff750 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+*** WARNING: Unable to verify checksum for Open_eVision_22_08.dll
+02 0000007f`5bcff780 00007ffc`21001deb     KERNELBASE!SleepEx+0x91
+03 0000007f`5bcff810 00007ffd`cdbeccb7     Open_eVision_22_08!Unload+0x9498bb
+04 0000007f`5bcff850 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+05 0000007f`5bcff880 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  11  Id: 6c4c.1434 Suspend: 0 Teb: 0000007f`5b255000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5bdff928 00007ffd`b034533b     win32u!NtUserMsgWaitForMultipleObjectsEx+0x14
+01 0000007f`5bdff930 00007ffd`b03779ce     GdiPlus!BackgroundThreadProc+0x7b
+02 0000007f`5bdff9a0 00007ffd`cdbeccb7     GdiPlus!DllRefCountSafeThreadThunk+0x1e
+03 0000007f`5bdff9d0 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+04 0000007f`5bdffa00 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  12  Id: 6c4c.6414 Suspend: 0 Teb: 0000007f`5b291000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5d7ff808 00007ffd`cbbfc11f     ntdll!NtWaitForSingleObject+0x14
+*** WARNING: Unable to verify checksum for kApi.dll
+01 0000007f`5d7ff810 00007ffc`2a28b5bc     KERNELBASE!WaitForSingleObjectEx+0xaf
+02 0000007f`5d7ff8b0 00007ffc`2a28361b     kApi!kSemaphore_Wait+0x4c
+03 0000007f`5d7ff8f0 00007ffc`2a284961     kApi!xkPeriodic_ThreadEntry+0x5b
+04 0000007f`5d7ff950 00007ffc`280d4c7c     kApi!xxkThread_Register+0xda1
+05 0000007f`5d7ff9a0 00007ffd`cdbeccb7     ucrtbased!thread_start<unsigned int (__cdecl*)(void *),1>+0x9c [minkernel\crts\ucrt\src\appcrt\startup\thread.cpp @ 97] 
+06 0000007f`5d7ffa00 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+07 0000007f`5d7ffa30 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  13  Id: 6c4c.200c Suspend: 0 Teb: 0000007f`5b293000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5d8ffc58 00007ffd`cbbfc11f     ntdll!NtWaitForSingleObject+0x14
+01 0000007f`5d8ffc60 00007ffc`2a28b5bc     KERNELBASE!WaitForSingleObjectEx+0xaf
+02 0000007f`5d8ffd00 00007ffc`2a28361b     kApi!kSemaphore_Wait+0x4c
+03 0000007f`5d8ffd40 00007ffc`2a284961     kApi!xkPeriodic_ThreadEntry+0x5b
+04 0000007f`5d8ffda0 00007ffc`280d4c7c     kApi!xxkThread_Register+0xda1
+05 0000007f`5d8ffdf0 00007ffd`cdbeccb7     ucrtbased!thread_start<unsigned int (__cdecl*)(void *),1>+0x9c [minkernel\crts\ucrt\src\appcrt\startup\thread.cpp @ 97] 
+06 0000007f`5d8ffe50 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+07 0000007f`5d8ffe80 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  14  Id: 6c4c.83a8 Suspend: 0 Teb: 0000007f`5b295000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5d9ff598 00007ffd`cbbfc11f     ntdll!NtWaitForSingleObject+0x14
+01 0000007f`5d9ff5a0 00007ffc`2a28b5bc     KERNELBASE!WaitForSingleObjectEx+0xaf
+02 0000007f`5d9ff640 00007ffc`2a27d3d9     kApi!kSemaphore_Wait+0x4c
+*** WARNING: Unable to verify checksum for GoSdk.dll
+03 0000007f`5d9ff680 00007ffc`2a412e34     kApi!kMsgQueue_Remove+0x59
+04 0000007f`5d9ff6e0 00007ffc`2a284961     GoSdk!GoAcceleratorMgr_WorkerThread+0x74
+05 0000007f`5d9ff760 00007ffc`280d4c7c     kApi!xxkThread_Register+0xda1
+06 0000007f`5d9ff7b0 00007ffd`cdbeccb7     ucrtbased!thread_start<unsigned int (__cdecl*)(void *),1>+0x9c [minkernel\crts\ucrt\src\appcrt\startup\thread.cpp @ 97] 
+07 0000007f`5d9ff810 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+08 0000007f`5d9ff840 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  15  Id: 6c4c.6f64 Suspend: 0 Teb: 0000007f`5b297000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5dafeb78 00007ffd`cacd951a     ntdll!NtWaitForSingleObject+0x14
+01 0000007f`5dafeb80 00007ffd`cacd91f2     mswsock!SockWaitForSingleObject+0x15a
+02 0000007f`5dafec10 00007ffd`ce7b19d1     mswsock!WSPSelect+0xa12
+03 0000007f`5dafedd0 00007ffc`2a268913     ws2_32!select+0x201
+04 0000007f`5dafef30 00007ffc`2a26ad92     kApi!xkSocket_WaitEx+0x2f3
+05 0000007f`5daff660 00007ffc`2a2725f9     kApi!kSocket_Wait+0x42
+06 0000007f`5daff6a0 00007ffc`2a413e69     kApi!kUdpClient_ReadFrom+0xc9
+07 0000007f`5daff700 00007ffc`2a412fca     GoSdk!GoAcceleratorMgr_ReceiveEvent+0x99
+08 0000007f`5daff770 00007ffc`2a284961     GoSdk!GoAcceleratorMgr_EventThread+0x4a
+09 0000007f`5daff7e0 00007ffc`280d4c7c     kApi!xxkThread_Register+0xda1
+0a 0000007f`5daff830 00007ffd`cdbeccb7     ucrtbased!thread_start<unsigned int (__cdecl*)(void *),1>+0x9c [minkernel\crts\ucrt\src\appcrt\startup\thread.cpp @ 97] 
+0b 0000007f`5daff890 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+0c 0000007f`5daff8c0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  16  Id: 6c4c.2aa0 Suspend: 0 Teb: 0000007f`5b299000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5dbff818 00007ffd`cbbfc11f     ntdll!NtWaitForSingleObject+0x14
+01 0000007f`5dbff820 00007ffc`2a28b5bc     KERNELBASE!WaitForSingleObjectEx+0xaf
+02 0000007f`5dbff8c0 00007ffc`2a27d3d9     kApi!kSemaphore_Wait+0x4c
+03 0000007f`5dbff900 00007ffc`2a41308d     kApi!kMsgQueue_Remove+0x59
+04 0000007f`5dbff960 00007ffc`2a284961     GoSdk!GoAcceleratorMgr_CallbackThread+0x5d
+05 0000007f`5dbff9e0 00007ffc`280d4c7c     kApi!xxkThread_Register+0xda1
+06 0000007f`5dbffa30 00007ffd`cdbeccb7     ucrtbased!thread_start<unsigned int (__cdecl*)(void *),1>+0x9c [minkernel\crts\ucrt\src\appcrt\startup\thread.cpp @ 97] 
+07 0000007f`5dbffa90 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+08 0000007f`5dbffac0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+# 17  Id: 6c4c.1a90 Suspend: 0 Teb: 0000007f`5b29b000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5dcfaf68 00007ffd`cbc029f3     ntdll!NtWaitForMultipleObjects+0x14
+01 0000007f`5dcfaf70 00007ffd`cbc028c1     KERNELBASE!WaitForMultipleObjectsEx+0x123
+02 0000007f`5dcfb260 00007ffd`cdc11330     KERNELBASE!WaitForMultipleObjects+0x11
+03 0000007f`5dcfb2a0 00007ffd`cdc3893d     kernel32!WerpReportFaultInternal+0x62c
+04 0000007f`5dcfb420 00007ffd`cbcef76c     kernel32!WerpReportFault+0xc5
+05 0000007f`5dcfb470 00007ffd`ce9e93a0     KERNELBASE!UnhandledExceptionFilter+0x34c
+06 0000007f`5dcfb560 00007ffd`ce99f933     ntdll!RtlUserThreadStart$filt$0+0x3f
+07 0000007f`5dcfb590 00007ffd`ce9e4abf     ntdll!_C_specific_handler+0x93
+08 0000007f`5dcfb600 00007ffd`ce8c5e97     ntdll!RtlpExecuteHandlerForException+0xf
+09 0000007f`5dcfb630 00007ffd`ce9e43fe     ntdll!RtlDispatchException+0x437
+0a 0000007f`5dcfbd80 00007ffd`ce8af6a3     ntdll!KiUserExceptionDispatch+0x2e
+0b 0000007f`5dcfeb00 00007ffd`ce8c016f     ntdll!RtlpWaitOnCriticalSection+0xb3
+0c 0000007f`5dcfec00 00007ffd`ce8c13e2     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+0d 0000007f`5dcfec80 00007ff6`a33c034a     ntdll!RtlEnterCriticalSection+0xf2
+0e 0000007f`5dcfecc0 0000007f`5dcfed50     HVision+0x1034a
+0f 0000007f`5dcfecc8 00007ff6`a35295f8     0x0000007f`5dcfed50
+10 0000007f`5dcfecd0 00000000`00000008     HVision+0x1795f8
+11 0000007f`5dcfecd8 00000000`0000003a     0x8
+12 0000007f`5dcfece0 00000000`0000002c     0x3a
+13 0000007f`5dcfece8 00000000`00000249     0x2c
+14 0000007f`5dcfecf0 0000007f`5dcfed80     0x249
+15 0000007f`5dcfecf8 00007ffd`00000002     0x0000007f`5dcfed80
+16 0000007f`5dcfed00 ffffffff`fffffffe     0x00007ffd`00000002
+17 0000007f`5dcfed08 000001bf`cb84d788     0xffffffff`fffffffe
+18 0000007f`5dcfed10 00007ffc`29ffb460     0x000001bf`cb84d788
+19 0000007f`5dcfed18 000001bf`86452be8     mfc140!afxStringManager+0x20
+1a 0000007f`5dcfed20 000001bf`cb84d848     0x000001bf`86452be8
+1b 0000007f`5dcfed28 000001bf`923f0f48     0x000001bf`cb84d848
+1c 0000007f`5dcfed30 0000007f`5dcff668     0x000001bf`923f0f48
+1d 0000007f`5dcfed38 00007ff6`a3661de8     0x0000007f`5dcff668
+1e 0000007f`5dcfed40 00007ff6`a3661e00     HVision+0x2b1de8
+1f 0000007f`5dcfed48 00007ff6`a33c01aa     HVision+0x2b1e00
+20 0000007f`5dcfed50 000001bf`cb84d848     HVision+0x101aa
+21 0000007f`5dcfed58 00007ff6`a3570920     0x000001bf`cb84d848
+22 0000007f`5dcfed60 00000000`00000029     HVision+0x1c0920
+23 0000007f`5dcfed68 00007ff6`00000001     0x29
+24 0000007f`5dcfed70 0000007f`5dcfed80     0x00007ff6`00000001
+25 0000007f`5dcfed78 0000007f`5dcff5f0     0x0000007f`5dcfed80
+26 0000007f`5dcfed80 205d5448`47494c5b     0x0000007f`5dcff5f0
+27 0000007f`5dcfed88 206f7420`6c696146     0x205d5448`47494c5b
+28 0000007f`5dcfed90 65732079`72746572     0x206f7420`6c696146
+29 0000007f`5dcfed98 20746867`696c2074     0x65732079`72746572
+2a 0000007f`5dcfeda0 7469736e`65746e69     0x20746867`696c2074
+2b 0000007f`5dcfeda8 34312848`43203b79     0x7469736e`65746e69
+2c 0000007f`5dcfedb0 30284c41`56203b29     0x34312848`43203b79
+2d 0000007f`5dcfedb8 2845444f`43203b29     0x30284c41`56203b29
+2e 0000007f`5dcfedc0 52544552`203b2930     0x2845444f`43203b29
+2f 0000007f`5dcfedc8 29312854`4e435f59     0x52544552`203b2930
+30 0000007f`5dcfedd0 00000000`0000003b     0x29312854`4e435f59
+31 0000007f`5dcfedd8 00000000`00000000     0x3b
+
+  18  Id: 6c4c.64a8 Suspend: 0 Teb: 0000007f`5b29d000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5ddffa58 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5ddffa60 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5ddffa90 00007ff6`a33be9bf     KERNELBASE!SleepEx+0x91
+03 0000007f`5ddffb20 00000000`00000500     HVision+0xe9bf
+04 0000007f`5ddffb28 00000000`00000000     0x500
+
+  19  Id: 6c4c.6d78 Suspend: 0 Teb: 0000007f`5b29f000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5deffcd8 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5deffce0 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5deffd10 00007ff6`a33be9bf     KERNELBASE!SleepEx+0x91
+03 0000007f`5deffda0 00000000`00000500     HVision+0xe9bf
+04 0000007f`5deffda8 00000000`00000000     0x500
+
+  20  Id: 6c4c.80e0 Suspend: 0 Teb: 0000007f`5b2a1000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5dfff948 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5dfff950 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5dfff980 00007ff6`a33be9bf     KERNELBASE!SleepEx+0x91
+03 0000007f`5dfffa10 00000000`00000500     HVision+0xe9bf
+04 0000007f`5dfffa18 00000000`00000000     0x500
+
+  21  Id: 6c4c.7d40 Suspend: 0 Teb: 0000007f`5b2a3000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5e0ffb48 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5e0ffb50 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5e0ffb80 00007ff6`a33be9bf     KERNELBASE!SleepEx+0x91
+03 0000007f`5e0ffc10 00000000`00000500     HVision+0xe9bf
+04 0000007f`5e0ffc18 00000000`00000000     0x500
+
+  22  Id: 6c4c.3894 Suspend: 0 Teb: 0000007f`5b2a5000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5e1ff9a8 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5e1ff9b0 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5e1ff9e0 00007ff6`a33be9bf     KERNELBASE!SleepEx+0x91
+03 0000007f`5e1ffa70 00000000`00000500     HVision+0xe9bf
+04 0000007f`5e1ffa78 00000000`00000000     0x500
+
+  23  Id: 6c4c.412c Suspend: 0 Teb: 0000007f`5b2a7000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5e2ffd68 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5e2ffd70 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5e2ffda0 00007ff6`a33be9bf     KERNELBASE!SleepEx+0x91
+03 0000007f`5e2ffe30 00000000`00000500     HVision+0xe9bf
+04 0000007f`5e2ffe38 00000000`00000000     0x500
+
+  24  Id: 6c4c.4334 Suspend: 0 Teb: 0000007f`5b2a9000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5e3ffd08 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5e3ffd10 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5e3ffd40 00007ff6`a33be9bf     KERNELBASE!SleepEx+0x91
+03 0000007f`5e3ffdd0 00000000`00000500     HVision+0xe9bf
+04 0000007f`5e3ffdd8 00000000`00000000     0x500
+
+  25  Id: 6c4c.5954 Suspend: 0 Teb: 0000007f`5b2ab000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5e4ffa68 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5e4ffa70 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5e4ffaa0 00007ff6`a33be9bf     KERNELBASE!SleepEx+0x91
+03 0000007f`5e4ffb30 00000000`00000500     HVision+0xe9bf
+04 0000007f`5e4ffb38 00000000`00000000     0x500
+
+  26  Id: 6c4c.978 Suspend: 0 Teb: 0000007f`5b2ad000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5e5ffd38 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5e5ffd40 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5e5ffd70 00007ff6`a33be9bf     KERNELBASE!SleepEx+0x91
+03 0000007f`5e5ffe00 00000000`00000500     HVision+0xe9bf
+04 0000007f`5e5ffe08 00000000`00000000     0x500
+
+  27  Id: 6c4c.115c Suspend: 0 Teb: 0000007f`5b2af000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5e6ffbb8 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5e6ffbc0 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5e6ffbf0 00007ff6`a33be9bf     KERNELBASE!SleepEx+0x91
+03 0000007f`5e6ffc80 00000000`00000500     HVision+0xe9bf
+04 0000007f`5e6ffc88 00000000`00000000     0x500
+
+  28  Id: 6c4c.86c Suspend: 0 Teb: 0000007f`5b2b1000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5e7ffc18 00007ffd`ce94fa44     ntdll!NtDelayExecution+0x14
+01 0000007f`5e7ffc20 00007ffd`cbc228d1     ntdll!RtlDelayExecution+0x34
+02 0000007f`5e7ffc50 00007ff6`a33be9bf     KERNELBASE!SleepEx+0x91
+03 0000007f`5e7ffce0 00000000`00000500     HVision+0xe9bf
+04 0000007f`5e7ffce8 00000000`00000000     0x500
+
+  29  Id: 6c4c.165c Suspend: 0 Teb: 0000007f`5b2b3000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5e8ff2f8 00007ffd`ce1e45b8     win32u!NtUserGetMessage+0x14
+01 0000007f`5e8ff300 00007ffd`9a2ae11a     user32!GetMessageA+0x48
+02 0000007f`5e8ff360 00007ffd`ce53100a     NSCCOR0364+0x3e11a
+03 0000007f`5e8ff810 00000000`00000000     0x00007ffd`ce53100a
+
+  30  Id: 6c4c.5630 Suspend: 0 Teb: 0000007f`5b2b5000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5e9ff758 00007ffd`ce1e45b8     win32u!NtUserGetMessage+0x14
+01 0000007f`5e9ff760 00007ffd`9a2ae11a     user32!GetMessageA+0x48
+02 0000007f`5e9ff7c0 00007ffd`ce531019     NSCCOR0364+0x3e11a
+03 0000007f`5e9ffc70 00000000`00000000     0x00007ffd`ce531019
+
+  31  Id: 6c4c.2f6c Suspend: 0 Teb: 0000007f`5b2b7000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5eaff4f8 00007ffd`ce1e45b8     win32u!NtUserGetMessage+0x14
+01 0000007f`5eaff500 00007ffd`9a2ae11a     user32!GetMessageA+0x48
+02 0000007f`5eaff560 00007ffd`ce531028     NSCCOR0364+0x3e11a
+03 0000007f`5eaffa10 00000000`00000000     0x00007ffd`ce531028
+
+  32  Id: 6c4c.bfc Suspend: 0 Teb: 0000007f`5b2b9000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5ebff8a8 00007ffd`ce1e45b8     win32u!NtUserGetMessage+0x14
+01 0000007f`5ebff8b0 00007ffd`9a2ae11a     user32!GetMessageA+0x48
+02 0000007f`5ebff910 00007ffd`ce531037     NSCCOR0364+0x3e11a
+03 0000007f`5ebffdc0 00000000`00000000     0x00007ffd`ce531037
+
+  33  Id: 6c4c.823c Suspend: 0 Teb: 0000007f`5b2bb000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5ecff648 00007ffd`ce1e45b8     win32u!NtUserGetMessage+0x14
+01 0000007f`5ecff650 00007ffd`9a2ae11a     user32!GetMessageA+0x48
+02 0000007f`5ecff6b0 00007ffd`ce531046     NSCCOR0364+0x3e11a
+03 0000007f`5ecffb60 00000000`00000000     0x00007ffd`ce531046
+
+  34  Id: 6c4c.6350 Suspend: 0 Teb: 0000007f`5b2bd000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5edff738 00007ffd`ce1e45b8     win32u!NtUserGetMessage+0x14
+01 0000007f`5edff740 00007ffd`9a2ae11a     user32!GetMessageA+0x48
+02 0000007f`5edff7a0 00007ffd`ce531055     NSCCOR0364+0x3e11a
+03 0000007f`5edffc50 00000000`00000000     0x00007ffd`ce531055
+
+  35  Id: 6c4c.8240 Suspend: 0 Teb: 0000007f`5b2bf000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5eeff8e8 00007ffd`ce1e45b8     win32u!NtUserGetMessage+0x14
+01 0000007f`5eeff8f0 00007ffd`9a2ae11a     user32!GetMessageA+0x48
+02 0000007f`5eeff950 00007ffd`ce531064     NSCCOR0364+0x3e11a
+03 0000007f`5eeffe00 00000000`00000000     0x00007ffd`ce531064
+
+  36  Id: 6c4c.42a8 Suspend: 0 Teb: 0000007f`5b2c1000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5efff268 00007ffd`ce1e45b8     win32u!NtUserGetMessage+0x14
+01 0000007f`5efff270 00007ffd`9a2ae11a     user32!GetMessageA+0x48
+02 0000007f`5efff2d0 00007ffd`ce531073     NSCCOR0364+0x3e11a
+03 0000007f`5efff780 00000000`00000000     0x00007ffd`ce531073
+
+  37  Id: 6c4c.542c Suspend: 0 Teb: 0000007f`5b2c3000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5f0ff728 00007ffd`ce1e45b8     win32u!NtUserGetMessage+0x14
+01 0000007f`5f0ff730 00007ffd`9a2ae11a     user32!GetMessageA+0x48
+02 0000007f`5f0ff790 00007ffd`ce531082     NSCCOR0364+0x3e11a
+03 0000007f`5f0ffc40 00000000`00000000     0x00007ffd`ce531082
+
+  38  Id: 6c4c.34e0 Suspend: 0 Teb: 0000007f`5b2c5000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5f1ff898 00007ffd`ce1e45b8     win32u!NtUserGetMessage+0x14
+01 0000007f`5f1ff8a0 00007ffd`9a2ae11a     user32!GetMessageA+0x48
+02 0000007f`5f1ff900 00007ffd`ce531091     NSCCOR0364+0x3e11a
+03 0000007f`5f1ffdb0 00000000`00000000     0x00007ffd`ce531091
+
+  39  Id: 6c4c.7138 Suspend: 0 Teb: 0000007f`5b2c7000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5f2ff858 00007ffd`ce1e45b8     win32u!NtUserGetMessage+0x14
+01 0000007f`5f2ff860 00007ffd`9a2ae11a     user32!GetMessageA+0x48
+02 0000007f`5f2ff8c0 00007ffd`ce5310a0     NSCCOR0364+0x3e11a
+03 0000007f`5f2ffd70 00000000`00000000     0x00007ffd`ce5310a0
+
+  40  Id: 6c4c.30fc Suspend: 0 Teb: 0000007f`5b2cb000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5beff578 00007ffd`ce8d064e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 0000007f`5beff580 00007ffd`cdbeccb7     ntdll!TppWorkerThread+0x37e
+02 0000007f`5beff8e0 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+03 0000007f`5beff910 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+  41  Id: 6c4c.7848 Suspend: 0 Teb: 0000007f`5b2cd000 Unfrozen
+ # Child-SP          RetAddr               Call Site
+00 0000007f`5bfff4c8 00007ffd`ce8d064e     ntdll!NtWaitForWorkViaWorkerFactory+0x14
+01 0000007f`5bfff4d0 00007ffd`cdbeccb7     ntdll!TppWorkerThread+0x37e
+02 0000007f`5bfff830 00007ffd`ce92ad6c     kernel32!BaseThreadInitThunk+0x17
+03 0000007f`5bfff860 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
