@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -51,6 +52,7 @@ public:
     Preprocessor(int width, int height, std::vector<float> mean, std::vector<float> stddev,
                  int crop_width = 0, int crop_height = 0)
         : width_(width), height_(height), crop_width_(crop_width), crop_height_(crop_height),
+          channel_count_(mean.size()),
           mean_(std::move(mean)), std_(std::move(stddev)) {
         if (width < 1 || height < 1 || width > 65536 || height > 65536 ||
             (mean_.size() != 1 && mean_.size() != 3) || mean_.size() != std_.size() ||
@@ -59,6 +61,7 @@ public:
         for (size_t c = 0; c < mean_.size(); ++c)
             if (!std::isfinite(mean_[c]) || !std::isfinite(std_[c]) || std_[c] <= 0)
                 throw std::invalid_argument("Invalid normalization");
+        BuildNormalizationLuts();
     }
     void Run(Image image, std::vector<float>& output) {
         Validate(image);
@@ -75,7 +78,23 @@ public:
             source_width_ = image.width; source_height_ = image.height;
         }
         const size_t plane = static_cast<size_t>(width_) * height_;
-        output.resize(plane * mean_.size());
+        const size_t total = plane * channel_count_;
+        if (output.size() != total) output.resize(total);
+        if (channel_count_ == 1) RunSingleChannel(image, pixels, output);
+        else RunMultiChannel(image, pixels, plane, output);
+    }
+
+private:
+    void BuildNormalizationLuts() {
+        for (size_t c = 0; c < channel_count_; ++c) {
+            luts_[c].resize(256);
+            for (int v = 0; v < 256; ++v)
+                luts_[c][v] = (static_cast<float>(v) / 255.0f - mean_[c]) / std_[c];
+        }
+    }
+
+    void RunMultiChannel(Image image, const uint8_t* pixels, size_t plane,
+                         std::vector<float>& output) {
         for (int y = 0; y < height_; ++y) {
             const auto ay = y_[y];
             const auto* row0 = pixels + static_cast<size_t>(ay.first) * image.stride;
@@ -85,15 +104,34 @@ public:
                 const unsigned top = row0[ax.first] * (256 - ax.weight) + row0[ax.second] * ax.weight;
                 const unsigned bottom = row1[ax.first] * (256 - ax.weight) + row1[ax.second] * ax.weight;
                 const unsigned pixel = (top * (256 - ay.weight) + bottom * ay.weight + 32768) >> 16;
-                const float value = static_cast<float>(pixel) / 255.0f;
-                for (size_t c = 0; c < mean_.size(); ++c)
-                    output[c * plane + static_cast<size_t>(y) * width_ + x] = (value - mean_[c]) / std_[c];
+                for (size_t c = 0; c < channel_count_; ++c)
+                    output[c * plane + static_cast<size_t>(y) * width_ + x] = luts_[c][pixel];
             }
         }
     }
-private:
+
+    void RunSingleChannel(Image image, const uint8_t* pixels,
+                          std::vector<float>& output) {
+        const auto& lut = luts_[0];
+        for (int y = 0; y < height_; ++y) {
+            const auto ay = y_[y];
+            const auto* row0 = pixels + static_cast<size_t>(ay.first) * image.stride;
+            const auto* row1 = pixels + static_cast<size_t>(ay.second) * image.stride;
+            auto* out = output.data() + static_cast<size_t>(y) * width_;
+            for (int x = 0; x < width_; ++x) {
+                const auto ax = x_[x];
+                const unsigned top = row0[ax.first] * (256 - ax.weight) + row0[ax.second] * ax.weight;
+                const unsigned bottom = row1[ax.first] * (256 - ax.weight) + row1[ax.second] * ax.weight;
+                const unsigned pixel = (top * (256 - ay.weight) + bottom * ay.weight + 32768) >> 16;
+                out[x] = lut[pixel];
+            }
+        }
+    }
+
     int width_, height_, crop_width_, crop_height_, source_width_ = 0, source_height_ = 0;
+    size_t channel_count_;
     std::vector<float> mean_, std_;
+    std::array<std::vector<float>, 3> luts_;
     std::vector<Axis> x_, y_;
 };
 } // namespace dvs_bw8
