@@ -1,63 +1,9 @@
-'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\HVision.exe'을(를) 로드했습니다. 기호가 로드되었습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\ntdll.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\kernel32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\KernelBase.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\user32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\win32u.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\gdi32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\gdi32full.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\msvcp_win.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\ucrtbase.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\advapi32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\msvcrt.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\sechost.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\rpcrt4.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\shell32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\shlwapi.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\ole32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\combase.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\oleaut32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\ws2_32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\GoSdk.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\kApi.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\onnxruntime.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\setupapi.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\mfc140.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\imm32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_5.82.26100.8328_none_87eede957a2ccddd\comctl32.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\WinSxS\amd64_microsoft.windows.gdiplus_6595b64144ccf1df_1.1.26100.9168_none_6ef70e683dc39227\GdiPlus.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\msvcp140.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\winmm.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\MultiCam.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\GCBase_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\GenApi_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\PylonBase_v7_3.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\version.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\vcruntime140.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\vcruntime140d.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'D:\SVM\CLT\BIN\ucrtbased.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\IPHLPAPI.DLL'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\dbghelp.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\msvcp140_1.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\dxgi.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\vcruntime140_1.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\uxtheme.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\MathParser_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\XmlParser_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\Log_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Program Files\Basler\pylon 7\Runtime\x64\NodeMapData_MD_VC141_v3_1_Basler_pylon.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\bcrypt.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\powrprof.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-'HVision.exe'(Win32): 'C:\Windows\System32\umpdc.dll'을(를) 로드했습니다. PDB 파일을 찾거나 열 수 없습니다.
-예외 발생(0x00007FFA02328644(msvcp140.dll), HVision.exe): 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
-
-0x00007FFA02328644(msvcp140.dll)에(HVision.exe의) 처리되지 않은 예외가 있습니다. 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
-
-예외 발생(0x00007FFA02328644(msvcp140.dll), HVision.exe): 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
-
-0x00007FFA02328644(msvcp140.dll)에(HVision.exe의) 처리되지 않은 예외가 있습니다. 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
-
-예외 발생(0x00007FFA02328644(msvcp140.dll), HVision.exe): 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
-
-0x00007FFA02328644(msvcp140.dll)에(HVision.exe의) 처리되지 않은 예외가 있습니다. 0xC0000005: 0x0000000000000000 위치를 읽는 동안 액세스 위반이 발생했습니다..
-
+>	msvcp140.dll!00007ff9d37b8644()	알 수 없음
+ 	[인라인 프레임] onnxruntime.dll!std::_Mutex_base::lock() 줄 52	C++
+ 	[인라인 프레임] onnxruntime.dll!google::protobuf::internal::CallOnceInitializedMutex<std::mutex>::lock() 줄 103	C++
+ 	[인라인 프레임] onnxruntime.dll!google::protobuf::internal::WrappedMutex::Lock() 줄 126	C++
+ 	[인라인 프레임] onnxruntime.dll!google::protobuf::internal::MutexLock::{ctor}(google::protobuf::internal::WrappedMutex *) 줄 148	C++
+ 	onnxruntime.dll!google::protobuf::internal::OnShutdownRun(void(*)(const void *) f, const void * arg) 줄 583	C++
+ 	[인라인 프레임] onnxruntime.dll!google::protobuf::internal::OnShutdownDestroyString(const std::basic_string<char,std::char_traits<char>,std::allocator<char> > *) 줄 205	C++
+ 	[인라인 프레임] onnxruntime.dll!google::protobuf::internal::InitProtobufDefaultsImpl() 줄 75	C++
+ 	onnxruntime.dll!google::protobuf::internal::InitProtobufDefaultsSlow() 줄 83	C++
