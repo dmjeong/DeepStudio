@@ -21,6 +21,10 @@ int main() {
                 const int ch = k % 2 ? std::max(1, h / 2) : 0;
                 dvs_bw8::Preprocessor pre(dw, dh, mean, stddev, cw, ch);
                 std::vector<float> actual;
+                // Run a different frame first: cached rows must not leak into the next Run.
+                std::vector<uint8_t> previous(pixels.size());
+                for (size_t i = 0; i < pixels.size(); ++i) previous[i] = static_cast<uint8_t>(255 - pixels[i]);
+                pre.Run({previous.data(), w, h, stride}, actual);
                 pre.Run({pixels.data(), w, h, stride}, actual);
                 cv::Mat src(h, w, CV_8UC1, pixels.data(), stride), resized;
                 if (cw) src = src(cv::Rect((w - cw) / 2, (h - ch) / 2, cw, ch));
