@@ -73,13 +73,28 @@ class WebAppTests(unittest.TestCase):
         weights.write_bytes(b"test")
         with patch.object(self.app.state.jobs, "start", return_value={"id": "export-test"}) as start:
             response = self.client.post("/api/jobs/export", json={"weights": str(weights),
-                "output": str(self.root / "model.onnx"), "dataset_validation": True})
+                "output": str(self.root / "model.dvsenc"), "dataset_validation": True,
+                "encryption_key_path": str(self.root / "private.key")})
         self.assertEqual(response.status_code, 200, response.text)
         kind, payload = start.call_args.args
         self.assertEqual(kind, "export")
         self.assertTrue(payload["dataset_validation"])
         self.assertFalse(payload["allow_precision_fallback"])
+        self.assertEqual(payload["encryption_key_path"], str(self.root / "private.key"))
         self.assertEqual(payload["project"]["data"], project["data"])
+
+    def test_model_key_creation_never_overwrites_or_returns_secret(self):
+        path = self.root / "secrets" / "inspection.key"
+        result = self.client.post("/api/model-keys", json={"path": str(path)})
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json(), {"path": str(path), "created": True})
+        secret = path.read_bytes()
+        self.assertEqual(len(secret), 32)
+        again = self.client.post("/api/model-keys", json={"path": str(path)})
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(path.read_bytes(), secret)
+        for invalid in ("relative.key", str(self.root / "file.pt"), ""):
+            self.assertEqual(self.client.post("/api/model-keys", json={"path": invalid}).status_code, 400)
 
     def test_mask_teaching_api_saves_real_training_png_and_restores_editable_shapes(self):
         project = self.project(task="segment")

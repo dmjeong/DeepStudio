@@ -20,6 +20,9 @@
 
 [C++17 / C# ONNX 실행·자동 테스트 예제](example/README.md)는 `example/`에서 제공한다.
 
+[암호화 ONNX 내보내기와 C++/C# 로드](example/ENCRYPTED_MODELS.md): 전 태스크의 모델과
+배포 설정을 함께 암호화하고, 프로그램 시작 때 메모리에서 한 번만 복호화한다.
+
 `build.bat`은 기본 모델의 런타임과 사전학습 가중치를 모두 받은 뒤 EXE에 포함한다.
 NVIDIA GPU가 있는 PC에서는 드라이버에 맞는 CUDA PyTorch를 자동 설치하고 실제 GPU
 합성곱과 역전파를 확인한 뒤 빌드한다. GPU 학습을 반드시 요구하려면 `gui\build.bat gpu`,

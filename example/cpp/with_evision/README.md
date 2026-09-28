@@ -3,12 +3,15 @@
 **OpenCV 필요 없음.** 기존 eVision 프로그램의 `EImageBW8` 또는 `EROIBW8`를 전달한다.
 이 예제는 Studio에서 내보낸 **분류 모델**용이며 컬러·BW16 버퍼는 받지 않는다.
 
+암호화 모델은 [암호화 예제](../../ENCRYPTED_MODELS.md)를 따른다. `encrypted.cpp`는
+`.dvsenc` 로드·복호화·준비 추론 후 같은 `InferEvision()` / `InferBW8()`을 사용한다.
+
 ## 기존 프로그램에 넣기
 
 ### 이미 있는 EROIBW8을 입력하기
 
 `roi_example.h`는 실제 Open eVision의 **EROIBW8 참조를 받는 예제**다.
-기존 eVision 프로젝트에 `classifier.h`, `bw8_preprocess.h`, `roi_example.h`와
+기존 eVision 프로젝트에 `classifier.h`, `bw8_preprocess.h`, `roi_example.h`, 상위 폴더의 `model_crypto.h`와
 상위 폴더의 `nlohmann` 폴더를 함께 복사한다. 기존 eVision 헤더·라이브러리 설정은 필요하다.
 
 ```cpp
@@ -41,9 +44,9 @@ API 사용은 [Euresys 공식 예제](https://documentation.euresys.com/products
 
 ### 공통 파일과 링크 설정
 
-1. 이 폴더의 **`classifier.h`, `bw8_preprocess.h` 두 파일**을 프로젝트에 복사한다.
+1. 이 폴더의 **`classifier.h`, `bw8_preprocess.h`와 상위 폴더의 `model_crypto.h`**를 프로젝트에 복사한다.
 2. 상위 폴더의 **`nlohmann` 폴더 전체**를 `classifier.h` 옆에 복사한다. `json.hpp`가 포함돼 있다. VS 추가 포함 디렉터리에 그 프로젝트 폴더와 ONNX Runtime 1.29.0의 `include`를 추가한다.
-3. ONNX Runtime의 `lib`를 라이브러리 경로에 추가하고 `onnxruntime.lib`를 링크한다.
+3. ONNX Runtime의 `lib`를 라이브러리 경로에 추가하고 `onnxruntime.lib`를 링크한다. Windows 암호화용 `bcrypt.lib`는 헤더에서 자동 지정하며 OS 기본 구성이라 추가 DLL은 없다.
 4. x64 / C++17 / UTF-8 소스(`/utf-8`), 정확한 부동소수점(`/fp:precise`)으로 빌드한다.
 5. `onnxruntime.dll`은 프로그램 EXE 옆에 둔다. 모델 JSON과 ONNX도 함께 준비한다.
 

@@ -78,6 +78,7 @@ class ExportRequest(Body):
     dataset_validation: bool = False
     validation_dir: str = ""
     allow_precision_fallback: bool = False
+    encryption_key_path: str = ""
 
 
 class ModelPackRequest(Body):
@@ -593,6 +594,17 @@ def create_app(state_dir=None):
             return jobs.start("infer", {**body.model_dump(exclude={"folder", "crop_mode", "crop_json"}),
                 "input_region": region, "images": paths,
                 "project": project_view(store.project) if store.project else {}})
+
+    @app.post("/api/model-keys")
+    def create_model_key(body: PathBody):
+        from model_crypto import create_key
+        path = Path(body.path)
+        if not body.path.strip() or not path.is_absolute() or path.suffix.lower() != ".key":
+            raise ValueError("새 암호키의 절대 경로와 .key 확장자를 지정하세요")
+        # Exclusive creation: a second click cannot overwrite the only key to
+        # an existing model. Return the path, never the secret bytes.
+        create_key(path)
+        return {"path": str(path), "created": True}
 
     @app.post("/api/jobs/export")
     def export(body: ExportRequest):

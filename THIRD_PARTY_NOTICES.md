@@ -17,6 +17,12 @@ release-specific SBOM.
 | LibreYOLO 1.5.0 | 기본 LibreMobileNetV4 / LibreYOLO9 / Re-DETR v4 native runtime | MIT for the library; https://github.com/LibreYOLO/libreyolo/blob/release/LICENSE and the bundled third-party list at https://github.com/LibreYOLO/libreyolo/blob/release/NOTICE |
 | RT-DETRv4 upstream (제품 표기 Re-DETR v4) | 기본 Re-DETR v4 소스 후보 | Apache-2.0; https://github.com/RT-DETRs/RT-DETRv4/blob/main/LICENSE |
 | SAM2 1.0 (`2b90b9f`) | 기본 SAM2.1 Hiera runtime | Apache-2.0; https://github.com/facebookresearch/sam2/blob/main/LICENSE |
+| cryptography | Python AES-GCM model containers and model-pack signatures | Apache-2.0 OR BSD-3-Clause; https://github.com/pyca/cryptography/blob/main/LICENSE |
+| OpenSSL 3 | Native encrypted-model loader on non-Windows builds | Apache-2.0; https://github.com/openssl/openssl/blob/openssl-3.0/LICENSE.txt |
+
+The Windows native encrypted-model loader uses the OS-provided BCrypt API and
+does not ship an OpenSSL DLL. Python cryptography wheels can contain OpenSSL;
+the bundled wheel's applicable licenses must accompany a frozen Python release.
 
 The LibreYOLO 1.5.0 and SAM2 1.0 runtimes are shipped dependencies of the Windows build.
 Its distribution LICENSE and applicable NOTICE entries must be copied into the

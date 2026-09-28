@@ -13,6 +13,7 @@
 #endif
 #endif
 #include "bw8_preprocess.h"
+#include "model_crypto.h"
 #include <onnxruntime_cxx_api.h>
 #include <nlohmann/json.hpp>
 #include <array>
@@ -38,9 +39,22 @@ class Classifier {
 public:
     explicit Classifier(const std::filesystem::path& json_path,
                         Image startup_image = {nullptr, 0, 0, 0}) {
-        std::ifstream file(json_path);
-        if (!file) throw std::runtime_error("Cannot open model JSON: " + json_path.u8string());
-        const auto doc = nlohmann::json::parse(file);
+        Initialize(ReadJson(json_path), json_path, nullptr, startup_image);
+    }
+    explicit Classifier(const dvs_crypto::Package& package, Image startup_image = {nullptr, 0, 0, 0}) {
+        Initialize(package.Config(), {}, &package, startup_image);
+    }
+    Classifier(const std::filesystem::path& encrypted_path, const dvs_crypto::Key& key,
+               Image startup_image = {nullptr, 0, 0, 0})
+        : Classifier(dvs_crypto::Package(encrypted_path, key), startup_image) {}
+private:
+    static nlohmann::json ReadJson(const std::filesystem::path& path) {
+        std::ifstream file(path);
+        if (!file) throw std::runtime_error("Cannot open model JSON: " + path.u8string());
+        return nlohmann::json::parse(file);
+    }
+    void Initialize(const nlohmann::json& doc, const std::filesystem::path& json_path,
+                    const dvs_crypto::Package* package, Image startup_image) {
         auto integer = [&](const char* name) {
             const auto& v = doc.at(name);
             if (!v.is_number_integer() || v.get<double>() < 0 || v.get<double>() > INT32_MAX)
@@ -105,7 +119,8 @@ public:
         }
         auto model_path = std::filesystem::u8path(doc.at("model_path").get<std::string>());
         if (model_path.is_relative()) model_path = json_path.parent_path() / model_path;
-        session_ = std::make_unique<Ort::Session>(env_, model_path.c_str(), options);
+        session_ = package ? package->Session(env_, doc.at("model_path").get<std::string>(), options)
+                           : std::make_unique<Ort::Session>(env_, model_path.c_str(), options);
         if (session_->GetInputCount() != 1 || session_->GetOutputCount() != 1)
             throw std::invalid_argument("Expected one input and one output");
         Ort::AllocatorWithDefaultOptions allocator;
@@ -137,6 +152,7 @@ public:
         warmup_ms_ = InferBW8(startup_image.data, startup_image.width, startup_image.height, startup_image.stride).inference_ms;
     }
 
+public:
     Result InferBW8(const void* pixels, int width, int height, size_t row_pitch) {
         const auto start = Clock::now();
         preprocess_->Run({pixels, width, height, row_pitch}, input_);

@@ -240,7 +240,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install C++ dependencies
-        run: sudo apt-get update && sudo apt-get install -y libopencv-dev nlohmann-json3-dev
+        run: sudo apt-get update && sudo apt-get install -y libopencv-dev nlohmann-json3-dev libssl-dev
       - name: Install ONNX Runtime
         run: |
           curl --fail --location --retry 3 https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-linux-x64-1.29.0.tgz -o "$RUNNER_TEMP/ort.tgz"
@@ -251,7 +251,7 @@ jobs:
         run: cmake --build build --parallel 2
       - name: Create deterministic ONNX fixtures
         run: |
-          python -m pip install onnx pillow opencv-python-headless
+          python -m pip install onnx pillow opencv-python-headless "cryptography>=44"
           python cpp/tests/make_models.py build/test-models
       - name: Compare Python and compiled C++ OpenCV preprocessing
         working-directory: .
@@ -260,10 +260,17 @@ jobs:
         run: python -m unittest tests.test_cpp_preprocessing -v
       - name: Test C++ inference contracts
         run: ctest --test-dir build --output-on-failure
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Test managed encrypted inference for every task
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build:${{ runner.temp }}/onnxruntime-linux-x64-1.29.0/lib
+        run: dotnet run --project tests/csharp/EncryptedContracts/EncryptedContracts.csproj -c Release -- build/test-models
       - name: Build and execute the public C++17 example
         run: |
           cmake -S example/cpp -B example/build -DCMAKE_BUILD_TYPE=Release -DONNXRUNTIME_ROOT="$RUNNER_TEMP/onnxruntime-linux-x64-1.29.0"
-          cmake --build example/build --target onnx_cpp_example onnx_cpp_self_test --parallel 2
+          cmake --build example/build --target onnx_cpp_example onnx_cpp_self_test onnx_encrypted_example --parallel 2
           ctest --test-dir example/build --output-on-failure
 
   tag-release:

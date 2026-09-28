@@ -113,6 +113,11 @@ DV_API dv_status dv_create_session(const char* config_path_utf8,
 DV_API dv_status dv_create_session_from_bundle(const char* bundle_path_utf8,
                                                const dv_session_options* options,
                                                dv_session** out_session);
+/* Authenticated memory-only load; key must be exactly 32 bytes. No key retained. */
+DV_API dv_status dv_create_session_encrypted(const char* package_path_utf8,
+                                             const uint8_t* key, uint32_t key_size,
+                                             const dv_session_options* options,
+                                             dv_session** out_session);
 DV_API dv_status dv_infer(dv_session* session, const dv_image_view* image,
                           dv_result** out_result);
 DV_API dv_status dv_sam_encode(dv_session* session, const dv_image_view* image,

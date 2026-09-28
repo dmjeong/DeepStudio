@@ -6,12 +6,15 @@ on:
     branches: [main]
     paths:
       - "sdk/**"
+      - "tests/csharp/**"
       - "example/**"
       - "cpp/**"
       - "model_runtime/**"
       - "gui/core/model_pack_worker.py"
       - "gui/core/model_registry.py"
       - "webapp/worker.py"
+      - "python/model_crypto.py"
+      - "tests/test_model_crypto.py"
       - "python/export_onnx.py"
       - "python/export_patchcore_onnx.py"
       - "python/export_sam2_onnx.py"
@@ -31,12 +34,15 @@ on:
   pull_request:
     paths:
       - "sdk/**"
+      - "tests/csharp/**"
       - "example/**"
       - "cpp/**"
       - "model_runtime/**"
       - "gui/core/model_pack_worker.py"
       - "gui/core/model_registry.py"
       - "webapp/worker.py"
+      - "python/model_crypto.py"
+      - "tests/test_model_crypto.py"
       - "python/export_onnx.py"
       - "python/export_patchcore_onnx.py"
       - "python/export_sam2_onnx.py"
@@ -85,7 +91,7 @@ jobs:
         run: |
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           if ($LASTEXITCODE -ne 0) { throw "CPU torch installation failed" }
-          python -m pip install onnx onnxruntime==1.29.0
+          python -m pip install onnx onnxruntime==1.29.0 "cryptography>=44"
           if ($LASTEXITCODE -ne 0) { throw "Export dependencies installation failed" }
           python example/generate_export_test_assets.py "$env:RUNNER_TEMP/studio-export-assets"
           if ($LASTEXITCODE -ne 0) { throw "Studio export regression fixture failed" }
@@ -123,7 +129,7 @@ jobs:
             "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" `
             "-DOpenCV_DIR=$deps/opencv/build"
           if ($LASTEXITCODE -ne 0) { throw "Example configure failed" }
-          cmake --build example/build --config Release --target onnx_cpp_example onnx_cpp_self_test --parallel 2
+          cmake --build example/build --config Release --target onnx_cpp_example onnx_cpp_self_test onnx_encrypted_example --parallel 2
           if ($LASTEXITCODE -ne 0) { throw "Example build failed" }
           # No DLL PATH override: the EXE must work with its own runtime files.
           ctest --test-dir example/build -C Release --output-on-failure
@@ -166,10 +172,18 @@ jobs:
           cmake -S example/cpp/with_opencv -B example/build-v141-opencv -G "Visual Studio 17 2022" -A x64 -T v141 `
             "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" "-DOpenCV_DIR=$deps/opencv/build/x64/vc16/lib"
           if ($LASTEXITCODE -ne 0) { throw "v141 OpenCV configure failed" }
-          cmake --build example/build-v141-opencv --config Release --target onnx_cpp_example onnx_cpp_self_test --parallel 2
+          cmake --build example/build-v141-opencv --config Release --target onnx_cpp_example onnx_cpp_self_test onnx_encrypted_example --parallel 2
           if ($LASTEXITCODE -ne 0) { throw "v141 OpenCV build failed" }
           ctest --test-dir example/build-v141-opencv -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "v141 OpenCV execution failed" }
+
+      - name: VS2017 encrypted BW8 Debug build and execution
+        shell: pwsh
+        run: |
+          cmake --build example/build-v141-bw8 --config Debug --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "v141 Debug build failed" }
+          ctest --test-dir example/build-v141-bw8 -C Debug --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "v141 Debug execution failed" }
 
   csharp-sdk:
     runs-on: windows-latest
@@ -185,6 +199,15 @@ jobs:
         run: dotnet build sdk/csharp/VisionRuntime.csproj --configuration Release
       - name: Build public C# example
         run: dotnet build example/csharp/OnnxExample.csproj --configuration Release --artifacts-path example/dotnet-build
+
+      - name: Build encrypted C# example
+        run: dotnet build example/csharp/encrypted/EncryptedExample.csproj --configuration Release --artifacts-path example/dotnet-encrypted
+
+      - name: Verify the batch helper uses an isolated SDK build cache
+        shell: pwsh
+        run: |
+          cmake "-DONNXRUNTIME_ROOT=$env:EXAMPLE_DEPS/onnxruntime-win-x64-1.29.0" -P example/cpp/build_encrypted.cmake
+          if ($LASTEXITCODE -ne 0) { throw "Encrypted example batch helper failed" }
 
   payload-contracts:
     runs-on: windows-latest
@@ -238,15 +261,17 @@ jobs:
       - name: Build C++17 native runtime
         shell: pwsh
         run: |
+          python -m pip install numpy onnx "cryptography>=44"
+          if ($LASTEXITCODE -ne 0) { throw "Encrypted contract fixture dependencies failed" }
           $build = Join-Path $env:RUNNER_TEMP "vision-cpp-build"
           $native = Join-Path $env:RUNNER_TEMP "vision-native"
           $vcpkg = $env:VCPKG_INSTALLATION_ROOT
           $toolchain = Join-Path $vcpkg "scripts\buildsystems\vcpkg.cmake"
           cmake -S cpp -B $build -G "Visual Studio 17 2022" -A x64 `
             "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT" `
-            -DVISION_BUILD_DEMO=OFF -DBUILD_TESTING=OFF
+            -DVISION_BUILD_DEMO=OFF -DBUILD_TESTING=ON
           if ($LASTEXITCODE -ne 0) { throw "C++ configure failed" }
-          cmake --build $build --config Release --target vision_runtime --parallel 2
+          cmake --build $build --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw "C++ native runtime build failed" }
           New-Item -ItemType Directory -Force -Path $native | Out-Null
           $runtime = Get-ChildItem -Path $build -Recurse -Filter "vision_runtime.dll" | Select-Object -First 1
@@ -259,6 +284,9 @@ jobs:
           $opencvDlls = Get-ChildItem -Path $opencv -Filter "*.dll"
           if ($opencvDlls.Count -eq 0) { throw "OpenCV runtime DLLs were not found" }
           Copy-Item $opencvDlls.FullName $native
+          $env:PATH = "$native;$env:PATH"
+          ctest --test-dir $build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "Native all-task encryption contracts failed" }
           "VISION_NATIVE_RUNTIME_DIR=$native" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Execute public C++17 and C# ONNX examples
         shell: pwsh
@@ -268,7 +296,7 @@ jobs:
           cmake -S example/cpp -B $build -G "Visual Studio 17 2022" -A x64 `
             "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "Example CMake configure failed" }
-          cmake --build $build --config Release --target onnx_cpp_example onnx_cpp_self_test --parallel 2
+          cmake --build $build --config Release --target onnx_cpp_example onnx_cpp_self_test onnx_encrypted_example --parallel 2
           if ($LASTEXITCODE -ne 0) { throw "Example C++ build failed" }
           $env:PATH = "$env:VISION_NATIVE_RUNTIME_DIR;$env:PATH"
           ctest --test-dir $build -C Release --output-on-failure
@@ -278,6 +306,12 @@ jobs:
           $env:DEEP_VISION_NATIVE_RUNTIME_DIR = $env:VISION_NATIVE_RUNTIME_DIR
           dotnet example/dotnet-build/bin/OnnxExample/release/OnnxExample.dll --self-test example/assets
           if ($LASTEXITCODE -ne 0) { throw "Example C# ONNX test failed" }
+          dotnet build example/csharp/encrypted/EncryptedExample.csproj -c Release -o "$env:RUNNER_TEMP/encrypted-csharp"
+          if ($LASTEXITCODE -ne 0) { throw "Encrypted C# build failed" }
+          dotnet "$env:RUNNER_TEMP/encrypted-csharp/EncryptedExample.dll"
+          if ($LASTEXITCODE -ne 0) { throw "Encrypted C# execution failed" }
+          dotnet run --project tests/csharp/EncryptedContracts/EncryptedContracts.csproj -c Release -- "$env:RUNNER_TEMP/vision-cpp-build/test-models"
+          if ($LASTEXITCODE -ne 0) { throw "Managed all-task encryption contracts failed" }
       - name: Build the actual frozen Windows GUI
         shell: pwsh
         run: |

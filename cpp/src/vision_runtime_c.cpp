@@ -464,6 +464,35 @@ dv_status dv_create_session(const char* config_path_utf8, const dv_session_optio
     }
 }
 
+dv_status dv_create_session_encrypted(const char* package_path_utf8,
+                                      const uint8_t* key, uint32_t key_size,
+                                      const dv_session_options* options, dv_session** out_session) {
+    if (out_session) *out_session = nullptr;
+    g_last_create_error.clear();
+    try {
+        if (!package_path_utf8 || !*package_path_utf8 || !key || key_size != 32 || !out_session)
+            throw std::invalid_argument("Invalid encrypted model arguments (32-byte key required).");
+        if (options && (options->struct_size < kMinOptionsSize || options->abi_version != DV_ABI_VERSION))
+            throw std::invalid_argument("Invalid session options.");
+        const std::string runtime = options && options->runtime_utf8 ? options->runtime_utf8 : "onnxruntime";
+        const int threads = options ? options->num_threads : -1;
+        dvs_crypto::Key local_key;
+        std::memcpy(local_key.data(), key, 32);
+        struct EraseKey { dvs_crypto::Key& k; ~EraseKey(){ dvs_crypto::Wipe(k.data(), k.size()); } } erase{local_key};
+        const dvs_crypto::Package package(std::filesystem::u8path(package_path_utf8), local_key);
+        auto session = std::make_unique<dv_session>();
+        if (package.Config().value("backend", std::string()) == "sam2") {
+            session->sam2 = std::make_unique<Sam2Inference>();
+            if (!session->sam2->InitializeFromPackage(package, runtime, threads))
+                throw std::runtime_error(session->sam2->LastError());
+        } else if (!session->engine.InitializeFromPackage(package, runtime, threads)) {
+            throw std::runtime_error("Encrypted model configuration or initialization failed.");
+        }
+        *out_session = session.release();
+        return DV_STATUS_OK;
+    } catch (...) { return classify_exception(nullptr); }
+}
+
 dv_status dv_create_session_from_bundle(const char* bundle_path_utf8,
                                         const dv_session_options* options,
                                         dv_session** out_session) {

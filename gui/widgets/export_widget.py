@@ -40,31 +40,21 @@ class ExportWorker(QThread):
 
     def __init__(self, checkpoint_path, output_path, opset_version,
                  dynamic_batch, simplify, verify, parent=None, *, sam2_model_id="",
-                 validation_dir=None, allow_precision_fallback=False):
+                 validation_dir=None, allow_precision_fallback=False, encryption_key_path=None):
         super().__init__(parent)
         self.checkpoint_path = checkpoint_path
         self.output_path = output_path
         self.options = dict(opset_version=opset_version, dynamic_batch=dynamic_batch,
                             simplify=simplify, verify=verify, validation_dir=validation_dir,
-                            allow_precision_fallback=allow_precision_fallback)
+                            allow_precision_fallback=allow_precision_fallback,
+                            encryption_key_path=encryption_key_path)
         self.sam2_model_id = sam2_model_id
 
     def run(self):
         try:
-            if self.sam2_model_id:
-                from export_sam2_onnx import export_official_sam2_checkpoint
-                # SAM2 deployment contains encoder+decoder graphs, so use the
-                # chosen ONNX file's directory as the bundle directory.
-                if self.options["dynamic_batch"] or self.options["simplify"]:
-                    self.log.emit("SAM2는 고정 1-image encoder와 dynamic prompt point 계약을 사용합니다. 선택한 동적 배치/단순화 옵션은 적용하지 않습니다.")
-                result = export_official_sam2_checkpoint(
-                    self.sam2_model_id, self.checkpoint_path,
-                    os.path.dirname(os.path.abspath(self.output_path)),
-                    verify=self.options["verify"], opset=self.options["opset_version"],
-                    log=self.log.emit)
-            else:
-                result = export_checkpoint(self.checkpoint_path, self.output_path,
-                                           log=self.log.emit, **self.options)
+            result = export_checkpoint(self.checkpoint_path, self.output_path,
+                                       log=self.log.emit, sam2_model_id=self.sam2_model_id,
+                                       **self.options)
             self.completed.emit(result)
         except Exception as exc:
             self.error.emit(str(exc))
@@ -166,6 +156,24 @@ class ExportWidget(QWidget):
         self.precision_check = QCheckBox("고정밀 호환 내보내기 허용 (느려질 수 있음, 실제 이미지 검증 모드에서는 미사용)")
         opt_layout.addRow("", self.precision_check)
 
+        self.encrypt_check = QCheckBox("모델과 설정을 암호화해서 내보내기 (.dvsenc)")
+        self.encrypt_check.toggled.connect(self._encryption_changed)
+        opt_layout.addRow("", self.encrypt_check)
+        self.key_edit = QLineEdit()
+        self.key_edit.setPlaceholderText("별도로 보관할 암호키 파일 (.key)")
+        key_row = QHBoxLayout()
+        key_row.addWidget(self.key_edit)
+        key_browse = QPushButton("기존 키 선택")
+        key_browse.clicked.connect(self._browse_key)
+        key_row.addWidget(key_browse)
+        key_create = QPushButton("새 키 생성")
+        key_create.clicked.connect(self._create_key)
+        key_row.addWidget(key_create)
+        opt_layout.addRow("암호키:", key_row)
+        key_hint = QLabel("모든 태스크 지원. 복호화는 프로그램 시작 때 한 번만 수행합니다. 키를 잃으면 모델을 열 수 없으므로 별도로 보관하세요.")
+        key_hint.setWordWrap(True)
+        opt_layout.addRow("", key_hint)
+
         layout.addWidget(opt_group)
 
         # ── 내보내기 버튼 ──
@@ -200,6 +208,9 @@ class ExportWidget(QWidget):
 
     def set_project(self, project: ProjectData):
         """프로젝트 설정"""
+        if self.project is not project:
+            self.encrypt_check.setChecked(False)
+            self.key_edit.clear()
         self.project = project
         self.validation_edit.clear()
         efficientnet = project.task == "classify" and str(getattr(project.model, "model_id", "")).startswith("efficientnet_")
@@ -243,7 +254,7 @@ class ExportWidget(QWidget):
         export_dir = os.path.join(project.project_dir, "exports")
         os.makedirs(export_dir, exist_ok=True)
         self.output_edit.setText(
-            os.path.join(export_dir, f"model_{project.task}.onnx")
+            os.path.join(export_dir, f"model_{project.task}" + (".dvsenc" if self.encrypt_check.isChecked() else ".onnx"))
         )
 
     def _browse_checkpoint(self):
@@ -257,10 +268,31 @@ class ExportWidget(QWidget):
     def _browse_output(self):
         filepath, _ = QFileDialog.getSaveFileName(
             self, "ONNX 저장", "",
-            "ONNX 모델 (*.onnx)"
+            "암호화 모델 (*.dvsenc)" if self.encrypt_check.isChecked() else "ONNX 모델 (*.onnx)"
         )
         if filepath:
             self.output_edit.setText(filepath)
+
+    def _encryption_changed(self, checked):
+        from pathlib import Path
+        if self.output_edit.text().strip():
+            self.output_edit.setText(str(Path(self.output_edit.text()).with_suffix(".dvsenc" if checked else ".onnx")))
+
+    def _browse_key(self):
+        path, _ = QFileDialog.getOpenFileName(self, "암호키 선택", "", "암호키 (*.key);;모든 파일 (*)")
+        if path:
+            self.key_edit.setText(path)
+
+    def _create_key(self):
+        path, _ = QFileDialog.getSaveFileName(self, "새 암호키를 별도로 보관할 위치", "", "암호키 (*.key)")
+        if path:
+            try:
+                from model_crypto import create_key
+                create_key(path)
+                self.key_edit.setText(path)
+                self.encrypt_check.setChecked(True)
+            except Exception as exc:
+                QMessageBox.warning(self, "키 생성 실패", str(exc))
 
     def _browse_validation(self):
         folder = QFileDialog.getExistingDirectory(self, "분류 비교 이미지 폴더", self.validation_edit.text())
@@ -291,6 +323,16 @@ class ExportWidget(QWidget):
             QMessageBox.warning(self, "알림", "출력 경로를 지정해 주세요.")
             return
 
+        encryption_key_path = None
+        if self.encrypt_check.isChecked():
+            encryption_key_path = self.key_edit.text().strip()
+            try:
+                from model_crypto import read_key
+                read_key(encryption_key_path)
+            except Exception as exc:
+                QMessageBox.warning(self, "암호키 확인", str(exc))
+                return
+
         try:
             self._validate_checkpoint_for_project(ckpt_path)
         except ValueError as exc:
@@ -317,6 +359,7 @@ class ExportWidget(QWidget):
             verify=self.verify_check.isChecked(), parent=self,
             validation_dir=validation_dir,
             allow_precision_fallback=self.precision_check.isChecked(),
+            encryption_key_path=encryption_key_path,
             sam2_model_id=(getattr(self.project.model, "model_id", "")
                            if self.project is not None and self.project.task == "segment" and
                            str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_") else ""),
@@ -375,11 +418,13 @@ class ExportWidget(QWidget):
         status = "검증 통과" if result["verification"] == "passed" else "검증 건너뜀"
         text = (f"ONNX 내보내기 완료 ({status})\n\n"
                 f"모델: {result['output_path']}\n"
-                f"설정: {result['config_path']}\n"
+                f"설정: {result.get('config_path') or '암호화 파일에 포함'}\n"
                 f"크기: {result['file_size_mb']:.1f} MB")
-        if result.get("backend") == "sam2":
+        if result.get("backend") == "sam2" and not result.get("encrypted"):
             text += "\nSAM2는 encoder ONNX, decoder ONNX, sam2.json 세 파일을 함께 배포합니다."
-        if result.get("cpp_supported"):
+        if result.get("encrypted"):
+            text += "\nC++/C# 암호화 로더와 별도 암호키로 엽니다. 키 파일을 모델과 함께 공개하지 마세요."
+        elif result.get("cpp_supported"):
             text += "\n제공된 C++ 추론기에서 ONNX와 JSON을 함께 로드할 수 있습니다."
         if result.get("runtime_settings"):
             settings = result["runtime_settings"]

@@ -32,6 +32,7 @@
 
 #pragma once
 
+#include "model_crypto.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -204,6 +205,8 @@ public:
      * @return 성공 여부
      */
     bool Initialize(const InferenceConfig& config);
+    bool InitializeFromPackage(const dvs_crypto::Package& package,
+                               const std::string& runtime = "onnxruntime", int num_threads = -1);
 
     /**
      * @brief JSON 설정 파일에서 초기화
@@ -265,6 +268,10 @@ public:
     void PrintModelInfo() const;
 
 private:
+    bool InitializeModel(const InferenceConfig& config, const dvs_crypto::Package* package);
+    bool InitializeDocument(const nlohmann::json& doc, const std::string& config_path,
+                            const std::string& runtime, int num_threads, const dvs_crypto::Package* package);
+
     // ── 전처리 ──
     /**
      * @brief OpenCV 이미지 → ONNX 입력 텐서 변환

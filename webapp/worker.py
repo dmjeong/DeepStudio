@@ -589,11 +589,16 @@ def export(context, payload):
         if not validation_dir:
             raise ValueError("실제 이미지 ONNX 출력 검증에는 이미지가 1장 이상 있는 비교 경로가 필요합니다")
         context.emit("log_message", [f"실제 이미지 비교 폴더: {validation_dir}"])
+    project = payload.get("project", {})
+    model_id = str(project.get("model", {}).get("model_id", ""))
+    sam2_model_id = model_id if project.get("task") == "segment" and model_id.startswith("sam2_hiera_") else ""
     result = export_checkpoint(payload["weights"], payload["output"],
                                opset_version=payload.get("opset", 17),
                                dynamic_batch=payload.get("dynamic_batch", False), verify=True,
                                validation_dir=validation_dir,
                                allow_precision_fallback=payload.get("allow_precision_fallback", False),
+                               encryption_key_path=payload.get("encryption_key_path") or None,
+                               sam2_model_id=sam2_model_id,
                                log=lambda line: context.emit("log_message", [line]))
     validation = result.get("classification_validation")
     if validation:

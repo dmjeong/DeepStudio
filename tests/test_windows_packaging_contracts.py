@@ -129,6 +129,12 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     notice = tmp_path / "THIRD_PARTY_NOTICES.md"
     notice.write_text("notice", encoding="utf-8")
 
+    (examples / "ENCRYPTED_MODELS.md").write_text("encrypted example", encoding="utf-8")
+    (examples / "assets/test.dvsenc").write_bytes(b"ciphertext")
+    (examples / "assets/example-only.key").write_bytes(bytes(range(32)))
+    for name in ("cpp/encrypted.cpp", "cpp/build_encrypted.bat", "cpp/build_encrypted.cmake", "cpp/with_evision/encrypted.cpp", "cpp/model_crypto.h", "csharp/encrypted/EncryptedExample.csproj", "csharp/encrypted/Program.cs"):
+        p = examples / name; p.parent.mkdir(parents=True, exist_ok=True); p.write_text("encrypted example")
+    (cpp / "include/model_crypto.h").write_text("crypto loader")
     payload = simple["stage_simple_payload"](
         tmp_path / "payload", app=app, example_root=examples, cpp_runtime_root=cpp,
         csharp_runtime_root=csharp, notice=notice,
@@ -141,7 +147,17 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     for name in ("classifier.h", "example_paths.h", "self_test.cpp", "setup_vs2017.bat", "setup_vs2017.py"):
         assert (payload / "Examples/cpp" / name).read_text(encoding="utf-8") == "example code"
     assert (payload / "Examples/csharp/vision-runtime/VisionRuntime.cs").is_file()
+    assert (payload / "Examples/cpp/model_crypto.h").is_file()
+    assert (payload / "Examples/cpp/encrypted.cpp").is_file()
+    assert (payload / "Examples/csharp/encrypted/Program.cs").is_file()
     simple["validate_simple_payload"](payload)
+    for required in ("Examples/cpp/build_encrypted.cmake", "Examples/cpp/with_evision/encrypted.cpp"):
+        path = payload / required
+        original = path.read_bytes()
+        path.unlink()
+        with pytest.raises(simple["PayloadStageError"], match="missing required files"):
+            simple["validate_simple_payload"](payload)
+        path.write_bytes(original)
     (payload / "models").mkdir()
     with pytest.raises(simple["PayloadStageError"], match="top level"):
         simple["validate_simple_payload"](payload)

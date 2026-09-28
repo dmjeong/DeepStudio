@@ -23,12 +23,16 @@ endif()
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/nlohmann" nlohmann)
 add_subdirectory("${DEEPVISION_RUNTIME_SOURCE}" vision EXCLUDE_FROM_ALL)
-add_executable(onnx_cpp_example main.cpp)
-add_executable(onnx_cpp_self_test self_test.cpp)
+# This file is also included by with_opencv/CMakeLists.txt. Resolve source
+# paths relative to this file, not the including project's source directory.
+add_executable(onnx_cpp_example "${CMAKE_CURRENT_LIST_DIR}/main.cpp")
+add_executable(onnx_encrypted_example "${CMAKE_CURRENT_LIST_DIR}/encrypted.cpp")
+add_executable(onnx_cpp_self_test "${CMAKE_CURRENT_LIST_DIR}/self_test.cpp")
 if(WIN32)
     # PATH is searched after Windows system directories. Put the matching ORT
     # DLL next to each EXE so a system/other application's ORT is never selected.
     get_filename_component(_ort_lib_dir "${ONNXRUNTIME_LIB}" DIRECTORY)
+    unset(EXAMPLE_ORT_DLL CACHE)
     find_file(EXAMPLE_ORT_DLL NAMES onnxruntime.dll
         PATHS "${_ort_lib_dir}" "${_ort_lib_dir}/../bin"
               "${ONNXRUNTIME_ROOT}/lib" "${ONNXRUNTIME_ROOT}/bin" NO_DEFAULT_PATH)
@@ -36,7 +40,7 @@ if(WIN32)
         message(FATAL_ERROR "Matching onnxruntime.dll not found. Set ONNXRUNTIME_ROOT to the extracted Windows SDK.")
     endif()
 endif()
-foreach(target onnx_cpp_example onnx_cpp_self_test)
+foreach(target onnx_cpp_example onnx_cpp_self_test onnx_encrypted_example)
     target_link_libraries(${target} PRIVATE vision_inference)
     if(MSVC)
         target_compile_options(${target} PRIVATE /utf-8)
@@ -63,6 +67,7 @@ foreach(target onnx_cpp_example onnx_cpp_self_test)
     endif()
 endforeach()
 enable_testing()
+add_test(NAME onnx_encrypted_no_args COMMAND onnx_encrypted_example)
 add_test(NAME onnx_example_no_args COMMAND onnx_cpp_example)
 add_test(NAME onnx_example_self_test COMMAND onnx_cpp_self_test)
 # Intentionally run away from the EXE/assets directory, just like a host app/IDE.

@@ -190,9 +190,16 @@ void ValidateOutput(const Ort::Value& output, const InferenceConfig& config, siz
 
 bool VisionInference::Initialize(const InferenceConfig& config)
 {
+    return InitializeModel(config, nullptr);
+}
+
+bool VisionInference::InitializeModel(const InferenceConfig& config, const dvs_crypto::Package* package)
+{
     try
     {
         ValidateConfig(config);
+        if (package && (config.runtime != "onnxruntime" || config.enable_profiling))
+            throw std::invalid_argument("Encrypted models require ONNX Runtime with profiling disabled.");
         if (config.runtime == "openvino")
         {
 #ifdef VISION_WITH_OPENVINO
@@ -248,7 +255,8 @@ bool VisionInference::Initialize(const InferenceConfig& config)
         options.EnableCpuMemArena();
         if (config.enable_profiling) options.EnableProfiling(ORT_TSTR("vision_profile"));
         const auto path = std::filesystem::u8path(config.model_path);
-        auto session = std::make_unique<Ort::Session>(m_env, path.c_str(), options);
+        auto session = package ? package->Session(m_env, config.model_path, options)
+                               : std::make_unique<Ort::Session>(m_env, path.c_str(), options);
         const std::vector<std::string> expected_outputs = config.output_names.empty()
             ? std::vector<std::string>{config.output_name} : config.output_names;
         if (session->GetInputCount() != 1 || session->GetOutputCount() != expected_outputs.size())
@@ -343,12 +351,28 @@ bool VisionInference::Initialize(const InferenceConfig& config)
 bool VisionInference::InitializeFromJson(const std::string& config_path,
                                         const std::string& runtime, int num_threads)
 {
-    try
-    {
-        const auto path = std::filesystem::u8path(config_path);
-        std::ifstream file(path);
+    try {
+        std::ifstream file(std::filesystem::u8path(config_path));
         if (!file) throw std::runtime_error("Cannot open configuration file.");
-        const auto doc = nlohmann::json::parse(file);
+        return InitializeDocument(nlohmann::json::parse(file), config_path, runtime, num_threads, nullptr);
+    } catch (const std::exception& error) {
+        std::cerr << "[Vision] Configuration error: " << error.what() << std::endl;
+        return false;
+    }
+}
+
+bool VisionInference::InitializeFromPackage(const dvs_crypto::Package& package,
+                                           const std::string& runtime, int num_threads)
+{
+    return InitializeDocument(package.Config(), "", runtime, num_threads, &package);
+}
+
+bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::string& config_path,
+                                         const std::string& runtime, int num_threads,
+                                         const dvs_crypto::Package* package)
+{
+    try {
+        const auto path = std::filesystem::u8path(config_path);
         if (!doc.is_object()) throw std::invalid_argument("Configuration must be an object.");
         if (!doc.contains("schema_version") || !doc.at("schema_version").is_number_integer() ||
             (doc.at("schema_version") != 5 && doc.at("schema_version") != 6))
@@ -378,9 +402,14 @@ bool VisionInference::InitializeFromJson(const std::string& config_path,
             }
         }
         config.backend = doc.value("backend", std::string("custom"));
-        auto model_path = std::filesystem::u8path(doc.at("model_path").get<std::string>());
-        if (model_path.is_relative()) model_path = path.parent_path() / model_path;
-        config.model_path = model_path.lexically_normal().u8string();
+        config.model_path = doc.at("model_path").get<std::string>();
+        if (!package) {
+            auto model_path = std::filesystem::u8path(config.model_path);
+            if (model_path.is_relative()) model_path = path.parent_path() / model_path;
+            config.model_path = model_path.lexically_normal().u8string();
+        }
+        // Package graph names are POSIX identifiers, including on Windows.
+        // Native path normalization would replace '/' with '\\' before lookup.
         config.task = doc.at("task").get<std::string>();
         // JSON 정수 필드에 소수나 문자열이 들어오는 경우도 거부한다.
         auto integer = [&doc](const char* key) {
@@ -487,7 +516,7 @@ bool VisionInference::InitializeFromJson(const std::string& config_path,
         }
         if (!doc.contains("preprocessing"))
             throw std::invalid_argument("Schema 5 requires preprocessing metadata.");
-        return Initialize(config);
+        return InitializeModel(config, package);
     }
     catch (const std::exception& e)
     {

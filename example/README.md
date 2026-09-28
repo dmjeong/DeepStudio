@@ -1,5 +1,8 @@
 # C++17 / C# ONNX 로딩·추론 예제
 
+**암호화 내보내기 사용법과 전 태스크 예제:** [ENCRYPTED_MODELS.md](ENCRYPTED_MODELS.md).
+모델·설정을 `.dvsenc`로 읽고 초기화 때 한 번만 복호화한다.
+
 **C++ 입력 방식에 따라 둘 중 하나를 선택한다.** 둘 다 시작 시 준비 추론을 1회 수행한다.
 
 | 버전 | 입력 | OpenCV 필요 | 사용법 |
@@ -42,7 +45,7 @@ $env:ONNXRUNTIME_ROOT = 'C:\libs\onnxruntime-win-x64-1.29.0'
 cmake -S example/cpp -B example/build -G "Visual Studio 17 2022" -A x64 `
   "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
   "-DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT"
-cmake --build example/build --config Release --target onnx_cpp_example onnx_cpp_self_test vision_runtime
+cmake --build example/build --config Release --target onnx_cpp_example onnx_cpp_self_test onnx_encrypted_example vision_runtime
 
 # CMake가 선택한 onnxruntime.dll을 EXE 옆에 복사한다.
 # vcpkg는 OpenCV 종속 DLL을 복사한다. 아래 PATH는 C# 실행에도 사용한다.
