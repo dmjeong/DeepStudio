@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, Signal, QSortFilterProxyModel, QSignalBlocker
 from PySide6.QtGui import QStandardItem, QStandardItemModel, QColor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QCheckBox, QPushButton, QDoubleSpinBox, QSlider, QTableView, QAbstractItemView, QHeaderView, QSizePolicy)
-from core.inference_review import review_record, source_class, finite, normalized_patchcore
+from core.inference_review import review_record, review_filter_options, source_class, finite, normalized_patchcore
 from core.inference_timing import format_result_timing, format_runtime_stages
 
 
@@ -34,6 +34,7 @@ class InferenceReview(QWidget):
         super().__init__(parent)
         self.paths, self.raw, self.rows = [], {}, {}
         self.project = None
+        self.class_names = []
         self.saved_threshold = None
         self.score_normalized = False
         self._updating = False
@@ -80,9 +81,10 @@ class InferenceReview(QWidget):
         filters = QHBoxLayout()
         self.class_filter = QComboBox()
         self.class_filter.addItem("전체 클래스", "")
+        self.class_filter.setToolTip("데이터셋 클래스(정답)로 필터링합니다. 모델 예측은 판정 필터를 사용하세요.")
         self.decision_filter = QComboBox()
-        for value in ("", "OK", "NG", "미보정", "ERROR", "대기"):
-            self.decision_filter.addItem(value or "전체 판정", value)
+        self.decision_filter.addItem("전체 판정", "")
+        self.decision_filter.setToolTip("현재 모델의 예측 클래스 또는 실제 판정값으로 필터링합니다.")
         self.search = QLineEdit()
         self.search.setPlaceholderText("파일명 검색")
         self.search.setAccessibleName("결과 파일명 검색")
@@ -146,17 +148,23 @@ class InferenceReview(QWidget):
             self.value.setValue(self.saved_threshold if self.saved_threshold is not None else .5)
         self._threshold_changed()
 
-    def set_context(self, paths, project=None):
+    def set_context(self, paths, project=None, *, class_names=()):
         self.project = project
+        self.class_names = list(class_names)
         self.paths, self.raw, self.rows = [], {}, {}
         # Structural row signals must reach the proxy; only suppress view selection callbacks.
         with QSignalBlocker(self.table.selectionModel()):
             self.model.removeRows(0, self.model.rowCount())
             for path in paths:
                 self._add_path(path)
-        self._update_classes()
+        self._update_filters()
         self._sync_threshold()
         self._filter()
+
+    def set_project(self, project):
+        self.project = project
+        self._update_filters()
+        self._sync_threshold()
 
     def _add_path(self, path):
         if path in self.rows:
@@ -193,19 +201,31 @@ class InferenceReview(QWidget):
         finally:
             self._updating = False
         if not self._bulk:
-            self._update_classes()
+            self._update_filters()
             self._sync_threshold()
             self._count()
 
-    def _update_classes(self):
-        current = self.class_filter.currentData()
-        values = sorted({self.model.item(i, 2).text() for i in range(self.model.rowCount())})
-        with QSignalBlocker(self.class_filter):
-            self.class_filter.clear()
-            self.class_filter.addItem("전체 클래스", "")
-            for name in values:
-                self.class_filter.addItem(name, name)
-            self.class_filter.setCurrentIndex(max(0, self.class_filter.findData(current)))
+    def _update_filters(self):
+        rows = []
+        for path in self.paths:
+            index = self.rows[path]
+            result = self.raw.get(path)
+            row = {"task": result.task, "details": result.details} if result is not None else {}
+            row.update(source_class=(result.source_class if result else "") or source_class(path, self.project),
+                       decision=self.model.item(index, 4).text())
+            rows.append(row)
+        options = review_filter_options(rows, project=self.project, class_names=self.class_names)
+        for combo, label, values in ((self.class_filter, "전체 클래스", options["classes"]),
+                                     (self.decision_filter, "전체 판정", options["decisions"])):
+            current = combo.currentData()
+            with QSignalBlocker(combo):
+                combo.clear()
+                combo.addItem(label, "")
+                for name in values:
+                    combo.addItem(name or "—", name or "—")
+                combo.setCurrentIndex(max(0, combo.findData(current)))
+        # A disappeared choice must also clear the proxy's previous predicate.
+        self._filter()
 
     def _sync_threshold(self):
         results = [r for r in self.raw.values() if r.task == "anomaly"]
@@ -239,6 +259,7 @@ class InferenceReview(QWidget):
                 self.update_result(result)
         finally:
             self._bulk = False
+        self._update_filters()
         self._sync_threshold()
         self._count()
         self.threshold_changed.emit()

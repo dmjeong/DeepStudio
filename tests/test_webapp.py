@@ -357,6 +357,27 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/defects/{job['id']}/candidates").status_code, 400)
         self.assertEqual(self.client.put("/api/defects/settings", json={"project_path": project["filepath"], "settings": settings}).status_code, 400)
 
+    def test_batch_filters_use_saved_project_and_model_labels(self):
+        job_id = "b" * 32
+        root = self.root / "state" / "jobs" / job_id
+        write_json(root / "job.json", {"id": job_id, "kind": "infer", "status": "completed", "created_at": "2026-01-01"})
+        names = ["정상 부품", "double", "스크래치 10%"]
+        write_json(root / "request.json", {"payload": {"project": {"task": "classify",
+            "data": {"class_names": names, "test_dir": "/test"}}}})
+        for index, probability in enumerate((.9, .7)):
+            write_json(root / "results" / f"{index}.json", {"index": index, "task": "classify", "status": "ok",
+                "image_path": f"/test/정상 부품/{index}.png", "summary": f"double {probability:.1%}",
+                "details": {"class_names": names, "probabilities": [1 - probability, probability, 0]}})
+        response = self.client.get(f"/api/jobs/{job_id}/results", params={"decision": "double", "limit": 1})
+        self.assertEqual(response.status_code, 200, response.text)
+        page = response.json()
+        self.assertEqual(page["classes"], names)
+        self.assertEqual(page["decisions"], names)
+        self.assertEqual(page["filtered_total"], 2)
+        self.assertEqual(page["results"][0]["decision"], "double")
+        self.assertEqual(page["results"][0]["source_class"], "정상 부품")
+        self.assertEqual(read_json(root / "results" / "0.json")["summary"], "double 90.0%")
+
     def test_cached_gradcam_range_and_toggle_without_model(self):
         job_id = "a" * 32
         root = self.root / "state" / "jobs" / job_id

@@ -106,6 +106,8 @@ export function Inference({ state, run, act, busy }: PageProps) {
         setResults(value.results);
         setTotal(value.filtered_total ?? value.total);
         setReview(value);
+        setClassFilter(current => current && !(value.classes || []).some((name: string) => (name || "__unknown__") === current) ? "" : current);
+        setDecisionFilter(current => current && !(value.decisions || []).includes(current) ? "" : current);
         setSelected(current => value.results.some((r: Config) => r.index === current) ? current : value.results[0]?.index ?? null);
         setError("");
       } catch (e) {
@@ -407,7 +409,7 @@ export function Inference({ state, run, act, busy }: PageProps) {
             <div className="review-counts">OK {review.counts?.OK ?? 0} / NG {review.counts?.NG ?? 0} / 오류 {review.counts?.ERROR ?? 0}</div>
           </div>}
           <div className="review-filters">
-            <Field label="결과 클래스">
+            <Field label="데이터셋 클래스 (정답)">
               <select value={classFilter} onChange={e => setClassFilter(e.target.value)}>
                 <option value="">전체 클래스</option>
                 {(review.classes || []).map((name: string) => <option key={name} value={name || "__unknown__"}>{name || "—"}</option>)}
@@ -416,7 +418,7 @@ export function Inference({ state, run, act, busy }: PageProps) {
             <Field label="결과 판정">
               <select value={decisionFilter} onChange={e => setDecisionFilter(e.target.value)}>
                 <option value="">전체 판정</option>
-                {["OK", "NG", "미보정", "ERROR"].map(name => <option key={name}>{name}</option>)}
+                {(review.decisions || []).map((name: string) => <option key={name} value={name}>{name}</option>)}
               </select>
             </Field>
             <Field label="결과 파일명 검색"><input value={search} onChange={e => setSearch(e.target.value)} placeholder="파일명 검색" /></Field>

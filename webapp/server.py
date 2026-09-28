@@ -751,7 +751,8 @@ def create_app(state_dir=None):
                 row["source_class"] = source_class(row.get("image_path", ""), project)
         return review_page(records, threshold=threshold, class_name=class_name, decision=decision,
                            search=search, selected=[int(i) for i in selected.split(",") if i],
-                           selected_only=selected_only, sort=sort, descending=descending, offset=offset, limit=limit)
+                           selected_only=selected_only, sort=sort, descending=descending, offset=offset, limit=limit,
+                           project=project)
 
     @app.get("/api/jobs/{job_id}/download/{name}")
     def job_download(job_id: str, name: str):

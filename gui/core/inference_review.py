@@ -39,6 +39,30 @@ def normalized_patchcore(record):
     return details.get("engine") == "patchcore" and details.get("score_space") == "normalized_0_1"
 
 
+def classification_decision(record):
+    """Read the predicted label from model output, never split a display summary."""
+    details = record.get("details") or {}
+    names, probabilities = details.get("class_names") or [], details.get("probabilities") or []
+    if names and len(names) == len(probabilities) and all(finite(p) for p in probabilities):
+        return str(names[max(range(len(probabilities)), key=lambda i: float(probabilities[i]))])
+    return record.get("summary") or "대기"
+
+
+def review_filter_options(rows, *, project=None, class_names=()):
+    """Build choices from the whole batch, independent of active filters/pagination."""
+    get = project.get if isinstance(project, dict) else lambda key, default=None: getattr(project, key, default)
+    data = get("data", {})
+    project_names = (data.get("class_names", []) if isinstance(data, dict)
+                     else getattr(data, "class_names", []))
+    output_names = [name for row in rows for name in (row.get("details") or {}).get("class_names", [])]
+    model_names = list(dict.fromkeys(output_names or class_names or project_names))
+    classes = list(dict.fromkeys([*project_names, *model_names, *(row.get("source_class", "") for row in rows)]))
+    tasks = {row.get("task") for row in rows if row.get("task")}
+    classify = "classify" in tasks if tasks else get("task", "classify") == "classify"
+    decisions = list(dict.fromkeys([*(model_names if classify else []), *(row["decision"] for row in rows)]))
+    return {"classes": classes, "decisions": decisions}
+
+
 def review_record(record, threshold=None):
     """Return an effective display copy; status=ok means execution succeeded, not OK."""
     if threshold is not None and not finite(threshold):
@@ -64,6 +88,8 @@ def review_record(record, threshold=None):
     row["saved_threshold"] = row.get("threshold")
     if row.get("status") == "error":
         row["decision"] = "ERROR"
+    elif row.get("task") == "classify":
+        row["decision"] = classification_decision(row)
     elif row.get("task") == "anomaly" and finite(row.get("score")):
         value = threshold if threshold is not None else row.get("threshold")
         row["threshold"] = float(value) if finite(value) else None
@@ -96,12 +122,13 @@ def restored_result(row):
 
 
 def review_page(records, *, threshold=None, class_name="", decision="", search="",
-                selected=None, selected_only=False, sort="index", descending=False, offset=0, limit=60):
+                selected=None, selected_only=False, sort="index", descending=False, offset=0, limit=60,
+                project=None):
     """Filter/sort the complete job before pagination. Index always identifies the raw file."""
     if sort not in {"index", "source_class", "filename", "decision", "score", "inference_sec"}:
         raise ValueError("지원하지 않는 정렬 열입니다")
     rows = [review_record(row, threshold) for row in records]
-    classes = sorted({row["source_class"] for row in rows})
+    options = review_filter_options(rows, project=project)
     scores = [float(row["score"]) for row in rows if row.get("task") == "anomaly" and finite(row.get("score"))]
     thresholds = sorted({float(row["saved_threshold"]) for row in rows if row.get("task") == "anomaly" and finite(row.get("saved_threshold"))})
     scored = [row for row in rows if row.get("task") == "anomaly" and finite(row.get("score")) and row.get("status") != "error"]
@@ -122,6 +149,6 @@ def review_page(records, *, threshold=None, class_name="", decision="", search="
     valid.sort(key=lambda r: float(r[sort]) if numeric else str(r.get(sort, "")).casefold(), reverse=descending)
     rows = valid + sorted(missing, key=lambda r: r["index"])
     return {"total": total, "filtered_total": len(rows), "results": rows[offset:offset+limit],
-            "classes": classes, "counts": counts, "anomaly": bool(scores),
+            **options, "counts": counts, "anomaly": bool(scores),
             "score_normalized": normalized,
             "score_range": [min(scores), max(scores)] if scores else [], "saved_thresholds": thresholds}
