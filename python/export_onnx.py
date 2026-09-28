@@ -147,8 +147,11 @@ def _upstream_reference_outputs(model, family, dummy):
 def verify_upstream_onnx(onnx_path, model, spec, dummy):
     """Compare every raw exported tensor with the public native checkpoint."""
     import onnxruntime as ort
-    actual = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"]).run(
-        None, {"images": dummy.cpu().numpy()})
+    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    inputs = session.get_inputs()
+    if len(inputs) != 1:
+        raise ValueError("LibreYOLO ONNX 입출력 개수 오류: 이미지 입력 1개 필요")
+    actual = session.run(None, {inputs[0].name: dummy.cpu().numpy()})
     expected = _upstream_reference_outputs(model, spec["family"], dummy)
     if len(actual) != len(expected):
         raise ValueError(f"LibreYOLO ONNX 출력 개수 불일치: PyTorch={len(expected)}, ONNX={len(actual)}")
@@ -457,11 +460,13 @@ def create_inference_config(output_dir, task, num_classes, input_size,
     }
     if architecture is not None:
         config["architecture"] = architecture
-    if backend == "efficientnet":
+    if backend in {"efficientnet", "libreyolo_mobilenetv4"}:
         config["postprocessing"] = {"output": "logits", "softmax_axis": 1}
-        if model_config is not None:
+        if backend == "efficientnet" and model_config is not None:
             from efficientnet_contract import model_input_contract
             config["model_config"] = {**model_config, **model_input_contract(model_config, in_channels)}
+        elif model_config is not None:
+            config["model_config"] = dict(model_config)
     elif backend == "builtin" and model_config is not None:
         config["model_config"] = dict(model_config)
     elif backend in {"redetr_v4", "libreyolo_rtdetrv4"}:
@@ -499,6 +504,23 @@ def create_inference_config(output_dir, task, num_classes, input_size,
     return str(path)
 
 
+def _upstream_onnx_tensor_names(onnx_path, family):
+    """Read the names shipped to SDKs; preserve upstream output semantic order."""
+    import onnx
+    graph = onnx.load(str(onnx_path), load_external_data=False).graph
+    # Older ONNX exporters can list stored weights among graph inputs. They are
+    # not runtime image feeds and must not replace the actual input in JSON.
+    initializers = {value.name for value in graph.initializer}
+    initializers.update(value.values.name for value in graph.sparse_initializer)
+    inputs = [value.name for value in graph.input if value.name not in initializers]
+    outputs = [value.name for value in graph.output]
+    expected_outputs = 2 if family == "rtdetrv4" else 1
+    if len(inputs) != 1 or len(outputs) != expected_outputs:
+        raise ValueError(f"LibreYOLO ONNX 입출력 개수 오류: 입력 1개·출력 {expected_outputs}개 필요 "
+                         f"(실제 입력 {len(inputs)}개·출력 {len(outputs)}개)")
+    return inputs[0], outputs
+
+
 def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_version,
                                 dynamic_batch, simplify, verify, log):
     """Export shipped LibreYOLO checkpoints without rebuilding them as CustomCSP."""
@@ -524,6 +546,7 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
         if exported.resolve() != staged_model.resolve() or not staged_model.is_file():
             raise ValueError("LibreYOLO ONNX exporter가 요청한 출력 파일을 생성하지 않았습니다")
         onnx.checker.check_model(str(staged_model))
+        input_name, output_names = _upstream_onnx_tensor_names(staged_model, family)
         if verify:
             generator = torch.Generator().manual_seed(42)
             dummy = torch.randn(1, 3, spec["input_height"], spec["input_width"], generator=generator)
@@ -532,14 +555,13 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
             verify_upstream_onnx(staged_model, model, spec, torch.zeros_like(dummy))
             if dynamic_batch:
                 verify_upstream_onnx(staged_model, model, spec, dummy.repeat(2, 1, 1, 1))
-        output_names = (["pred_logits", "pred_boxes"] if family == "rtdetrv4" else ["output"])
         detection_encoding = ("pixel_xyxy" if family == "yolo9" else "normalized_cxcywh")
         staged_config = create_inference_config(
             stage, spec["task"], spec["num_classes"],
             [spec["input_height"], spec["input_width"]], 3, output.name,
             spec["class_names"], preprocessing=spec["preprocessing"], backend=backend,
             verification="passed" if verify else "skipped", config_filename=config_name,
-            output_names=output_names, detection_box_encoding=detection_encoding,
+            input_name=input_name, output_names=output_names, detection_box_encoding=detection_encoding,
             model_config={"model_family": family, "upstream_export": "libreyolo_public_api"})
         manifest = json.loads(Path(staged_config).read_text(encoding="utf-8"))
         manifest["export"] = {"opset": opset_version, "precision": "float32",

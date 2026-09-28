@@ -38,16 +38,36 @@ class TinyUpstreamClassifier(torch.nn.Module):
 class FakeLibreYOLOClassifier:
     FAMILY = "mobilenetv4"
 
-    def __init__(self):
+    def __init__(self, input_name="images", output_name="output"):
         self.model = TinyUpstreamClassifier().eval()
+        self.input_name = input_name
+        self.output_name = output_name
 
     def export(self, format, *, output_path, imgsz, opset, dynamic, simplify, device):
         assert format == "onnx"
         assert imgsz == (8, 8)
         torch.onnx.export(self.model, torch.zeros((1, 3, 8, 8)), output_path,
-                          input_names=["images"], output_names=["output"], opset_version=opset,
-                          dynamic_axes={"images": {0: "batch"}, "output": {0: "batch"}} if dynamic else None,
+                          input_names=[self.input_name], output_names=[self.output_name], opset_version=opset,
+                          dynamic_axes={self.input_name: {0: "batch"}, self.output_name: {0: "batch"}} if dynamic else None,
                           dynamo=False)
+        return output_path
+
+
+class TinyUpstreamReDetr(torch.nn.Module):
+    def forward(self, images):
+        value = images.mean(dim=(1, 2, 3))
+        return {"pred_logits": torch.stack((value, -value), dim=1).unsqueeze(1),
+                "pred_boxes": torch.stack((value, value, value, value), dim=1).unsqueeze(1)}
+
+
+class FakeLibreYOLOReDetr:
+    def __init__(self):
+        self.model = TinyUpstreamReDetr().eval()
+
+    def export(self, format, *, output_path, imgsz, opset, dynamic, simplify, device):
+        torch.onnx.export(self.model, torch.zeros((1, 3, 8, 8)), output_path,
+                          input_names=["detector_pixels"], output_names=["z_logits", "a_boxes"],
+                          opset_version=opset, dynamo=False)
         return output_path
 
 
@@ -226,12 +246,117 @@ class ExportContractTests(unittest.TestCase):
                 result = export_onnx.export_checkpoint(checkpoint_path, output, dynamic_batch=True,
                                                        verify=True, log=lambda _: None)
             manifest = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["input_name"], "images")
+            self.assertEqual(manifest["postprocessing"], {"output": "logits", "softmax_axis": 1})
+            self.assert_upstream_runtime_matches_manifest(output, manifest)
         loader.assert_called_once_with(checkpoint_path, device="cpu")
         self.assertEqual(export_onnx.checkpoint_backend(checkpoint), "libreyolo")
         self.assertEqual(result["backend"], "libreyolo_mobilenetv4")
         self.assertTrue(result["cpp_supported"])
         self.assertEqual(manifest["export"]["verification_reference"], "libreyolo_exported_pytorch_graph")
         self.assertEqual(manifest["output_names"], ["output"])
+
+    def assert_upstream_runtime_matches_manifest(self, output, manifest):
+        """Run the shipped pair, using JSON names exactly as the SDK does."""
+        import onnxruntime as ort
+        session = ort.InferenceSession(str(output), providers=["CPUExecutionProvider"])
+        self.assertEqual([item.name for item in session.get_inputs()], [manifest["input_name"]])
+        self.assertEqual([item.name for item in session.get_outputs()], manifest["output_names"])
+        tensor = np.linspace(-2., 3., 3 * 8 * 8, dtype=np.float32).reshape(1, 3, 8, 8)
+        actual = session.run([manifest["output_name"]], {manifest["input_name"]: tensor})[0]
+        with torch.inference_mode():
+            expected = TinyUpstreamClassifier()(torch.from_numpy(tensor)).numpy()
+        np.testing.assert_allclose(actual, expected, atol=1e-6)
+        # The SDK applies softmax once to these logits, including negative logits.
+        probabilities = np.exp(actual - actual.max(axis=1, keepdims=True))
+        probabilities /= probabilities.sum(axis=1, keepdims=True)
+        expected_probabilities = torch.softmax(torch.from_numpy(expected), dim=1).numpy()
+        np.testing.assert_allclose(probabilities, expected_probabilities, atol=1e-6)
+
+    def test_libreyolo_export_reads_renamed_tensors_with_and_without_verification(self):
+        checkpoint = {"model_family": "mobilenetv4", "task": "classify", "nc": 2,
+                      "names": {0: "OK", 1: "NG"}, "imgsz": 8}
+        for verify in (True, False):
+            with self.subTest(verify=verify), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "libre.pt"
+                output = Path(directory) / "libre.onnx"
+                torch.save(checkpoint, source)
+                model = FakeLibreYOLOClassifier("camera_pixels", "raw_scores")
+                with patch("upstream_models.load_upstream_checkpoint", return_value=model):
+                    export_onnx.export_checkpoint(source, output, verify=verify, log=lambda _: None)
+                manifest = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+                self.assertEqual(manifest["input_name"], "camera_pixels")
+                self.assertEqual(manifest["output_names"], ["raw_scores"])
+                self.assertEqual(manifest["verification"], "passed" if verify else "skipped")
+                self.assert_upstream_runtime_matches_manifest(output, manifest)
+
+    def test_libreyolo_unsupported_tensor_counts_preserve_existing_release(self):
+        import onnx
+        checkpoint = {"model_family": "mobilenetv4", "task": "classify", "nc": 2,
+                      "names": {0: "OK", 1: "NG"}, "imgsz": 8}
+        for extra_input in (True, False):
+            class UnsupportedExport(FakeLibreYOLOClassifier):
+                def export(self, *args, **kwargs):
+                    path = super().export(*args, **kwargs)
+                    graph = onnx.load(path)
+                    if extra_input:
+                        graph.graph.input.append(onnx.helper.make_tensor_value_info(
+                            "another_image", onnx.TensorProto.FLOAT, [1, 3, 8, 8]))
+                    else:
+                        graph.graph.output.append(graph.graph.input[0])
+                    onnx.save(graph, path)
+                    return path
+            with self.subTest(extra_input=extra_input), tempfile.TemporaryDirectory() as directory:
+                source, output = Path(directory) / "libre.pt", Path(directory) / "libre.onnx"
+                torch.save(checkpoint, source)
+                output.write_bytes(b"previous model")
+                output.with_suffix(".json").write_bytes(b"previous config")
+                with patch("upstream_models.load_upstream_checkpoint", return_value=UnsupportedExport()):
+                    with self.assertRaisesRegex(ValueError, "입출력 개수"):
+                        export_onnx.export_checkpoint(source, output, verify=False, log=lambda _: None)
+                self.assertEqual(output.read_bytes(), b"previous model")
+                self.assertEqual(output.with_suffix(".json").read_bytes(), b"previous config")
+
+    def test_libreyolo_redetr_export_preserves_graph_output_order(self):
+        import onnxruntime as ort
+        checkpoint = {"model_family": "rtdetrv4", "task": "detect", "nc": 2,
+                      "names": {0: "OK", 1: "NG"}, "imgsz": 8}
+        with tempfile.TemporaryDirectory() as directory:
+            source, output = Path(directory) / "libre.pt", Path(directory) / "libre.onnx"
+            torch.save(checkpoint, source)
+            with patch("upstream_models.load_upstream_checkpoint", return_value=FakeLibreYOLOReDetr()):
+                export_onnx.export_checkpoint(source, output, verify=True, log=lambda _: None)
+            manifest = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["input_name"], "detector_pixels")
+            # Detection SDKs use logits first and boxes second, not alphabetical order.
+            self.assertEqual(manifest["output_names"], ["z_logits", "a_boxes"])
+            session = ort.InferenceSession(str(output), providers=["CPUExecutionProvider"])
+            logits, boxes = session.run(manifest["output_names"], {
+                manifest["input_name"]: np.ones((1, 3, 8, 8), dtype=np.float32)})
+            np.testing.assert_allclose(logits, [[[1., -1.]]])
+            np.testing.assert_allclose(boxes, [[[1., 1., 1., 1.]]])
+
+    def test_libreyolo_export_does_not_treat_stored_weights_as_image_inputs(self):
+        import onnx
+        class LegacyWeightInput(FakeLibreYOLOClassifier):
+            def export(self, *args, **kwargs):
+                path = super().export(*args, **kwargs)
+                graph = onnx.load(path)
+                graph.graph.initializer.append(onnx.helper.make_tensor(
+                    "stored_weight", onnx.TensorProto.FLOAT, [1], [1.]))
+                graph.graph.input.insert(0, onnx.helper.make_tensor_value_info(
+                    "stored_weight", onnx.TensorProto.FLOAT, [1]))
+                onnx.save(graph, path)
+                return path
+        checkpoint = {"model_family": "mobilenetv4", "task": "classify", "nc": 2,
+                      "names": {0: "OK", 1: "NG"}, "imgsz": 8}
+        with tempfile.TemporaryDirectory() as directory:
+            source, output = Path(directory) / "libre.pt", Path(directory) / "libre.onnx"
+            torch.save(checkpoint, source)
+            with patch("upstream_models.load_upstream_checkpoint", return_value=LegacyWeightInput()):
+                export_onnx.export_checkpoint(source, output, verify=True, log=lambda _: None)
+            manifest = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+            self.assert_upstream_runtime_matches_manifest(output, manifest)
 
     def test_libreyolo_detection_manifests_keep_cpp_output_contracts(self):
         with tempfile.TemporaryDirectory() as directory:

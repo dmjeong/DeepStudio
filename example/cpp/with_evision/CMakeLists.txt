@@ -47,6 +47,28 @@ add_test(NAME evision_bw8_contracts COMMAND evision_onnx_test)
 set_tests_properties(evision_bw8_example evision_bw8_contracts PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}" TIMEOUT 60)
 
+# CI generates these artifacts with Studio's real Python exporter. Normal users
+# building the argument-free public examples do not need Python or torch.
+set(STUDIO_EXPORT_TEST_ASSETS "" CACHE PATH "Artifacts from example/generate_export_test_assets.py")
+if(STUDIO_EXPORT_TEST_ASSETS)
+    foreach(asset libreyolo.onnx libreyolo.json expected.json)
+        if(NOT EXISTS "${STUDIO_EXPORT_TEST_ASSETS}/${asset}")
+            message(FATAL_ERROR "Missing generated export test asset: ${asset}")
+        endif()
+    endforeach()
+    add_executable(evision_export_test export_test.cpp)
+    target_link_libraries(evision_export_test PRIVATE evision_classifier)
+    add_custom_command(TARGET evision_export_test POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${STUDIO_EXPORT_TEST_ASSETS}" "$<TARGET_FILE_DIR:evision_export_test>/export-test-assets")
+    if(WIN32)
+        add_custom_command(TARGET evision_export_test POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll" "$<TARGET_FILE_DIR:evision_export_test>/onnxruntime.dll")
+    endif()
+    add_test(NAME evision_studio_export_contract COMMAND evision_export_test)
+    set_tests_properties(evision_studio_export_contract PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}" TIMEOUT 60)
+endif()
+
 # Optional verification only; the two production targets above never link OpenCV.
 option(EVISION_CHECK_OPENCV_PARITY "Compare BW8 preprocessing with OpenCV" OFF)
 if(EVISION_CHECK_OPENCV_PARITY)

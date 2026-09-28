@@ -122,6 +122,26 @@ ctest --test-dir example/build-evision -C Release --output-on-failure
 배포에는 자신의 EXE, `onnxruntime.dll`, 모델 JSON/ONNX, 기존 eVision 실행 구성과
 Visual C++ x64 런타임이 필요하다. nlohmann-json은 헤더 라이브러리라 DLL이 없다.
 
+### 개발용: Studio 내보내기 산출물까지 연결 검사
+
+Windows CI는 LibreYOLO 공개 API 형태의 작은 합성 모델을 Studio의 실제
+`export_checkpoint()`로 내보낸 뒤, **생성된 ONNX·JSON을 수정 없이** C++로 읽는다.
+검정·회색·흰색 BW8 ROI의 클래스와 모든 확률을 PyTorch 기준값과 비교하므로,
+입출력 이름 불일치와 softmax 중복 적용도 검출한다. VS2022와 VS2017 v141 CI에 연결돼 있다.
+이는 배포 연결 회귀 검사이며 실제 MobileNetV4 가중치의 정확도나 eVision SDK 인증을 뜻하지 않는다.
+
+로컬에서 검사하려면 torch·onnx·onnxruntime이 있는 Python 환경으로 저장소 루트에서
+아래 명령을 실행한다. 기존 사용자 예제 빌드에는 이 Python 환경이 필요 없다.
+
+```bat
+python example/generate_export_test_assets.py example/build-export-assets
+cmake -S example/cpp/with_evision -B example/build-export-check -G "Visual Studio 17 2022" -A x64 ^
+  "-DONNXRUNTIME_ROOT=C:/libs/onnxruntime-win-x64-1.29.0" ^
+  "-DSTUDIO_EXPORT_TEST_ASSETS=%CD%/example/build-export-assets"
+cmake --build example/build-export-check --config Release
+ctest --test-dir example/build-export-check -C Release --output-on-failure
+```
+
 ## 전처리 일치 검사
 
 BW8 입력을 모델 채널 수(1 또는 3)에 맞게 사용하고, JSON의 중앙 crop, uint8 bilinear

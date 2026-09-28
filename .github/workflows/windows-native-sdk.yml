@@ -77,6 +77,18 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Generate real Studio export artifacts for the C++ loader regression
+        shell: pwsh
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          if ($LASTEXITCODE -ne 0) { throw "CPU torch installation failed" }
+          python -m pip install onnx onnxruntime==1.29.0
+          if ($LASTEXITCODE -ne 0) { throw "Export dependencies installation failed" }
+          python example/generate_export_test_assets.py "$env:RUNNER_TEMP/studio-export-assets"
+          if ($LASTEXITCODE -ne 0) { throw "Studio export regression fixture failed" }
       - name: Install Visual Studio 2017 v141 compiler
         shell: pwsh
         run: |
@@ -121,7 +133,8 @@ jobs:
         run: |
           $deps = $env:EXAMPLE_DEPS
           cmake -S example/cpp/with_evision -B example/build-bw8 -G "Visual Studio 17 2022" -A x64 `
-            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0"
+            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" `
+            "-DSTUDIO_EXPORT_TEST_ASSETS=$env:RUNNER_TEMP/studio-export-assets"
           if ($LASTEXITCODE -ne 0) { throw "BW8 configure failed" }
           cmake --build example/build-bw8 --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw "BW8 build failed" }
@@ -143,7 +156,8 @@ jobs:
         run: |
           $deps = $env:EXAMPLE_DEPS
           cmake -S example/cpp/with_evision -B example/build-v141-bw8 -G "Visual Studio 17 2022" -A x64 -T v141 `
-            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0"
+            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" `
+            "-DSTUDIO_EXPORT_TEST_ASSETS=$env:RUNNER_TEMP/studio-export-assets"
           if ($LASTEXITCODE -ne 0) { throw "v141 BW8 configure failed" }
           cmake --build example/build-v141-bw8 --config Release --parallel 2
           if ($LASTEXITCODE -ne 0) { throw "v141 BW8 build failed" }
