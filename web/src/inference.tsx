@@ -445,7 +445,7 @@ export function Inference({ state, run, act, busy }: PageProps) {
                 <td>{r.index + 1}</td><td>{r.source_class || "—"}</td>
                 <td title={r.image_path}><button onClick={() => {setSelected(r.index); setZoom(100);}}>{r.filename}</button></td>
                 <td style={{color: r.color}} title={r.error || r.summary}>{r.decision}</td>
-                <td>{typeof r.score === "number" ? number(r.score, 6) : "—"}</td>
+                <td title={r.score_description}>{typeof r.display_score === "number" ? number(r.display_score, 6) : "—"}</td>
                 <td>{timing(r.inference_sec)}</td>
               </tr>)}</tbody>
             </table>

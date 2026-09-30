@@ -5,7 +5,8 @@ from PySide6.QtCore import Qt, Signal, QSortFilterProxyModel, QSignalBlocker
 from PySide6.QtGui import QStandardItem, QStandardItemModel, QColor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QCheckBox, QPushButton, QDoubleSpinBox, QSlider, QTableView, QAbstractItemView, QHeaderView, QSizePolicy)
-from core.inference_review import review_record, review_filter_options, source_class, finite, normalized_patchcore
+from core.inference_review import (review_record, review_filter_options, source_class, finite,
+                                   normalized_patchcore, review_score)
 from core.inference_timing import format_result_timing, format_runtime_stages
 
 
@@ -189,12 +190,13 @@ class InferenceReview(QWidget):
             row = self.rows[result.image_path]
             record = review_record(asdict(result), self.threshold)
             values = {2: record["source_class"] or source_class(result.image_path, self.project) or "—",
-                      4: record["decision"], 5: float(result.score) if finite(result.score) else None,
+                      4: record["decision"], 5: review_score(asdict(result)),
                       6: round(result.inference_sec * 1000, 3) if finite(result.inference_sec) else None}
             for col, value in values.items():
                 self.model.item(row, col).setData(value, Qt.ItemDataRole.DisplayRole)
             self.model.item(row, 4).setForeground(QColor(record.get("color", "#5590F0")))
             self.model.item(row, 4).setToolTip(record.get("error") or record.get("summary", ""))
+            self.model.item(row, 5).setToolTip(record["score_description"])
             self.model.item(row, 6).setToolTip(
                 f"{format_result_timing(result)}\n{format_runtime_stages(result).rstrip()}"
                 + ("\n" + (result.details or {})["runtime_warning"] if (result.details or {}).get("runtime_warning") else ""))
