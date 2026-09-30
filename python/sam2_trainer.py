@@ -74,19 +74,67 @@ def _sam2_logits(model, images: torch.Tensor, point_coords: torch.Tensor) -> tor
 
 def _loss_and_scores(logits: torch.Tensor, targets: torch.Tensor) -> tuple[torch.Tensor, float, float]:
     resized = F.interpolate(targets.unsqueeze(1).float(), size=logits.shape[-2:], mode="nearest")[:, 0]
-    bce = F.binary_cross_entropy_with_logits(logits, resized)
+    valid = resized != 255
+    if not valid.any():
+        raise ValueError("SAM2 정답 마스크에 평가할 픽셀이 없습니다.")
+    binary_targets = (resized > 0.5).to(dtype=logits.dtype)
+    pixel_bce = F.binary_cross_entropy_with_logits(logits, binary_targets, reduction="none")
+    bce = (pixel_bce * valid).sum() / valid.sum().clamp(min=1)
     probabilities = logits.sigmoid()
-    intersection = (probabilities * resized).sum(dim=(1, 2))
-    denominator = probabilities.sum(dim=(1, 2)) + resized.sum(dim=(1, 2))
+    probabilities = probabilities * valid
+    binary_targets = binary_targets * valid
+    intersection = (probabilities * binary_targets).sum(dim=(1, 2))
+    denominator = probabilities.sum(dim=(1, 2)) + binary_targets.sum(dim=(1, 2))
     dice_loss = 1.0 - ((2.0 * intersection + 1.0) / (denominator + 1.0)).mean()
-    prediction = probabilities >= 0.5
-    truth = resized >= 0.5
+    prediction = (probabilities >= 0.5) & valid
+    truth = binary_targets >= 0.5
     discrete_intersection = (prediction & truth).sum(dim=(1, 2)).float()
     union = (prediction | truth).sum(dim=(1, 2)).float()
     dice = ((2.0 * discrete_intersection + 1.0) /
             (prediction.sum(dim=(1, 2)).float() + truth.sum(dim=(1, 2)).float() + 1.0)).mean()
     iou = ((discrete_intersection + 1.0) / (union + 1.0)).mean()
     return bce + dice_loss, float(dice.detach().cpu()), float(iou.detach().cpu())
+
+
+def _validate_prompt_masks(loader, split: str, class_names: list[str] | None = None) -> dict:
+    """Reject empty/misindexed SAM masks before loading the multi-GB model."""
+    from PIL import Image
+    import numpy as np
+
+    pairs = getattr(getattr(loader, "dataset", None), "pairs", None)
+    if not pairs:
+        raise ValueError(f"SAM2 {split} 데이터에 이미지-마스크 쌍이 없습니다. images/{split}과 masks/{split}을 확인하세요.")
+    seen_foreground = set()
+    annotated = 0
+    for image_path, mask_path in pairs:
+        with Image.open(image_path) as source_image:
+            image_size = source_image.size
+        with Image.open(mask_path) as source:
+            if source.mode not in ("P", "L", "I", "I;16", "I;16L", "I;16B"):
+                raise ValueError(f"SAM2 마스크는 단일 채널 클래스 인덱스 PNG여야 합니다: {mask_path}")
+            if source.size != image_size:
+                raise ValueError(f"이미지와 마스크 크기가 다릅니다: {image_path} / {mask_path}")
+            values = np.asarray(source)
+        if values.ndim != 2:
+            raise ValueError(f"SAM2 마스크는 단일 채널이어야 합니다: {mask_path}")
+        valid_values = values[values != 255]
+        if class_names and valid_values.size and int(valid_values.max()) >= len(class_names):
+            raise ValueError(
+                f"SAM2 마스크 클래스 번호가 클래스 목록과 맞지 않습니다: {mask_path}. "
+                f"현재 클래스 수={len(class_names)}, 허용 번호=0~{len(class_names) - 1} 및 255"
+            )
+        foreground = np.unique(values[(values > 0) & (values != 255)])
+        if foreground.size:
+            annotated += 1
+            seen_foreground.update(int(value) for value in foreground)
+    if not seen_foreground:
+        raise ValueError(
+            f"SAM2 {split} 마스크에 학습할 전경 영역이 없습니다. 현재 규칙에서 클래스 ID 0은 배경, "
+            "1 이상은 전경, 255는 학습 제외 픽셀입니다. 데이터 티칭에서 배경이 아닌 클래스를 선택해 "
+            f"폴리곤/브러시로 표시하고 저장하세요. (검사한 마스크 {len(pairs)}개)"
+        )
+    return {"images": len(pairs), "annotated_images": annotated,
+            "foreground_class_ids": sorted(seen_foreground)}
 
 
 def _checkpoint_payload(model, optimizer, *, model_id: str, epoch: int, best_dice: float,
@@ -125,6 +173,7 @@ def _save_checkpoint(path: Path, payload: dict) -> None:
 def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
                epochs: int, batch_size: int, learning_rate: float, weight_decay: float,
                device: str, use_amp: bool, input_size: int = 1024,
+               class_names: list[str] | None = None,
                initial_checkpoint: str | Path | None = None,
                horizontal_flip: float = 0.5, rotation: float = 0.0,
                color_jitter: float = 0.0, emit: Callable[[dict], None] | None = None,
@@ -136,11 +185,25 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
         raise ValueError("SAM2 학습 입력 크기는 1024여야 합니다.")
     if epochs < 1 or batch_size < 1:
         raise ValueError("SAM2 epochs와 batch_size는 1 이상이어야 합니다.")
+    if class_names is not None and len(class_names) < 2:
+        raise ValueError(
+            "SAM2 분할에는 클래스 ID 0의 배경과 ID 1 이상의 전경 클래스가 모두 필요합니다. "
+            "클래스 목록 첫 항목을 배경으로 두고 전경 클래스를 하나 이상 추가하세요."
+        )
     emit = emit or (lambda _event: None)
     should_stop = should_stop or (lambda: False)
     torch_device = torch.device(device)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
+    train_loader, val_loader = create_segmentation_loaders(
+        str(data_root), input_size=(1024, 1024), batch_size=batch_size, in_channels=3,
+        flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
+    train_data = _validate_prompt_masks(train_loader, "train", class_names)
+    val_data = _validate_prompt_masks(val_loader, "val", class_names)
+    emit({"event": "dataset_validated", "train": train_data, "val": val_data})
+
+    # Check the data contract before allocating/downloading SAM2 weights. This
+    # makes the common missing-mask/background-only error immediate and clear.
     model = load_sam2_checkpoint(model_id, checkpoint_path=initial_checkpoint, device=str(torch_device))
     for parameter in model.parameters():
         parameter.requires_grad_(False)
@@ -149,9 +212,6 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
             parameter.requires_grad_(True)
     model.train()
     model.image_encoder.eval()
-    train_loader, val_loader = create_segmentation_loaders(
-        str(data_root), input_size=(1024, 1024), batch_size=batch_size, in_channels=3,
-        flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
     optimizer = torch.optim.AdamW(
         [parameter for parameter in model.parameters() if parameter.requires_grad],
         lr=learning_rate, weight_decay=weight_decay)

@@ -237,6 +237,10 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
             raise ValueError("기존 클래스 또는 중복 이름 확인 필요")
     if action == "reclass" and project.task in {"detect", "segment", "obb"} and source_class not in names:
         raise ValueError("변경할 원래 클래스 선택 필요")
+    if action == "reclass" and project.task in {"detect", "segment", "obb"} and source_class == class_name:
+        raise ValueError("원래 클래스와 대상 클래스가 같습니다.")
+    if action == "reclass" and project.task == "segment" and (names.index(source_class) == 0 or names.index(class_name) == 0):
+        raise ValueError("세그멘테이션 클래스 ID 0은 배경으로 예약되어 있습니다. 전경 클래스만 변경하세요.")
     if action == "annotations" and (len(sources) != 1 or project.task not in {"detect", "segment", "obb"}):
         raise ValueError("탐지/분할 이미지 한 장 선택 필요")
     mask_document = None
@@ -264,6 +268,7 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
             if cancelled():
                 raise InterruptedError("데이터 변경 취소")
             related = sidecars(project, path, split) if action != "import" else []
+            reclass_changed = False
             if action == "delete":
                 for _, label in related:
                     tx.remove(label)
@@ -306,20 +311,26 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
                 for kind, label in related:
                     if kind == "labels":
                         rows = read_annotations(label, project.task, len(names))
+                        if not any(row["class_id"] == old for row in rows):
+                            continue
                         for row in rows:
                             if row["class_id"] == old:
                                 row["class_id"] = new
                         tx.write(label, encode_annotations(rows))
+                        reclass_changed = True
                     else:
                         with Image.open(label) as mask:
                             pixels = np.array(mask)
                             if pixels.ndim != 2 or pixels.dtype.kind not in "ui":
                                 raise ValueError("정수 클래스 마스크 필요")
+                            if not np.any(pixels == old):
+                                continue
                             pixels[pixels == old] = new
                             out = Image.fromarray(pixels)
                             stream = io.BytesIO()
                             out.save(stream, format=mask.format)
                             tx.write(label, stream.getvalue())
+                            reclass_changed = True
             elif action == "mask_annotations":
                 base = root.parent.parent if root.parent.name == "images" else Path(project.data.root)
                 mask_path = base / "masks" / split / path.relative_to(root).with_suffix(".png")
@@ -336,7 +347,15 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
                 label = base / "labels" / split / path.relative_to(root).with_suffix(".txt")
                 tx.write(label, encode_annotations(annotations or []))
                 read_annotations(label, project.task, len(names))
-            changed += 1
+            if action == "reclass" and project.task in {"detect", "segment", "obb"}:
+                changed += int(reclass_changed)
+            else:
+                changed += 1
+        if action == "reclass" and project.task in {"detect", "segment", "obb"} and changed == 0:
+            raise ValueError(
+                f"선택한 이미지에 '{source_class}' 라벨이 없습니다. 이미지 전체에 클래스를 붙이는 작업은 "
+                "탐지/분할 학습 정답이 되지 않습니다. 이미지를 열고 객체 박스나 영역을 표시한 뒤 저장하세요."
+            )
         tx.finish()
         if action == "rename_class" and project.task in {"classify", "anomaly"}:
             # ImageFolder가 이전 빈 클래스 폴더를 별도 클래스로 읽지 않도록 정리.

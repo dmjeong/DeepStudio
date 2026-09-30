@@ -167,6 +167,10 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
   };
   const down = (event: React.PointerEvent<SVGSVGElement>) => {
     if (!data || busy || submitting || !names.length) return;
+    if (segment && names.length < 2) {
+      setError("세그멘테이션은 클래스 ID 0을 배경으로 사용합니다. 배경 다음에 전경 클래스를 하나 이상 추가하세요.");
+      return;
+    }
     event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
     const p = coordinate(event);
     if (event.button === 1 || space.current || mode === "pan") {
@@ -240,7 +244,8 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
   const disabled = busy || submitting || !data || !!points.length || !names.length || (segment && !base);
   return <DatasetDialog className="teaching-dialog" title={`데이터 티칭 — ${item.name}`} onClose={() => { if (!busy && !submitting && ((!dirty && !points.length) || window.confirm("저장하지 않은 변경을 버리고 닫을까요?"))) onClose(); }}>
     {(error || saveError) && <p className="error" role="alert">{error || saveError}</p>}
-    <div className="annotation-toolbar"><Field label="정답 클래스"><select value={classId} disabled={busy || submitting} onChange={e => setClassId(Number(e.target.value))}>{names.map((name, i) => <option key={i} value={i}>{i}: {name}</option>)}</select></Field>
+    {segment && names.length < 2 && <p className="error">클래스 ID 0은 배경입니다. 클래스 사이드바에 배경을 첫 번째로 두고, 그 다음에 실제 전경 클래스를 추가해야 마스크를 그릴 수 있습니다.</p>}
+    <div className="annotation-toolbar"><Field label="정답 클래스"><select value={classId} disabled={busy || submitting} onChange={e => setClassId(Number(e.target.value))}>{names.map((name, i) => <option key={i} value={i}>{i === 0 && segment ? `${i}: 배경 (${name})` : `${i}: ${name}`}</option>)}</select></Field>
       {segment && <><Field label="브러시 px"><input type="number" min="1" max="1024" value={brush} onChange={e => setBrush(Math.max(1, Math.min(1024, Number(e.target.value) || 1)))} /></Field><Field label="마스크 농도"><input type="range" min="0" max="100" value={opacity} onChange={e => setOpacity(Number(e.target.value))} /></Field></>}
       <span>{zoom.toFixed(0)}%</span><button onClick={() => setZoom(100)}>화면 맞춤 0</button></div>
     <div className="row teaching-tools">{([...(segment ? [["polygon", "다각형 P"], ["brush", "브러시 B"], ["erase", "지우개 E"]] : [["erase", "클릭 삭제 E"]]), ["rectangle", "사각형 R"], ["select", "선택/수정 V"], ["pan", "이동 H"]] as [Mode, string][]).map(([key, label]) => <button key={key} aria-pressed={mode === key} disabled={busy || submitting} className={mode === key ? "primary" : ""} onClick={() => chooseMode(key)}>{label}</button>)}

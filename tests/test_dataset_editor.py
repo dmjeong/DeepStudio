@@ -98,6 +98,18 @@ class DatasetEditorTests(unittest.TestCase):
         with Image.open(label) as mask:
             np.testing.assert_array_equal(np.array(mask), [[0, 2, 2, 255]])
 
+    def test_segmentation_reclass_without_matching_region_is_rejected(self):
+        p = self.project("segment")
+        path = self.image(p.data.train_dir)
+        with self.assertRaisesRegex(ValueError, "라벨이 없습니다"):
+            edit_dataset(p, "reclass", [str(path)], source_class="scratch", class_name="dent")
+
+    def test_segmentation_background_cannot_be_reclassified(self):
+        p = self.project("segment")
+        path = self.image(p.data.train_dir)
+        with self.assertRaisesRegex(ValueError, "배경으로 예약"):
+            edit_dataset(p, "reclass", [str(path)], source_class="good", class_name="scratch")
+
     def test_project_save_failure_restores_files_and_class_names(self):
         p = self.project()
         image = self.image(Path(p.data.train_dir) / "scratch")

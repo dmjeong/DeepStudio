@@ -341,6 +341,13 @@ def _train_sam2_project(context, project, device):
     history = []
 
     def progress(event):
+        if event.get("event") == "dataset_validated":
+            for split, summary in (("train", event["train"]), ("val", event["val"])):
+                context.emit("log_message", [
+                    f"SAM2 {split} 마스크 확인: {summary['images']}장 | "
+                    f"전경 라벨 {summary['foreground_class_ids']}"
+                ])
+            return
         if event.get("event") == "training_started":
             context.emit("progress_updated", [0, int(event["total_epochs"])])
             context.emit("log_message", [
@@ -371,7 +378,7 @@ def _train_sam2_project(context, project, device):
     result = train_sam2(
         model_id, data.root, output_dir=run_dir, epochs=cfg.epochs, batch_size=cfg.batch_size,
         learning_rate=cfg.learning_rate, weight_decay=cfg.weight_decay, device=str(device),
-        use_amp=cfg.use_amp, input_size=1024, initial_checkpoint=source,
+        use_amp=cfg.use_amp, input_size=1024, class_names=list(data.class_names), initial_checkpoint=source,
         horizontal_flip=cfg.augmentation.horizontal_flip, rotation=cfg.augmentation.rotation,
         color_jitter=cfg.augmentation.color_jitter, emit=progress, should_stop=context.cancelled,
     )

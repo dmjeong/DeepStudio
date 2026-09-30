@@ -66,6 +66,13 @@ export function Dataset({ project, state, act, refresh, busy }: PageProps & { pr
   const toggle = (path: string) => setSelected(old => old.includes(path) ? old.filter(p => p !== path) : [...old, path]);
   const counts = data?.splits.find(s => s.split === split)?.classes || {};
   const names: string[] = project.data.class_names;
+  const reclassNames = project.task === "segment" ? names.slice(1) : names;
+  useEffect(() => {
+    if (!reclassNames.includes(sourceClass)) setSourceClass(reclassNames[0] || "");
+    if (!reclassNames.includes(targetClass)) setTargetClass(reclassNames[0] || "");
+  }, [project.task, names.join("\u0000")]);
+  const selectedImages = images.images.filter(item => selected.includes(item.path));
+  const canReclassify = selectedImages.some(item => item.classes.includes(sourceClass));
   return <>
     <div className="dataset-toolbar">
       <div className="split-tabs" role="group" aria-label="데이터 분할">
@@ -80,8 +87,9 @@ export function Dataset({ project, state, act, refresh, busy }: PageProps & { pr
     <div className="data-workspace">
       <aside className="class-sidebar">
         <h2>클래스</h2>
+        {project.task === "segment" && <p className="muted">클래스 이름은 라벨을 만들기 전에도 추가할 수 있습니다. 이미지에서 클래스를 지정하려면 열어서 해당 영역을 폴리곤이나 브러시로 표시하고 저장하세요. 세그멘테이션 학습은 저장된 마스크가 필요합니다.</p>}
         <button className={!filter ? "class-filter active" : "class-filter"} onClick={() => setFilter("")}>전체 이미지 <span>{data?.splits.find(s => s.split === split)?.count || 0}</span></button>
-        {Array.from(new Set([...names, ...Object.keys(counts)])).map((n, i) => <button key={n} className={filter === n ? "class-filter active" : "class-filter"} onClick={() => setFilter(n)}><span className="class-marker" style={{ background: classColor(i) }} />{n}<span>{counts[n] || 0}</span></button>)}
+        {Array.from(new Set([...names, ...Object.keys(counts)])).map((n, i) => <button key={n} className={filter === n ? "class-filter active" : "class-filter"} onClick={() => setFilter(n)}><span className="class-marker" style={{ background: classColor(i) }} />{n}{project.task === "segment" && i === 0 && <small>배경 ID 0</small>}<span>{counts[n] || 0}</span></button>)}
         <div className="class-actions">
           <Field label="새 클래스 이름"><input value={name} onChange={e => setName(e.target.value)} placeholder="예: scratch" /></Field>
           <button disabled={busy || !name.trim()} onClick={() => act(async () => { await api("/classes", "POST", { name: name.trim() }); setName(""); await refresh(); })}>클래스 추가</button>
@@ -98,8 +106,8 @@ export function Dataset({ project, state, act, refresh, busy }: PageProps & { pr
         <div className="selection-bar">
           <label className="check"><input type="checkbox" aria-label="현재 페이지 전체 선택" checked={images.images.length > 0 && images.images.every(i => selected.includes(i.path))} onChange={e => setSelected(e.target.checked ? images.images.map(i => i.path) : [])} />{selected.length ? `${selected.length}장 선택` : `${images.total}장`}</label>
           {selected.length > 0 && <div className="bulk-actions"><select aria-label="이동할 분할" value={targetSplit} onChange={e => setTargetSplit(e.target.value)}>{["train", "val", "test"].map(s => <option key={s}>{s}</option>)}</select><button disabled={busy || split === targetSplit} onClick={() => act(() => edit("move", { target_split: targetSplit }))}>분할 이동</button>
-            {!["classify", "anomaly"].includes(project.task) && <select aria-label="변경할 원래 클래스" value={sourceClass} onChange={e => setSourceClass(e.target.value)}>{names.map(n => <option key={n}>{n}</option>)}</select>}
-            <select aria-label="변경할 클래스" value={targetClass} onChange={e => setTargetClass(e.target.value)}>{names.map(n => <option key={n}>{n}</option>)}</select><button disabled={busy || !targetClass} onClick={() => act(() => edit("reclass", { class_name: targetClass, source_class: sourceClass }))}>클래스 변경</button>
+            {!["classify", "anomaly"].includes(project.task) && <select aria-label="변경할 원래 클래스" value={sourceClass} onChange={e => setSourceClass(e.target.value)}>{reclassNames.map(n => <option key={n}>{n}</option>)}</select>}
+            <select aria-label="변경할 클래스" value={targetClass} onChange={e => setTargetClass(e.target.value)}>{reclassNames.map(n => <option key={n}>{n}</option>)}</select><button disabled={busy || !targetClass || !canReclassify} title={!canReclassify ? "선택한 이미지에 변경할 클래스의 라벨이 없습니다. 이미지에서 먼저 영역을 표시하세요." : undefined} onClick={() => act(() => edit("reclass", { class_name: targetClass, source_class: sourceClass }))}>클래스 변경</button>
             <button className="danger" disabled={busy} onClick={() => setDialog("delete")}>이미지 삭제</button></div>}
         </div>
         {error && <p className="error" role="alert">{error}</p>}
