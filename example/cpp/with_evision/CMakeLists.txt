@@ -51,12 +51,17 @@ if(OpenMP_CXX_FOUND)
 endif()
 foreach(target evision_onnx_example evision_onnx_test evision_encrypted_example evision_parallel_example evision_concurrency_test)
     target_link_libraries(${target} PRIVATE evision_classifier)
-    add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_LIST_DIR}/../../assets" "$<TARGET_FILE_DIR:${target}>/assets")
+    set(_example_ort_dll "")
     if(WIN32)
-        add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll" "$<TARGET_FILE_DIR:${target}>/onnxruntime.dll")
+        set(_example_ort_dll "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll")
     endif()
+    # Multiple targets share one output/assets directory. Serialize their
+    # copies so a parallel build cannot overwrite another copy in progress.
+    add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND}
+        "-DASSET_SOURCE=${CMAKE_CURRENT_LIST_DIR}/../../assets"
+        "-DDESTINATION=$<TARGET_FILE_DIR:${target}>"
+        "-DORT_DLL=${_example_ort_dll}"
+        -P "${CMAKE_CURRENT_LIST_DIR}/copy_assets.cmake")
 endforeach()
 enable_testing()
 add_test(NAME evision_encrypted_no_args COMMAND evision_encrypted_example)

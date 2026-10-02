@@ -23,6 +23,8 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace dvs_bw8 {
 struct Result {
@@ -35,9 +37,10 @@ struct Result {
 
 // No OpenCV, Python, or application SDK dependency. An EImageBW8 remains owned
 // by the caller. Keep its pixels alive and unchanged until InferBW8 returns.
-// Create once at startup. Default calls are serialized. For parallel CPU runs,
-// create one Context per worker, sharing this model/session. Join workers before
-// destroying the Classifier; image/ROI pixels must remain stable during the call.
+// Create once at startup. Default calls borrow independent reusable scratch;
+// concurrent callers automatically grow the workspace pool as needed. No worker
+// count or thread ID is required. Join callers before destroying the Classifier;
+// image/ROI pixels must remain stable during the call.
 class Classifier {
 public:
     class Context {
@@ -63,6 +66,44 @@ public:
         Ort::Value input_tensor_{nullptr}, output_tensor_{nullptr};
         std::mutex mutex_;
     };
+
+private:
+    struct Workspace {
+        explicit Workspace(std::unique_ptr<Context> value) : context(std::move(value)) {}
+        std::unique_ptr<Context> context;
+        bool busy = false; // Access only under pool_mutex_.
+    };
+    class WorkspaceLease {
+    public:
+        WorkspaceLease(Classifier& owner, Workspace& workspace) noexcept
+            : owner_(owner), workspace_(workspace) {}
+        ~WorkspaceLease() {
+            const std::lock_guard<std::mutex> lock(owner_.pool_mutex_);
+            workspace_.busy = false;
+        }
+        WorkspaceLease(const WorkspaceLease&) = delete;
+        WorkspaceLease& operator=(const WorkspaceLease&) = delete;
+    private:
+        Classifier& owner_;
+        Workspace& workspace_;
+    };
+    Workspace& BorrowWorkspace() {
+        const std::lock_guard<std::mutex> lock(pool_mutex_);
+        for (auto& workspace : workspaces_) {
+            if (!workspace->busy) {
+                workspace->busy = true;
+                return *workspace;
+            }
+        }
+        // A busy workspace is never reused. Grow only when all are in use;
+        // heap-owned Workspace/Context addresses survive vector reallocation.
+        auto workspace = std::make_unique<Workspace>(CreateContext());
+        workspace->busy = true;
+        workspaces_.push_back(std::move(workspace));
+        return *workspaces_.back();
+    }
+
+public:
 
     Classifier(const Classifier&) = delete;
     Classifier& operator=(const Classifier&) = delete;
@@ -101,6 +142,7 @@ private:
         if (width_ < 1 || height_ < 1 || width_ > 65536 || height_ > 65536 ||
             (channels != 1 && channels != 3) || classes < 1)
             throw std::invalid_argument("Invalid model dimensions");
+        channels_ = channels; classes_ = classes;
         const auto& prep = doc.at("preprocessing");
         if (prep.at("resize_implementation") != "opencv_linear_exact_v1" ||
             prep.at("interpolation") != "INTER_LINEAR_EXACT" || prep.at("antialias") != false ||
@@ -169,12 +211,6 @@ private:
             output_shape.size() != 2 || (output_shape[0] > 0 && output_shape[0] != 1) ||
             (output_shape[1] > 0 && output_shape[1] != classes))
             throw std::invalid_argument("Tensor shape/type does not match JSON");
-        input_.resize(static_cast<size_t>(width_) * height_ * channels); output_.resize(classes);
-        const std::array<int64_t, 4> input_shape{1, channels, height_, width_};
-        const std::array<int64_t, 2> result_shape{1, classes};
-        const auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        input_tensor_ = Ort::Value::CreateTensor<float>(memory, input_.data(), input_.size(), input_shape.data(), 4);
-        output_tensor_ = Ort::Value::CreateTensor<float>(memory, output_.data(), output_.size(), result_shape.data(), 2);
         std::vector<uint8_t> zero;
         if (!startup_image.data && startup_image.width == 0 && startup_image.height == 0 && startup_image.stride == 0) {
             const int w = (std::max)(width_, crop_width), h = (std::max)(height_, crop_height);
@@ -186,18 +222,16 @@ private:
 
 public:
     Result InferBW8(const void* pixels, int width, int height, size_t row_pitch) {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        return InferBuffers(*preprocess_, input_, output_, input_tensor_, output_tensor_,
-                            {pixels, width, height, row_pitch});
+        auto& workspace = BorrowWorkspace();
+        const WorkspaceLease lease(*this, workspace);
+        return InferBW8(*workspace.context, pixels, width, height, row_pitch);
     }
 
     // Allocate reusable buffers once per OpenMP/std::thread worker. This does
     // not load/decrypt another model or change its verified runtime settings.
     std::unique_ptr<Context> CreateContext() {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        return std::unique_ptr<Context>(new Context(this, *preprocess_, width_, height_,
-            static_cast<int>(input_.size() / (static_cast<size_t>(width_) * height_)),
-            static_cast<int>(output_.size())));
+        // Immutable prototype: only the Context's private copy is ever Run.
+        return std::unique_ptr<Context>(new Context(this, *preprocess_, width_, height_, channels_, classes_));
     }
 
     Result InferBW8(Context& context, const void* pixels, int width, int height, size_t row_pitch) {
@@ -255,13 +289,12 @@ private:
     static double Milliseconds(Clock::duration duration) { return std::chrono::duration<double, std::milli>(duration).count(); }
     Ort::Env env_{ORT_LOGGING_LEVEL_WARNING, "BW8"};
     std::unique_ptr<Ort::Session> session_;
-    std::unique_ptr<Preprocessor> preprocess_;
-    int width_ = 0, height_ = 0;
+    std::unique_ptr<const Preprocessor> preprocess_; // Immutable prototype for new workspaces.
+    int width_ = 0, height_ = 0, channels_ = 0, classes_ = 0;
     std::string input_name_, output_name_;
     std::vector<std::string> names_;
-    std::vector<float> input_, output_;
-    Ort::Value input_tensor_{nullptr}, output_tensor_{nullptr};
     double warmup_ms_ = 0;
-    std::mutex mutex_;
+    std::mutex pool_mutex_;
+    std::vector<std::unique_ptr<Workspace>> workspaces_;
 };
 } // namespace dvs_bw8

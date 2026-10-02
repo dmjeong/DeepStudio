@@ -33,7 +33,8 @@ static void Exercise(dvs_bw8::Classifier& model) {
         contexts[i] = model.CreateContext();
     }
     if (expected[0].class_id == expected[1].class_id) throw std::runtime_error("Input-independent fixture");
-    // Default shared scratch is safe; separate Contexts permit concurrent Run.
+    // Default calls automatically borrow independent scratch. Explicit Contexts
+    // remain supported for callers that want to preallocate their own workspace.
     // Reusing one Context concurrently is also safe and serializes that Context.
     for (int mode = 0; mode < 3; ++mode) {
         std::atomic<int> ready{0}, errors{0};
@@ -72,6 +73,51 @@ static void Exercise(dvs_bw8::Classifier& model) {
     }
     if (errors.load()) throw std::runtime_error("OpenMP prediction mismatch");
 #endif
+    // Caller counts change over time; no OMP thread ID or capacity is supplied
+    // to the model. Busy workspaces must never be handed to a second caller.
+    int dynamic_calls = 0;
+    for (int callers : {3, 11, 2, 17}) {
+        dynamic_calls += callers * 32;
+        std::atomic<int> ready{0}, errors{0};
+        std::atomic<bool> start{false};
+        std::vector<std::thread> threads;
+        for (int worker = 0; worker < callers; ++worker) threads.emplace_back([&, worker] {
+            ++ready;
+            while (!start.load()) std::this_thread::yield();
+            for (int i = 0; i < 32; ++i) {
+                const int sample = (i + worker) % workers;
+                const auto& frame = frames[sample];
+                try {
+                    if (!Same(model.InferBW8(frame.data.data(), frame.width, frame.height, frame.pitch), expected[sample]))
+                        ++errors;
+                } catch (...) { ++errors; }
+            }
+        });
+        while (ready.load() != callers) std::this_thread::yield();
+        start = true;
+        for (auto& thread : threads) thread.join();
+        if (errors.load()) throw std::runtime_error("Changing caller count mixed predictions");
+    }
+#ifdef _OPENMP
+    // Two independent OMP teams reuse local thread IDs concurrently. The
+    // automatic API must not confuse team 0's worker 0 with team 1's worker 0.
+    std::atomic<int> team_errors{0};
+    std::array<std::thread, 2> teams;
+    for (int team = 0; team < 2; ++team) teams[team] = std::thread([&, team] {
+        const int team_workers = team == 0 ? 3 : 5;
+#pragma omp parallel for num_threads(team_workers)
+        for (int i = 0; i < 160; ++i) {
+            const int sample = (i + team) % workers;
+            const auto& frame = frames[sample];
+            try {
+                if (!Same(model.InferBW8(frame.data.data(), frame.width, frame.height, frame.pitch), expected[sample]))
+                    ++team_errors;
+            } catch (...) { ++team_errors; }
+        }
+    });
+    for (auto& team : teams) team.join();
+    if (team_errors.load()) throw std::runtime_error("Independent OMP teams mixed predictions");
+#endif
     // Validation failure must release the Context's lock for the next call.
     bool rejected = false;
     try { model.InferBW8(*contexts[0], nullptr, 7, 11, 24); } catch (const std::invalid_argument&) { rejected = true; }
@@ -79,10 +125,15 @@ static void Exercise(dvs_bw8::Classifier& model) {
     const auto& frame = frames[0];
     if (!Same(model.InferBW8(*contexts[0], frame.data.data(), frame.width, frame.height, frame.pitch), expected[0]))
         throw std::runtime_error("Context failed after an invalid buffer");
+    // A failed automatic call returns its borrowed workspace through RAII.
+    rejected = false;
+    try { model.InferBW8(nullptr, 7, 11, 24); } catch (const std::invalid_argument&) { rejected = true; }
+    if (!rejected || !Same(model.InferBW8(frame.data.data(), frame.width, frame.height, frame.pitch), expected[0]))
+        throw std::runtime_error("Automatic workspace failed after an invalid buffer");
     std::cout << "PASS: shared model, default/shared/per-worker Contexts, "
-              << 3 * workers * repeats << " std::thread calls";
+              << 3 * workers * repeats + dynamic_calls << " std::thread calls";
 #ifdef _OPENMP
-    std::cout << ", " << workers * repeats << " OpenMP calls";
+    std::cout << ", " << workers * repeats + 320 << " OpenMP calls";
 #endif
     std::cout << '\n';
 }
