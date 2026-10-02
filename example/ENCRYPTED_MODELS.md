@@ -66,7 +66,11 @@ private:
 실행 파일 옆에 모델을 둘 때는 `example_paths.h`의 `ExecutableDirectory()`와
 합친 경로를 전달한다. 작업 폴더가 달라지는 Visual Studio F5 실행에서도 같다.
 BW8 포인터는 기존처럼 `InferBW8(ptr, width, height, rowPitch)`로 넣는다.
-같은 객체에 대한 동시 호출은 하지 않고 작업 스레드에서 순차 처리한다.
+기본 호출은 같은 객체를 여러 스레드에서 사용해도 내부 잠금으로 순차 처리한다.
+실제로 동시에 추론하려면 작업자마다 `CreateContext()`를 한 번 호출하고
+`InferEvision(*context, roi)`를 사용한다. 모델과 복호화는 한 번만 수행한다.
+인자 없는 OMP 예제는 `cpp/with_evision/parallel.cpp`이며 자세한 연결 방법은
+[eVision 예제의 병렬 추론 안내](cpp/with_evision/README.md#openmp로-동시에-추론하기)를 따른다.
 
 인자 없는 전체 예제는 `cpp/with_evision/encrypted.cpp`다. 기존 CMake 빌드에
 `evision_encrypted_example`이 함께 추가된다. `cpp/build_encrypted.bat`을 실행하면

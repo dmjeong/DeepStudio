@@ -40,7 +40,7 @@ struct VisionInference::OpenVINOState
 #endif
 };
 
-// One owner calls Classify at a time (as enforced by ClassificationWorker).
+// Classify holds m_classification_mutex while these buffers are in use.
 // Tensor wrappers and buffers live for the model lifetime, never for one frame.
 struct VisionInference::ClassificationState
 {
@@ -706,6 +706,10 @@ cv::Mat VisionInference::ColorizeMask(const cv::Mat& mask, int num_classes)
 ClassifyResult VisionInference::Classify(const cv::Mat& image)
 {
     ClassifyResult result;
+    // ORT can accept independent Run calls, but these tensor buffers and the
+    // OpenVINO InferRequest belong to the instance. An OpenMP caller must not
+    // overwrite another frame while its Run is still reading that frame.
+    std::unique_lock<std::mutex> inference_lock(m_classification_mutex);
 
     if (!m_bInitialized)
     {
@@ -749,6 +753,9 @@ ClassifyResult VisionInference::Classify(const cv::Mat& image)
         ValidateOutput(state.output_tensor, m_config, 2);
         logits.assign(state.output.begin(), state.output.end());
     }
+    // From here every frame owns its logits; postprocessing can overlap without
+    // retaining the shared scratch/tensor buffers. Timings exclude lock wait.
+    inference_lock.unlock();
     if (logits.empty() || std::any_of(logits.begin(), logits.end(), [](float v) { return !std::isfinite(v); }))
         throw std::runtime_error("Invalid classification output.");
     result.probabilities = Softmax(logits);

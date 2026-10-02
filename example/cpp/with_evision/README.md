@@ -77,9 +77,69 @@ auto result = model.InferBW8(
 전달해 그 프레임으로 준비 추론한다. 없으면 검은 이미지로 준비한다. 오류는
 `std::exception`으로 전달하므로 초기화/추론 호출부에서 잡아 표시한다.
 
-동일 객체의 동시 호출은 지원하지 않는다. 호출이 끝날 때까지 원본 버퍼를 해제하거나
+기본 `InferEvision(image)` / `InferBW8(...)` 호출은 같은 객체를 여러 스레드에서
+사용해도 내부 잠금으로 순차 처리한다. 호출이 끝날 때까지 원본 버퍼를 해제하거나
 카메라가 덮어쓰지 않도록 한다. 원본 전체 이미지 복사는 하지 않으며 모델용 float 텐서는
 내부 버퍼에 생성한다. 전처리 좌표와 텐서를 재사용한다.
+
+## OpenMP로 동시에 추론하기
+
+**모델은 하나만 읽고, 작업자마다 Context를 하나씩 만든다.** Context는 각 작업자가
+쓰는 전처리 좌표·입력·출력 버퍼다. 다른 Context는 같은 ONNX Runtime CPU 세션을
+동시에 사용하므로 모델을 여러 번 읽거나 복호화하지 않는다. OpenVINO 전환이나
+배치 export는 이 공유 버퍼 오류를 고치는 데 필요하지 않다.
+
+초기화 시 모델과 Context를 멤버에 보관한다. 다음은 평문 모델 초기화다.
+암호화 모델은 기존 `Classifier(encrypted_path, key)` 생성자로 바꾸면 된다.
+
+```cpp
+#include "classifier.h"
+#include <array>
+#include <exception>
+#include <omp.h>
+
+constexpr int workers = 2;
+dvs_bw8::Classifier model(L"C:/models/model.json");
+std::array<std::unique_ptr<dvs_bw8::Classifier::Context>, workers> contexts;
+for (auto& context : contexts) {
+    context = model.CreateContext();
+    model.InferEvision(*context, startupRoi); // 실제 ROI로 작업자별 준비 추론.
+}
+```
+
+검사할 ROI들을 먼저 준비하고, 결과 배열도 검사 개수만큼 미리 만든다.
+`rois`는 서로 다른 `EROIBW8` 객체를 가리키는 포인터 배열이다.
+
+```cpp
+std::vector<dvs_bw8::Result> results(rois.size());
+std::vector<std::exception_ptr> errors(rois.size());
+const int count = static_cast<int>(rois.size());
+#pragma omp parallel for num_threads(workers)
+for (int i = 0; i < count; ++i) {
+    try {
+        results[i] = model.InferEvision(*contexts[omp_get_thread_num()], *rois[i]);
+    } catch (...) {
+        errors[i] = std::current_exception(); // OMP 영역 밖에서 표시한다.
+    }
+}
+for (const auto& error : errors) if (error) std::rethrow_exception(error);
+```
+
+VS2017에서 **C/C++ → 언어 → OpenMP 지원: 예(`/openmp`)**를 켠다.
+전체 실행 예제 `parallel.cpp`는 인자 없이 암호화 예제 모델을 한 번 읽고,
+작업자별 Context 생성·준비 추론·병렬 호출·결과 검사를 수행한다.
+OpenMP가 없는 빌드는 같은 예제를 `std::thread`로 실행한다.
+
+- 작업자별로 다른 Context를 쓴다. 같은 Context를 공유하면 안전하지만 잠금 때문에 순차 처리한다.
+- 같은 ROI 객체를 다른 스레드에서 `SetPlacement()`로 변경하지 않는다. ROI와 부모 이미지의 픽셀은 모든 호출이 끝날 때까지 그대로 유지한다.
+- 결과는 `results[i]`처럼 각 작업이 자기 위치에 쓴다. 공유 `result` 변수나 동시 `push_back()`을 쓰지 않는다.
+- 모델과 Context를 해제하기 전에 모든 작업자를 종료한다. 추론 중 모델을 재초기화하지 않는다.
+- 작업자 수는 2개부터 비교한다. ORT 내부 스레드도 CPU를 사용하므로 작업자가 많다고 항상 빨라지지는 않는다. JSON에 기록된 검증된 실행 설정은 그대로 사용한다.
+- `inference_ms`는 전처리·모델·후처리 시간이다. 잠금 대기 시간과 전체 ROI 처리 시간은 호출부의 시계로 별도 측정한다.
+
+배치는 여러 ROI를 `[N,C,H,W]` 입력 하나로 묶는 별도 방식이다. 이를 쓰려면
+dynamic batch로 내보낸 모델과 batch API가 필요하다. 위 Context API는 기존
+batch 1 모델로 동작한다. 배치와 Context 중 빠른 쪽은 대상 PC에서 비교해야 한다.
 
 ## 예제 자체 빌드·테스트
 

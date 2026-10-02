@@ -38,7 +38,8 @@ inline cv::Mat ReadImage(const std::filesystem::path& path) {
 }
 
 // Construct once during application startup, before enabling the inference UI.
-// Construction includes one warm-up inference. Call on one thread at a time.
+// Construction includes one warm-up inference. Concurrent classification calls
+// are serialized inside VisionInference. Join workers before destruction.
 class Classifier {
 public:
     explicit Classifier(const std::filesystem::path& model_json,

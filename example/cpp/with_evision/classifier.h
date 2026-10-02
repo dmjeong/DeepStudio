@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace dvs_bw8 {
@@ -34,9 +35,40 @@ struct Result {
 
 // No OpenCV, Python, or application SDK dependency. An EImageBW8 remains owned
 // by the caller. Keep its pixels alive and unchanged until InferBW8 returns.
-// Create once at startup; do not call the same instance concurrently.
+// Create once at startup. Default calls are serialized. For parallel CPU runs,
+// create one Context per worker, sharing this model/session. Join workers before
+// destroying the Classifier; image/ROI pixels must remain stable during the call.
 class Classifier {
 public:
+    class Context {
+    public:
+        ~Context() = default;
+        Context(const Context&) = delete;
+        Context& operator=(const Context&) = delete;
+    private:
+        friend class Classifier;
+        Context(const Classifier* owner, const Preprocessor& processor,
+                int width, int height, int channels, int classes)
+            : owner_(owner), preprocess_(processor),
+              input_(static_cast<size_t>(width) * height * channels), output_(classes) {
+            const std::array<int64_t, 4> shape{1, channels, height, width};
+            const std::array<int64_t, 2> result_shape{1, classes};
+            const auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+            input_tensor_ = Ort::Value::CreateTensor<float>(memory, input_.data(), input_.size(), shape.data(), 4);
+            output_tensor_ = Ort::Value::CreateTensor<float>(memory, output_.data(), output_.size(), result_shape.data(), 2);
+        }
+        const Classifier* owner_;
+        Preprocessor preprocess_;
+        std::vector<float> input_, output_;
+        Ort::Value input_tensor_{nullptr}, output_tensor_{nullptr};
+        std::mutex mutex_;
+    };
+
+    Classifier(const Classifier&) = delete;
+    Classifier& operator=(const Classifier&) = delete;
+    Classifier(Classifier&&) = delete;
+    Classifier& operator=(Classifier&&) = delete;
+
     explicit Classifier(const std::filesystem::path& json_path,
                         Image startup_image = {nullptr, 0, 0, 0}) {
         Initialize(ReadJson(json_path), json_path, nullptr, startup_image);
@@ -154,21 +186,45 @@ private:
 
 public:
     Result InferBW8(const void* pixels, int width, int height, size_t row_pitch) {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return InferBuffers(*preprocess_, input_, output_, input_tensor_, output_tensor_,
+                            {pixels, width, height, row_pitch});
+    }
+
+    // Allocate reusable buffers once per OpenMP/std::thread worker. This does
+    // not load/decrypt another model or change its verified runtime settings.
+    std::unique_ptr<Context> CreateContext() {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return std::unique_ptr<Context>(new Context(this, *preprocess_, width_, height_,
+            static_cast<int>(input_.size() / (static_cast<size_t>(width_) * height_)),
+            static_cast<int>(output_.size())));
+    }
+
+    Result InferBW8(Context& context, const void* pixels, int width, int height, size_t row_pitch) {
+        if (context.owner_ != this) throw std::invalid_argument("Context belongs to another Classifier");
+        const std::lock_guard<std::mutex> lock(context.mutex_);
+        return InferBuffers(context.preprocess_, context.input_, context.output_,
+                            context.input_tensor_, context.output_tensor_, {pixels, width, height, row_pitch});
+    }
+
+private:
+    Result InferBuffers(Preprocessor& processor, std::vector<float>& input, std::vector<float>& output,
+                        Ort::Value& input_tensor, Ort::Value& output_tensor, Image image) {
         const auto start = Clock::now();
-        preprocess_->Run({pixels, width, height, row_pitch}, input_);
+        processor.Run(image, input);
         const auto prepared = Clock::now();
         const char* input_names[] = {input_name_.c_str()};
         const char* output_names[] = {output_name_.c_str()};
-        session_->Run(Ort::RunOptions{nullptr}, input_names, &input_tensor_, 1, output_names, &output_tensor_, 1);
+        session_->Run(Ort::RunOptions{nullptr}, input_names, &input_tensor, 1, output_names, &output_tensor, 1);
         const auto inferred = Clock::now();
-        for (float value : output_) if (!std::isfinite(value)) throw std::runtime_error("Non-finite model output");
+        for (float value : output) if (!std::isfinite(value)) throw std::runtime_error("Non-finite model output");
         Result result{};
-        result.class_id = static_cast<int>(std::max_element(output_.begin(), output_.end()) - output_.begin());
+        result.class_id = static_cast<int>(std::max_element(output.begin(), output.end()) - output.begin());
         result.class_name = names_.empty() ? "class_" + std::to_string(result.class_id) : names_[result.class_id];
-        result.probabilities.resize(output_.size());
+        result.probabilities.resize(output.size());
         float sum = 0;
-        for (size_t i = 0; i < output_.size(); ++i) {
-            result.probabilities[i] = std::exp(output_[i] - output_[result.class_id]);
+        for (size_t i = 0; i < output.size(); ++i) {
+            result.probabilities[i] = std::exp(output[i] - output[result.class_id]);
             sum += result.probabilities[i];
         }
         for (auto& value : result.probabilities) value /= sum;
@@ -181,11 +237,17 @@ public:
         return result;
     }
 
+public:
     // Instantiated in the user's eVision project; accepts EImageBW8/EROIBW8.
     template<class BW8Image> Result InferEvision(BW8Image& image) {
         if (image.GetBitsPerPixel() != 8 || image.GetColPitch() != 1)
             throw std::invalid_argument("InferEvision requires BW8, not a color or BW16 image");
         return InferBW8(image.GetImagePtr(0, 0), image.GetWidth(), image.GetHeight(), image.GetRowPitch());
+    }
+    template<class BW8Image> Result InferEvision(Context& context, BW8Image& image) {
+        if (image.GetBitsPerPixel() != 8 || image.GetColPitch() != 1)
+            throw std::invalid_argument("InferEvision requires BW8, not a color or BW16 image");
+        return InferBW8(context, image.GetImagePtr(0, 0), image.GetWidth(), image.GetHeight(), image.GetRowPitch());
     }
     double WarmupMilliseconds() const { return warmup_ms_; }
 private:
@@ -200,5 +262,6 @@ private:
     std::vector<float> input_, output_;
     Ort::Value input_tensor_{nullptr}, output_tensor_{nullptr};
     double warmup_ms_ = 0;
+    std::mutex mutex_;
 };
 } // namespace dvs_bw8
