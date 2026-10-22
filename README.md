@@ -40,7 +40,7 @@ Hiera 변형의 ONNX Export에 자동 연결되고, 새 프로젝트에서는 �
 
 데이터셋 이미지를 열면 검출 박스와 분할 마스크를 직접 그릴 수 있다. Qt에서는
 이미지 선택 후 **데이터 티칭 / 정답 그리기**, 브라우저에서는 이미지 클릭으로 연다.
-[드로잉 도구 사용법](docs/DATASET_TEACHING.ko.md)과 [2.51 릴리스](docs/RELEASE_2.51.md)를 참고한다.
+[새 라벨링 작업실 사용법](docs/ANNOTATION_WORKSPACE.ko.md)과 [9.23 검증 기록](docs/RELEASE_9.23.md)을 참고한다.
 
 Python 3.11 환경에서 이 폴더로 이동합니다.
 

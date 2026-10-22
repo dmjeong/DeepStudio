@@ -1,0 +1,145 @@
+{
+  "feature": "annotation-workspace",
+  "source_version": "9.23",
+  "date": "2026-10-22",
+  "base_commit": "20d406f4b7e42af9f94eae90b2cefce4c96c73ab",
+  "python_regression": {
+    "passed": 174,
+    "warnings": 245,
+    "seconds": 13.21,
+    "new_workspace_tests": 33
+  },
+  "qt_scale_checks": {
+    "1.25": 10,
+    "1.5": 10,
+    "2.0": 10
+  },
+  "web": {
+    "unit_tests_passed": 14,
+    "typescript_vite_build": "passed"
+  },
+  "lint": "CI E/F/W and additional new-file checks passed",
+  "benchmark_128": {
+    "system": "macOS-26.5-arm64-arm-64bit",
+    "cpu": "arm",
+    "python": "3.12.13",
+    "pyside6": "6.12.0",
+    "qt_platform": "offscreen",
+    "image": [
+      4096,
+      4096
+    ],
+    "objects": 128,
+    "brush_px": 32,
+    "window": [
+      1380,
+      900
+    ],
+    "initial_window_ms": 331.640874966979,
+    "pointer_to_processed_paint_ms": {
+      "median": 1.3647088780999184,
+      "p95": 1.8127784132957458,
+      "max": 5.830417387187481,
+      "samples": 159,
+      "over_100ms": 0
+    },
+    "stroke_commit_ms": 9.79637447744608,
+    "notes": "Qt synthetic mouse events plus processEvents; target Windows/native display requires a separate run."
+  },
+  "benchmark_1000": {
+    "system": "macOS-26.5-arm64-arm-64bit",
+    "cpu": "arm",
+    "python": "3.12.13",
+    "pyside6": "6.12.0",
+    "qt_platform": "offscreen",
+    "image": [
+      4096,
+      4096
+    ],
+    "objects": 1000,
+    "brush_px": 32,
+    "window": [
+      1380,
+      900
+    ],
+    "initial_window_ms": 600.3933325409889,
+    "pointer_to_processed_paint_ms": {
+      "median": 1.4307079836726189,
+      "p95": 1.982416585087776,
+      "max": 12.96108216047287,
+      "samples": 159,
+      "over_100ms": 0
+    },
+    "stroke_commit_ms": 22.19029050320387,
+    "notes": "Qt synthetic mouse events plus processEvents; target Windows/native display requires a separate run.",
+    "grid": [
+      25,
+      40
+    ]
+  },
+  "sam2_tiny_cpu": {
+    "model": "sam2_hiera_tiny",
+    "device": "cpu",
+    "image": [
+      256,
+      192
+    ],
+    "proposal_pixels": 6461,
+    "png_roundtrip_equal": true,
+    "save_keeps_workspace_open": true,
+    "ui_timer_ticks_during_prediction": 87,
+    "elapsed_seconds": 1.8082122495397925
+  },
+  "memory_500": {
+    "closed_images": 500,
+    "size": [
+      1536,
+      2048
+    ],
+    "objects_per_image": 128,
+    "retained_dialogs": 0,
+    "rss_MiB_after_10": 225.296875,
+    "rss_MiB_after_50": 227.71875,
+    "rss_MiB_after_100": 231.171875,
+    "rss_MiB_last_40_min": 237.0625,
+    "rss_MiB_last_40_max": 237.0625,
+    "notes": "Manual Qt offscreen lifecycle test, not a native Windows memory acceptance test.",
+    "rss_MiB_after_200": 237.28125,
+    "rss_MiB_after_250": 237.84375,
+    "rss_MiB_after_300": 238.34375,
+    "rss_MiB_after_500": 237.0625,
+    "qt_pixmap_cache_KiB": 10240,
+    "rss_MiB_after_warmup_250_min": 236.84375,
+    "rss_MiB_after_warmup_250_max": 238.34375
+  },
+  "source_sha256": {
+    "gui/core/version.py": "8e1034ca90ee4f02a2c9c9af02a6e8d3dff71e3c6a3a198a05f2020aa812d2d0",
+    "gui/core/mask_annotations.py": "dcc0e76b55fcbc78622eedd66abe0c2154617317cf33460e18c811bda0fc3cc6",
+    "gui/core/annotation_tools.py": "9cf968757e17618e95e3de38f6437c36f906e6489ea1be4a3052c7b4cf04a162",
+    "gui/core/annotation_journal.py": "21c8de639faf804f7e3d024f4276c8c068c6d5930dafe4007d13d002e8b028d3",
+    "gui/core/annotation_assist.py": "463ba1e2af26cd21c5bb16e3ffdf228b36da6dd0cf9033336eec8d39b8654bc6",
+    "gui/core/dataset_editor.py": "f513c86b92c6577cbbfd585041dc0ead4623028468ad8cc6dd4b5b027732ec80",
+    "gui/widgets/annotation_workspace.py": "14b23986f79c9cad689b6140ada8bbc66d80dee5cabc01477732210dd72f5e25",
+    "gui/widgets/annotation_workspace_ui.py": "fd9e61c259a2ed3722387dcb3dbcbe2de9f38b8a549219d89a4837191f836aea",
+    "gui/widgets/annotation_workspace_state.py": "1ce7772be44bb6774f1233f6dfdd641f3e32f6cf00b271c5d5aeb7d8eecbd122",
+    "gui/widgets/annotation_shortcuts.py": "f386ba144086d180ca9672ddaaecda1b3aa85217d05e18aaa1e8edeff7f56122",
+    "gui/widgets/annotation_grid_dialog.py": "d08fa0c3a780387a9cc28b0c5461e78eddddcc0bb149e800bed030f18fb00e1c",
+    "gui/widgets/annotation_io.py": "01f50975fceb027f16a1ea496cd835bc24253c75e32c4df24c448dab0fd94ae2",
+    "gui/widgets/detection_canvas.py": "a3af00df2d6654c24a58297865deb5f44bf76bf8bb539abf889ed6f8a86092ec",
+    "gui/widgets/segmentation_canvas.py": "ebfa92793e7104d02562d95f6fe9aebfeb0f25be6a021a858a033d1ee494fc32",
+    "gui/widgets/segmentation_annotation.py": "70be062ded9edb13bb90ee6c4b610e6d7ec358a8143cd9be7a58f94e56c95fc5",
+    "gui/widgets/obb_annotation.py": "2b7c9858c6e3e91c5b703d927fa98d75fc3e088afe048eb37b0e0310332a2aff",
+    "gui/widgets/dataset_widget.py": "2216c55f69faef3fdb8cccc781134fe784effc3327c1bfe1093a9e073680a6bb",
+    "webapp/server.py": "2e149d6bc0fab47f7449c323ffa997d1db83d4342f1641d6199497f4ff91bb42",
+    "web/src/teaching-editor.tsx": "fd401ec6b7e942380e9dd5e3e10a16eecf433ed1ae4dfc6ac613b97ab1c47b0c",
+    "tests/test_annotation_workspace.py": "7a6daf93944ab985cada0374940b2e8aac734cf65bc1a91d6227d55952e15200"
+  },
+  "not_executed": [
+    "Windows native installer and offline installation",
+    "Windows multi-monitor DPI switching",
+    "Target i7 editor responsiveness",
+    "SAM2 GPU and Small/Base+/Large actual weights",
+    "All-model training/ONNX/C++ regression",
+    "Same-operator annotation-time and quality comparison"
+  ]
+}

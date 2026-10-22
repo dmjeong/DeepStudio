@@ -1026,7 +1026,7 @@ class DatasetWidget(QWidget):
             if not self._ensure_idle():
                 return
             from pathlib import Path
-            from core.dataset_editor import edit_dataset, read_annotations, sidecars, split_root
+            from core.dataset_editor import edit_dataset, read_annotations, sidecars, split_root, annotation_revision
             from widgets.obb_annotation import OBBAnnotationDialog
             from widgets.segmentation_annotation import SegmentationAnnotationDialog
             from core.mask_annotations import load_mask_document
@@ -1038,25 +1038,34 @@ class DatasetWidget(QWidget):
                 if image_path not in paths:
                     paths = [image_path]
                 index = paths.index(image_path)
+                revision_holder = {}
                 def add_class(name):
                     self.about_to_change.emit()
                     ClassManager.add(project, name)
+                    revision_holder["value"] = annotation_revision(project, image_path, split)
                     return project.data.class_names
 
+                annotation_preferences = {"_persistent": True}
                 while True:
                     image_path = paths[index]
+                    revision_holder["value"] = annotation_revision(project, image_path, split)
+                    def save_annotation(values, path=image_path):
+                        action = "mask_annotations" if project.task == "segment" else "annotations"
+                        result = edit_dataset(project, action, [path], split=split, annotations=values, expected_revision=revision_holder["value"])
+                        revision_holder["value"] = result["annotation_revision"]
+                        return result
                     if project.task == "segment":
                         document = load_mask_document(project, image_path, split)
                         dialog = SegmentationAnnotationDialog(image_path, project.data.class_names, document,
-                            lambda values, path=image_path: edit_dataset(project, "mask_annotations", [path], split=split, annotations=values), self,
-                            add_class=add_class, navigation=(index, len(paths)))
+                            save_annotation, self,
+                            add_class=add_class, navigation=(index, len(paths)), image_paths=paths, preferences=annotation_preferences, label_revision=revision_holder["value"], image_records=records, revision_provider=lambda path: annotation_revision(project,path,split))
                     else:
                         labels = sidecars(project, image_path, split)
                         rows = [row for kind, label in labels if kind == "labels"
                                 for row in read_annotations(label, project.task, len(project.data.class_names))]
                         dialog = OBBAnnotationDialog(image_path, project.data.class_names, rows,
-                            lambda values, path=image_path: edit_dataset(project, "annotations", [path], split=split, annotations=values), self,
-                            task=project.task, add_class=add_class, navigation=(index, len(paths)))
+                            save_annotation, self,
+                            task=project.task, add_class=add_class, navigation=(index, len(paths)), image_paths=paths, preferences=annotation_preferences, label_revision=revision_holder["value"], image_records=records, revision_provider=lambda path: annotation_revision(project,path,split))
                     dialog.exec()
                     delta = getattr(dialog, "navigation_delta", 0)
                     dialog.deleteLater()

@@ -41,7 +41,7 @@ class _SaveLabels(QThread):
             self.error = str(exc)
 
 
-class OBBAnnotationDialog(AnnotationNavigation, QDialog):
+class OrientedBoxAnnotationDialog(AnnotationNavigation, QDialog):
     def __init__(self, image_path, class_names, rows, save, parent=None, *, task="obb", add_class=None, navigation=None):
         super().__init__(parent)
         self.selected = -1
@@ -441,3 +441,17 @@ class OBBAnnotationDialog(AnnotationNavigation, QDialog):
     def closeEvent(self, event):
         event.ignore()
         self.reject()
+
+
+def OBBAnnotationDialog(image_path, class_names, rows, save, parent=None, *, task="obb", **kwargs):
+    """Keep the public constructor; detection uses the shared workspace."""
+    import os
+    if task == "detect" and os.environ.get("DVS_ANNOTATION_WORKSPACE", "1") != "0":
+        from widgets.annotation_workspace import DetectionAnnotationDialog
+        return DetectionAnnotationDialog(image_path, class_names, rows, save, parent, **kwargs)
+    kwargs.pop("image_paths", None)
+    kwargs.pop("draft_store", None)
+    kwargs.pop("preferences", None)
+    for name in ("label_revision", "image_records", "revision_provider"):
+        kwargs.pop(name, None)
+    return OrientedBoxAnnotationDialog(image_path, class_names, rows, save, parent, task=task, **kwargs)

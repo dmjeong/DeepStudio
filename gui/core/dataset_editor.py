@@ -1,19 +1,24 @@
 """Qt와 웹이 공유하는 데이터 탐색 및 백업 가능한 이미지/정답 편집."""
 
-from collections import Counter
-from datetime import datetime
 import copy
 import io
-import json
-from pathlib import Path
 import shutil
 import uuid
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
-from PIL import Image
-
-from core.class_management import IMAGE_EXTENSIONS, SPLITS, _plain_path, _walk_files, validate_class_name
+from core.annotation_journal import guarded_dataset, write_journal
+from core.class_management import (
+    IMAGE_EXTENSIONS,
+    SPLITS,
+    _plain_path,
+    _walk_files,
+    validate_class_name,
+)
 from core.project import ProjectManager
+from PIL import Image
 
 
 def split_root(project, split):
@@ -26,15 +31,47 @@ def sidecars(project, image, split):
     """하위 폴더를 유지해 이미지와 대응하는 모든 정답을 찾는다."""
     root = split_root(project, split)
     relative = Path(image).relative_to(root)
-    base = root.parent.parent if root.parent.name == "images" else Path(project.data.root)
+    base = (
+        root.parent.parent if root.parent.name == "images" else Path(project.data.root)
+    )
     result = []
-    for kind in ("labels", "masks") if project.task == "segment" else ("labels",) if project.task in ("detect", "obb") else ():
+    for kind in (
+        ("labels", "masks")
+        if project.task == "segment"
+        else ("labels",)
+        if project.task in ("detect", "obb")
+        else ()
+    ):
         folder = _plain_path(base / kind / split / relative.parent)
         if folder.is_dir():
-            result.extend((kind, path) for path in folder.iterdir()
-                          if path.stem == relative.stem and (path.suffix.lower() == ".txt" if kind == "labels"
-                                                           else path.suffix.lower() in IMAGE_EXTENSIONS))
+            result.extend(
+                (kind, path)
+                for path in folder.iterdir()
+                if path.stem == relative.stem
+                and (
+                    path.suffix.lower() == ".txt"
+                    if kind == "labels"
+                    else path.suffix.lower() in IMAGE_EXTENSIONS
+                )
+            )
     return result
+
+
+def annotation_revision(project, image, split):
+    """A semantic label/class revision, checked while holding the edit lock."""
+    import hashlib
+
+    from core.annotation_tools import fingerprint
+
+    root = split_root(project, split)
+    image = root / Path(image).resolve().relative_to(root.resolve())
+    values = []
+    for kind, path in sorted(
+        sidecars(project, image, split), key=lambda row: str(row[1])
+    ):
+        values.append([kind, str(path), hashlib.sha256(path.read_bytes()).hexdigest()])
+    stat=Path(image).stat()
+    return fingerprint({"classes": project.data.class_names, "labels": values,'image':[stat.st_size,stat.st_mtime_ns]})
 
 
 def read_annotations(path, task, count):
@@ -47,20 +84,31 @@ def read_annotations(path, task, count):
             class_id, coords = int(values[0]), [float(v) for v in values[1:]]
         except (ValueError, IndexError) as exc:
             raise ValueError(f"정답 형식 오류: {path}") from exc
-        valid = len(coords) == 4 if task == "detect" else len(coords) >= 6 and len(coords) % 2 == 0
-        if not valid or not 0 <= class_id < count or any(not np.isfinite(v) or not 0 <= v <= 1 for v in coords):
+        valid = (
+            len(coords) == 4
+            if task == "detect"
+            else len(coords) >= 6 and len(coords) % 2 == 0
+        )
+        if (
+            not valid
+            or not 0 <= class_id < count
+            or any(not np.isfinite(v) or not 0 <= v <= 1 for v in coords)
+        ):
             raise ValueError(f"정답 클래스 또는 좌표 범위 오류: {path}")
         if task == "detect" and (coords[2] <= 0 or coords[3] <= 0):
             raise ValueError(f"박스 너비와 높이는 0보다 커야 함: {path}")
         if task == "obb":
             from core.paths import ensure_python_path
+
             ensure_python_path()
             from obb import validate_corners
+
             validate_corners(coords)
         result.append({"class_id": class_id, "coordinates": coords})
     return result
 
 
+@guarded_dataset
 def scan_dataset(project, cancelled=lambda: False):
     """정답 클래스별 이미지 수를 계산. 손상 정답은 해당 이미지에 오류로 표시."""
     records, splits = [], []
@@ -82,13 +130,18 @@ def scan_dataset(project, cancelled=lambda: False):
                     for kind, label in sidecars(project, path, split):
                         annotated = True
                         if kind == "labels":
-                            classes.update(names[row["class_id"]] for row in read_annotations(label, project.task, len(names)))
+                            classes.update(
+                                names[row["class_id"]]
+                                for row in read_annotations(
+                                    label, project.task, len(names)
+                                )
+                            )
                         else:
                             with Image.open(label) as mask:
                                 pixels = np.asarray(mask)
                                 if pixels.ndim != 2:
                                     raise ValueError("정수 클래스 마스크 필요")
-                                ids = set(int(i) for i in np.unique(pixels)) - {255}
+                                ids = {int(i) for i in np.unique(pixels)} - {255}
                                 if any(i < 0 or i >= len(names) for i in ids):
                                     raise ValueError("마스크 클래스 범위 오류")
                                 classes.update(names[i] for i in ids)
@@ -96,12 +149,33 @@ def scan_dataset(project, cancelled=lambda: False):
                 error = str(exc)
             counts.update(classes)
             stat = path.stat()
-            records.append({"path": str(path), "name": path.name, "split": split,
-                            "classes": sorted(classes), "annotated": annotated, "error": error,
-                            "revision": f"{stat.st_mtime_ns}-{stat.st_size}"})
-        splits.append({"split": split, "path": str(root), "count": len(images),
-                       "classes": {name: counts[name] for name in dict.fromkeys([*names, *counts])}})
-    return {"splits": splits, "class_names": names, "root": project.data.root, "images": records}
+            records.append(
+                {
+                    "path": str(path),
+                    "name": path.name,
+                    "split": split,
+                    "classes": sorted(classes),
+                    "annotated": annotated,
+                    "error": error,
+                    "revision": f"{stat.st_mtime_ns}-{stat.st_size}",
+                }
+            )
+        splits.append(
+            {
+                "split": split,
+                "path": str(root),
+                "count": len(images),
+                "classes": {
+                    name: counts[name] for name in dict.fromkeys([*names, *counts])
+                },
+            }
+        )
+    return {
+        "splits": splits,
+        "class_names": names,
+        "root": project.data.root,
+        "images": records,
+    }
 
 
 class EditTransaction:
@@ -110,11 +184,19 @@ class EditTransaction:
     def __init__(self, project, action):
         self.project = project
         self.before = copy.deepcopy(project)
-        self.backup = Path(project.project_dir).parent / ".deep_studio_dataset_archive" / (
-            datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8])
-        data_roots = [Path(project.data.root).resolve(), *(split_root(project, sp) for sp in SPLITS)]
+        self.backup = (
+            Path(project.project_dir).parent
+            / ".deep_studio_dataset_archive"
+            / (datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8])
+        )
+        data_roots = [
+            Path(project.data.root).resolve(),
+            *(split_root(project, sp) for sp in SPLITS),
+        ]
         if any(self.backup.resolve().is_relative_to(root) for root in data_roots):
-            raise ValueError("백업 위치가 데이터 루트 안에 포함됨. 프로젝트와 데이터 루트를 별도로 지정 필요")
+            raise ValueError(
+                "백업 위치가 데이터 루트 안에 포함됨. 프로젝트와 데이터 루트를 별도로 지정 필요"
+            )
         self.backup.mkdir(parents=True)
         self.paths = {}
         self.created_dirs = set()
@@ -131,9 +213,7 @@ class EditTransaction:
             self._manifest("pending")
 
     def _manifest(self, status):
-        (self.backup / "manifest.json").write_text(json.dumps({"action": self.action, "status": status,
-            "files": [{"path": str(p), "backup": b.name if b else None} for p, b in self.paths.items()]},
-            ensure_ascii=False, indent=2), encoding="utf-8")
+        write_journal(self, status)
 
     def mkdir(self, directory):
         missing = []
@@ -145,10 +225,12 @@ class EditTransaction:
         self.created_dirs.update(missing)
 
     def write(self, path, data):
+        from core.annotation_tools import atomic_write
+
         path = _plain_path(path)
         self.save(path)
         self.mkdir(path.parent)
-        path.write_bytes(data)
+        atomic_write(path, data)
 
     def copy(self, source, target, move=False):
         source, target = _plain_path(source), _plain_path(target)
@@ -188,7 +270,9 @@ class EditTransaction:
                     path.unlink(missing_ok=True)
             except OSError as exc:
                 failures.append(str(exc))
-        for directory in sorted(self.created_dirs, key=lambda p: len(p.parts), reverse=True):
+        for directory in sorted(
+            self.created_dirs, key=lambda p: len(p.parts), reverse=True
+        ):
             try:
                 directory.rmdir()
             except OSError:
@@ -196,7 +280,9 @@ class EditTransaction:
         self.project.__dict__.update(self.before.__dict__)
         self._manifest("recovery_required" if failures else "rolled_back")
         if failures:
-            raise RuntimeError(f"일부 파일 복구 필요: {self.backup}: " + "; ".join(failures))
+            raise RuntimeError(
+                f"일부 파일 복구 필요: {self.backup}: " + "; ".join(failures)
+            )
 
 
 def annotation_view(project, path, split):
@@ -207,16 +293,44 @@ def annotation_view(project, path, split):
     with Image.open(image) as opened:
         width, height = opened.size
     labels = sidecars(project, image, split)
-    return {"path": str(image), "width": width, "height": height,
-            "has_mask": any(kind == "masks" for kind, _ in labels),
-            "annotations": [row for kind, p in labels if kind == "labels"
-                            for row in read_annotations(p, project.task, len(project.data.class_names))]}
+    return {
+        "path": str(image),
+        "width": width,
+        "height": height,
+        "has_mask": any(kind == "masks" for kind, _ in labels),
+        "annotations": [
+            row
+            for kind, p in labels
+            if kind == "labels"
+            for row in read_annotations(p, project.task, len(project.data.class_names))
+        ],
+    }
 
 
-def edit_dataset(project, action, paths=(), split="train", target_split="train", class_name="",
-                 source_class="", new_name="", annotations=None, cancelled=lambda: False):
+@guarded_dataset
+def edit_dataset(
+    project,
+    action,
+    paths=(),
+    split="train",
+    target_split="train",
+    class_name="",
+    source_class="",
+    new_name="",
+    annotations=None,
+    cancelled=lambda: False,
+    expected_revision=None,
+):
     """이미지 묶음 편집. 오류/취소는 전체 묶음 복구, 원본 삭제는 백업 후 수행."""
-    if action not in {"import", "move", "reclass", "delete", "rename_class", "annotations", "mask_annotations"}:
+    if action not in {
+        "import",
+        "move",
+        "reclass",
+        "delete",
+        "rename_class",
+        "annotations",
+        "mask_annotations",
+    }:
         raise ValueError("데이터 편집 작업 오류")
     root, target_root = split_root(project, split), split_root(project, target_split)
     names = project.data.class_names
@@ -228,28 +342,58 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
             raise ValueError(f"이미지 파일 필요: {path}")
         if action != "import":
             path.relative_to(root)
-    if action in {"reclass", "import"} and (project.task in {"classify", "anomaly"} or action == "reclass"):
-        if class_name not in names:
-            raise ValueError("대상 클래스 선택 필요")
+    if action in {"reclass", "import"} and (
+        project.task in {"classify", "anomaly"} or action == "reclass"
+    ) and class_name not in names:
+        raise ValueError("대상 클래스 선택 필요")
     if action == "rename_class":
         validate_class_name(new_name)
-        if source_class not in names or any(n.casefold() == new_name.casefold() for n in names):
+        if source_class not in names or any(
+            n.casefold() == new_name.casefold() for n in names
+        ):
             raise ValueError("기존 클래스 또는 중복 이름 확인 필요")
-    if action == "reclass" and project.task in {"detect", "segment", "obb"} and source_class not in names:
+    if (
+        action == "reclass"
+        and project.task in {"detect", "segment", "obb"}
+        and source_class not in names
+    ):
         raise ValueError("변경할 원래 클래스 선택 필요")
-    if action == "reclass" and project.task in {"detect", "segment", "obb"} and source_class == class_name:
+    if (
+        action == "reclass"
+        and project.task in {"detect", "segment", "obb"}
+        and source_class == class_name
+    ):
         raise ValueError("원래 클래스와 대상 클래스가 같습니다.")
-    if action == "reclass" and project.task == "segment" and (names.index(source_class) == 0 or names.index(class_name) == 0):
-        raise ValueError("세그멘테이션 클래스 ID 0은 배경으로 예약되어 있습니다. 전경 클래스만 변경하세요.")
-    if action == "annotations" and (len(sources) != 1 or project.task not in {"detect", "segment", "obb"}):
+    if (
+        action == "reclass"
+        and project.task == "segment"
+        and (names.index(source_class) == 0 or names.index(class_name) == 0)
+    ):
+        raise ValueError(
+            "세그멘테이션 클래스 ID 0은 배경으로 예약되어 있습니다. 전경 클래스만 변경하세요."
+        )
+    if action == "annotations" and (
+        len(sources) != 1 or project.task not in {"detect", "segment", "obb"}
+    ):
         raise ValueError("탐지/분할 이미지 한 장 선택 필요")
+    if expected_revision is not None and action in {"annotations", "mask_annotations"}:
+        if (
+            len(sources) != 1
+            or annotation_revision(project, sources[0], split) != expected_revision
+        ):
+            raise ValueError(
+                "편집을 시작한 뒤 정답 또는 클래스가 다른 곳에서 변경됐습니다. 초안을 보존하고 이미지를 다시 여세요."
+            )
     mask_document = None
     if action == "mask_annotations":
         if len(sources) != 1 or project.task != "segment":
             raise ValueError("분할 이미지 한 장 선택 필요")
         from core.mask_annotations import MaskDocument
+
         with Image.open(sources[0]) as image:
-            mask_document = MaskDocument.from_payload(annotations, *image.size, len(names))
+            mask_document = MaskDocument.from_payload(
+                annotations, *image.size, len(names)
+            )
     tx = EditTransaction(project, action)
     changed = 0
     try:
@@ -261,7 +405,13 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
                     for path in _walk_files(directory / source_class):
                         if path not in seen:
                             seen.add(path)
-                            tx.copy(path, directory / new_name / path.relative_to(directory / source_class), move=True)
+                            tx.copy(
+                                path,
+                                directory
+                                / new_name
+                                / path.relative_to(directory / source_class),
+                                move=True,
+                            )
                             changed += 1
             project.data.class_names[names.index(source_class)] = new_name
         for path in sources:
@@ -273,33 +423,76 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
                 for _, label in related:
                     tx.remove(label)
                 tx.remove(path)
-            elif action in {"move", "import"} or action == "reclass" and project.task in {"classify", "anomaly"}:
+            elif (
+                action in {"move", "import"}
+                or action == "reclass"
+                and project.task in {"classify", "anomaly"}
+            ):
                 if action == "import":
                     with Image.open(path) as check:
                         check.verify()
-                    dest_dir = target_root / class_name if project.task in {"classify", "anomaly"} else target_root
+                    dest_dir = (
+                        target_root / class_name
+                        if project.task in {"classify", "anomaly"}
+                        else target_root
+                    )
                     if project.task in {"detect", "segment", "obb"}:
-                        for kind in (("labels", "masks") if project.task == "segment" else ("labels",)):
-                            candidates = [path.with_suffix(".txt")] if kind == "labels" else []
+                        for kind in (
+                            ("labels", "masks")
+                            if project.task == "segment"
+                            else ("labels",)
+                        ):
+                            candidates = (
+                                [path.with_suffix(".txt")] if kind == "labels" else []
+                            )
                             # 폴더 가져오기는 images/split 하위의 대응 labels/masks를 함께 복사.
                             for parent in path.parents:
                                 if parent.name == "images":
-                                    candidate = parent.parent / kind / path.relative_to(parent)
-                                    candidates += [candidate.with_suffix(".txt")] if kind == "labels" else [candidate.with_suffix(s) for s in (".png", ".tif", ".bmp")]
+                                    candidate = (
+                                        parent.parent / kind / path.relative_to(parent)
+                                    )
+                                    candidates += (
+                                        [candidate.with_suffix(".txt")]
+                                        if kind == "labels"
+                                        else [
+                                            candidate.with_suffix(s)
+                                            for s in (".png", ".tif", ".bmp")
+                                        ]
+                                    )
                                     break
-                            related.extend((kind, p) for p in dict.fromkeys(candidates) if p.is_file())
+                            related.extend(
+                                (kind, p)
+                                for p in dict.fromkeys(candidates)
+                                if p.is_file()
+                            )
                 else:
                     relative = path.relative_to(root)
-                    dest_dir = target_root / relative.parent if action == "move" else root / class_name / Path(*relative.parts[1:-1])
+                    dest_dir = (
+                        target_root / relative.parent
+                        if action == "move"
+                        else root / class_name / Path(*relative.parts[1:-1])
+                    )
                 targets = [dest_dir / path.name]
                 destinations = []
                 for kind, label in related:
-                    base = target_root.parent.parent if target_root.parent.name == "images" else Path(project.data.root)
-                    folder = base / kind / target_split / targets[0].relative_to(target_root).parent
+                    base = (
+                        target_root.parent.parent
+                        if target_root.parent.name == "images"
+                        else Path(project.data.root)
+                    )
+                    folder = (
+                        base
+                        / kind
+                        / target_split
+                        / targets[0].relative_to(target_root).parent
+                    )
                     destinations.append(folder / (path.stem + label.suffix))
                 # 같은 stem은 정답을 공유하므로 확장자가 달라도 충돌 거부.
                 if project.task in {"detect", "segment", "obb"} and dest_dir.is_dir():
-                    if any(p.stem.casefold() == path.stem.casefold() and p != path for p in dest_dir.iterdir()):
+                    if any(
+                        p.stem.casefold() == path.stem.casefold() and p != path
+                        for p in dest_dir.iterdir()
+                    ):
                         raise FileExistsError(f"같은 이름의 정답 충돌: {path.stem}")
                 for (kind, source), target in zip(related, destinations):
                     if kind == "labels":
@@ -332,8 +525,14 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
                             tx.write(label, stream.getvalue())
                             reclass_changed = True
             elif action == "mask_annotations":
-                base = root.parent.parent if root.parent.name == "images" else Path(project.data.root)
-                mask_path = base / "masks" / split / path.relative_to(root).with_suffix(".png")
+                base = (
+                    root.parent.parent
+                    if root.parent.name == "images"
+                    else Path(project.data.root)
+                )
+                mask_path = (
+                    base / "masks" / split / path.relative_to(root).with_suffix(".png")
+                )
                 tx.write(mask_path, mask_document.encode())
                 # One authoritative target per image. The transaction retains
                 # prior raster/vector files for recovery if any save step fails.
@@ -342,16 +541,28 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
                         tx.remove(label)
             elif action == "annotations":
                 if any(kind == "masks" for kind, _ in related):
-                    raise ValueError("픽셀 마스크는 클래스 변경으로 편집. 박스/폴리곤과 혼합 저장 불가")
-                base = root.parent.parent if root.parent.name == "images" else Path(project.data.root)
-                label = base / "labels" / split / path.relative_to(root).with_suffix(".txt")
+                    raise ValueError(
+                        "픽셀 마스크는 클래스 변경으로 편집. 박스/폴리곤과 혼합 저장 불가"
+                    )
+                base = (
+                    root.parent.parent
+                    if root.parent.name == "images"
+                    else Path(project.data.root)
+                )
+                label = (
+                    base / "labels" / split / path.relative_to(root).with_suffix(".txt")
+                )
                 tx.write(label, encode_annotations(annotations or []))
                 read_annotations(label, project.task, len(names))
             if action == "reclass" and project.task in {"detect", "segment", "obb"}:
                 changed += int(reclass_changed)
             else:
                 changed += 1
-        if action == "reclass" and project.task in {"detect", "segment", "obb"} and changed == 0:
+        if (
+            action == "reclass"
+            and project.task in {"detect", "segment", "obb"}
+            and changed == 0
+        ):
             raise ValueError(
                 f"선택한 이미지에 '{source_class}' 라벨이 없습니다. 이미지 전체에 클래스를 붙이는 작업은 "
                 "탐지/분할 학습 정답이 되지 않습니다. 이미지를 열고 객체 박스나 영역을 표시한 뒤 저장하세요."
@@ -362,15 +573,26 @@ def edit_dataset(project, action, paths=(), split="train", target_split="train",
             for sp in SPLITS:
                 old_root = split_root(project, sp) / source_class
                 if old_root.is_dir():
-                    for directory in sorted((p for p in old_root.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+                    for directory in sorted(
+                        (p for p in old_root.rglob("*") if p.is_dir()),
+                        key=lambda p: len(p.parts),
+                        reverse=True,
+                    ):
                         directory.rmdir()
                     old_root.rmdir()
     except BaseException:
         tx.rollback()
         raise
-    return {"changed": changed, "backup_path": str(tx.backup)}
+    result = {"changed": changed, "backup_path": str(tx.backup)}
+    if action in {"annotations", "mask_annotations"}:
+        result["annotation_revision"] = annotation_revision(project, sources[0], split)
+    return result
 
 
 def encode_annotations(rows):
-    return "".join(f"{row['class_id']} " + " ".join(format(float(v), ".8g") for v in row["coordinates"]) + "\n"
-                   for row in rows).encode("utf-8")
+    return "".join(
+        f"{row['class_id']} "
+        + " ".join(format(float(v), ".8g") for v in row["coordinates"])
+        + "\n"
+        for row in rows
+    ).encode("utf-8")

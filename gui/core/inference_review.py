@@ -181,7 +181,8 @@ def review_page(records, *, threshold=None, class_name="", decision="", search="
             (not needle or needle in row["filename"].casefold()) and
             (not selected_only or row["index"] in chosen)]
     numeric = sort in {"index", "score", "inference_sec"}
-    sort_value = lambda row: row.get("display_score") if sort == "score" else row.get(sort)
+    def sort_value(row):
+        return row.get("display_score") if sort == "score" else row.get(sort)
     valid = [r for r in rows if not numeric or finite(sort_value(r))]
     missing = [r for r in rows if numeric and not finite(sort_value(r))]
     valid.sort(key=lambda r: r["index"])

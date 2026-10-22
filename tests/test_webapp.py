@@ -136,6 +136,33 @@ class WebAppTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 200, response.text)
 
+    def test_new_desktop_mask_is_lossless_readonly_and_cannot_be_overwritten_by_old_web_editor(self):
+        import base64
+        from core.project import ProjectManager
+        from core.mask_annotations import MaskDocument
+        from core.dataset_editor import edit_dataset
+        project = self.project(task="segment")
+        local = ProjectManager.load(project["filepath"])
+        path = Path(local.data.train_dir) / "new-format.png"
+        Image.new("RGB", (100, 80)).save(path)
+        document = MaskDocument(100, 80, 2, shapes=[{
+            "kind": "polygon", "class_id": 1, "points": [.2,.2,.8,.2,.8,.8,.2,.8], "object_id": "part"}])
+        document.objects["part"] = {"hidden": True, "locked": True}
+        edit_dataset(local, "mask_annotations", [str(path)], annotations=document.payload())
+        label = Path(local.data.root) / "masks/train/new-format.png"
+        before = label.read_bytes()
+        response = self.client.get("/api/dataset/mask-annotations", params={"path": str(path), "split": "train"})
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["editor_read_only"])
+        self.assertEqual(payload["shapes"], [])
+        with Image.open(io.BytesIO(base64.b64decode(payload["base_png"]))) as image:
+            np.testing.assert_array_equal(np.array(image), document.render())
+        response = self.client.post("/api/dataset/edit", json={"action": "mask_annotations", "paths": [str(path)],
+            "split": "train", "annotations": payload})
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(label.read_bytes(), before)
+
     def test_center_crop_settings_save_before_optional_model_pack_install(self):
         for task in ("detect", "segment", "anomaly", "obb"):
             with self.subTest(task=task):

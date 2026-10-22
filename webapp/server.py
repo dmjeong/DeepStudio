@@ -470,7 +470,19 @@ def create_app(state_dir=None):
         if project.task != "segment":
             raise ValueError("분할 프로젝트에서만 마스크를 편집할 수 있습니다.")
         document = load_mask_document(project, path, split)
-        return {**document.payload(), "persisted": document.persisted}
+        payload = document.payload()
+        if payload["schema_version"] > 1:
+            # The web canvas cannot yet replay scoped/owned raster edits.
+            # Show the exact rendered mask and protect the editable document.
+            import base64
+            stream = io.BytesIO()
+            from PIL import Image
+            Image.fromarray(document.render()).save(stream, format="PNG")
+            payload = {"schema_version": 2, "width": document.width, "height": document.height,
+                       "base_png": base64.b64encode(stream.getvalue()).decode("ascii"), "shapes": [],
+                       "editor_read_only": True,
+                       "editor_notice": "이 마스크는 새 라벨링 작업실 형식입니다. 정확한 픽셀을 표시하며 편집은 데스크톱 작업실에서 계속하세요."}
+        return {**payload, "persisted": document.persisted}
 
     @app.post("/api/dataset/edit")
     def dataset_edit(body: DatasetEdit):
@@ -484,6 +496,11 @@ def create_app(state_dir=None):
                 edit["paths"] = image_paths(body.folder)
             if not edit["paths"] and body.action != "rename_class":
                 raise ValueError("이미지 선택 필요")
+            if body.action == "mask_annotations":
+                from core.mask_annotations import load_mask_document
+                for path in edit["paths"]:
+                    if load_mask_document(project, path, body.split).payload()["schema_version"] > 1:
+                        raise ValueError("새 마스크 편집 정보 보호를 위해 데스크톱 라벨링 작업실에서 저장하세요.")
             return jobs.start("dataset_edit", {"project": project_view(project),
                 "project_digest": digest(ProjectManager.get_active_filepath(project)), "edit": edit})
 
