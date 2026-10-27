@@ -147,8 +147,11 @@ def _upstream_reference_outputs(model, family, dummy):
 def verify_upstream_onnx(onnx_path, model, spec, dummy):
     """Compare every raw exported tensor with the public native checkpoint."""
     import onnxruntime as ort
-    actual = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"]).run(
-        None, {"images": dummy.cpu().numpy()})
+    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    inputs = session.get_inputs()
+    if len(inputs) != 1:
+        raise ValueError("LibreYOLO ONNX 입출력 개수 오류: 이미지 입력 1개 필요")
+    actual = session.run(None, {inputs[0].name: dummy.cpu().numpy()})
     expected = _upstream_reference_outputs(model, spec["family"], dummy)
     if len(actual) != len(expected):
         raise ValueError(f"LibreYOLO ONNX 출력 개수 불일치: PyTorch={len(expected)}, ONNX={len(actual)}")
@@ -457,11 +460,13 @@ def create_inference_config(output_dir, task, num_classes, input_size,
     }
     if architecture is not None:
         config["architecture"] = architecture
-    if backend == "efficientnet":
+    if backend in {"efficientnet", "libreyolo_mobilenetv4"}:
         config["postprocessing"] = {"output": "logits", "softmax_axis": 1}
-        if model_config is not None:
+        if backend == "efficientnet" and model_config is not None:
             from efficientnet_contract import model_input_contract
             config["model_config"] = {**model_config, **model_input_contract(model_config, in_channels)}
+        elif model_config is not None:
+            config["model_config"] = dict(model_config)
     elif backend == "builtin" and model_config is not None:
         config["model_config"] = dict(model_config)
     elif backend in {"redetr_v4", "libreyolo_rtdetrv4"}:
@@ -499,6 +504,23 @@ def create_inference_config(output_dir, task, num_classes, input_size,
     return str(path)
 
 
+def _upstream_onnx_tensor_names(onnx_path, family):
+    """Read the names shipped to SDKs; preserve upstream output semantic order."""
+    import onnx
+    graph = onnx.load(str(onnx_path), load_external_data=False).graph
+    # Older ONNX exporters can list stored weights among graph inputs. They are
+    # not runtime image feeds and must not replace the actual input in JSON.
+    initializers = {value.name for value in graph.initializer}
+    initializers.update(value.values.name for value in graph.sparse_initializer)
+    inputs = [value.name for value in graph.input if value.name not in initializers]
+    outputs = [value.name for value in graph.output]
+    expected_outputs = 2 if family == "rtdetrv4" else 1
+    if len(inputs) != 1 or len(outputs) != expected_outputs:
+        raise ValueError(f"LibreYOLO ONNX 입출력 개수 오류: 입력 1개·출력 {expected_outputs}개 필요 "
+                         f"(실제 입력 {len(inputs)}개·출력 {len(outputs)}개)")
+    return inputs[0], outputs
+
+
 def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_version,
                                 dynamic_batch, simplify, verify, log):
     """Export shipped LibreYOLO checkpoints without rebuilding them as CustomCSP."""
@@ -524,6 +546,7 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
         if exported.resolve() != staged_model.resolve() or not staged_model.is_file():
             raise ValueError("LibreYOLO ONNX exporter가 요청한 출력 파일을 생성하지 않았습니다")
         onnx.checker.check_model(str(staged_model))
+        input_name, output_names = _upstream_onnx_tensor_names(staged_model, family)
         if verify:
             generator = torch.Generator().manual_seed(42)
             dummy = torch.randn(1, 3, spec["input_height"], spec["input_width"], generator=generator)
@@ -532,14 +555,13 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
             verify_upstream_onnx(staged_model, model, spec, torch.zeros_like(dummy))
             if dynamic_batch:
                 verify_upstream_onnx(staged_model, model, spec, dummy.repeat(2, 1, 1, 1))
-        output_names = (["pred_logits", "pred_boxes"] if family == "rtdetrv4" else ["output"])
         detection_encoding = ("pixel_xyxy" if family == "yolo9" else "normalized_cxcywh")
         staged_config = create_inference_config(
             stage, spec["task"], spec["num_classes"],
             [spec["input_height"], spec["input_width"]], 3, output.name,
             spec["class_names"], preprocessing=spec["preprocessing"], backend=backend,
             verification="passed" if verify else "skipped", config_filename=config_name,
-            output_names=output_names, detection_box_encoding=detection_encoding,
+            input_name=input_name, output_names=output_names, detection_box_encoding=detection_encoding,
             model_config={"model_family": family, "upstream_export": "libreyolo_public_api"})
         manifest = json.loads(Path(staged_config).read_text(encoding="utf-8"))
         manifest["export"] = {"opset": opset_version, "precision": "float32",
@@ -857,9 +879,21 @@ def _raise_efficientnet_verification_error(model, path, probe, probe_name, opset
     ) from original_error
 
 
+def _paths_alias(first, second):
+    """Include hard links as well as symlinks when protecting source files."""
+    first, second = Path(first), Path(second)
+    if first.resolve() == second.resolve():
+        return True
+    try:
+        return first.samefile(second)
+    except OSError:
+        return False
+
+
 def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_batch=False,
                       simplify=False, verify=True, overrides=None, log=print,
-                      bundle_output=None, validation_dir=None, allow_precision_fallback=False):
+                      bundle_output=None, validation_dir=None, allow_precision_fallback=False,
+                      encryption_key_path=None, sam2_model_id=""):
     """실패 단계와 환경을 자동 기록한다. 검증 실패한 모델은 배포하지 않는다.
 
     ``bundle_output`` is optional so existing callers can keep the historical
@@ -870,16 +904,42 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
     import platform
     import traceback
     events = []
+    sources = [checkpoint_path]
+    if encryption_key_path:
+        sources.append(encryption_key_path)
+    diagnostic_path = Path(output_path).with_suffix(".export-error.json")
+    # Diagnostics must never overwrite/delete a checkpoint, key, deployment, or
+    # a symlink target. Unusual filenames are valid; do not assume key suffixes.
+    if diagnostic_path.is_symlink() or any(
+        _paths_alias(diagnostic_path, path) for path in [*sources, output_path]
+    ):
+        diagnostic_path = None
     def report(message):
         events.append(str(message))
         log(message)
     report("체크포인트 및 ONNX 의존성 로드")
     try:
+        if any(_paths_alias(output_path, path) for path in sources):
+            raise ValueError("출력 파일은 체크포인트 또는 암호키와 다른 경로에 저장해야 합니다.")
         if validation_dir and not verify:
             raise ValueError("실제 이미지 검증을 사용하려면 출력 검증을 켜세요")
-        result = _export_checkpoint(checkpoint_path, output_path, opset_version, dynamic_batch,
-                                    simplify, verify, overrides, report, validation_dir=validation_dir,
-                                    allow_precision_fallback=allow_precision_fallback)
+        def run_export(destination):
+            if sam2_model_id:
+                if dynamic_batch or simplify:
+                    report("SAM2는 고정 image batch와 dynamic prompt 계약을 사용합니다. 동적 배치/단순화 옵션은 적용하지 않습니다.")
+                from export_sam2_onnx import export_official_sam2_checkpoint
+                return export_official_sam2_checkpoint(sam2_model_id, checkpoint_path,
+                    Path(destination).parent, verify=verify, opset=opset_version, log=report)
+            return _export_checkpoint(checkpoint_path, destination, opset_version, dynamic_batch,
+                                      simplify, verify, overrides, report, validation_dir=validation_dir,
+                                      allow_precision_fallback=allow_precision_fallback)
+        if encryption_key_path:
+            if bundle_output is not None:
+                raise ValueError("암호화 파일 자체가 배포 번들입니다. --bundle과 함께 사용할 수 없습니다.")
+            from model_crypto import encrypted_export
+            result = encrypted_export(run_export, output_path, encryption_key_path, report)
+        else:
+            result = run_export(output_path)
         if bundle_output is not None:
             from model_runtime.deployment_bundle import build_deployment_bundle
             source = result.get("output_dir") or result.get("output_path")
@@ -906,18 +966,21 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
                       "events": events, "traceback": traceback.format_exc()}
         if hasattr(error, "numerical_diagnostic"):
             diagnostic["numerical_diagnostic"] = error.numerical_diagnostic
-        path = Path(output_path).with_suffix(".export-error.json")
         report_location = ""
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8")
-            report(f"내보내기 진단 저장: {path}")
-            report_location = f"\n상세 진단 파일: {path}"
+            if diagnostic_path is None:
+                report(json.dumps(diagnostic, ensure_ascii=False))
+            else:
+                diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+                diagnostic_path.write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8")
+                report(f"내보내기 진단 저장: {diagnostic_path}")
+                report_location = f"\n상세 진단 파일: {diagnostic_path}"
         except OSError:
             report(json.dumps(diagnostic, ensure_ascii=False))
         raise ValueError(f"ONNX 내보내기 실패 [{diagnostic['stage']}]: {error}{report_location}") from error
     try:
-        Path(output_path).with_suffix(".export-error.json").unlink(missing_ok=True)
+        if diagnostic_path is not None:
+            diagnostic_path.unlink(missing_ok=True)
     except OSError:
         report("이전 진단 파일 삭제 실패: ONNX 내보내기는 완료되었습니다.")
     return result
@@ -935,6 +998,7 @@ def parse_args(argv=None):
     parser.add_argument("--dynamic_batch", action="store_true")
     parser.add_argument("--simplify", action="store_true")
     parser.add_argument("--verify", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--encryption-key", help="32-byte key file; output must use .dvsenc")
     parser.add_argument("--bundle", help="optional .dvdeploy output directory for C++/C# SDK")
     parser.add_argument("--validation-dir", help="class folders of local images for classification FP32 verification")
     parser.add_argument("--allow-precision-fallback", action="store_true", help="explicitly allow slow FP64 compatibility export")
@@ -947,7 +1011,8 @@ def main():
                       args.simplify, args.verify,
                       {key: getattr(args, key) for key in ("task", "num_classes", "in_channels", "input_size")},
                       bundle_output=args.bundle, validation_dir=args.validation_dir,
-                      allow_precision_fallback=args.allow_precision_fallback)
+                      allow_precision_fallback=args.allow_precision_fallback,
+                      encryption_key_path=args.encryption_key)
 
 
 if __name__ == "__main__":

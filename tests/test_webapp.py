@@ -73,13 +73,28 @@ class WebAppTests(unittest.TestCase):
         weights.write_bytes(b"test")
         with patch.object(self.app.state.jobs, "start", return_value={"id": "export-test"}) as start:
             response = self.client.post("/api/jobs/export", json={"weights": str(weights),
-                "output": str(self.root / "model.onnx"), "dataset_validation": True})
+                "output": str(self.root / "model.dvsenc"), "dataset_validation": True,
+                "encryption_key_path": str(self.root / "private.key")})
         self.assertEqual(response.status_code, 200, response.text)
         kind, payload = start.call_args.args
         self.assertEqual(kind, "export")
         self.assertTrue(payload["dataset_validation"])
         self.assertFalse(payload["allow_precision_fallback"])
+        self.assertEqual(payload["encryption_key_path"], str(self.root / "private.key"))
         self.assertEqual(payload["project"]["data"], project["data"])
+
+    def test_model_key_creation_never_overwrites_or_returns_secret(self):
+        path = self.root / "secrets" / "inspection.key"
+        result = self.client.post("/api/model-keys", json={"path": str(path)})
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json(), {"path": str(path), "created": True})
+        secret = path.read_bytes()
+        self.assertEqual(len(secret), 32)
+        again = self.client.post("/api/model-keys", json={"path": str(path)})
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(path.read_bytes(), secret)
+        for invalid in ("relative.key", str(self.root / "file.pt"), ""):
+            self.assertEqual(self.client.post("/api/model-keys", json={"path": invalid}).status_code, 400)
 
     def test_mask_teaching_api_saves_real_training_png_and_restores_editable_shapes(self):
         project = self.project(task="segment")
@@ -120,6 +135,33 @@ class WebAppTests(unittest.TestCase):
             "parent": str(self.root), "class_names": [],
         })
         self.assertEqual(response.status_code, 200, response.text)
+
+    def test_new_desktop_mask_is_lossless_readonly_and_cannot_be_overwritten_by_old_web_editor(self):
+        import base64
+        from core.project import ProjectManager
+        from core.mask_annotations import MaskDocument
+        from core.dataset_editor import edit_dataset
+        project = self.project(task="segment")
+        local = ProjectManager.load(project["filepath"])
+        path = Path(local.data.train_dir) / "new-format.png"
+        Image.new("RGB", (100, 80)).save(path)
+        document = MaskDocument(100, 80, 2, shapes=[{
+            "kind": "polygon", "class_id": 1, "points": [.2,.2,.8,.2,.8,.8,.2,.8], "object_id": "part"}])
+        document.objects["part"] = {"hidden": True, "locked": True}
+        edit_dataset(local, "mask_annotations", [str(path)], annotations=document.payload())
+        label = Path(local.data.root) / "masks/train/new-format.png"
+        before = label.read_bytes()
+        response = self.client.get("/api/dataset/mask-annotations", params={"path": str(path), "split": "train"})
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["editor_read_only"])
+        self.assertEqual(payload["shapes"], [])
+        with Image.open(io.BytesIO(base64.b64decode(payload["base_png"]))) as image:
+            np.testing.assert_array_equal(np.array(image), document.render())
+        response = self.client.post("/api/dataset/edit", json={"action": "mask_annotations", "paths": [str(path)],
+            "split": "train", "annotations": payload})
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(label.read_bytes(), before)
 
     def test_center_crop_settings_save_before_optional_model_pack_install(self):
         for task in ("detect", "segment", "anomaly", "obb"):
@@ -356,6 +398,27 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/defects/jobs").json(), [])
         self.assertEqual(self.client.get(f"/api/defects/{job['id']}/candidates").status_code, 400)
         self.assertEqual(self.client.put("/api/defects/settings", json={"project_path": project["filepath"], "settings": settings}).status_code, 400)
+
+    def test_batch_filters_use_saved_project_and_model_labels(self):
+        job_id = "b" * 32
+        root = self.root / "state" / "jobs" / job_id
+        write_json(root / "job.json", {"id": job_id, "kind": "infer", "status": "completed", "created_at": "2026-01-01"})
+        names = ["정상 부품", "double", "스크래치 10%"]
+        write_json(root / "request.json", {"payload": {"project": {"task": "classify",
+            "data": {"class_names": names, "test_dir": "/test"}}}})
+        for index, probability in enumerate((.9, .7)):
+            write_json(root / "results" / f"{index}.json", {"index": index, "task": "classify", "status": "ok",
+                "image_path": f"/test/정상 부품/{index}.png", "summary": f"double {probability:.1%}",
+                "details": {"class_names": names, "probabilities": [1 - probability, probability, 0]}})
+        response = self.client.get(f"/api/jobs/{job_id}/results", params={"decision": "double", "limit": 1})
+        self.assertEqual(response.status_code, 200, response.text)
+        page = response.json()
+        self.assertEqual(page["classes"], names)
+        self.assertEqual(page["decisions"], names)
+        self.assertEqual(page["filtered_total"], 2)
+        self.assertEqual(page["results"][0]["decision"], "double")
+        self.assertEqual(page["results"][0]["source_class"], "정상 부품")
+        self.assertEqual(read_json(root / "results" / "0.json")["summary"], "double 90.0%")
 
     def test_cached_gradcam_range_and_toggle_without_model(self):
         job_id = "a" * 32

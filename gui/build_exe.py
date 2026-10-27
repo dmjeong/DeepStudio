@@ -210,6 +210,8 @@ def build():
         "--hidden-import", "numpy",
         "--hidden-import", "onnx",
         "--hidden-import", "onnxruntime",
+        "--hidden-import", "model_crypto",
+        "--hidden-import", "cryptography.hazmat.primitives.ciphers.aead",
         "--hidden-import", "psutil",
         "--collect-submodules", "truststore",
         "--hidden-import", "certifi",

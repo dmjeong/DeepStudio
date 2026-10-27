@@ -69,6 +69,25 @@ void Sam2Inference::Fail(const std::string& message)
 bool Sam2Inference::InitializeFromJson(const std::string& config_path,
                                        const std::string& runtime, int num_threads)
 {
+    try {
+        std::ifstream file(fs::u8path(config_path));
+        if (!file) throw std::runtime_error("Cannot open SAM2 configuration file.");
+        return InitializeDocument(json::parse(file), config_path, runtime, num_threads, nullptr);
+    } catch (const std::exception& error) {
+        m_ready = false; m_error = error.what(); return false;
+    }
+}
+
+bool Sam2Inference::InitializeFromPackage(const dvs_crypto::Package& package,
+                                          const std::string& runtime, int num_threads)
+{
+    return InitializeDocument(package.Config(), "", runtime, num_threads, &package);
+}
+
+bool Sam2Inference::InitializeDocument(const json& document, const std::string& config_path,
+                                       const std::string& runtime, int num_threads,
+                                       const dvs_crypto::Package* package)
+{
     m_ready = false;
     m_error.clear();
     m_encoder.reset();
@@ -80,9 +99,6 @@ bool Sam2Inference::InitializeFromJson(const std::string& config_path,
             throw std::invalid_argument("SAM2 supports the ONNX Runtime backend only.");
         if (num_threads < -1) throw std::invalid_argument("Invalid SAM2 thread count.");
         const auto path = fs::u8path(config_path);
-        std::ifstream file(path);
-        if (!file) throw std::runtime_error("Cannot open SAM2 configuration file.");
-        const auto document = json::parse(file);
         if (!document.is_object() || document.value("backend", std::string()) != "sam2" ||
             document.value("task", std::string()) != "segment")
             throw std::invalid_argument("SAM2 configuration must use backend sam2 and task segment.");
@@ -107,10 +123,15 @@ bool Sam2Inference::InitializeFromJson(const std::string& config_path,
         auto parse_graph = [&](const char* name) {
             const auto graph = graphs.at(name);
             GraphContract result;
-            auto graph_file = fs::u8path(required_text(graph, "file", std::string("SAM2 ") + name));
-            if (graph_file.is_absolute() || graph_file.lexically_normal().string().find("..") != std::string::npos)
-                throw std::invalid_argument(std::string("SAM2 ") + name + " graph path must be relative.");
-            result.path = (path.parent_path() / graph_file).lexically_normal().u8string();
+            result.path = required_text(graph, "file", std::string("SAM2 ") + name);
+            if (!package) {
+                auto graph_file = fs::u8path(result.path);
+                if (graph_file.is_absolute() || graph_file.lexically_normal().string().find("..") != std::string::npos)
+                    throw std::invalid_argument(std::string("SAM2 ") + name + " graph path must be relative.");
+                result.path = (path.parent_path() / graph_file).lexically_normal().u8string();
+            }
+            // The authenticated package already validated this POSIX name;
+            // preserve it instead of converting separators on Windows.
             result.outputs = required_strings(graph, "outputs", std::string("SAM2 ") + name);
             if (graph.contains("inputs")) {
                 if (!graph.at("inputs").is_object())
@@ -150,8 +171,10 @@ bool Sam2Inference::InitializeFromJson(const std::string& config_path,
         if (num_threads > 0) options.SetIntraOpNumThreads(num_threads);
         options.EnableMemPattern();
         options.EnableCpuMemArena();
-        m_encoder = std::make_unique<Ort::Session>(m_env, fs::u8path(m_encoder_contract.path).c_str(), options);
-        m_decoder = std::make_unique<Ort::Session>(m_env, fs::u8path(m_decoder_contract.path).c_str(), options);
+        m_encoder = package ? package->Session(m_env, m_encoder_contract.path, options)
+                            : std::make_unique<Ort::Session>(m_env, fs::u8path(m_encoder_contract.path).c_str(), options);
+        m_decoder = package ? package->Session(m_env, m_decoder_contract.path, options)
+                            : std::make_unique<Ort::Session>(m_env, fs::u8path(m_decoder_contract.path).c_str(), options);
         if (m_encoder->GetInputCount() != 1 || m_encoder->GetOutputCount() != m_encoder_contract.outputs.size())
             throw std::invalid_argument("SAM2 encoder input/output count does not match the contract.");
         auto encoder_input = m_encoder->GetInputNameAllocated(0, m_allocator);

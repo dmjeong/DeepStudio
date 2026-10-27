@@ -3,12 +3,15 @@
 **OpenCV 필요 없음.** 기존 eVision 프로그램의 `EImageBW8` 또는 `EROIBW8`를 전달한다.
 이 예제는 Studio에서 내보낸 **분류 모델**용이며 컬러·BW16 버퍼는 받지 않는다.
 
+암호화 모델은 [암호화 예제](../../ENCRYPTED_MODELS.md)를 따른다. `encrypted.cpp`는
+`.dvsenc` 로드·복호화·준비 추론 후 같은 `InferEvision()` / `InferBW8()`을 사용한다.
+
 ## 기존 프로그램에 넣기
 
 ### 이미 있는 EROIBW8을 입력하기
 
 `roi_example.h`는 실제 Open eVision의 **EROIBW8 참조를 받는 예제**다.
-기존 eVision 프로젝트에 `classifier.h`, `bw8_preprocess.h`, `roi_example.h`와
+기존 eVision 프로젝트에 `classifier.h`, `bw8_preprocess.h`, `roi_example.h`, 상위 폴더의 `model_crypto.h`와
 상위 폴더의 `nlohmann` 폴더를 함께 복사한다. 기존 eVision 헤더·라이브러리 설정은 필요하다.
 
 ```cpp
@@ -41,9 +44,9 @@ API 사용은 [Euresys 공식 예제](https://documentation.euresys.com/products
 
 ### 공통 파일과 링크 설정
 
-1. 이 폴더의 **`classifier.h`, `bw8_preprocess.h` 두 파일**을 프로젝트에 복사한다.
+1. 이 폴더의 **`classifier.h`, `bw8_preprocess.h`와 상위 폴더의 `model_crypto.h`**를 프로젝트에 복사한다.
 2. 상위 폴더의 **`nlohmann` 폴더 전체**를 `classifier.h` 옆에 복사한다. `json.hpp`가 포함돼 있다. VS 추가 포함 디렉터리에 그 프로젝트 폴더와 ONNX Runtime 1.29.0의 `include`를 추가한다.
-3. ONNX Runtime의 `lib`를 라이브러리 경로에 추가하고 `onnxruntime.lib`를 링크한다.
+3. ONNX Runtime의 `lib`를 라이브러리 경로에 추가하고 `onnxruntime.lib`를 링크한다. Windows 암호화용 `bcrypt.lib`는 헤더에서 자동 지정하며 OS 기본 구성이라 추가 DLL은 없다.
 4. x64 / C++17 / UTF-8 소스(`/utf-8`), 정확한 부동소수점(`/fp:precise`)으로 빌드한다.
 5. `onnxruntime.dll`은 프로그램 EXE 옆에 둔다. 모델 JSON과 ONNX도 함께 준비한다.
 
@@ -74,7 +77,10 @@ auto result = model.InferBW8(
 전달해 그 프레임으로 준비 추론한다. 없으면 검은 이미지로 준비한다. 오류는
 `std::exception`으로 전달하므로 초기화/추론 호출부에서 잡아 표시한다.
 
-동일 객체의 동시 호출은 지원하지 않는다. 호출이 끝날 때까지 원본 버퍼를 해제하거나
+기본 `InferEvision(image)` / `InferBW8(...)` 호출은 같은 객체를 여러 스레드에서
+동시에 사용할 수 있다. 호출별로 비어 있는 작업 공간을 자동으로 빌리고,
+모두 사용 중이면 새로 만든다. 호출이 끝나면 공간을 반환해 다음 호출에서 재사용한다.
+호출이 끝날 때까지 원본 버퍼를 해제하거나
 카메라가 덮어쓰지 않도록 한다. 원본 전체 이미지 복사는 하지 않으며 모델용 float 텐서는
 내부 버퍼에 생성한다. 전처리 좌표와 텐서를 재사용한다.
 
@@ -82,6 +88,71 @@ auto result = model.InferBW8(
 가로 보간 결과를 재사용하고(확대 시 가로 보간량이 원본 행 수로 감소), 공유하지 않는
 행은 한 루프에서 바로 계산한다. 정규화는 256칸 LUT로 보간 루프 안에서 끝낸다.
 정수 연산은 그대로라 결과는 기존 구현·OpenCV `INTER_LINEAR_EXACT`와 비트 단위로 같다.
+
+## OpenMP로 동시에 추론하기
+
+**모델은 하나만 읽고, 기존 추론 호출을 그대로 사용한다.** Context 배열, 고정 N,
+`omp_get_thread_num()`이 필요 없다. 각 호출이 독립된 입력·출력 공간을 사용하므로
+서로 다른 OMP 구간이나 기존 프로그램의 작업 스레드에서 동시에 호출해도 된다.
+작업 공간은 메모리이며 스레드를 만들거나 점유하지 않는다. 스레드 생성·개수는
+기존 프로그램이 관리한다. 모델 로드·복호화와 검증된 ORT 설정은 한 번만 적용한다.
+
+```cpp
+#include "classifier.h"
+#include <exception>
+#include <vector>
+
+dvs_bw8::Classifier model(L"C:/models/model.json");
+// 기존 작업 스레드에서 호출할 때도 같은 코드다.
+auto result = model.InferEvision(roi);
+```
+
+검사할 ROI들을 먼저 준비하고, 결과 배열도 검사 개수만큼 미리 만든다.
+`rois`는 서로 다른 `EROIBW8` 객체를 가리키는 포인터 배열이다.
+
+```cpp
+std::vector<dvs_bw8::Result> results(rois.size());
+std::vector<std::exception_ptr> errors(rois.size());
+const int count = static_cast<int>(rois.size());
+#pragma omp parallel for
+for (int i = 0; i < count; ++i) {
+    try {
+        results[i] = model.InferEvision(*rois[i]);
+    } catch (...) {
+        errors[i] = std::current_exception(); // OMP 영역 밖에서 표시한다.
+    }
+}
+for (const auto& error : errors) if (error) std::rethrow_exception(error);
+```
+
+VS2017에서 **C/C++ → 언어 → OpenMP 지원: 예(`/openmp`)**를 켠다.
+전체 실행 예제 `parallel.cpp`는 인자 없이 암호화 예제 모델을 한 번 읽고,
+생성자에서 준비 추론을 마치고, 자동 작업 공간으로 병렬 호출·결과 검사를 수행한다.
+OpenMP가 없는 빌드는 같은 예제를 `std::thread`로 실행한다.
+
+- 스레드 수가 바뀌어도 호출 코드는 같다. 풀은 동시 호출 수에 맞춰 늘어나며 확보한 공간은 모델을 해제할 때까지 재사용한다.
+- 처음 새로운 동시 호출 공간이 필요하면 할당·전처리 캐시 준비 비용이 발생할 수 있다. 이미 확보한 공간은 다시 만들지 않는다.
+- 같은 ROI 객체를 다른 스레드에서 `SetPlacement()`로 변경하지 않는다. ROI와 부모 이미지의 픽셀은 모든 호출이 끝날 때까지 그대로 유지한다.
+- 결과는 `results[i]`처럼 각 작업이 자기 위치에 쓴다. 공유 `result` 변수나 동시 `push_back()`을 쓰지 않는다.
+- 모델을 해제하기 전에 모든 추론 호출을 완료한다. 추론 중 모델을 재초기화하지 않는다.
+- ORT 내부 스레드도 CPU를 사용하므로 작업자가 많다고 항상 빨라지지는 않는다. JSON에 기록된 검증된 실행 설정은 그대로 사용한다.
+- `inference_ms`는 전처리·모델·후처리 시간이다. 풀 대여·새 공간 할당 시간과 전체 ROI 처리 시간은 호출부의 시계로 별도 측정한다.
+
+작업 공간을 미리 확보하고 직접 보관할 필요가 있을 때는 기존 명시적 API도 지원한다.
+다음 초기화는 작업자 초기화 시 한 번 수행하며, 호출 때마다 만들지 않는다.
+
+```cpp
+auto context = model.CreateContext();
+model.InferEvision(*context, startupRoi); // 이 공간의 전처리 캐시 준비.
+auto result = model.InferEvision(*context, roi);
+```
+
+명시적 Context 하나를 여러 호출이 공유하면 해당 Context의 잠금 때문에 순차 실행한다.
+기본 자동 호출은 사용 중인 Context를 다른 호출에 배정하지 않는다.
+
+배치는 여러 ROI를 `[N,C,H,W]` 입력 하나로 묶는 별도 방식이다. 이를 쓰려면
+dynamic batch로 내보낸 모델과 batch API가 필요하다. 위 자동 호출은 기존
+batch 1 모델로 동작한다. 배치와 Context 중 빠른 쪽은 대상 PC에서 비교해야 한다.
 
 ## 예제 자체 빌드·테스트
 
@@ -126,6 +197,26 @@ ctest --test-dir example/build-evision -C Release --output-on-failure
 
 배포에는 자신의 EXE, `onnxruntime.dll`, 모델 JSON/ONNX, 기존 eVision 실행 구성과
 Visual C++ x64 런타임이 필요하다. nlohmann-json은 헤더 라이브러리라 DLL이 없다.
+
+### 개발용: Studio 내보내기 산출물까지 연결 검사
+
+Windows CI는 LibreYOLO 공개 API 형태의 작은 합성 모델을 Studio의 실제
+`export_checkpoint()`로 내보낸 뒤, **생성된 ONNX·JSON을 수정 없이** C++로 읽는다.
+검정·회색·흰색 BW8 ROI의 클래스와 모든 확률을 PyTorch 기준값과 비교하므로,
+입출력 이름 불일치와 softmax 중복 적용도 검출한다. VS2022와 VS2017 v141 CI에 연결돼 있다.
+이는 배포 연결 회귀 검사이며 실제 MobileNetV4 가중치의 정확도나 eVision SDK 인증을 뜻하지 않는다.
+
+로컬에서 검사하려면 torch·onnx·onnxruntime이 있는 Python 환경으로 저장소 루트에서
+아래 명령을 실행한다. 기존 사용자 예제 빌드에는 이 Python 환경이 필요 없다.
+
+```bat
+python example/generate_export_test_assets.py example/build-export-assets
+cmake -S example/cpp/with_evision -B example/build-export-check -G "Visual Studio 17 2022" -A x64 ^
+  "-DONNXRUNTIME_ROOT=C:/libs/onnxruntime-win-x64-1.29.0" ^
+  "-DSTUDIO_EXPORT_TEST_ASSETS=%CD%/example/build-export-assets"
+cmake --build example/build-export-check --config Release
+ctest --test-dir example/build-export-check -C Release --output-on-failure
+```
 
 ## 전처리 일치 검사
 

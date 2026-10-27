@@ -10,6 +10,7 @@
     <DeepVisionRuntimeProject Condition="!Exists('$(DeepVisionRuntimeProject)')">vision-runtime/VisionRuntime.csproj</DeepVisionRuntimeProject>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="encrypted/**/*.cs" />
     <ProjectReference Include="$(DeepVisionRuntimeProject)" />
   </ItemGroup>
 </Project>

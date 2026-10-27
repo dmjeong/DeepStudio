@@ -155,6 +155,27 @@ public sealed class VisionSession : SafeHandle
         finally { Marshal.FreeCoTaskMem(runtimeUtf8); }
     }
 
+    /// <summary>Load/decrypt once; reuse this session. The caller retains ownership of the 32-byte key.</summary>
+    public static VisionSession OpenEncrypted(string packagePath, byte[] key, int numThreads = -1)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packagePath);
+        ArgumentNullException.ThrowIfNull(key);
+        if (key.Length != 32) throw new ArgumentException("Model key must contain exactly 32 bytes", nameof(key));
+        if (numThreads < -1) throw new ArgumentOutOfRangeException(nameof(numThreads));
+        var options = new NativeSessionOptions
+        {
+            StructSize = (uint)Marshal.SizeOf<NativeSessionOptions>(), AbiVersion = AbiVersion,
+            RuntimeUtf8 = IntPtr.Zero, NumThreads = numThreads,
+        };
+        var status = Native.dv_create_session_encrypted(packagePath, key, (uint)key.Length, ref options, out var raw);
+        if (status != 0 || raw == IntPtr.Zero)
+        {
+            string detail = Marshal.PtrToStringUTF8(Native.dv_last_create_error(IntPtr.Zero)) ?? string.Empty;
+            throw new InvalidOperationException($"Encrypted model initialization failed ({StatusName(status)}): {detail}");
+        }
+        return new VisionSession(raw);
+    }
+
     public ClassificationResult InferClassification(byte[] image, int width, int height, int channels,
                                                      int strideBytes = 0)
     {
@@ -521,6 +542,13 @@ public sealed class VisionSession : SafeHandle
 
     private static class Native
     {
+        [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, EntryPoint = "dv_last_error")]
+        internal static extern IntPtr dv_last_create_error(IntPtr session);
+
+        [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int dv_create_session_encrypted([MarshalAs(UnmanagedType.LPUTF8Str)] string packagePath,
+            [In] byte[] key, uint keySize, ref NativeSessionOptions options, out IntPtr session);
+
         [DllImport(NativeLibrary, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
         internal static extern int dv_create_session([MarshalAs(UnmanagedType.LPUTF8Str)] string configPath,
             ref NativeSessionOptions options, out IntPtr session);

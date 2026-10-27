@@ -105,20 +105,26 @@ def test_brush_shortcuts_adjust_size_and_shift_temporarily_erases(editor):
     assert dialog.document.render()[200, 230] == 0
 
 
-def test_failed_save_and_incomplete_polygon_cannot_navigate(editor):
+def test_incomplete_polygon_is_drafted_and_failed_explicit_save_stays_open(editor):
     app, dialog, saved = editor
     click(dialog, 200, 100)
     dialog.next_button.click()
     assert dialog.navigation_delta == 0 and dialog.worker is None
+    dialog.draft_worker.wait(10000)
+    app.processEvents()
+    assert dialog.navigation_delta == 1 and not saved
+    # Browsing preserves incomplete work as a draft, not an empty training mask.
+    dialog.navigation_delta = 0
+    dialog.show()
     QTest.keyClick(dialog.view, Qt.Key.Key_Escape)
     dialog._save_callback = lambda _: (_ for _ in ()).throw(OSError("disk full"))
-    dialog.next_button.click()
+    dialog._save()
     dialog.worker.wait(10000)
     app.processEvents()
     assert dialog.navigation_delta == 0 and dialog.isVisible()
     assert "disk full" in dialog.status.text() and dialog.dirty
     dialog._save_callback = saved.append
-    dialog.next_button.click()
+    dialog._save()
     dialog.worker.wait(10000)
     app.processEvents()
     assert len(saved) == 1 and saved[0]["shapes"] == []

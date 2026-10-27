@@ -5,7 +5,7 @@ import { classColor, DatasetDialog } from "./pages/Dataset";
 import type { Annotation, AnnotationEditorProps } from "./annotation-editor";
 
 type Shape = { kind: "polygon" | "stroke" | "box"; class_id: number; points: number[]; width?: number; operation?: "erase" };
-export interface MaskPayload { schema_version: number; width: number; height: number; base_png: string; shapes: Shape[]; persisted?: boolean }
+export interface MaskPayload { schema_version: number; width: number; height: number; base_png: string; shapes: Shape[]; persisted?: boolean; editor_read_only?: boolean; editor_notice?: string }
 type Mode = "polygon" | "rectangle" | "brush" | "erase" | "select" | "pan";
 type Gesture = { type: string; start: number[]; original?: Shape; index: number; handle: number; points: number[] };
 const copy = (shapes: Shape[]) => structuredClone(shapes);
@@ -19,6 +19,7 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
   const segment = project.task === "segment";
   const names: string[] = project.data.class_names;
   const [data, setData] = useState<MaskPayload | null>(null);
+  const readOnly = !!data?.editor_read_only;
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [mode, setMode] = useState<Mode>(segment ? "polygon" : "rectangle");
   const [classId, setClassId] = useState(segment && names.length > 1 ? 1 : 0);
@@ -117,7 +118,7 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
     setError(""); add({ kind: "polygon", class_id: classId, points });
   };
   const save = (next = 0) => {
-    if (!data || busy || submitLock.current || points.length || gesture.current || !names.length || (segment && !base)) return;
+    if (!data || readOnly || busy || submitLock.current || points.length || gesture.current || !names.length || (segment && !base)) return;
     setSubmitting(true); submitLock.current = true;
     onSave(segment ? { ...data, shapes, persisted: undefined } : shapes.map(row => ({ class_id: row.class_id, coordinates: row.points })), next);
   };
@@ -129,7 +130,7 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
   };
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
-      if ((event.target as HTMLElement).closest("input,select,textarea") || busy || submitting) return;
+      if ((event.target as HTMLElement).closest("input,select,textarea") || busy || submitting || readOnly) return;
       const key = event.key.toLowerCase(), ctrl = event.ctrlKey || event.metaKey;
       if (key === " ") { space.current = true; event.preventDefault(); return; }
       if (ctrl && key === "z") { event.preventDefault(); history(!event.shiftKey); }
@@ -166,7 +167,11 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
       clamp((event.clientY-rect.top)/rect.height * (segment ? data!.height/Math.max(1, data!.height-1) : 1))];
   };
   const down = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (!data || busy || submitting || !names.length) return;
+    if (!data || busy || submitting || readOnly || !names.length) return;
+    if (segment && names.length < 2) {
+      setError("세그멘테이션은 클래스 ID 0을 배경으로 사용합니다. 배경 다음에 전경 클래스를 하나 이상 추가하세요.");
+      return;
+    }
     event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
     const p = coordinate(event);
     if (event.button === 1 || space.current || mode === "pan") {
@@ -237,14 +242,16 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
     return shape.kind === "stroke" ? <polyline key={index} data-shape={index} points={svgPoints(p)} fill="none" stroke={live ? color : "transparent"} strokeWidth={shape.width} strokeLinecap="round" strokeLinejoin="round" /> :
       <polygon key={index} data-shape={index} points={svgPoints(p)} fill={segment ? "transparent" : color} fillOpacity={segment ? 1 : .12} stroke={segment && index !== selected && !live ? "transparent" : color} strokeWidth={2} vectorEffect="non-scaling-stroke" />;
   };
-  const disabled = busy || submitting || !data || !!points.length || !names.length || (segment && !base);
+  const disabled = busy || submitting || readOnly || !data || !!points.length || !names.length || (segment && !base);
   return <DatasetDialog className="teaching-dialog" title={`데이터 티칭 — ${item.name}`} onClose={() => { if (!busy && !submitting && ((!dirty && !points.length) || window.confirm("저장하지 않은 변경을 버리고 닫을까요?"))) onClose(); }}>
     {(error || saveError) && <p className="error" role="alert">{error || saveError}</p>}
-    <div className="annotation-toolbar"><Field label="정답 클래스"><select value={classId} disabled={busy || submitting} onChange={e => setClassId(Number(e.target.value))}>{names.map((name, i) => <option key={i} value={i}>{i}: {name}</option>)}</select></Field>
+    {readOnly && <p role="status">{data?.editor_notice}</p>}
+    {segment && names.length < 2 && <p className="error">클래스 ID 0은 배경입니다. 클래스 사이드바에 배경을 첫 번째로 두고, 그 다음에 실제 전경 클래스를 추가해야 마스크를 그릴 수 있습니다.</p>}
+    <div className="annotation-toolbar"><Field label="정답 클래스"><select value={classId} disabled={busy || submitting || readOnly} onChange={e => setClassId(Number(e.target.value))}>{names.map((name, i) => <option key={i} value={i}>{i === 0 && segment ? `${i}: 배경 (${name})` : `${i}: ${name}`}</option>)}</select></Field>
       {segment && <><Field label="브러시 px"><input type="number" min="1" max="1024" value={brush} onChange={e => setBrush(Math.max(1, Math.min(1024, Number(e.target.value) || 1)))} /></Field><Field label="마스크 농도"><input type="range" min="0" max="100" value={opacity} onChange={e => setOpacity(Number(e.target.value))} /></Field></>}
       <span>{zoom.toFixed(0)}%</span><button onClick={() => setZoom(100)}>화면 맞춤 0</button></div>
-    <div className="row teaching-tools">{([...(segment ? [["polygon", "다각형 P"], ["brush", "브러시 B"], ["erase", "지우개 E"]] : [["erase", "클릭 삭제 E"]]), ["rectangle", "사각형 R"], ["select", "선택/수정 V"], ["pan", "이동 H"]] as [Mode, string][]).map(([key, label]) => <button key={key} aria-pressed={mode === key} disabled={busy || submitting} className={mode === key ? "primary" : ""} onClick={() => chooseMode(key)}>{label}</button>)}
-      <button disabled={busy || submitting || !undo.current.length} onClick={() => history(true)}>실행 취소 Ctrl+Z</button><button disabled={busy || submitting || !redo.current.length} onClick={() => history(false)}>다시 실행</button></div>
+    <div className="row teaching-tools">{([...(segment ? [["polygon", "다각형 P"], ["brush", "브러시 B"], ["erase", "지우개 E"]] : [["erase", "클릭 삭제 E"]]), ["rectangle", "사각형 R"], ["select", "선택/수정 V"], ["pan", "이동 H"]] as [Mode, string][]).map(([key, label]) => <button key={key} aria-pressed={mode === key} disabled={busy || submitting || readOnly} className={mode === key ? "primary" : ""} onClick={() => chooseMode(key)}>{label}</button>)}
+      <button disabled={busy || submitting || readOnly || !undo.current.length} onClick={() => history(true)}>실행 취소 Ctrl+Z</button><button disabled={busy || submitting || readOnly || !redo.current.length} onClick={() => history(false)}>다시 실행</button></div>
     <p className="muted">휠: 확대 · Space+드래그: 이동 · 1~9: 클래스 · 선택 후 꼭짓점 드래그: 수정 · Delete: 삭제 · Ctrl+S: 저장{segment ? " · Enter/첫 점: 다각형 완료 · Shift+브러시/지우개: 배경으로 지우기 · [ ]: 브러시 크기 · 지우개는 객체 목록에 추가되지 않습니다" : " · E: 객체 클릭 삭제 · Ctrl+D: 박스 복제"}</p>
     <div ref={scroll} className="annotation-canvas-scroll" onContextMenu={e => { e.preventDefault(); cancel(); }}>{data && <svg aria-label="정답 그리기 캔버스" className="annotation-canvas" viewBox={`0 0 ${data.width} ${data.height}`} style={{ width: `${fitWidth*zoom/100}px`, minWidth: `${fitWidth*zoom/100}px`, margin: "auto", aspectRatio: `${data.width}/${data.height}`, cursor: mode === "pan" ? "grab" : mode === "select" ? "default" : "crosshair" }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancel}>
       <image href={`/api/image?path=${encodeURIComponent(item.path)}&size=4096&v=${item.revision}`} width={data.width} height={data.height} style={{ pointerEvents: "none" }} />
@@ -259,8 +266,8 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
     {points.length > 0 && <div className="row"><button disabled={points.length < 6} onClick={finish}>다각형 완료 Enter</button><button onClick={cancel}>취소 Esc</button></div>}
     <div className="annotation-list">{shapes.map((shape, i) => shape.operation === "erase" ? null : <div key={i} className={i === selected ? "teaching-selected" : ""}>
       <button onClick={() => { setSelected(i); chooseMode("select"); }}>#{i+1} {shape.kind === "box" ? "박스" : shape.kind === "polygon" ? "다각형" : "브러시"}</button>
-      <select aria-label={`정답 ${i+1} 클래스`} value={shape.class_id} disabled={busy || submitting} onChange={e => change(shapes.map((v, j) => j === i ? { ...v, class_id: Number(e.target.value) } : v))}>{names.map((name, n) => <option key={n} value={n}>{name}</option>)}{shape.class_id === 255 && <option value={255}>학습 제외 (255)</option>}</select>
-      <button className="danger" disabled={busy || submitting} onClick={() => { change(shapes.filter((_, n) => i !== n)); setSelected(-1); }}>삭제</button></div>)}</div>
+      <select aria-label={`정답 ${i+1} 클래스`} value={shape.class_id} disabled={busy || submitting || readOnly} onChange={e => change(shapes.map((v, j) => j === i ? { ...v, class_id: Number(e.target.value) } : v))}>{names.map((name, n) => <option key={n} value={n}>{name}</option>)}{shape.class_id === 255 && <option value={255}>학습 제외 (255)</option>}</select>
+      <button className="danger" disabled={busy || submitting || readOnly} onClick={() => { change(shapes.filter((_, n) => i !== n)); setSelected(-1); }}>삭제</button></div>)}</div>
     <div className="row"><button className="primary" disabled={!!disabled} onClick={() => save()}>정답 저장 Ctrl+S</button>{navigation && navigation.index >= 0 && <><button disabled={!!disabled || navigation.index === 0} onClick={() => save(-1)}>저장하고 이전 J</button><span>현재 목록 {navigation.index+1}/{navigation.count}</span><button disabled={!!disabled || navigation.index+1 >= navigation.count} onClick={() => save(1)}>저장하고 다음 K</button></>}</div>
   </DatasetDialog>;
 }

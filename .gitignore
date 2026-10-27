@@ -10,3 +10,14 @@ __pycache__/
 .venv/
 uv.lock
 runs/
+
+# .NET intermediate output (SDK/examples)
+**/obj/
+sdk/csharp/bin/
+tests/csharp/**/bin/
+
+# Private model artifacts; only the public synthetic demonstration is committed.
+*.dvsenc
+*.key
+!example/assets/test.dvsenc
+!example/assets/example-only.key

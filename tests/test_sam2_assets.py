@@ -103,3 +103,30 @@ def test_finetune_checkpoint_rejects_a_different_hiera_variant(tmp_path, monkeyp
     }
     with pytest.raises(ValueError, match="sam2_hiera_small"):
         load_sam2_checkpoint("sam2_hiera_tiny", checkpoint_path=checkpoint)
+
+
+def test_sam2_training_preflight_requires_foreground_in_each_split(tmp_path):
+    import numpy as np
+    from PIL import Image
+    from sam2_trainer import _validate_prompt_masks
+
+    image = tmp_path / "sample.png"
+    mask = tmp_path / "mask.png"
+    Image.new("RGB", (8, 6), "gray").save(image)
+    Image.fromarray(np.zeros((6, 8), dtype=np.uint8)).save(mask)
+
+    class Dataset:
+        pairs = [(str(image), str(mask))]
+
+    class Loader:
+        dataset = Dataset()
+
+    with pytest.raises(ValueError, match="클래스 ID 0은 배경"):
+        _validate_prompt_masks(Loader(), "train", ["background", "part"])
+
+    pixels = np.zeros((6, 8), dtype=np.uint8)
+    pixels[2:4, 3:5] = 1
+    Image.fromarray(pixels).save(mask)
+    assert _validate_prompt_masks(Loader(), "train", ["background", "part"]) == {
+        "images": 1, "annotated_images": 1, "foreground_class_ids": [1],
+    }

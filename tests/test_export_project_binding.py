@@ -95,3 +95,40 @@ def test_export_worker_passes_explicit_validation_options(monkeypatch):
     worker.run()
     assert captured["validation_dir"] == "local-images"
     assert captured["allow_precision_fallback"] is False
+
+
+def test_encryption_extension_and_key_do_not_leak_across_projects(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    widget = ExportWidget()
+    try:
+        project = ProjectManager.create_new("one", "classify", str(tmp_path / "one"), ["ok", "ng"])
+        widget.set_project(project)
+        widget.encrypt_check.setChecked(True)
+        widget.key_edit.setText("private.key")
+        assert widget.output_edit.text().endswith(".dvsenc")
+        widget.encrypt_check.setChecked(False)
+        assert widget.output_edit.text().endswith(".onnx")
+        widget.encrypt_check.setChecked(True)
+        other = ProjectManager.create_new("two", "segment", str(tmp_path / "two"), ["bg", "part"])
+        widget.set_project(other)
+        assert not widget.encrypt_check.isChecked() and not widget.key_edit.text()
+        assert widget.output_edit.text().endswith(".onnx")
+    finally:
+        widget.close()
+        widget.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize("sam2_model_id", ["", "sam2_hiera_tiny", "sam2_hiera_small", "sam2_hiera_base_plus", "sam2_hiera_large"])
+def test_gui_worker_routes_encryption_and_sam2_through_common_service(monkeypatch, sam2_model_id):
+    from widgets import export_widget
+    captured = {}
+    def export(*args, **kwargs):
+        captured.update(kwargs)
+        return {"encrypted": True}
+    monkeypatch.setattr(export_widget, "export_checkpoint", export)
+    worker = export_widget.ExportWorker("source.pt", "output.dvsenc", 17, False, False, True,
+                                       encryption_key_path="private.key", sam2_model_id=sam2_model_id)
+    worker.run()
+    assert captured["encryption_key_path"] == "private.key"
+    assert captured["sam2_model_id"] == sam2_model_id

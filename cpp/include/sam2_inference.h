@@ -1,4 +1,5 @@
 #pragma once
+#include "model_crypto.h"
 
 #include <onnxruntime_cxx_api.h>
 #include <opencv2/core.hpp>
@@ -57,6 +58,8 @@ public:
     bool InitializeFromJson(const std::string& config_path,
                             const std::string& runtime = "",
                             int num_threads = -1);
+    bool InitializeFromPackage(const dvs_crypto::Package& package,
+                               const std::string& runtime = "onnxruntime", int num_threads = -1);
     bool IsReady() const { return m_ready; }
     const std::string& LastError() const { return m_error; }
 
@@ -69,6 +72,9 @@ public:
                          float min_score = -std::numeric_limits<float>::infinity());
 
 private:
+    bool InitializeDocument(const nlohmann::json& document, const std::string& config_path,
+                            const std::string& runtime, int num_threads, const dvs_crypto::Package* package);
+
     struct GraphContract
     {
         std::string path;

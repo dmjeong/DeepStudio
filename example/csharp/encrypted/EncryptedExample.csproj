@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <DeepVisionRuntimeProject Condition="'$(DeepVisionRuntimeProject)' == ''">../../../sdk/csharp/VisionRuntime.csproj</DeepVisionRuntimeProject>
+    <DeepVisionRuntimeProject Condition="!Exists('$(DeepVisionRuntimeProject)')">../vision-runtime/VisionRuntime.csproj</DeepVisionRuntimeProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(DeepVisionRuntimeProject)" />
+    <None Include="../../assets/*" Link="assets/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -38,7 +38,8 @@ inline cv::Mat ReadImage(const std::filesystem::path& path) {
 }
 
 // Construct once during application startup, before enabling the inference UI.
-// Construction includes one warm-up inference. Call on one thread at a time.
+// Construction includes one warm-up inference. Concurrent classification calls
+// are serialized inside VisionInference. Join workers before destruction.
 class Classifier {
 public:
     explicit Classifier(const std::filesystem::path& model_json,
@@ -46,6 +47,16 @@ public:
         // JSON resolves the companion ONNX path and preserves verified settings.
         if (!model_.InitializeFromJson(model_json.u8string(), "onnxruntime"))
             throw std::runtime_error("Model/JSON load failed: " + model_json.u8string());
+        Warmup(startup_image);
+    }
+    Classifier(const std::filesystem::path& encrypted_path, const dvs_crypto::Key& key,
+               const cv::Mat& startup_image = cv::Mat()) {
+        const dvs_crypto::Package package(encrypted_path, key);
+        if (!model_.InitializeFromPackage(package)) throw std::runtime_error("Encrypted model load failed");
+        Warmup(startup_image);
+    }
+private:
+    void Warmup(const cv::Mat& startup_image) {
         if (model_.GetConfig().task != "classify")
             throw std::runtime_error("Classifier requires a classification export");
         const auto& config = model_.GetConfig();
@@ -64,6 +75,7 @@ public:
         // Discard this prediction. Only successful construction means ready.
     }
 
+public:
     ClassifyResult Infer(const cv::Mat& pixels) {
         // Original GRAY/BGR/BGRA pixels. Do not resize/normalize/softmax again.
         return model_.Classify(pixels);

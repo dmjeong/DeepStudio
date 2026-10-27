@@ -341,6 +341,13 @@ def _train_sam2_project(context, project, device):
     history = []
 
     def progress(event):
+        if event.get("event") == "dataset_validated":
+            for split, summary in (("train", event["train"]), ("val", event["val"])):
+                context.emit("log_message", [
+                    f"SAM2 {split} 마스크 확인: {summary['images']}장 | "
+                    f"전경 라벨 {summary['foreground_class_ids']}"
+                ])
+            return
         if event.get("event") == "training_started":
             context.emit("progress_updated", [0, int(event["total_epochs"])])
             context.emit("log_message", [
@@ -371,7 +378,7 @@ def _train_sam2_project(context, project, device):
     result = train_sam2(
         model_id, data.root, output_dir=run_dir, epochs=cfg.epochs, batch_size=cfg.batch_size,
         learning_rate=cfg.learning_rate, weight_decay=cfg.weight_decay, device=str(device),
-        use_amp=cfg.use_amp, input_size=1024, initial_checkpoint=source,
+        use_amp=cfg.use_amp, input_size=1024, class_names=list(data.class_names), initial_checkpoint=source,
         horizontal_flip=cfg.augmentation.horizontal_flip, rotation=cfg.augmentation.rotation,
         color_jitter=cfg.augmentation.color_jitter, emit=progress, should_stop=context.cancelled,
     )
@@ -589,11 +596,16 @@ def export(context, payload):
         if not validation_dir:
             raise ValueError("실제 이미지 ONNX 출력 검증에는 이미지가 1장 이상 있는 비교 경로가 필요합니다")
         context.emit("log_message", [f"실제 이미지 비교 폴더: {validation_dir}"])
+    project = payload.get("project", {})
+    model_id = str(project.get("model", {}).get("model_id", ""))
+    sam2_model_id = model_id if project.get("task") == "segment" and model_id.startswith("sam2_hiera_") else ""
     result = export_checkpoint(payload["weights"], payload["output"],
                                opset_version=payload.get("opset", 17),
                                dynamic_batch=payload.get("dynamic_batch", False), verify=True,
                                validation_dir=validation_dir,
                                allow_precision_fallback=payload.get("allow_precision_fallback", False),
+                               encryption_key_path=payload.get("encryption_key_path") or None,
+                               sam2_model_id=sam2_model_id,
                                log=lambda line: context.emit("log_message", [line]))
     validation = result.get("classification_validation")
     if validation:

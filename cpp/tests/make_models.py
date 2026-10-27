@@ -279,3 +279,79 @@ files = {path.name: {"size": path.stat().st_size, "sha256": hashlib.sha256(path.
     "schema_version": 1, "bundle_type": "onnx-deployment", "config": "runtime_optimization.json",
     "backend": "custom", "task": "classify", "verification": "passed", "files": files,
 }, sort_keys=True), encoding="utf-8")
+
+# Encrypt every supported fixture through the production Python format writer.
+# Package names remain POSIX identifiers on Windows, unlike native file paths.
+# Cover both the single-model loader and SAM2's two graph lookups.
+for name in ("classify", "sam2"):
+    nested = json.loads((root / f"{name}.json").read_text(encoding="utf-8"))
+    original_names = [nested["model_path"]]
+    original_names += [graph["file"] for graph in nested.get("contracts", {}).get("graphs", {}).values()]
+    for original_name in set(original_names):
+        destination = root / "graphs" / "nested" / original_name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(root / original_name, destination)
+    nested["model_path"] = "graphs/nested/" + nested["model_path"]
+    for graph in nested.get("contracts", {}).get("graphs", {}).values():
+        graph["file"] = "graphs/nested/" + graph["file"]
+    (root / f"{name}_nested.json").write_text(json.dumps(nested), encoding="utf-8")
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
+from model_crypto import decode_package, encrypt_config, MAGIC
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import os
+import struct
+key = bytes(range(32))  # Public fixture key, not for production.
+(root / "example-only.key").write_bytes(key)
+encrypted_names = []
+# Other CTests deliberately leave invalid/absolute-path JSONs in this folder.
+# Re-running CTest must only encrypt the valid fixtures produced above.
+for name in ("classify", "builtin", "segment", "detect", "redetr", "redetr_softmax",
+             "sam2", "anomaly", "patchcore", "close_logits", "runtime_optimization",
+             "classify_nested", "sam2_nested"):
+    config_path = root / f"{name}.json"
+    encrypt_config(config_path, config_path.with_suffix(".dvsenc"), key)
+    encrypted_names.append(name)
+(root / "encrypted-tests.json").write_text(json.dumps(encrypted_names), encoding="utf-8")
+cipher = (root / "classify.dvsenc").read_bytes()
+bad = bytearray(cipher); bad[-1] ^= 1
+(root / "tampered.dvsenc").write_bytes(bad)
+(root / "truncated.dvsenc").write_bytes(cipher[:-20])
+plain = AESGCM(key).decrypt(cipher[8:20], cipher[20:], MAGIC)
+length = struct.unpack_from("<I", plain)[0]
+invalid_names = ["tampered", "truncated"]
+
+
+def malformed_package(filename, json_bytes):
+    payload = struct.pack("<I", len(json_bytes)) + json_bytes + plain[4+length:]
+    nonce = os.urandom(12)
+    data = MAGIC + nonce + AESGCM(key).encrypt(nonce, payload, MAGIC)
+    try:
+        decode_package(data, key)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"Malformed fixture accepted by Python: {filename}")
+    (root / f"{filename}.dvsenc").write_bytes(data)
+    invalid_names.append(filename)
+
+
+for filename in ("invalid-length", "missing-graph", "negative-length", "fractional-length"):
+    header = json.loads(plain[4:4+length])
+    if filename == "invalid-length": header["models"][0]["size"] = 2**63
+    elif filename == "negative-length": header["models"][0]["size"] = -1
+    elif filename == "fractional-length": header["models"][0]["size"] = 1.5
+    else: header["config"]["model_path"] = "absent.onnx"
+    malformed_package(filename, json.dumps(header).encode())
+
+for index, contracts in enumerate((None, [], False, "invalid", {"graphs": None},
+                                    {"graphs": []}, {"graphs": False}, {"graphs": {"invalid": None}})):
+    header = json.loads(plain[4:4+length])
+    header["config"]["contracts"] = contracts
+    malformed_package(f"invalid-contracts-{index}", json.dumps(header).encode())
+
+compact_header = json.dumps(json.loads(plain[4:4+length]), separators=(",", ":")).encode()
+malformed_package("duplicate-root-field", b'{"format":"invalid",' + compact_header[1:])
+malformed_package("duplicate-config-field", compact_header.replace(b'"config":{', b'"config":{"num_classes":999,', 1))
+malformed_package("duplicate-model-field", compact_header.replace(b'"models":[{', b'"models":[{"size":1,', 1))
+(root / "encrypted-invalid-tests.json").write_text(json.dumps(invalid_names), encoding="utf-8")

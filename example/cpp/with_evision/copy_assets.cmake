@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.14)
+if(NOT IS_DIRECTORY "${ASSET_SOURCE}" OR NOT DESTINATION)
+    message(FATAL_ERROR "Example asset source or destination is missing")
+endif()
+file(MAKE_DIRECTORY "${DESTINATION}")
+file(LOCK "${DESTINATION}/.dvs-example-assets.lock" GUARD PROCESS TIMEOUT 60)
+execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_directory
+    "${ASSET_SOURCE}" "${DESTINATION}/assets" RESULT_VARIABLE status)
+if(NOT status EQUAL 0)
+    message(FATAL_ERROR "Example asset copy failed: ${status}")
+endif()
+if(ORT_DLL)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${ORT_DLL}" "${DESTINATION}/onnxruntime.dll" RESULT_VARIABLE status)
+    if(NOT status EQUAL 0)
+        message(FATAL_ERROR "ONNX Runtime DLL copy failed: ${status}")
+    endif()
+endif()

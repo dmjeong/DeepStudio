@@ -777,6 +777,7 @@ class InferenceWidget(QWidget, InferenceOperations):
             self.image_path_label.clear()
             self.ckpt_edit.clear()
         self.project = project
+        self.result_review.set_project(project)
 
         # 최근 학습 결과에서 자동으로 체크포인트 탐색
         if project.runs:
@@ -816,7 +817,8 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.gradcam_info.clear()
         self.task_details_group.hide()
         self.task_details_label.clear()
-        self.result_review.set_context(self._batch_images or ([self._current_image] if self._current_image else []), self.project)
+        self.result_review.set_context(self._batch_images or ([self._current_image] if self._current_image else []),
+                                       self.project, class_names=self.class_names)
         self._refresh_grid()
 
     def _clear_model(self):
@@ -1594,7 +1596,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         │ → 격자 뷰 갱신 (_refresh_grid)                        │
         └────────────────────────────────────────────────────────┘
         """
-        self.result_review.set_context(self._batch_images, self.project)
+        self.result_review.set_context(self._batch_images, self.project, class_names=self.class_names)
         self._batch_results.clear()
         self._batch_times.clear()
 

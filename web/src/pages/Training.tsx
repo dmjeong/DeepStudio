@@ -42,6 +42,7 @@ export function Training({
   const modelName = selectedModel ? `${selectedModel.family} ${selectedModel.variant}` : modelId;
   const modes = modelModes(project.task, modelId, modelName);
   const builtin = builtinAdapters.has(modelId);
+  const sam2 = project.task === "segment" && modelId.startsWith("sam2_hiera_");
   const unsupported = project.task !== "anomaly" && !modes.some(([value]) => value === cfg.training_mode);
   const efficientnet = project.task === "classify" && cfg.training_mode.startsWith("efficientnet");
   const resume = cfg.training_mode === "efficientnet_resume";
@@ -111,6 +112,7 @@ export function Training({
           }
         >
           {optionError && <p className="error">{optionError}</p>}
+          {project.task === "segment" && <p className="learning-mode-help">세그멘테이션 클래스 목록은 라벨 없이도 추가할 수 있지만, 모델이 배울 영역에는 이미지별 마스크가 필요합니다. 현재 학습 규약에서 클래스 ID 0은 배경이고 1 이상은 전경입니다.</p>}
           <fieldset disabled={busy}>
             {project.task !== "obb" && <Field label="모델 카탈로그">
               <select value={modelId} onChange={event => {
@@ -194,6 +196,7 @@ export function Training({
               />
             )}
             {unsupported && <p className="learning-mode-help">선택 모델에 맞는 학습 모드를 다시 선택하세요.</p>}
+            {sam2 && <p className="learning-mode-help">SAM2 학습은 train과 val 양쪽에 이미지와 같은 이름의 픽셀 마스크가 있어야 합니다. 전경 영역을 1번 이상 클래스 ID로 그리세요. 배경만 있거나 0번 클래스만 표시된 마스크는 학습 대상이 아닙니다.</p>}
             {modelId.startsWith("libreyolo_") && <p className="learning-mode-help">
               LibreYOLO 완성 .dvmodel 팩은 현재 기본 설치본과 저장소에 포함되지 않습니다. 모델 이름만으로 학습할 수 있는 상태는 아닙니다.
               .pt의 확장자를 바꾸는 방식이 아니라 학습 코드·가중치·Docker 이미지를 묶은 팩이 필요합니다.

@@ -1,12 +1,13 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-09-19T01:35:00+09:00",
+  "lastUpdated": "2026-10-22T02:06:03.049248+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
-    "model-packs-windows-distribution"
+    "model-packs-windows-distribution",
+    "annotation-workspace"
   ],
-  "primaryFeature": "model-packs-windows-distribution",
+  "primaryFeature": "annotation-workspace",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -200,13 +201,13 @@
         "Windows release script fails closed on native Python manifest collector and validator exit codes",
         "Windows and Linux native SDK CI pins ONNX Runtime 1.29.0, matching the supported user validation environment",
         "ManagedWsl import uses an atomic ownership marker and rolls back attempted new distro registrations after import or marker failures",
-        "Managed WSL ownership checks reject symlinked marker files before discovering or unregistering a distro"
-        ,"Pack installer rejects symlinked model/version directories and cleans failed staging activation without leaving orphaned payloads"
-        ,"Deployment bundle builder/verifier rejects symlinked source/output paths and non-normalized checksum keys"
-        ,"Pack builder rejects explicitly supplied symlinked manifests before resolving external release metadata"
-        ,"Model registry archive loading rejects pack symlinks, archive symlinks, duplicate paths and non-normalized entries"
-        ,"WiX release gate verifies the requested WiX 4 patch version before building MSI or Burn artifacts"
-        ,"Container model-pack entrypoints load only pack-local Python modules and reject ambient-module fallback"
+        "Managed WSL ownership checks reject symlinked marker files before discovering or unregistering a distro",
+        "Pack installer rejects symlinked model/version directories and cleans failed staging activation without leaving orphaned payloads",
+        "Deployment bundle builder/verifier rejects symlinked source/output paths and non-normalized checksum keys",
+        "Pack builder rejects explicitly supplied symlinked manifests before resolving external release metadata",
+        "Model registry archive loading rejects pack symlinks, archive symlinks, duplicate paths and non-normalized entries",
+        "WiX release gate verifies the requested WiX 4 patch version before building MSI or Burn artifacts",
+        "Container model-pack entrypoints load only pack-local Python modules and reject ambient-module fallback"
       ],
       "openDecisions": [
         "Re-DETR v4 upstream implementation, checkpoint and per-variant ONNX parity",
@@ -214,6 +215,39 @@
         "P0 single EXE payload size and signature, Windows SAM2, offline WSL",
         "Hardware/driver minima require measured model profiles before release"
       ]
+    },
+    "annotation-workspace": {
+      "phase": "check",
+      "matchRate": null,
+      "iterationCount": 0,
+      "documents": {
+        "plan": "docs/01-plan/features/annotation-workspace.plan.md",
+        "design": "docs/02-design/features/annotation-workspace.design.md",
+        "analysis": "docs/03-analysis/annotation-workspace.analysis.md",
+        "report": "docs/04-report/annotation-workspace.report.md",
+        "userGuide": "docs/ANNOTATION_WORKSPACE.ko.md",
+        "localEvidence": "docs/03-analysis/artifacts/annotation-workspace-local-validation.json"
+      },
+      "localValidation": {
+        "sourceVersion": "9.23",
+        "python": "174 passed, 245 deprecation warnings",
+        "newWorkspaceTests": 33,
+        "qtScaleChecks": "125/150/200%: 10 passed each",
+        "web": "14 passed, TypeScript/Vite build passed",
+        "sam2": "official SAM2.1 Tiny CPU: GUI apply/save/reopen identical",
+        "editorP95Ms": 1.8127784132957458,
+        "windowsNativeAcceptance": "pending"
+      },
+      "releaseAcceptance": {
+        "status": "pending_windows",
+        "notExecuted": [
+          "Windows installer/offline smoke",
+          "Windows multi-monitor DPI",
+          "target i7 responsiveness",
+          "SAM2 GPU and Small/Base+/Large weight execution",
+          "same-operator annotation time/quality comparison"
+        ]
+      }
     }
   },
   "pipeline": {
@@ -224,7 +258,7 @@
   "session": {
     "startedAt": "2026-09-17T12:14:10.629Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-09-17T12:31:03.356Z"
+    "lastActivity": "2026-10-22T02:06:03.049248+00:00"
   },
   "history": [
     {
@@ -516,6 +550,40 @@
       "windows_release": "WiX patch version is checked against wix --version; WSL payload root symlinks are rejected",
       "container_entrypoint": "worker_entrypoint modules are resolved from pack-local source files only",
       "windows_i7": "not measured"
+    },
+    {
+      "feature": "annotation-workspace",
+      "from": "design",
+      "to": "do",
+      "timestamp": "2026-10-22T00:32:43.876Z"
+    },
+    {
+      "feature": "annotation-workspace",
+      "action": "phase_complete",
+      "phase": "design",
+      "nextPhase": "do",
+      "timestamp": "2026-10-22T00:32:43.876Z"
+    },
+    {
+      "feature": "annotation-workspace",
+      "from": "do",
+      "to": "check",
+      "timestamp": "2026-10-22T02:06:03.006Z"
+    },
+    {
+      "feature": "annotation-workspace",
+      "action": "phase_complete",
+      "phase": "do",
+      "nextPhase": "check",
+      "timestamp": "2026-10-22T02:06:03.007Z"
+    },
+    {
+      "feature": "annotation-workspace",
+      "action": "local_implementation_verified",
+      "timestamp": "2026-10-22T02:06:03.049248+00:00",
+      "version": "9.23",
+      "tests": "174 passed; 125/150/200% 10 each; web 14",
+      "windows_acceptance": "pending"
     }
   ]
 }

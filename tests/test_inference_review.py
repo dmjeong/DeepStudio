@@ -12,12 +12,54 @@ from core.inference_types import make_anomaly_result, InferenceResult
 from core.inference_review import effective_result, review_page, source_class, restored_result
 
 
+def classification_result(path, probabilities, names=("정상 부품", "double", "스크래치 10%"), source=""):
+    top = max(range(len(probabilities)), key=probabilities.__getitem__)
+    return InferenceResult(path, "ok", "classify", f"{names[top]} {probabilities[top]:.1%}",
+                           source_class=source, details={"class_names": list(names), "probabilities": probabilities})
+
+
 def records():
     return [{**asdict(replace(make_anomaly_result(f"/data/test/{'good' if i % 2 == 0 else 'defect'}/image-{i:03}.png", i / 10, 3),
                              source_class="good" if i % 2 == 0 else "defect", inference_sec=i / 1000)), "index": i} for i in range(75)]
 
 
 class ReviewTests(unittest.TestCase):
+    def test_custom_labels_filter_predictions_independently_of_confidence_and_source(self):
+        raw = [{**asdict(result), "index": i} for i, result in enumerate([
+            classification_result("a.png", [.05, .9, .05], source="정상 부품"),
+            classification_result("b.png", [.2, .7, .1], source="double"),
+            classification_result("c.png", [.05, .05, .9], source="double"),
+        ])]
+        page = review_page(raw, decision="double", limit=1)
+        self.assertEqual(page["filtered_total"], 2)
+        self.assertEqual(page["results"][0]["decision"], "double")
+        self.assertEqual(page["decisions"], ["정상 부품", "double", "스크래치 10%"])
+        self.assertEqual(page["classes"], ["정상 부품", "double", "스크래치 10%"])
+        combined = review_page(raw, class_name="double", decision="double")
+        self.assertEqual([row["index"] for row in combined["results"]], [1])
+        self.assertEqual(review_page(raw, decision="스크래치 10%")["filtered_total"], 1)
+        self.assertEqual(raw[0]["summary"], "double 90.0%")
+
+    def test_choices_include_unused_project_classes_and_actual_error_status(self):
+        project = {"task": "classify", "data": {"class_names": ["empty", "double"]}}
+        page = review_page([], project=project)
+        self.assertEqual(page["classes"], ["empty", "double"])
+        self.assertEqual(page["decisions"], ["empty", "double"])
+        row = {**asdict(replace(classification_result("a.png", [.1, .8, .1]),
+                               status="error", error="read failed")), "index": 0}
+        page = review_page([row])
+        self.assertEqual(page["results"][0]["decision"], "ERROR")
+        self.assertIn("ERROR", page["decisions"])
+        self.assertNotIn("OK", page["decisions"])
+        self.assertEqual(review_page([row], class_name="__unknown__")["filtered_total"], 1)
+
+    def test_nonclassification_choices_use_actual_decisions(self):
+        raw = [{**asdict(InferenceResult("detect.png", "ok", "detect", "2개 탐지")), "index": 0}]
+        self.assertEqual(review_page(raw)["decisions"], ["2개 탐지"])
+        raw = [{**asdict(make_anomaly_result("a.png", .6, .5)), "index": 0}]
+        self.assertEqual(review_page(raw)["decisions"], ["NG"])
+        self.assertEqual(review_page(raw, threshold=.7)["decisions"], ["OK"])
+
     def test_desktop_restores_legacy_patchcore_job_as_normalized_result(self):
         stored = {**asdict(make_anomaly_result("legacy.png", 6, 3)), "index": 0,
                   "heatmap": {"kind": "PatchCore"}}
@@ -74,6 +116,49 @@ class ReviewQtTests(unittest.TestCase):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PySide6.QtWidgets import QApplication
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_custom_class_filters_refresh_with_model_and_batch_results(self):
+        from widgets.inference_review import InferenceReview
+        widget = InferenceReview()
+        self.addCleanup(widget.deleteLater)
+        names = ["정상 부품", "double", "스크래치 10%"]
+        project = {"task": "classify", "data": {"root": "/data", "class_names": names}}
+        paths = ["/data/test/double/a.png", "/data/test/double/b.png", "/data/test/정상 부품/c.png"]
+        widget.set_context(paths, project, class_names=names)
+        choices = lambda combo: [combo.itemData(i) for i in range(1, combo.count())]
+        self.assertEqual(choices(widget.class_filter), names)
+        self.assertEqual(choices(widget.decision_filter), names + ["대기"])
+        for path, probabilities in zip(paths, ([.1, .8, .1], [.2, .7, .1], [.9, .05, .05])):
+            widget.update_result(classification_result(path, probabilities))
+        self.assertEqual(choices(widget.decision_filter), names)
+        widget.decision_filter.setCurrentIndex(widget.decision_filter.findData("double"))
+        self.assertEqual(widget.proxy.rowCount(), 2)
+        widget.class_filter.setCurrentIndex(widget.class_filter.findData("double"))
+        self.assertEqual(widget.proxy.rowCount(), 2)
+        widget.class_filter.setCurrentIndex(widget.class_filter.findData("정상 부품"))
+        self.assertEqual(widget.proxy.rowCount(), 0)
+        # A new model/batch must remove old choices AND clear the proxy predicate.
+        widget.set_context(["flat.png"], class_names=["새 정상", "새 결함"])
+        self.assertEqual(choices(widget.class_filter), ["새 정상", "새 결함", "—"])
+        self.assertEqual(choices(widget.decision_filter), ["새 정상", "새 결함", "대기"])
+        self.assertEqual(widget.proxy.rowCount(), 1)
+        widget.update_result(classification_result("flat.png", [.1, .9], names=["새 정상", "새 결함"]))
+        self.assertEqual(widget.model.item(0, 2).text(), "—")
+        self.assertEqual(widget.model.item(0, 4).text(), "새 결함")
+        self.assertNotIn("double", choices(widget.decision_filter))
+
+    def test_threshold_refresh_removes_stale_decision_filter(self):
+        from widgets.inference_review import InferenceReview
+        widget = InferenceReview()
+        self.addCleanup(widget.deleteLater)
+        widget.set_context(["a.png"], {"task": "anomaly"})
+        widget.update_result(make_anomaly_result("a.png", .6, .5))
+        widget.decision_filter.setCurrentIndex(widget.decision_filter.findData("NG"))
+        widget.override.setChecked(True)
+        widget.value.setValue(.7)
+        self.assertEqual(widget.model.item(0, 4).text(), "OK")
+        self.assertEqual(widget.decision_filter.currentData(), "")
+        self.assertEqual(widget.proxy.rowCount(), 1)
 
     def test_normalized_threshold_range_stays_fixed_and_restores_on_model_switch(self):
         from widgets.inference_review import InferenceReview
@@ -136,6 +221,28 @@ class ReviewQtTests(unittest.TestCase):
         widget.decision_filter.setCurrentIndex(widget.decision_filter.findData("OK"))
         widget.search.setText("image-01")
         self.assertEqual(widget.proxy.rowCount(), 5)
+
+    @unittest.skipUnless(all(importlib.util.find_spec(name) for name in ("torch", "torchvision", "cv2", "matplotlib")), "Full desktop runtime required")
+    def test_inference_screen_passes_project_and_loaded_model_labels(self):
+        import torch
+        from core.project import ProjectData
+        from widgets.inference_widget import InferenceWidget
+        widget = InferenceWidget()
+        self.addCleanup(widget.deleteLater)
+        project = ProjectData()
+        project.data.class_names = ["프로젝트 정상", "프로젝트 결함"]
+        widget.set_project(project)
+        review = widget.result_review
+        self.assertGreater(review.class_filter.findData("프로젝트 정상"), 0)
+        widget._activate_model(path="test.pt", device=torch.device("cpu"), class_names=["가중치 정상", "가중치 결함"], process=True)
+        self.assertGreater(review.decision_filter.findData("가중치 결함"), 0)
+        self.assertEqual(review.decision_filter.findData("프로젝트 결함"), -1)
+        new_project = ProjectData()
+        new_project.data.class_names = ["새 클래스"]
+        widget.set_project(new_project)
+        self.assertGreater(review.class_filter.findData("새 클래스"), 0)
+        self.assertEqual(review.class_filter.findData("프로젝트 정상"), -1)
+        self.assertEqual(review.decision_filter.findData("가중치 결함"), -1)
 
     @unittest.skipUnless(all(importlib.util.find_spec(name) for name in ("torch", "torchvision", "cv2", "matplotlib")), "Full desktop runtime required")
     def test_loaded_anomaly_table_fits_laptop_viewport_with_real_theme(self):

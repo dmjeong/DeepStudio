@@ -1,5 +1,8 @@
 # C++17 / C# ONNX 로딩·추론 예제
 
+**암호화 내보내기 사용법과 전 태스크 예제:** [ENCRYPTED_MODELS.md](ENCRYPTED_MODELS.md).
+모델·설정을 `.dvsenc`로 읽고 초기화 때 한 번만 복호화한다.
+
 **C++ 입력 방식에 따라 둘 중 하나를 선택한다.** 둘 다 시작 시 준비 추론을 1회 수행한다.
 
 | 버전 | 입력 | OpenCV 필요 | 사용법 |
@@ -42,7 +45,7 @@ $env:ONNXRUNTIME_ROOT = 'C:\libs\onnxruntime-win-x64-1.29.0'
 cmake -S example/cpp -B example/build -G "Visual Studio 17 2022" -A x64 `
   "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
   "-DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT"
-cmake --build example/build --config Release --target onnx_cpp_example onnx_cpp_self_test vision_runtime
+cmake --build example/build --config Release --target onnx_cpp_example onnx_cpp_self_test onnx_encrypted_example vision_runtime
 
 # CMake가 선택한 onnxruntime.dll을 EXE 옆에 복사한다.
 # vcpkg는 OpenCV 종속 DLL을 복사한다. 아래 PATH는 C# 실행에도 사용한다.
@@ -119,7 +122,9 @@ std::cout << result.class_name << " " << result.confidence
 
 전처리·ONNX 실행·softmax는 내부에서 수행한다. `result.inference_ms`는 이 세 단계의
 합계이며 파일 읽기·디코딩은 제외한다. 실패는 `std::exception`을 잡아 프로그램에서 표시한다.
-같은 객체에 대한 동시 호출은 피하고, UI를 멈추지 않으려면 앱의 작업 스레드에서 순차 호출한다.
+이 OpenCV 분류기는 같은 객체의 동시 호출을 내부 잠금으로 순차 처리한다.
+eVision/BW8 헤더는 기존 추론 호출에 작업 공간을 자동 배정해 동시에 실행한다.
+UI를 멈추지 않으려면 앱의 작업 스레드에서 호출한다.
 객체가 살아 있는 동안 입력 `cv::Mat`을 보관할 필요는 없지만, 호출 중에는 픽셀을 수정하지 않는다.
 
 다른 PC로 옮길 때는 EXE, EXE 옆의 DLL들, JSON/ONNX를 함께 복사한다.

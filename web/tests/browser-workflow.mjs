@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import assert from "node:assert/strict";
 import { verifyTeaching } from "./teaching-workflow.mjs";
+import { verifyExportDraft } from "./export-workflow.mjs";
 const root = resolve(process.env.STUDIO_PACKAGE_ROOT || "..");
 const temp = await mkdtemp(join(tmpdir(), "studio-browser-"));
 const output = resolve("browser-results");
@@ -24,6 +25,7 @@ try {
   page.on("pageerror", e => errors.push(e.message));
   page.on("dialog", d => d.accept());
   await page.goto("http://127.0.0.1:8766");
+  await verifyExportDraft(page, { temp, fixture, output });
   await page.getByRole("button", { name: "데이터셋", exact: true }).click();
   await page.getByRole("button", { name: "＋ 이미지 추가", exact: true }).click();
   await page.getByLabel("추가할 이미지 파일").setInputFiles(fixture.image);

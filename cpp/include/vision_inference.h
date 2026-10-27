@@ -32,9 +32,11 @@
 
 #pragma once
 
+#include "model_crypto.h"
 #include <string>
 #include <vector>
 #include <memory>
+#include <mutex>
 #include <chrono>
 
 // ONNX Runtime 헤더
@@ -204,6 +206,8 @@ public:
      * @return 성공 여부
      */
     bool Initialize(const InferenceConfig& config);
+    bool InitializeFromPackage(const dvs_crypto::Package& package,
+                               const std::string& runtime = "onnxruntime", int num_threads = -1);
 
     /**
      * @brief JSON 설정 파일에서 초기화
@@ -230,7 +234,9 @@ public:
      * @param image 입력 이미지 (GRAY, BGR 또는 BGRA, OpenCV)
      * @return 분류 결과
      */
-    // Uses reusable scratch/tensors: serialize calls on each instance, or use ClassificationWorker.
+    // Concurrent Classify calls are serialized while reusable input/output
+    // buffers are in use. Initialize before starting workers; join them before
+    // reinitializing, releasing, or destroying this instance.
     ClassifyResult Classify(const cv::Mat& image);
 
     /**
@@ -265,6 +271,10 @@ public:
     void PrintModelInfo() const;
 
 private:
+    bool InitializeModel(const InferenceConfig& config, const dvs_crypto::Package* package);
+    bool InitializeDocument(const nlohmann::json& doc, const std::string& config_path,
+                            const std::string& runtime, int num_threads, const dvs_crypto::Package* package);
+
     // ── 전처리 ──
     /**
      * @brief OpenCV 이미지 → ONNX 입력 텐서 변환
@@ -308,6 +318,7 @@ private:
     std::unique_ptr<Ort::Session> m_session;  ///< 추론 세션
     struct ClassificationState;
     std::unique_ptr<ClassificationState> m_classification;
+    std::mutex m_classification_mutex;
     struct OpenVINOState;
     std::unique_ptr<OpenVINOState> m_openvino;
     Ort::AllocatorWithDefaultOptions m_allocator; ///< 메모리 할당기
