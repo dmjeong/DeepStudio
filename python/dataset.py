@@ -364,10 +364,13 @@ class SegmentationDataset(Dataset):
         if image.size != mask.size:
             raise ValueError(f"이미지/마스크 원본 크기 불일치: {img_path} {image.size}, {mask_path} {mask.size}")
 
-        # 리사이즈 (이미지: bilinear, 마스크: nearest)
+        # 리사이즈 (이미지: 픽셀 중심 기준 bilinear, 마스크: 픽셀 중심 기준 nearest)
+        # INTER_NEAREST는 왼쪽 위 모서리 기준이라 축소 시 마스크가 이미지보다
+        # 오른쪽·아래로 평균 약 0.38 출력 px 밀린다. 모델이 그 어긋남까지 학습한다.
         image = Image.fromarray(resize(np.asarray(image), self.input_size))
         import cv2
-        mask = Image.fromarray(cv2.resize(np.asarray(mask), tuple(reversed(self.input_size)), interpolation=cv2.INTER_NEAREST))
+        mask = Image.fromarray(cv2.resize(np.asarray(mask), tuple(reversed(self.input_size)),
+                                          interpolation=cv2.INTER_NEAREST_EXACT))
 
         # 학습 시 동기화된 데이터 증강
         if self.is_train:

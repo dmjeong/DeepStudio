@@ -23,6 +23,11 @@ from builtin_models import build_builtin_model, get_builtin_spec, make_builtin_c
 from dataset import create_classification_loaders, create_segmentation_loaders
 
 
+def _legacy_class_names(count: int) -> list[str]:
+    """Placeholder names written by segmentation training before class names were passed."""
+    return [str(index) for index in range(count)]
+
+
 def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None):
     training = optimizer is not None
     model.train(training)
@@ -155,6 +160,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   resume: str | Path | None = None,
                   initial_weights: str | Path | None = None, pretrained: bool = False, log=print,
                   selection_metric: str = "engine_default",
+                  class_names: Iterable[str] | None = None,
                   should_stop=lambda: False) -> Path:
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
@@ -216,7 +222,12 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             num_workers=num_workers, pin_memory=pin_memory,
             in_channels=in_channels, num_classes=num_classes,
             flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
-        class_names = [str(index) for index in range(num_classes)]
+        # Mask pixel values carry no names: the project's ordered class list is
+        # what export, the SDK JSON and class-order checks below rely on.
+        class_names = (_legacy_class_names(num_classes) if class_names is None
+                       else [str(name) for name in class_names])
+        if len(class_names) != num_classes or any(not name for name in class_names):
+            raise ValueError("class_names must name every segmentation class")
     initial_checkpoint = None
     backbone_weights = None
     if initial_weights is not None:
@@ -235,6 +246,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         head = {"resnet18": "fc.", "resnet50": "fc.",
                 "convnext_v1_tiny": "classifier.2.",
                 "deeplabv3plus_resnet34": "decoder.6.", "unet_resnet18": "head."}[model_id]
+        # Older segmentation checkpoints stored placeholder names "0".."N-1". They
+        # differ from real project names, so only their backbone is transferred.
         if list(initial_checkpoint.get("class_names", [])) != class_names:
             source = {key: value for key, value in source.items() if not key.startswith(head)}
             missing, unexpected = model.load_state_dict(source, strict=False)
@@ -315,6 +328,10 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         saved_policy = selection_policy(SimpleNamespace(selection_metric=saved_metric), "builtin", spec.task)
         if saved_policy.metric != policy.metric:
             raise ValueError("resume Best 기준이 다릅니다. 같은 기준으로 재개하거나 로컬 가중치로 새 학습을 시작하세요.")
+        saved_names = list(checkpoint.get("class_names", []))
+        if (spec.task == "segment" and saved_names != _legacy_class_names(len(saved_names))
+                and saved_names != class_names):
+            raise ValueError("resume 체크포인트와 클래스 이름·순서가 다릅니다. 로컬 가중치로 새 학습을 시작하세요.")
         model.load_state_dict(checkpoint["model_state_dict"], strict=True)
         model.weight_provenance = dict(checkpoint.get("weight_provenance", {}))
         training_config["weight_provenance"] = model.weight_provenance

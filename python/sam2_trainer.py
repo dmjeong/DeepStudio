@@ -73,7 +73,9 @@ def _sam2_logits(model, images: torch.Tensor, point_coords: torch.Tensor) -> tor
 
 
 def _loss_and_scores(logits: torch.Tensor, targets: torch.Tensor) -> tuple[torch.Tensor, float, float]:
-    resized = F.interpolate(targets.unsqueeze(1).float(), size=logits.shape[-2:], mode="nearest")[:, 0]
+    # Pixel-centre sampling: "nearest" picks each block's top-left source pixel and
+    # shifts the target ~0.38 low-res px right/down of the image the logits see.
+    resized = F.interpolate(targets.unsqueeze(1).float(), size=logits.shape[-2:], mode="nearest-exact")[:, 0]
     valid = resized != 255
     if not valid.any():
         raise ValueError("SAM2 정답 마스크에 평가할 픽셀이 없습니다.")

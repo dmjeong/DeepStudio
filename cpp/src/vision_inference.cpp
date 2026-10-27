@@ -855,8 +855,15 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
                        m_config.crop_width, m_config.crop_height);
     if (seg_mask.size() != roi.size())
     {
-        cv::resize(seg_mask, seg_mask, roi.size(),
-                   0, 0, cv::INTER_NEAREST);  // 마스크는 NEAREST!
+        // 클래스 번호는 보간하지 않는다. INTER_NEAREST_EXACT는 픽셀 중심 기준이라
+        // Python 미리보기(PIL NEAREST)·학습 마스크와 같은 격자를 쓴다. INTER_NEAREST는
+        // 정수배가 아닌 크기(예: 512→1920×1080)에서 경계 픽셀이 다른 클래스로 밀린다.
+#if CV_VERSION_MAJOR > 4 || (CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR >= 5)
+        const int mask_interpolation = cv::INTER_NEAREST_EXACT;
+#else
+        const int mask_interpolation = cv::INTER_NEAREST;  // OpenCV 4.5 미만 호환
+#endif
+        cv::resize(seg_mask, seg_mask, roi.size(), 0, 0, mask_interpolation);
     }
 
     result.mask = cv::Mat::zeros(image.size(), CV_8UC1);

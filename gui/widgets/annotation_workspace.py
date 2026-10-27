@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
 )
 from widgets.annotation_grid_dialog import GridDialog
-from widgets.annotation_io import AnnotationWrite
+from widgets.annotation_io import AnnotationWrite, ImagePrefetcher
 from widgets.annotation_workspace_state import AnnotationWorkspaceState
 from widgets.annotation_workspace_ui import AnnotationWorkspaceUI
 from widgets.common import NoWheelComboBox
@@ -90,7 +90,14 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             if self.rows or (self.document is not None and self.document.persisted)
             else "미작업"
         )
-        self.pixmap = QPixmap(self.image_path)
+        # The previous window decoded this file in the background while the user
+        # was editing; without it the GUI thread decodes (4096² PNG ≈ 0.4 s).
+        prefetched = ImagePrefetcher.take(self.image_path)
+        self.pixmap = (
+            QPixmap.fromImage(prefetched)
+            if prefetched is not None
+            else QPixmap(self.image_path)
+        )
         if self.pixmap.isNull():
             raise ValueError("이미지를 열 수 없습니다.")
         self.pixmap.setDevicePixelRatio(1.0)
@@ -124,6 +131,26 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self._load_draft()
         self._render()
         QTimer.singleShot(0, self._fit)
+        if self.navigation and self.image_paths:
+            current = self.navigation[0]
+            ImagePrefetcher.request(
+                [
+                    self.image_paths[i]
+                    for i in (current + 1, current - 1)
+                    if 0 <= i < len(self.image_paths)
+                ]
+            )
+
+    def done(self, result):
+        # A closed window's remaining thumbnails must not keep decoding originals
+        # on the shared IO threads while the next image's window is opening.
+        worker = getattr(self, "thumbnail_worker", None)
+        if worker is not None:
+            try:
+                worker.requestInterruption()
+            except RuntimeError:  # finished loader already deleted itself
+                pass
+        super().done(result)
 
     def _items(self):
         return self.document.shapes if self.task == "segment" else self.rows

@@ -131,6 +131,13 @@ class SegmentationCanvas(DetectionCanvas):
             for tx in range(x // size, (x + w - 1) // size + 1):
                 ax, ay = tx * size, ty * size
                 cell = pixels[ay : ay + size, ax : ax + size]
+                tile = self.tiles.get((tx, ty))
+                if not cell.any():
+                    # Background (class 0) is fully transparent in the palette:
+                    # most tiles of a defect mask need no RGBA conversion at all.
+                    if tile is not None and not tile.pixmap().isNull():
+                        tile.setPixmap(QPixmap())
+                    continue
                 rgba = np.ascontiguousarray(palette[cell])
                 if self._view_owners is not None:
                     owners = self._view_owners[ay : ay + size, ax : ax + size]
@@ -140,7 +147,6 @@ class SegmentationCanvas(DetectionCanvas):
                 image = QImage(
                     rgba.data, iw, ih, iw * 4, QImage.Format.Format_RGBA8888
                 ).copy()
-                tile = self.tiles.get((tx, ty))
                 if tile is None:
                     tile = self.scene().addPixmap(QPixmap())
                     self.overlay.addToGroup(tile)

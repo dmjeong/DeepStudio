@@ -25,6 +25,7 @@ Deep Vision Studio — 데이터셋 관리 페이지
 """
 
 import os
+import gc
 import json
 import shutil
 import copy
@@ -37,7 +38,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QInputDialog,
     QTabBar, QMenu, QApplication,
 )
-from PySide6.QtCore import Qt, Signal, QMimeData, QByteArray, QThread
+from PySide6.QtCore import Qt, Signal, QMimeData, QByteArray, QThread, QCoreApplication, QEvent
 from PySide6.QtGui import (
     QPixmap, QDragEnterEvent, QDropEvent, QDrag,
 )
@@ -57,6 +58,20 @@ IMAGE_MIME_TYPE = "application/x-custom_csp-dataset-images"
 
 # ── 분할 목록 (탭 라벨은 텍스트 온리) ──
 SPLITS = ["train", "val", "test"]
+
+
+def _release_annotation_dialog(dialog):
+    """다음 이미지의 작업실을 열기 전에 닫힌 작업실을 실제로 삭제한다.
+
+    이미지 이동 루프는 exec() → deleteLater() → 다음 창의 exec()를 반복한다.
+    Qt는 deleteLater를 예약한 단계보다 깊은 중첩 이벤트 루프(다음 창의 exec())에서
+    그 삭제를 처리하지 않으므로, 원본 해상도 버퍼를 가진 창이 이미지마다 누적됐다.
+    창에 딸린 저장·초안 스레드가 완전히 끝난 뒤, 같은 루프 단계에서 삭제를 처리한다.
+    """
+    for thread in dialog.findChildren(QThread):
+        thread.wait()  # 닫힐 때는 작업이 이미 끝나 있어 즉시 반환된다
+    dialog.deleteLater()
+    QCoreApplication.sendPostedEvents(dialog, QEvent.Type.DeferredDelete)
 
 
 class _ClassOperationThread(QThread):
@@ -1068,7 +1083,10 @@ class DatasetWidget(QWidget):
                             task=project.task, add_class=add_class, navigation=(index, len(paths)), image_paths=paths, preferences=annotation_preferences, label_revision=revision_holder["value"], image_records=records, revision_provider=lambda path: annotation_revision(project,path,split))
                     dialog.exec()
                     delta = getattr(dialog, "navigation_delta", 0)
-                    dialog.deleteLater()
+                    _release_annotation_dialog(dialog)
+                    del dialog
+                    document = None
+                    gc.collect()  # 창↔캔버스 참조 순환이 잡은 원본 해상도 numpy 버퍼를 바로 회수
                     if type(delta) is not int or not delta or not 0 <= index + delta < len(paths):
                         break
                     index += delta

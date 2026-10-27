@@ -157,6 +157,7 @@ def _train_builtin_project(context, project, device):
                          resume=resume, initial_weights=initial_weights,
                          pretrained=cfg.training_mode == "builtin_finetune",
                          selection_metric=cfg.selection_metric,
+                         class_names=(list(data.class_names) if project.task == "segment" else None),
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),

@@ -27,9 +27,12 @@ def _png(pixels):
 def _validate_pixels(pixels, width, height, classes):
     if pixels.shape != (height, width) or pixels.dtype.kind not in "ui":
         raise ValueError("원본 이미지와 같은 크기의 정수 클래스 마스크가 필요합니다.")
-    valid = pixels[pixels != 255]
-    if valid.size and (valid.min() < 0 or valid.max() >= classes):
-        raise ValueError("마스크의 클래스 번호가 프로젝트와 맞지 않습니다.")
+    # Fast exact path: an unsigned mask whose maximum is already a valid class
+    # needs no copy of its non-255 pixels (the common case without ignore pixels).
+    if not (pixels.dtype.kind == "u" and pixels.size and pixels.max() < classes):
+        valid = pixels[pixels != 255]
+        if valid.size and (valid.min() < 0 or valid.max() >= classes):
+            raise ValueError("마스크의 클래스 번호가 프로젝트와 맞지 않습니다.")
     return pixels.astype(np.uint8, copy=True)
 
 
@@ -367,7 +370,8 @@ class MaskDocument:
         )
         if key != self._cache_key:
             pixels = self.base.copy()
-            owners = -self.base.astype(np.int32) - 2
+            # Same values as -base - 2 in one int32 allocation (4096²: 64 MiB, not 3×).
+            owners = np.subtract(-2, self.base, dtype=np.int32)
             self._key_indices = {}
             for index, item in enumerate(self.shapes):
                 if item.get("operation") != "erase":
