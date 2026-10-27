@@ -59,6 +59,7 @@ from model import CustomCSP
 from checkpoint import make_checkpoint_metadata
 from class_weights import class_counts, weights_from_counts, describe_class_weights
 from classification_loss import WeightedClassificationLoss
+from segmentation_loss import SegmentationLoss, pixel_class_weights
 from core.project import ProjectData, RunRecord, ProjectManager
 from core.metrics import (
     create_metrics, TASK_METRIC_NAMES,
@@ -722,7 +723,25 @@ class TrainWorker(TrainingEngine):
                 weights=weights, label_smoothing=cfg.label_smoothing
             )
         elif task == "segment":
-            return nn.CrossEntropyLoss(ignore_index=255)
+            # 배경이 대부분인 결함 마스크: 픽셀 빈도 가중 CE와 전경 Dice 선택 (train_builtin과 같은 손실)
+            mode = getattr(cfg, "class_weights", "none")
+            loss = getattr(cfg, "segmentation_loss", "ce_dice")
+            weights = counts = None
+            if mode != "none":
+                if train_loader is None or not num_classes:
+                    raise ValueError("클래스 가중치 적용을 위한 학습 데이터 로더 필요")
+                names = list(self.project.data.class_names)
+                weights, counts = pixel_class_weights(train_loader.dataset, num_classes, mode, names)
+                self._class_weight_details = {
+                    "mode": mode, "class_names": names, "counts": counts, "weights": weights,
+                    "unit": "pixels", "normalization": "training_pixel_mean_1",
+                }
+                self.signals.log_message.emit(f"  클래스 가중치({mode}, 학습 픽셀 기준): " + ", ".join(
+                    f"{i}:{name}={count}px(w={weight:.4f})"
+                    for i, (name, count, weight) in enumerate(zip(names, counts, weights))))
+            criterion = SegmentationLoss(num_classes or len(self.project.data.class_names),
+                                         loss=loss, weights=weights)
+            return criterion.to(device) if device is not None else criterion
         elif task == "detect":
             # Detection은 별도 복합 손실 (cls + bbox + obj)
             return None  # _train_one_epoch에서 직접 계산

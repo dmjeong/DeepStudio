@@ -60,6 +60,67 @@ IMAGE_MIME_TYPE = "application/x-custom_csp-dataset-images"
 SPLITS = ["train", "val", "test"]
 
 
+class _MaskDocumentPrefetcher:
+    """다음 이미지의 마스크 문서를 사용자가 현재 이미지를 편집하는 동안 미리 준비한다.
+
+    마스크 디코딩·검증과 소유자 맵 렌더링(4096² 기준 약 0.2초)을 작업 스레드로 옮긴다.
+    한 장만 준비한다(4096² 문서 약 100MB). 준비를 요청한 시점의 클래스 목록과
+    이미지·정답 파일의 수정 시각·크기가 사용 시점과 하나라도 다르면 버리고 새로 읽는다.
+    """
+
+    def __init__(self, project, split):
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.project, self.split = project, split
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mask-prefetch")
+        self._pending = None  # (image path, file key, future)
+
+    def _key(self, image_path):
+        from core.dataset_editor import sidecars
+
+        files = [("image", image_path)] + sorted(sidecars(self.project, image_path, self.split))
+        stats = []
+        for kind, path in files:
+            stat = os.stat(path)
+            stats.append((kind, str(path), stat.st_mtime_ns, stat.st_size))
+        return tuple(self.project.data.class_names), tuple(stats)
+
+    def _prepare(self, image_path):
+        from pathlib import Path
+        from core.mask_annotations import load_mask_document
+
+        document = load_mask_document(self.project, image_path, self.split)
+        # 작업실이 여는 순간 하는 객체 ID 부여를 그대로 미리 한다 (같은 결정적 ID).
+        document.ensure_object_ids(str(Path(image_path).resolve()))
+        document.render(copy_pixels=False)
+        return document
+
+    def request(self, image_path):
+        if self._pending is not None and self._pending[0] == image_path:
+            return
+        self._pending = None
+        try:
+            key = self._key(image_path)
+        except OSError:
+            return
+        self._pending = (image_path, key, self._executor.submit(self._prepare, image_path))
+
+    def take(self, image_path):
+        pending, self._pending = self._pending, None
+        if pending is None or pending[0] != image_path:
+            return None
+        _, key, future = pending
+        try:
+            document = future.result()
+            return document if self._key(image_path) == key else None
+        except Exception:  # noqa: BLE001 - 정상 경로에서 다시 읽으며 같은 오류를 사용자에게 알린다
+            return None
+
+    def close(self):
+        self._pending = None
+        self._executor.shutdown(wait=True, cancel_futures=True)
+
+
 def _release_annotation_dialog(dialog):
     """다음 이미지의 작업실을 열기 전에 닫힌 작업실을 실제로 삭제한다.
 
@@ -1061,35 +1122,44 @@ class DatasetWidget(QWidget):
                     return project.data.class_names
 
                 annotation_preferences = {"_persistent": True}
-                while True:
-                    image_path = paths[index]
-                    revision_holder["value"] = annotation_revision(project, image_path, split)
-                    def save_annotation(values, path=image_path):
-                        action = "mask_annotations" if project.task == "segment" else "annotations"
-                        result = edit_dataset(project, action, [path], split=split, annotations=values, expected_revision=revision_holder["value"])
-                        revision_holder["value"] = result["annotation_revision"]
-                        return result
-                    if project.task == "segment":
-                        document = load_mask_document(project, image_path, split)
-                        dialog = SegmentationAnnotationDialog(image_path, project.data.class_names, document,
-                            save_annotation, self,
-                            add_class=add_class, navigation=(index, len(paths)), image_paths=paths, preferences=annotation_preferences, label_revision=revision_holder["value"], image_records=records, revision_provider=lambda path: annotation_revision(project,path,split))
-                    else:
-                        labels = sidecars(project, image_path, split)
-                        rows = [row for kind, label in labels if kind == "labels"
-                                for row in read_annotations(label, project.task, len(project.data.class_names))]
-                        dialog = OBBAnnotationDialog(image_path, project.data.class_names, rows,
-                            save_annotation, self,
-                            task=project.task, add_class=add_class, navigation=(index, len(paths)), image_paths=paths, preferences=annotation_preferences, label_revision=revision_holder["value"], image_records=records, revision_provider=lambda path: annotation_revision(project,path,split))
-                    dialog.exec()
-                    delta = getattr(dialog, "navigation_delta", 0)
-                    _release_annotation_dialog(dialog)
-                    del dialog
-                    document = None
-                    gc.collect()  # 창↔캔버스 참조 순환이 잡은 원본 해상도 numpy 버퍼를 바로 회수
-                    if type(delta) is not int or not delta or not 0 <= index + delta < len(paths):
-                        break
-                    index += delta
+                prefetcher = _MaskDocumentPrefetcher(project, split) if project.task == "segment" else None
+                direction = 1
+                try:
+                    while True:
+                        image_path = paths[index]
+                        revision_holder["value"] = annotation_revision(project, image_path, split)
+                        def save_annotation(values, path=image_path):
+                            action = "mask_annotations" if project.task == "segment" else "annotations"
+                            result = edit_dataset(project, action, [path], split=split, annotations=values, expected_revision=revision_holder["value"])
+                            revision_holder["value"] = result["annotation_revision"]
+                            return result
+                        if project.task == "segment":
+                            document = prefetcher.take(image_path) or load_mask_document(project, image_path, split)
+                            dialog = SegmentationAnnotationDialog(image_path, project.data.class_names, document,
+                                save_annotation, self,
+                                add_class=add_class, navigation=(index, len(paths)), image_paths=paths, preferences=annotation_preferences, label_revision=revision_holder["value"], image_records=records, revision_provider=lambda path: annotation_revision(project,path,split))
+                            if 0 <= index + direction < len(paths):  # 진행 방향의 다음 이미지
+                                prefetcher.request(paths[index + direction])
+                        else:
+                            labels = sidecars(project, image_path, split)
+                            rows = [row for kind, label in labels if kind == "labels"
+                                    for row in read_annotations(label, project.task, len(project.data.class_names))]
+                            dialog = OBBAnnotationDialog(image_path, project.data.class_names, rows,
+                                save_annotation, self,
+                                task=project.task, add_class=add_class, navigation=(index, len(paths)), image_paths=paths, preferences=annotation_preferences, label_revision=revision_holder["value"], image_records=records, revision_provider=lambda path: annotation_revision(project,path,split))
+                        dialog.exec()
+                        delta = getattr(dialog, "navigation_delta", 0)
+                        _release_annotation_dialog(dialog)
+                        del dialog
+                        document = None
+                        gc.collect()  # 창↔캔버스 참조 순환이 잡은 원본 해상도 numpy 버퍼를 바로 회수
+                        if type(delta) is not int or not delta or not 0 <= index + delta < len(paths):
+                            break
+                        index += delta
+                        direction = 1 if delta > 0 else -1
+                finally:
+                    if prefetcher is not None:
+                        prefetcher.close()
                 self.set_project(project)
                 self.project_changed.emit(project)
             except (OSError, ValueError, StopIteration) as exc:

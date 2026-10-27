@@ -131,6 +131,9 @@ class TrainingConfig:
     label_smoothing: float = 0.05     # (classification용)
     # 클래스 불균형 보정: "none"| "balanced"(역빈도) | "sqrt"(완만한 역빈도)
     class_weights: str = "none"
+    # 분할 손실: "ce_dice"(CE + 전경 Dice, 기본) | "ce"(픽셀 CE만, 9.23까지의 동작)
+    # 배경이 대부분인 결함 마스크에서 CE만 쓰면 작은 결함을 놓치기 쉽다 (docs/RELEASE_9.33.md 실험).
+    segmentation_loss: str = "ce_dice"
     device: str = "auto"  # auto, cpu, cuda, cuda:0, cuda:1
     use_amp: bool = True              # Mixed Precision (GPU 시 자동 활성화)
     # ── 학습 모드 ──

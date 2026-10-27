@@ -65,6 +65,7 @@ class MaskDocument:
     def ensure_object_ids(self, namespace):
         """Deterministic IDs let a v1 draft reopen before its first PNG save."""
         remap = {}
+        changed = False
         for i, shape in enumerate(self.shapes):
             if shape.get("operation") == "erase":
                 continue
@@ -74,18 +75,24 @@ class MaskDocument:
                     uuid.NAMESPACE_URL,
                     namespace + ":" + str(i) + ":" + json.dumps(shape, sort_keys=True),
                 ).hex
+                changed = True
             remap[old] = shape["object_id"]
         for shape in self.shapes:
             if "scope_object" in shape:
-                shape["scope_object"] = remap.get(
-                    shape["scope_object"], shape["scope_object"]
-                )
+                value = remap.get(shape["scope_object"], shape["scope_object"])
+                changed |= value != shape["scope_object"]
+                shape["scope_object"] = value
             if "protected_objects" in shape:
-                shape["protected_objects"] = [
-                    remap.get(k, k) for k in shape["protected_objects"]
-                ]
-        self.objects = {remap.get(k, k): v for k, v in self.objects.items()}
-        self.invalidate()
+                values = [remap.get(k, k) for k in shape["protected_objects"]]
+                changed |= values != shape["protected_objects"]
+                shape["protected_objects"] = values
+        objects = {remap.get(k, k): v for k, v in self.objects.items()}
+        changed |= list(objects) != list(self.objects)
+        self.objects = objects
+        # A document whose IDs were already assigned (e.g. prepared in the
+        # background for the next image) keeps its valid render cache.
+        if changed:
+            self.invalidate()
 
     def invalidate(self):
         self._cache_valid = False

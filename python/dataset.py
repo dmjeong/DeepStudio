@@ -26,6 +26,7 @@ CustomCSP 데이터셋 로더
 
 import os
 import random
+from collections import OrderedDict
 from typing import Tuple, List, Optional, Dict
 
 import torch
@@ -293,6 +294,72 @@ class ClassificationDataset(Dataset):
 #  Segmentation 데이터셋
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+def resize_label_mask(mask: np.ndarray, size: Tuple[int, int], *, keep_ratio: float = 0.5) -> np.ndarray:
+    """클래스 번호 마스크를 (H, W)로 바꾼다. 축소해도 작은 결함이 정답에서 사라지지 않게 한다.
+
+    1. 픽셀 중심 nearest(INTER_NEAREST_EXACT): 이미지의 INTER_LINEAR_EXACT와 같은 격자.
+       INTER_NEAREST(왼쪽 위 기준)는 4배 축소에서 정답을 평균 0.38 출력 px 밀어낸다.
+    2. nearest는 블록마다 한 픽셀만 읽어서, 블록보다 얇은 결함은 통째로 사라지거나
+       (4배 축소의 3×3 점 결함 약 43%) 점선으로 끊긴다(비스듬한 1px 흠집 94%, 2px 70%).
+       클래스별로 출력 픽셀이 덮는 원본 면적 비율(coverage)을 구하고, coverage > 0인
+       출력 영역의 연결 성분마다 다음이면 그 성분의 배경 출력 픽셀을 해당 클래스로 되살린다.
+         - nearest가 남긴 픽셀 수 < 면적상 기대치(coverage 합) × keep_ratio  (사라짐)
+         - 블록보다 얇은 성분(평균 coverage < 0.5)인데 nearest 결과가 2조각 이상  (끊김)
+       되살린 얇은 선은 출력 1~2px 폭의 연결된 선이 된다(출력 격자에서 가능한 최소 폭).
+       충분히 남은 성분(큰 결함은 평균 coverage 0.8 이상)과 다른 클래스·255(학습 제외)
+       픽셀은 바꾸지 않는다.
+
+    연결 성분은 출력 해상도에서 구한다: 원본에서 붙어 있는 결함은 출력에서도 붙어 있고,
+    원본 해상도 연결 성분(4096²에서 클래스당 약 50ms)을 피한다.
+    """
+    import cv2
+
+    height, width = int(size[0]), int(size[1])
+    resized = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST_EXACT)
+    if mask.shape[0] <= height and mask.shape[1] <= width:  # 확대는 성분을 잃지 않는다
+        return resized
+    if mask.dtype == np.uint8:  # 정렬하는 np.unique(4096²에서 약 0.1초) 대신 히스토그램
+        histogram = cv2.calcHist([mask], [0], None, [256], [0, 256]).ravel()
+        classes = np.flatnonzero(histogram)
+    else:
+        classes = np.unique(mask)
+    # 출력 픽셀 하나가 덮는 원본 픽셀 수. 255 이하이면 uint8(0/255) 면적 평균에서도
+    # 원본 1픽셀이 반올림 후 1 이상으로 남는다. 더 큰 블록은 uint16(0/65535)으로 정밀도를 높인다.
+    block = (mask.shape[0] / height) * (mask.shape[1] / width)
+    full = 255 if block <= 255 else 65535
+    for cls in classes:
+        if cls == 0 or cls == 255:
+            continue
+        # 출력 픽셀별 해당 클래스 면적 비율 × full (0이면 블록 안에 그 클래스 픽셀이 없다)
+        member = cv2.inRange(mask, int(cls), int(cls))  # uint8 0/255, 원본 해상도에서 가장 싼 비교
+        if full != 255:
+            member = member.astype(np.uint16) * np.uint16(257)
+        area = cv2.resize(member, (width, height), interpolation=cv2.INTER_AREA)
+        coverage = area.astype(np.float32) * (1.0 / full)  # 출력 해상도라 변환 비용이 작다
+        present = (area > 0).astype(np.uint8)
+        count, labels = cv2.connectedComponents(present, connectivity=8)
+        if count <= 1:
+            continue
+        flat = labels.ravel()
+        expected = np.bincount(flat, weights=coverage.ravel(), minlength=count)
+        pixels = np.bincount(flat, minlength=count)
+        sampled = (resized == cls).astype(np.uint8)
+        kept = np.bincount(flat, weights=sampled.ravel(), minlength=count)
+        # nearest가 남긴 조각 수: 조각마다 그것이 속한 coverage 성분 번호를 찾아 센다
+        piece_count, piece_labels = cv2.connectedComponents(sampled, connectivity=8)
+        owner = np.zeros(piece_count, dtype=np.int64)
+        owner[piece_labels.ravel()] = flat  # 한 조각의 픽셀은 모두 같은 성분에 속한다
+        pieces = np.bincount(owner[1:], minlength=count)
+        thin = expected < 0.5 * pixels
+        lost = np.flatnonzero((kept < keep_ratio * expected) | (thin & (pieces > 1)))
+        lost = lost[lost != 0]  # 0은 coverage가 없는 영역
+        if not lost.size:
+            continue
+        restore = np.isin(labels, lost) & (resized == 0)
+        resized[restore] = cls
+    return resized
+
+
 class SegmentationDataset(Dataset):
     """
     이미지 + 마스크 세그멘테이션 데이터셋
@@ -328,6 +395,12 @@ class SegmentationDataset(Dataset):
         # 채널 수에 맞는 정규화 값 선택
         self.mean, self.std = get_normalize_params(in_channels)
 
+        # 축소 마스크 캐시: 작은 결함 보존 계산(2048² 약 25ms, 4096² 약 50ms)을 첫 epoch에만 한다.
+        # 파일 수정 시각·크기가 키라 바뀐 마스크는 다시 계산한다. 작업자 프로세스마다 64MB 한도.
+        self._mask_cache = OrderedDict()
+        self._mask_cache_bytes = 0
+        self._mask_cache_limit = 64 * 1024 * 1024
+
         # 이미지-마스크 쌍 매칭
         self.pairs = self._find_pairs()
 
@@ -345,6 +418,43 @@ class SegmentationDataset(Dataset):
         from spatial_data import semantic_pairs
         return semantic_pairs(self.img_dir, self.mask_dir)
 
+    def _resized_mask(self, mask_path: str) -> Tuple[np.ndarray, Tuple[int, int]]:
+        """학습 크기로 줄인 클래스 마스크(복사본)와 원본 (W, H)."""
+        stat = os.stat(mask_path)
+        key = (mask_path, stat.st_mtime_ns, stat.st_size)
+        cached = self._mask_cache.get(key)
+        if cached is None:
+            # 팔레트 마스크는 표시 색이 아닌 인덱스를 보존한다.
+            with Image.open(mask_path) as source_mask:
+                if source_mask.mode not in ("P", "L", "I", "I;16"):
+                    raise ValueError(
+                        f"정답 마스크는 클래스 인덱스 이미지 필요 (팔레트/L/I): {mask_path}"
+                    )
+                original = np.asarray(source_mask)
+                size = source_mask.size
+            cached = (resize_label_mask(original, self.input_size), size)
+            nbytes = cached[0].nbytes
+            if nbytes <= self._mask_cache_limit:
+                while self._mask_cache and self._mask_cache_bytes + nbytes > self._mask_cache_limit:
+                    _, (dropped, _) = self._mask_cache.popitem(last=False)
+                    self._mask_cache_bytes -= dropped.nbytes
+                self._mask_cache[key] = cached
+                self._mask_cache_bytes += nbytes
+        else:
+            self._mask_cache.move_to_end(key)
+        return cached[0].copy(), cached[1]
+
+    def class_pixel_counts(self, num_classes: int) -> List[int]:
+        """학습 크기 마스크의 클래스별 픽셀 수 (255 학습 제외 픽셀은 세지 않음)."""
+        counts = np.zeros(num_classes, dtype=np.int64)
+        for _, mask_path in self.pairs:
+            mask = self._resized_mask(mask_path)[0]
+            values = np.bincount(mask[mask != 255].ravel().astype(np.int64), minlength=num_classes)
+            if values.size > num_classes:
+                raise ValueError(f"정답 마스크 클래스 범위 오류: {mask_path}")
+            counts += values
+        return counts.tolist()
+
     def __len__(self) -> int:
         return len(self.pairs)
 
@@ -353,24 +463,14 @@ class SegmentationDataset(Dataset):
 
         # 이미지 로드 — 채널 수에 따라 RGB 또는 Grayscale 변환
         image = Image.fromarray(read_image(img_path, self.in_channels))
-        # 팔레트 마스크는 표시 색이 아닌 인덱스를 보존한다.
-        with Image.open(mask_path) as source_mask:
-            mask = source_mask.copy()
-        if mask.mode not in ("P", "L", "I", "I;16"):
-            raise ValueError(
-                f"정답 마스크는 클래스 인덱스 이미지 필요 (팔레트/L/I): {mask_path}"
-            )
+        mask_array, mask_size = self._resized_mask(mask_path)
+        if image.size != mask_size:
+            raise ValueError(f"이미지/마스크 원본 크기 불일치: {img_path} {image.size}, {mask_path} {mask_size}")
 
-        if image.size != mask.size:
-            raise ValueError(f"이미지/마스크 원본 크기 불일치: {img_path} {image.size}, {mask_path} {mask.size}")
-
-        # 리사이즈 (이미지: 픽셀 중심 기준 bilinear, 마스크: 픽셀 중심 기준 nearest)
-        # INTER_NEAREST는 왼쪽 위 모서리 기준이라 축소 시 마스크가 이미지보다
-        # 오른쪽·아래로 평균 약 0.38 출력 px 밀린다. 모델이 그 어긋남까지 학습한다.
+        # 리사이즈 (이미지: 픽셀 중심 기준 bilinear, 마스크: 픽셀 중심 기준 nearest
+        # + 축소로 사라지는 작은 결함 보존). resize_label_mask 설명 참고.
         image = Image.fromarray(resize(np.asarray(image), self.input_size))
-        import cv2
-        mask = Image.fromarray(cv2.resize(np.asarray(mask), tuple(reversed(self.input_size)),
-                                          interpolation=cv2.INTER_NEAREST_EXACT))
+        mask = Image.fromarray(mask_array)
 
         # 학습 시 동기화된 데이터 증강
         if self.is_train:

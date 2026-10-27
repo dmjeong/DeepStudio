@@ -31,7 +31,8 @@ def test_minimum_loss_ties_early_stop_and_resume_guard(tmp_path, monkeypatch, mo
     losses = iter([.4, .2, .2, .3, .1])
     counter = []
 
-    def epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None):
+    def epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None,
+              pixel_counts_out=None):
         if metrics_out is None:
             return 1., 0.
         loss = next(losses)

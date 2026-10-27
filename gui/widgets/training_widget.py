@@ -457,6 +457,11 @@ class TrainingWidget(TrainingForm, QWidget):
             control.setEnabled(not is_pc and not resume)
         for control in (self.batch_spin, self.input_size_spin, self.class_weight_combo):
             control.setEnabled(not resume)
+        # SAM2는 자체 prompt 손실을 쓰므로 분할 손실·가중치 선택이 적용되지 않는다.
+        sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
+        self.segmentation_loss_combo.setEnabled(not resume and not sam2)
+        if self.project and self.project.task == "segment" and sam2:
+            self.class_weight_combo.setEnabled(False)
         self.selection_combo.setEnabled(not is_pc and not resume)
         self._selection_changed()
         capabilities = self._training_capabilities()
@@ -567,6 +572,8 @@ class TrainingWidget(TrainingForm, QWidget):
             if self.class_weight_combo.itemData(i) == cw_mode:
                 self.class_weight_combo.setCurrentIndex(i)
                 break
+        loss_index = self.segmentation_loss_combo.findData(getattr(cfg, "segmentation_loss", "ce_dice"))
+        self.segmentation_loss_combo.setCurrentIndex(max(loss_index, 0))
 
         # 데이터 증강 설정 복원
         aug = cfg.augmentation
@@ -604,11 +611,13 @@ class TrainingWidget(TrainingForm, QWidget):
         self._rebuild_metric_cards(project.task)
         self.metric_chart.set_task(project.task)
 
-        # 클래스 가중치: classify의 두 학습 엔진 모두 지원
-        # (segment/detect/anomaly는 클래스 가중치 미지원)
-        is_classify = (project.task == "classify")
-        self.class_weight_label.setVisible(is_classify)
-        self.class_weight_combo.setVisible(is_classify)
+        # 클래스 가중치: classify(이미지 수 기준)와 segment(픽셀 수 기준) 지원
+        # (detect/anomaly는 클래스 가중치 미지원)
+        weighted = project.task in ("classify", "segment")
+        self.class_weight_label.setVisible(weighted)
+        self.class_weight_combo.setVisible(weighted)
+        self.segmentation_loss_label.setVisible(project.task == "segment")
+        self.segmentation_loss_combo.setVisible(project.task == "segment")
 
         # ── PatchCore 설정 복원 (이상 탐지 전용) ──────────
         # anomaly 태스크일 때만 PatchCore 옵션 그룹 표시
@@ -754,7 +763,8 @@ class TrainingWidget(TrainingForm, QWidget):
 
         # 증강 설정
         cfg.class_weights = (self.class_weight_combo.currentData()
-                             if self.project.task == "classify" else "none")
+                             if self.project.task in ("classify", "segment") else "none")
+        cfg.segmentation_loss = self.segmentation_loss_combo.currentData() or "ce_dice"
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
         cfg.augmentation.rotation = self.rotation_spin.value()
         cfg.augmentation.color_jitter = self.color_jitter_spin.value()

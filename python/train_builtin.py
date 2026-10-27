@@ -74,7 +74,8 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
     return total_loss / samples, correct / samples
 
 
-def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None):
+def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None,
+                        pixel_counts_out=None):
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
@@ -111,6 +112,8 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
                 gt_area[cls] += truth.sum().item()
     if samples == 0 or intersection is None:
         raise ValueError("segmentation loader contains no samples")
+    if pixel_counts_out is not None:  # 이 epoch에 본 클래스별 정답 픽셀 수 (255 제외)
+        pixel_counts_out[:] = [int(value) for value in gt_area.tolist()]
     evaluated = gt_area > 0
     if not evaluated.any():
         raise ValueError("segmentation validation contains no labeled pixels")
@@ -120,6 +123,23 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
         dice = 2 * intersection[evaluated] / dice_denominator.clamp(min=1)
         metrics_out.update(mIoU=float(iou.mean()), dice_score=float(dice.mean()), val_loss=total_loss / samples)
     return total_loss / samples, float(iou.mean())
+
+
+RARE_PIXEL_FRACTION = 0.001
+
+
+def _log_rare_class_hint(pixel_counts, class_names, log):
+    """학습 크기 정답에서 0.1% 미만인 결함 클래스를 알린다 (추가 데이터 순회 없이 첫 epoch 집계 사용).
+
+    합성 실험(4배 축소, 점 결함 0.02%)에서 CE + Dice만으로는 점 결함을 하나도 찾지 못했고,
+    Sqrt 클래스 가중치를 더하면 검출률이 0.50이 되었다 (docs/RELEASE_9.33.md).
+    """
+    total = sum(pixel_counts)
+    rare = [f"{class_names[i]} {count / total * 100:.3f}%" for i, count in enumerate(pixel_counts)
+            if i > 0 and total and 0 < count < RARE_PIXEL_FRACTION * total]
+    if rare:
+        log("  희귀 결함 클래스(학습 픽셀 0.1% 미만): " + ", ".join(rare)
+            + " — 결함을 놓치면 클래스 가중치 Sqrt를 사용해 보세요.")
 
 
 def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str,
@@ -161,6 +181,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   initial_weights: str | Path | None = None, pretrained: bool = False, log=print,
                   selection_metric: str = "engine_default",
                   class_names: Iterable[str] | None = None,
+                  segmentation_loss: str = "ce_dice", class_weights: str = "none",
                   should_stop=lambda: False) -> Path:
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
@@ -183,6 +204,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         raise ValueError("validation or label smoothing settings are invalid")
     if warmup_epochs < 0 or early_stop_patience < 0 or not 0 < backbone_lr_mult <= 1:
         raise ValueError("scheduler, early-stop or backbone LR settings are invalid")
+    if segmentation_loss not in ("ce", "ce_dice") or class_weights not in ("none", "balanced", "sqrt"):
+        raise ValueError("segmentation_loss must be ce/ce_dice and class_weights none/balanced/sqrt")
     if resume is not None and initial_weights is not None:
         raise ValueError("resume and initial_weights are mutually exclusive")
     if pretrained and (resume is not None or initial_weights is not None):
@@ -301,7 +324,24 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                      ))
     else:
         scheduler = main_scheduler
-    criterion = nn.CrossEntropyLoss(ignore_index=255, label_smoothing=label_smoothing)
+    loss_details = {}
+    if spec.task == "segment":
+        from segmentation_loss import SegmentationLoss, pixel_class_weights
+
+        pixel_weights = counts = None
+        if class_weights != "none":  # 픽셀 수 집계(전체 마스크 축소)는 가중치를 쓸 때만
+            pixel_weights, counts = pixel_class_weights(train_loader.dataset, num_classes,
+                                                        class_weights, class_names)
+        if pixel_weights is not None:
+            loss_details["class_pixel_counts"] = counts
+            log("segmentation class weights (" + class_weights + "): " + ", ".join(
+                f"{name}={weight:.3f}" for name, weight in zip(class_names, pixel_weights)))
+        criterion = SegmentationLoss(num_classes, loss=segmentation_loss, weights=pixel_weights,
+                                     label_smoothing=label_smoothing)
+        loss_details.update(segmentation_loss=segmentation_loss, class_weights=class_weights,
+                            class_weight_values=pixel_weights)
+    else:
+        criterion = nn.CrossEntropyLoss(ignore_index=255, label_smoothing=label_smoothing)
     training_config = {
         "optimizer": optimizer_name, "scheduler": scheduler_name,
         "learning_rate": learning_rate, "weight_decay": weight_decay,
@@ -313,6 +353,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         "selection_metric": policy.metric, "selection_direction": policy.direction,
         "augmentation": {"horizontal_flip": horizontal_flip, "rotation": rotation,
                          "color_jitter": color_jitter},
+        **loss_details,
     }
     start_epoch = 0
     history: list[dict] = []
@@ -369,7 +410,11 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target)
             val_loss, val_metric = _classification_epoch(model, val_loader, criterion, None, target, validation_metrics)
         else:
-            train_loss, train_metric = _segmentation_epoch(model, train_loader, criterion, optimizer, target)
+            seen_pixels = []
+            train_loss, train_metric = _segmentation_epoch(model, train_loader, criterion, optimizer, target,
+                                                           pixel_counts_out=seen_pixels)
+            if epoch == start_epoch and class_weights == "none":
+                _log_rare_class_hint(seen_pixels, class_names, log)
             val_loss, val_metric = _segmentation_epoch(model, val_loader, criterion, None, target, validation_metrics)
         selected_value = policy.value(validation_metrics)
         if not all(torch.isfinite(torch.tensor(value)) for value in (train_loss, train_metric, val_loss, val_metric)):
@@ -451,6 +496,10 @@ def main() -> None:
     parser.add_argument("--pretrained", action="store_true", help="Load the selected ImageNet backbone")
     parser.add_argument("--initial_weights", help="Local torchvision backbone or matching Studio checkpoint")
     parser.add_argument("--selection_metric", default="engine_default")
+    parser.add_argument("--segmentation_loss", choices=("ce_dice", "ce"), default="ce_dice",
+                        help="segment: CE + foreground Dice (default) or plain pixel CE")
+    parser.add_argument("--class_weights", choices=("none", "balanced", "sqrt"), default="none",
+                        help="segment: class weights from training pixel counts")
     args = parser.parse_args()
     train_builtin(args.model, args.data_root, num_classes=args.num_classes,
                   input_size=args.input_size or None, in_channels=args.in_channels,
@@ -458,7 +507,8 @@ def main() -> None:
                   learning_rate=args.learning_rate, output_dir=args.output_dir,
                   device=args.device, num_workers=args.num_workers,
                   resume=args.resume, pretrained=args.pretrained,
-                  initial_weights=args.initial_weights, selection_metric=args.selection_metric)
+                  initial_weights=args.initial_weights, selection_metric=args.selection_metric,
+                  segmentation_loss=args.segmentation_loss, class_weights=args.class_weights)
 
 
 if __name__ == "__main__":

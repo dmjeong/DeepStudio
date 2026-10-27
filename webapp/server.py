@@ -318,6 +318,8 @@ def create_app(state_dir=None):
                 raise ValueError("EfficientNet은 분류 태스크와 B0/B1 모델 선택 필요")
             if cfg.class_weights not in {"none", "balanced", "sqrt"} or cfg.optimizer not in {"adamw", "adam", "sgd"}:
                 raise ValueError("클래스 가중치 또는 optimizer 설정 오류")
+            if cfg.segmentation_loss not in {"ce", "ce_dice"}:
+                raise ValueError("분할 손실 설정 오류")
             if cfg.scheduler not in {"cosine", "step", "none"} or cfg.anomaly_method not in {"patchcore", "reconstruction"}:
                 raise ValueError("scheduler 또는 이상 탐지 설정 오류")
             if not 0 < cfg.patchcore_sampling_ratio <= 1 or min(cfg.patchcore_n_neighbors, cfg.patchcore_max_candidates, cfg.patchcore_max_memory_bank) < 1:

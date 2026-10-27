@@ -81,10 +81,11 @@ def dataset_namespace():
     names = {"ClassificationDataset", "SegmentationDataset", "AnomalyDataset",
              "_TransformOverrideSubset", "_has_classification_images",
              "_loader_runtime_options", "create_classification_loaders",
-             "create_anomaly_loaders"}
+             "create_anomaly_loaders", "resize_label_mask"}
+    from collections import OrderedDict
     from opencv_preprocess import read_image, resize
     return source_objects("python/dataset.py", names, {
-        "read_image": read_image, "resize": resize,
+        "read_image": read_image, "resize": resize, "OrderedDict": OrderedDict,
         "os": os, "random": random, "np": np, "Image": Image, "Dataset": object,
         "DataLoader": Loader, "torch": torch, "T": SimpleNamespace(functional=tensor_ops),
         "get_normalize_params": lambda channels: ([0], [1]),

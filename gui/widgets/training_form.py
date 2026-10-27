@@ -338,7 +338,7 @@ class TrainingForm:
         self.selection_info.setWordWrap(True)
         hp_layout.addRow(self.selection_info)
 
-        # 클래스 불균형 보정 (자체 모델 및 EfficientNet 분류 학습)
+        # 클래스 불균형 보정 (분류: 클래스별 이미지 수, 분할: 클래스별 학습 픽셀 수)
         self.class_weight_combo = NoWheelComboBox()
         self.class_weight_combo.addItem("사용 안 함", "none")
         self.class_weight_combo.addItem("Balanced (역빈도)", "balanced")
@@ -347,13 +347,26 @@ class TrainingForm:
             "클래스별 이미지 수가 크게 다를 때 손실에 가중치를 적용합니다.\n"
             "Balanced: 표본이 적은 클래스일수록 큰 가중치 (완전 역빈도)\n"
             "Sqrt: 극단적 불균형에서 학습이 불안정할 때 완만하게 보정\n"
-            "자체 모델 및 EfficientNet 분류 학습에 적용됩니다.\n"
+            "분류 학습과 분할 학습(SAM2 제외)에 적용됩니다. 분할은 학습 크기 마스크의 클래스별 픽셀 수로 계산합니다.\n"
             "클래스별 이미지 수가 같으면 두 방식 모두 일반 손실과 같습니다.\n"
             "학습 로그에서 실제 클래스별 표본 수와 적용 가중치를 확인하세요.\n"
             "전체 정확도가 같아도 클래스별 Recall과 F1은 달라질 수 있습니다."
         )
         self.class_weight_label = QLabel("클래스 가중치:")
         hp_layout.addRow(self.class_weight_label, self.class_weight_combo)
+
+        # 분할 손실 (기본 모델·Custom CSP 분할 학습, SAM2는 자체 prompt 손실 사용)
+        self.segmentation_loss_combo = NoWheelComboBox()
+        self.segmentation_loss_combo.addItem("CE + Dice (권장)", "ce_dice")
+        self.segmentation_loss_combo.addItem("CE (픽셀 교차 엔트로피만)", "ce")
+        self.segmentation_loss_combo.setToolTip(
+            "결함 마스크는 대부분 배경이라 픽셀 CE만 쓰면 작은 결함을 놓쳐도 손실이 작습니다.\n"
+            "CE + Dice: 결함 클래스별 겹침 비율(Dice)을 함께 줄여 픽셀 수와 무관하게 결함을 학습합니다.\n"
+            "CE: 9.23까지와 같은 손실입니다. 배경과 결함 면적이 비슷할 때 사용하세요.\n"
+            "255(학습 제외) 픽셀은 두 손실 모두에서 제외합니다."
+        )
+        self.segmentation_loss_label = QLabel("분할 손실:")
+        hp_layout.addRow(self.segmentation_loss_label, self.segmentation_loss_combo)
 
         # ── 입력 크기 (32~1024, 32배수 단위) ──
         # 640 권장: 해상도 보존 vs 학습 속도 최적 밸런스
