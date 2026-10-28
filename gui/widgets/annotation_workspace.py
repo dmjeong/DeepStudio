@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 from core.annotation_tools import AnnotationDraftStore, fingerprint
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Slot
+from PySide6.QtCore import QRectF, QSignalBlocker, Qt, QTimer, Slot
 from PySide6.QtGui import QImage, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -898,6 +898,36 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self.view.fitInView(self.view.image_rect, Qt.AspectRatioMode.KeepAspectRatio)
         self.fit_scale = self.view.transform().m11()
         self._show_zoom()
+
+    def focus_region(self, bounds, key="", seed=None, area=None):
+        """데이터셋 영역 목록에서 연 영역을 확대하고 그 객체를 선택한다 (원본 픽셀 좌표).
+
+        아주 작은 영역(점 결함)도 주변 맥락이 보이도록 최소 48px 정사각형에 여백을 둔다.
+        """
+        x, y, w, h = bounds
+        side = max(w, h, 48)
+        pad = side * 0.6
+        cx, cy = x + w / 2, y + h / 2
+        rect = QRectF(cx - side / 2 - pad, cy - side / 2 - pad, side + 2 * pad, side + 2 * pad)
+        self.view.fitInView(rect.intersected(self.view.image_rect), Qt.AspectRatioMode.KeepAspectRatio)
+        self._show_zoom()
+        if self.task == "detect":
+            index = int(key.split(":")[1]) if key.startswith("row:") else -1
+        elif seed is not None:
+            index = self.document.owner_at(int(seed[0]), int(seed[1]))
+        else:
+            index = -1
+        if index == -1 or index not in self._indices():
+            return
+        if (self.task == "segment" and area is not None
+                and int(np.count_nonzero(self.document._owners == index)) != int(area)):
+            # 원본 PNG 층(클래스당 객체 하나)이나 떨어진 조각이 있는 객체는 선택하면 다른 blob까지
+            # 함께 잡힌다. 확대만 하고, 이 영역만 다루는 방법을 안내한다.
+            self.status.setText("이 영역은 같은 클래스의 다른 영역과 한 객체입니다. 이 영역만 편집하려면 "
+                                "객체를 선택하고 '선택 영역의 연결 부분 나누기'를 쓰세요.")
+            return
+        self._select_many({index})
+        self._select(index)
 
     def _actual_size(self):
         ratio = self.view.viewport().devicePixelRatioF()

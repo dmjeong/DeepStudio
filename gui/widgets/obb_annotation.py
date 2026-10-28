@@ -1,7 +1,7 @@
 """OBB annotation at original image coordinates, with transactional async saves."""
 import copy
 
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPointF
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPointF, QRectF
 from PySide6.QtGui import QColor, QPen, QBrush, QPolygonF, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider,
@@ -240,6 +240,18 @@ class OrientedBoxAnnotationDialog(AnnotationNavigation, QDialog):
         self.rows.append(row)
         self.selected, self.dirty = len(self.rows)-1, True
         self._render()
+
+    def focus_region(self, bounds, key="", seed=None, area=None):
+        """데이터셋 영역 목록에서 연 회전 박스를 확대하고 선택한다 (원본 픽셀 좌표)."""
+        x, y, w, h = bounds
+        side = max(w, h, 48)
+        pad = side * 0.6
+        cx, cy = x + w / 2, y + h / 2
+        rect = QRectF(cx - side / 2 - pad, cy - side / 2 - pad, side + 2 * pad, side + 2 * pad)
+        self.view.fitInView(rect.intersected(self.scene.sceneRect()), Qt.AspectRatioMode.KeepAspectRatio)
+        index = int(key.split(":")[1]) if key.startswith("row:") else -1
+        if 0 <= index < len(self.rows):
+            self._select_box(index)
 
     def _select_box(self, index):
         self.selected = index

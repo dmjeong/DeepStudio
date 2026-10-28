@@ -26,6 +26,7 @@ Deep Vision Studio — 데이터셋 관리 페이지
 
 import os
 import gc
+import weakref
 import json
 import shutil
 import copy
@@ -36,11 +37,11 @@ from PySide6.QtWidgets import (
     QGroupBox, QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QDialog, QSlider,
     QTabWidget, QInputDialog,
-    QTabBar, QMenu, QApplication,
+    QTabBar, QMenu, QApplication, QCheckBox, QProgressDialog,
 )
-from PySide6.QtCore import Qt, Signal, QMimeData, QByteArray, QThread, QCoreApplication, QEvent
+from PySide6.QtCore import Qt, Signal, QMimeData, QByteArray, QThread, QCoreApplication, QEvent, QTimer
 from PySide6.QtGui import (
-    QPixmap, QDragEnterEvent, QDropEvent, QDrag,
+    QPixmap, QDragEnterEvent, QDropEvent, QDrag, QColor,
 )
 
 from core.project import ProjectData, SUPPORTED_TASKS
@@ -444,6 +445,7 @@ class DatasetWidget(QWidget):
 
     about_to_change = Signal()
     project_changed = Signal(object)
+    dataset_index_updated = Signal()  # 스캔 결과가 바뀌면 열린 영역 목록이 다시 읽는다
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -549,6 +551,16 @@ class DatasetWidget(QWidget):
         self.annotate_btn = QPushButton("데이터 티칭 / 정답 그리기")
         self.annotate_btn.clicked.connect(self._edit_selected_annotation)
         annotation_layout.addWidget(self.annotate_btn)
+        # 영역 목록: 데이터셋 전체의 클래스 영역을 크기순으로 보고, 작업실로 바로 열거나 영역만 편집
+        self.region_list_btn = QPushButton("영역 목록")
+        self.region_list_btn.setToolTip("데이터셋 전체의 클래스 영역(blob·박스)을 크기·클래스별로 보고\n"
+                                        "더블클릭으로 작업실에서 그 영역을 확대해 엽니다.")
+        self.region_list_btn.clicked.connect(self._open_region_list)
+        annotation_layout.addWidget(self.region_list_btn)
+        self.overlay_check = QCheckBox("썸네일에 영역 표시")
+        self.overlay_check.setChecked(True)
+        self.overlay_check.toggled.connect(lambda _checked: [self._refresh_browser(s) for s in SPLITS])
+        annotation_layout.addWidget(self.overlay_check)
         annotation_hint = QLabel("이미지 선택 후 편집하거나 더블클릭하세요. 클래스는 이미지 전체가 아닌 객체마다 지정합니다.")
         annotation_hint.setWordWrap(True)
         annotation_layout.addWidget(annotation_hint, 1)
@@ -587,6 +599,24 @@ class DatasetWidget(QWidget):
         self.stats_hint.setStyleSheet("color: #8A92A4; font-size: 11px; padding: 2px 8px;")
         self.stats_hint.hide()
         stats_inner.addWidget(self.stats_hint)
+
+        # 객체 태스크: 클래스별 영역 크기와 학습 입력 크기에서 1px 미만인 영역 수
+        self.size_table = QTableWidget()
+        self.size_table.setColumnCount(5)
+        self.size_table.setHorizontalHeaderLabels(["클래스", "영역", "면적 중앙값", "최소", "학습 1px↓"])
+        self.size_table.verticalHeader().hide()
+        size_header = self.size_table.horizontalHeader()
+        size_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for col in range(1, 5):
+            size_header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        self.size_table.setMaximumHeight(150)
+        self.size_table.hide()
+        stats_inner.addWidget(self.size_table)
+        self.size_warning = QLabel()
+        self.size_warning.setWordWrap(True)
+        self.size_warning.setStyleSheet("color: #E0A030; font-size: 11px; padding: 2px 8px;")
+        self.size_warning.hide()
+        stats_inner.addWidget(self.size_warning)
 
         # 요약 정보
         self.summary_label = QLabel("이미지를 추가해 주세요.")
@@ -1053,13 +1083,17 @@ class DatasetWidget(QWidget):
             return
         self._dataset_index = index
         self._dataset_thumbnails = thumbnails
+        self._dataset_overlays = index.get("overlays", {})
         total = len(index["images"])
         if self.project.task in OBJECT_TASKS:
             self._update_region_table(index)
+            self._update_size_table(index)
             regions = sum(sum(split.get("regions", {}).values()) for split in index["splits"])
             self.summary_label.setText(
                 f"총 {total}장 | 영역 {regions}개 | {len(region_classes(self.project))}개 클래스")
         else:
+            self.size_table.hide()
+            self.size_warning.hide()
             stats = {}
             for split in index["splits"]:
                 for name, count in split["classes"].items():
@@ -1071,6 +1105,103 @@ class DatasetWidget(QWidget):
         self.project.data.image_count = total
         for split in SPLITS:
             self._refresh_browser(split)
+        self.dataset_index_updated.emit()
+
+    def _update_size_table(self, index):
+        """클래스별 영역 크기와 학습 입력 크기에서 1px 미만인 영역 수.
+
+        9.33 실험: 원본 512² → 입력 128²에서 3×3 점 결함(학습 면적 약 0.6px)은 라벨에 남아도
+        가중치 없이는 하나도 검출되지 않았다. 라벨링 단계에서 미리 보여줘 입력 크기·가중치를 정하게 한다.
+        """
+        from widgets.region_list_dialog import region_rows
+
+        rows = region_rows(self.project, index["images"])
+        by_class = {}
+        for row in rows:
+            by_class.setdefault(row["item"]["class"], []).append(row)
+        names = [name for name in region_classes(self.project) if name in by_class]
+        self.size_table.setRowCount(len(names))
+        for line, name in enumerate(names):
+            values = by_class[name]
+            areas = sorted(row["item"]["area"] for row in values)
+            small = sum(row["small"] for row in values)
+            cells = [name, f"{len(values):,}", f"{areas[len(areas) // 2]:,}", f"{areas[0]:,}",
+                     f"{small:,}" + (" ⚠" if small else "")]
+            for column, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                if column:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if column == 4 and small:
+                    item.setForeground(QColor("#E0A030"))
+                    item.setToolTip(f"학습 입력 {self.project.training.input_size}px에서 면적 또는 폭이 "
+                                    "1px보다 작은 영역입니다.")
+                self.size_table.setItem(line, column, item)
+        self.size_table.setVisible(bool(names))
+        small_total = sum(row["small"] for row in rows)
+        self.size_warning.setText(
+            f"⚠ 학습 입력 {self.project.training.input_size}px에서 1px보다 작은 영역 {small_total:,}개. "
+            "라벨에는 남지만 모델이 배우기 어렵습니다(9.33 실험: 가중치 없이 점 결함 검출률 0). "
+            "입력 크기를 키우거나 클래스 가중치 Sqrt를 쓰세요. '영역 목록'에서 확인할 수 있습니다."
+            if small_total else "")
+        self.size_warning.setVisible(bool(small_total))
+
+    # ── 영역 목록 · 영역 단위 편집 ───────────────────
+    def _open_region_list(self):
+        from widgets.region_list_dialog import RegionListDialog
+
+        if not self.project or self.project.task not in OBJECT_TASKS:
+            return
+        if getattr(self, "_dataset_index", None) is None:
+            QMessageBox.information(self, "영역 목록", "데이터 탐색이 끝난 뒤 다시 여세요.")
+            return
+        dialog = RegionListDialog(self, region_classes(self.project))
+        dialog.exec()
+        dialog.deleteLater()
+
+    def open_region(self, row):
+        """영역 목록에서 고른 영역을 작업실에서 확대·선택한 상태로 연다."""
+        item = row["item"]
+        self._open_image_preview(row["path"], focus=(item["bbox"], item["key"], item["seed"], item["area"]))
+
+    def edit_regions(self, rows, class_id):
+        """선택한 영역만 클래스를 바꾸거나(class_id) 지운다(None). 이미지마다 백업 후 저장."""
+        from core.dataset_regions import edit_regions
+
+        if not rows or not self._ensure_idle():
+            return False
+        by_image = {}
+        for row in rows:
+            by_image.setdefault((row["split"], row["path"]), []).append(row["item"])
+        names = self.project.data.class_names
+        action = "삭제" if class_id is None else f"'{names[class_id]}' 클래스로 변경"
+        answer = QMessageBox.question(
+            self, "영역 편집",
+            f"선택한 영역 {len(rows)}개(이미지 {len(by_image)}장)를 {action}합니다.\n"
+            "각 이미지의 다른 영역은 그대로 두고, 저장 전 원본 정답을 백업합니다.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return False
+        self.about_to_change.emit()
+        progress = QProgressDialog("영역 편집 중...", None, 0, len(by_image), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        done, error = 0, None
+        for (split, path), items in by_image.items():
+            try:
+                edit_regions(self.project, split, path, items, class_id)
+            except (OSError, ValueError) as exc:
+                error = f"{os.path.basename(path)}: {exc}"
+                break
+            done += 1
+            progress.setValue(done)
+        progress.close()
+        self.set_project(self.project)
+        self.project_changed.emit(self.project)
+        if error:
+            QMessageBox.warning(self, "영역 편집 중단",
+                                f"이미지 {done}장은 저장했고, 다음 이미지에서 멈췄습니다.\n{error}")
+            return False
+        self.summary_label.setText(f"영역 {len(rows)}개 {action} 완료 (이미지 {done}장, 원본 백업)")
+        return True
 
     def _update_region_table(self, index):
         """객체 태스크 통계: 클래스별 '영역 수 · 영역이 있는 이미지 수'와 영역 없는 이미지 행.
@@ -1167,8 +1298,11 @@ class DatasetWidget(QWidget):
         cols = 4
         for i, (img_path, label) in enumerate(display_images):
             row, col = divmod(i, cols)
-            thumb = ImageThumbnail(img_path, label, split=split_name,
-                                   thumbnail=getattr(self, "_dataset_thumbnails", {}).get(img_path))
+            thumbnail = getattr(self, "_dataset_thumbnails", {}).get(img_path)
+            if task in OBJECT_TASKS and self.overlay_check.isChecked():
+                # 영역을 클래스 색으로 겹친 썸네일 (스캔 스레드에서 합성)
+                thumbnail = getattr(self, "_dataset_overlays", {}).get(img_path, thumbnail)
+            thumb = ImageThumbnail(img_path, label, split=split_name, thumbnail=thumbnail)
             # 인터랙션 시그널 연결 (선택 / 드래그 / 우클릭 메뉴)
             thumb.clicked.connect(self._on_thumb_clicked)
             thumb.drag_started.connect(self._on_thumb_drag)
@@ -1206,8 +1340,11 @@ class DatasetWidget(QWidget):
             return
         self._open_image_preview(next(iter(self._selected_paths)))
 
-    def _open_image_preview(self, image_path: str):
-        """데이터셋 격자의 썸네일을 원본 해상도로 확인한다."""
+    def _open_image_preview(self, image_path: str, focus=None):
+        """데이터셋 격자의 썸네일을 원본 해상도로 확인한다.
+
+        focus=(bbox, 객체 키, 점, 면적)이면 첫 작업실이 그 영역을 확대해 선택한 상태로 열린다(영역 목록).
+        """
         if not os.path.isfile(image_path):
             QMessageBox.warning(self, "이미지 보기", "이미지 파일을 찾을 수 없습니다.")
             return
@@ -1260,6 +1397,11 @@ class DatasetWidget(QWidget):
                             dialog = OBBAnnotationDialog(image_path, project.data.class_names, rows,
                                 save_annotation, self,
                                 task=project.task, add_class=add_class, navigation=(index, len(paths)), image_paths=paths, preferences=annotation_preferences, label_revision=revision_holder["value"], image_records=records, revision_provider=lambda path: annotation_revision(project,path,split))
+                        if focus is not None and hasattr(dialog, "focus_region"):
+                            # 작업실의 첫 화면 맞춤(QTimer 0) 다음에 실행되도록 같은 큐에 넣는다
+                            target = weakref.ref(dialog)
+                            QTimer.singleShot(0, lambda f=focus: target() and target().focus_region(*f))
+                            focus = None
                         dialog.exec()
                         delta = getattr(dialog, "navigation_delta", 0)
                         _release_annotation_dialog(dialog)
