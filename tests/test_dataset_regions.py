@@ -40,7 +40,7 @@ def test_scan_counts_regions_per_image_and_split(tmp_path):
     assert rows["a"]["regions"] == {"scratch": 3, "dent": 1}
     assert rows["b"]["regions"] == {} and rows["b"]["annotated"]
     assert rows["c"]["regions"] == {} and not rows["c"]["annotated"]
-    # The existing image-level contract is unchanged (web and filters still read it).
+    # The existing image-level contract is unchanged (the web page and filters still read it).
     assert rows["a"]["classes"] == ["background", "dent", "scratch"]
     train = index["splits"][0]
     assert train["regions"] == {"scratch": 3, "dent": 1}
@@ -136,32 +136,3 @@ def test_object_task_class_delete_asks_which_class(tmp_path):
         widget.close()
         widget.deleteLater()
     app.processEvents()
-
-
-def test_web_api_returns_regions_and_filters_background_only_images(tmp_path):
-    pytest.importorskip("fastapi")
-    import webapp  # noqa: F401
-    from fastapi.testclient import TestClient
-    from webapp.server import create_app
-
-    with TestClient(create_app(tmp_path / "state"), base_url="http://127.0.0.1",
-                    headers={"X-Studio-Request": "1"}) as client:
-        created = client.post("/api/projects", json={"name": "web regions", "task": "segment",
-                                                     "parent": str(tmp_path), "class_names": NAMES})
-        assert created.status_code == 200, created.text
-        project = ProjectManager.load(created.json()["filepath"])
-        images = Path(project.data.train_dir)
-        masks = images.parent.parent / "masks" / "train"
-        masks.mkdir(parents=True, exist_ok=True)
-        for name in "ab":
-            Image.new("L", (20, 20), 90).save(images / f"{name}.png")
-        mask = np.zeros((20, 20), np.uint8)
-        mask[2:4, 2:8] = 1
-        Image.fromarray(mask, "L").save(masks / "a.png")
-        Image.fromarray(np.zeros((20, 20), np.uint8), "L").save(masks / "b.png")
-        summary = client.get("/api/dataset?rescan=true").json()
-        assert summary["splits"][0]["regions"] == {"scratch": 1} and summary["splits"][0]["empty"] == 1
-        rows = client.get("/api/dataset/images", params={"split": "train"}).json()["images"]
-        assert {row["name"]: row["regions"] for row in rows} == {"a.png": {"scratch": 1}, "b.png": {}}
-        empty = client.get("/api/dataset/images", params={"split": "train", "status": "empty"}).json()
-        assert [row["name"] for row in empty["images"]] == ["b.png"]

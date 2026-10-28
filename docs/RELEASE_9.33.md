@@ -53,7 +53,7 @@ Dice_c = (2·Σ p_c·y_c + 1) / (Σ p_c + Σ y_c + 1)   (255 픽셀은 p, y 모�
 | 클래스 삭제 | 상단 클래스 선택값 | 삭제할 클래스를 묻는 창 (배경 제외) |
 
 - 영역: 마스크는 같은 클래스 픽셀의 8-연결 성분, 박스·폴리곤은 정답 한 줄이다. 배경(0)과 255는 영역이 아니다.
-- `scan_dataset`이 이미지별 `regions`, 분할별 `regions`/`empty`/`unlabeled`를 추가로 돌려준다. 기존 `classes`는 그대로다. 웹 API는 `status=empty` 필터를 받는다.
+- `scan_dataset`이 이미지별 `regions`, 분할별 `regions`/`empty`/`unlabeled`를 추가로 돌려준다. 기존 `classes`는 그대로다. 데스크톱 화면만 바꿨다. 웹 화면과 웹 서버 코드는 바꾸지 않았다(웹 데이터셋 API 응답에는 같은 스캔 결과라 새 필드가 함께 실리지만 웹 화면은 읽지 않는다).
 - 마스크 영역 집계는 파일 경로·수정 시각·크기로 캐시한다. 2048² 마스크 60장의 첫 탐색 1.69초는 이전과 같고, 다시 탐색할 때 1.58초 → 0.01초다.
 
 ### 클래스 이름과 정렬
@@ -117,11 +117,11 @@ CE만 쓸 때 seed에 따라 0.47/0.29로 크게 흔들렸다. Dice를 더하면
 
 ### 테스트
 
-- 새 회귀 테스트 `tests/test_dataset_regions.py`: 이미지·분할 영역 수, 8-연결과 255 제외, 집계 캐시와 무효화, 박스 영역, 데스크톱 화면(클래스 선택 숨김, 필터, 배지, 통계 표, 클래스 삭제 대상), 웹 API `regions`와 `status=empty`.
+- 새 회귀 테스트 `tests/test_dataset_regions.py`: 이미지·분할 영역 수, 8-연결과 255 제외, 집계 캐시와 무효화, 박스 영역, 데스크톱 화면(클래스 선택 숨김, 필터, 배지, 통계 표, 클래스 삭제 대상).
 - 새 회귀 테스트 `tests/test_segmentation_imbalance.py`: 얇은 결함 보존·끊김, 큰 결함 불변, 255/다른 클래스 보존, 캐시 무효화, 픽셀 수, CE 동일성, Dice 신호, 255 제외, 빈 배치, 설정 검증, `train_builtin` 기록, 픽셀 없는 클래스 오류, 기본 손실, Custom CSP 손실, 객체 ID 재부여 시 캐시 유지, 마스크 미리 읽기 무효화.
 - `tests/test_annotation_navigation.py`, `tests/test_segmentation_training_contracts.py`(9.33 1차 커밋).
 - 전체 `pytest tests/`: 1,122 통과, 9 건너뜀, 1 실패. 실패한 `test_inference_contracts::test_failed_batch_image_is_error_and_preserves_timing`은 9.33 이전 커밋에서도 같은 이유로 실패하며 이번 변경과 무관하다.
-- `ruff`(CI 범위)와 `git diff --check` 통과. 웹: `npm run build`(타입 검사 포함)와 `npm test` 통과.
+- `ruff`(CI 범위)와 `git diff --check` 통과.
 
 ## 호환 범위
 
