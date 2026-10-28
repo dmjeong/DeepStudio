@@ -3,8 +3,9 @@
 import copy
 import io
 import shutil
+import threading
 import uuid
-from collections import Counter
+from collections import Counter, OrderedDict
 from datetime import datetime
 from pathlib import Path
 
@@ -108,19 +109,72 @@ def read_annotations(path, task, count):
     return result
 
 
+# 마스크 영역 집계 캐시: (경로, 수정 시각, 크기, 클래스 수) → (픽셀 클래스 번호들, {번호: 영역 수}).
+# 데이터셋 화면은 이미지 추가·이동·저장 때마다 전체를 다시 탐색하므로, 바뀌지 않은 마스크는
+# 다시 디코딩하지 않는다. 항목이 작아(튜플 두 개) 2만 장까지 유지한다.
+_REGION_CACHE = OrderedDict()
+_REGION_CACHE_LIMIT = 20000
+_REGION_LOCK = threading.Lock()
+
+
+def mask_regions(path, class_count):
+    """클래스 번호 마스크의 (픽셀이 있는 클래스 번호, 클래스별 영역 수).
+
+    분할의 클래스는 이미지 전체가 아니라 이미지 안의 영역(blob)에 붙는다. 영역은 같은 클래스
+    픽셀의 8-연결 성분이다. 배경(0)과 학습 제외(255)는 영역으로 세지 않는다.
+    """
+    import cv2
+
+    stat = Path(path).stat()
+    key = (str(path), stat.st_mtime_ns, stat.st_size, class_count)
+    with _REGION_LOCK:
+        cached = _REGION_CACHE.get(key)
+        if cached is not None:
+            _REGION_CACHE.move_to_end(key)
+            return cached
+    with Image.open(path) as mask:
+        pixels = np.asarray(mask)
+    if pixels.ndim != 2:
+        raise ValueError("정수 클래스 마스크 필요")
+    if pixels.dtype == np.uint8:  # 정렬하는 np.unique(4096²에서 약 0.1초) 대신 히스토그램
+        ids = {int(i) for i in np.flatnonzero(cv2.calcHist([pixels], [0], None, [256], [0, 256]).ravel())}
+    else:
+        ids = {int(i) for i in np.unique(pixels)}
+    ids.discard(255)
+    if any(i < 0 or i >= class_count for i in ids):
+        raise ValueError("마스크 클래스 범위 오류")
+    regions = {}
+    for class_id in sorted(ids - {0}):
+        member = (pixels == class_id).astype(np.uint8)
+        regions[class_id] = int(cv2.connectedComponents(member, connectivity=8)[0]) - 1
+    result = (tuple(sorted(ids)), regions)
+    with _REGION_LOCK:
+        _REGION_CACHE[key] = result
+        while len(_REGION_CACHE) > _REGION_CACHE_LIMIT:
+            _REGION_CACHE.popitem(last=False)
+    return result
+
+
 @guarded_dataset
 def scan_dataset(project, cancelled=lambda: False):
-    """정답 클래스별 이미지 수를 계산. 손상 정답은 해당 이미지에 오류로 표시."""
+    """정답 클래스별 이미지 수를 계산. 손상 정답은 해당 이미지에 오류로 표시.
+
+    detect/obb/segment는 이미지마다 클래스별 영역 수(regions)도 기록한다. 박스·폴리곤은 정답 한 줄,
+    마스크는 같은 클래스 픽셀의 연결 성분 하나가 영역 하나다. 분할의 배경(0)은 영역이 아니다.
+    """
     records, splits = [], []
     names = project.data.class_names
     for split in SPLITS:
         root = split_root(project, split)
         counts = Counter()
+        region_totals = Counter()
+        unlabeled = empty = 0
         images = [p for p in _walk_files(root) if p.suffix.lower() in IMAGE_EXTENSIONS]
         for path in images:
             if cancelled():
                 raise InterruptedError("데이터 탐색 취소")
             classes, error, annotated = set(), "", False
+            regions = Counter()
             try:
                 if project.task in {"classify", "anomaly"}:
                     parts = path.relative_to(root).parts
@@ -130,24 +184,23 @@ def scan_dataset(project, cancelled=lambda: False):
                     for kind, label in sidecars(project, path, split):
                         annotated = True
                         if kind == "labels":
-                            classes.update(
-                                names[row["class_id"]]
-                                for row in read_annotations(
-                                    label, project.task, len(names)
-                                )
-                            )
+                            rows = read_annotations(label, project.task, len(names))
+                            classes.update(names[row["class_id"]] for row in rows)
+                            regions.update(row["class_id"] for row in rows)
                         else:
-                            with Image.open(label) as mask:
-                                pixels = np.asarray(mask)
-                                if pixels.ndim != 2:
-                                    raise ValueError("정수 클래스 마스크 필요")
-                                ids = {int(i) for i in np.unique(pixels)} - {255}
-                                if any(i < 0 or i >= len(names) for i in ids):
-                                    raise ValueError("마스크 클래스 범위 오류")
-                                classes.update(names[i] for i in ids)
+                            ids, mask_counts = mask_regions(label, len(names))
+                            classes.update(names[i] for i in ids)
+                            regions.update(mask_counts)
             except (OSError, ValueError) as exc:
                 error = str(exc)
             counts.update(classes)
+            if project.task == "segment":
+                regions.pop(0, None)  # 폴리곤 정답의 배경 번호도 영역이 아니다
+            region_names = {names[i]: regions[i] for i in sorted(regions) if regions[i]}
+            region_totals.update(region_names)
+            if project.task in {"detect", "obb", "segment"} and not error:
+                unlabeled += not annotated
+                empty += annotated and not region_names
             stat = path.stat()
             records.append(
                 {
@@ -155,6 +208,7 @@ def scan_dataset(project, cancelled=lambda: False):
                     "name": path.name,
                     "split": split,
                     "classes": sorted(classes),
+                    "regions": region_names,
                     "annotated": annotated,
                     "error": error,
                     "revision": f"{stat.st_mtime_ns}-{stat.st_size}",
@@ -168,6 +222,9 @@ def scan_dataset(project, cancelled=lambda: False):
                 "classes": {
                     name: counts[name] for name in dict.fromkeys([*names, *counts])
                 },
+                "regions": {name: region_totals[name] for name in names if region_totals[name]},
+                "unlabeled": unlabeled,
+                "empty": empty,
             }
         )
     return {

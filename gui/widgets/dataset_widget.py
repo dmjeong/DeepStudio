@@ -59,6 +59,35 @@ IMAGE_MIME_TYPE = "application/x-custom_csp-dataset-images"
 # ── 분할 목록 (탭 라벨은 텍스트 온리) ──
 SPLITS = ["train", "val", "test"]
 
+# 객체 태스크(detect/obb/segment)의 클래스는 이미지가 아니라 이미지 안의 영역(박스·폴리곤·
+# 마스크 blob)에 붙는다. 데이터셋 화면은 "이미지가 어느 클래스인가" 대신
+# "이미지 안에 어떤 클래스 영역이 몇 개 있는가"를 보여준다.
+OBJECT_TASKS = ("detect", "segment", "obb")
+FILTER_UNLABELED = "미라벨 이미지"
+
+
+def empty_filter_label(task):
+    """정답 파일은 있지만 클래스 영역이 하나도 없는 이미지 (분할: 배경만, 탐지: 객체 없음)."""
+    return "배경만 있는 이미지" if task == "segment" else "객체 없는 이미지"
+
+
+def region_classes(project):
+    """영역으로 지정할 수 있는 클래스. 시맨틱 분할의 0번(배경)은 영역이 아니다."""
+    names = list(project.data.class_names)
+    return names[1:] if project.task == "segment" else names
+
+
+def region_summary(row, task):
+    """썸네일 배지 문구: 'scratch 3 · dent 1' / 배경만 / 미라벨 / 정답 오류."""
+    if row.get("error"):
+        return "정답 오류"
+    regions = row.get("regions") or {}
+    if regions:
+        return " · ".join(f"{name} {count}" for name, count in regions.items())
+    if not row.get("annotated"):
+        return "미라벨"
+    return "배경만" if task == "segment" else "객체 없음"
+
 
 class _MaskDocumentPrefetcher:
     """다음 이미지의 마스크 문서를 사용자가 현재 이미지를 편집하는 동안 미리 준비한다.
@@ -289,14 +318,19 @@ class ImageThumbnail(QFrame):
         )
         layout.addWidget(name_label)
 
-        # 클래스 배지 (어느 클래스 소속인지 한눈에)
+        # 클래스 배지: 분류는 소속 클래스, 객체 태스크는 이미지 안의 클래스별 영역 수
+        # ("scratch 3 · dent 1"). 길면 말줄임하고 전체 문구는 툴팁으로 보여준다.
         if label:
-            badge = QLabel(label[:16])
+            badge = QLabel()
             badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            muted = label in ("미라벨", "배경만", "객체 없음")
+            color = "#E05555" if label == "정답 오류" else "#8A92A4" if muted else "#5590F0"
             badge.setStyleSheet(
-                "color: #5590F0; font-size: 10px; font-weight: bold;"
+                f"color: {color}; font-size: 10px; font-weight: bold;"
                 "border: none; background: transparent;"
             )
+            badge.setText(badge.fontMetrics().elidedText(label, Qt.TextElideMode.ElideRight, 128))
+            badge.setToolTip(label)
             layout.addWidget(badge)
 
     # ── 선택 상태 ──
@@ -547,6 +581,13 @@ class DatasetWidget(QWidget):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         stats_inner.addWidget(self.stats_table)
 
+        # 객체 태스크 통계 읽는 법 (클래스는 이미지가 아닌 영역 단위)
+        self.stats_hint = QLabel()
+        self.stats_hint.setWordWrap(True)
+        self.stats_hint.setStyleSheet("color: #8A92A4; font-size: 11px; padding: 2px 8px;")
+        self.stats_hint.hide()
+        stats_inner.addWidget(self.stats_hint)
+
         # 요약 정보
         self.summary_label = QLabel("이미지를 추가해 주세요.")
         self.summary_label.setStyleSheet("color: #8A92A4; padding: 8px;")
@@ -653,6 +694,15 @@ class DatasetWidget(QWidget):
         splitter.setSizes([350, 650])
         layout.addWidget(splitter, stretch=1)
 
+    @staticmethod
+    def _filter_options(project):
+        """분할 탭 필터 항목 ('전체' 포함). 객체 태스크는 '이 클래스 영역이 있는 이미지'로 거른다."""
+        if project.task == "anomaly":
+            return ["전체", "good", "defect"]
+        if project.task in OBJECT_TASKS:
+            return ["전체", *region_classes(project), FILTER_UNLABELED, empty_filter_label(project.task)]
+        return ["전체", *project.data.class_names]
+
     def set_project(self, project: ProjectData):
         """프로젝트 설정 → 데이터 폴더 자동 인식 + UI 갱신"""
         project_key = os.path.normcase(os.path.realpath(project.project_dir))
@@ -660,8 +710,8 @@ class DatasetWidget(QWidget):
             self._class_filter = "전체"
         self._filter_project_key = project_key
         self.project = project
-        self.annotation_row.setVisible(project.task in ("detect", "segment", "obb"))
-        available = ["good", "defect"] if project.task == "anomaly" else project.data.class_names
+        self.annotation_row.setVisible(project.task in OBJECT_TASKS)
+        available = self._filter_options(project)
         if self._class_filter != "전체" and self._class_filter not in available:
             self._class_filter = "전체"
         task_info = SUPPORTED_TASKS.get(project.task, {})
@@ -683,12 +733,22 @@ class DatasetWidget(QWidget):
             self.class_combo.show()
             self.add_class_btn.hide()
             self.del_class_btn.hide()
-        elif project.task in ("classify", "detect", "segment", "obb"):
-            # Segment도 클래스 번호 관리 가능. 이미지 추가 경로는 클래스와 무관.
+        elif project.task == "classify":
+            # 분류: 이미지가 곧 클래스. 추가할 이미지의 클래스 폴더를 고른다.
             for cls_name in project.data.class_names:
                 self.class_combo.addItem(cls_name)
             self.class_label_widget.show()
             self.class_combo.show()
+            self.add_class_btn.show()
+            self.del_class_btn.show()
+        elif project.task in OBJECT_TASKS:
+            # 객체 태스크: 이미지는 클래스 없이 images/{split}에 추가하고, 클래스는
+            # 작업실에서 영역마다 지정한다. 그래서 이미지 추가 줄에 클래스 선택을 두지 않는다.
+            # (콤보는 분할 탭 필터와의 동기화를 위해 숨긴 채 유지)
+            for cls_name in available[1:]:
+                self.class_combo.addItem(cls_name)
+            self.class_label_widget.hide()
+            self.class_combo.hide()
             self.add_class_btn.show()
             self.del_class_btn.show()
 
@@ -706,12 +766,7 @@ class DatasetWidget(QWidget):
             filter_combo = self.tab_filters.get(split_name)
             if filter_combo:
                 filter_combo.clear()
-                filter_combo.addItem("전체")
-                if project.task == "anomaly":
-                    filter_combo.addItems(["good", "defect"])
-                else:
-                    for cls_name in project.data.class_names:
-                        filter_combo.addItem(cls_name)
+                filter_combo.addItems(available)
                 filter_combo.setCurrentText(self._class_filter)
 
         self._syncing = False
@@ -789,9 +844,10 @@ class DatasetWidget(QWidget):
                 skipped += 1
 
         # 결과 알림
+        target = split if task in OBJECT_TASKS else f"{split}/{self.class_combo.currentText()}"
         self.summary_label.setText(
-            f"{copied}장 추가 완료 ({split}/{self.class_combo.currentText()}) "
-            f"| 건너뜀: {skipped}장"
+            f"{copied}장 추가 완료 ({target}) | 건너뜀: {skipped}장"
+            + (" | 클래스는 정답 그리기에서 영역마다 지정" if task in OBJECT_TASKS and copied else "")
         )
 
         # 새 Detection 이미지는 정답이 없어 클래스 필터에서 숨겨지지 않게 한다.
@@ -886,7 +942,20 @@ class DatasetWidget(QWidget):
         """영향 범위 검증 후 확인. 정답 번호와 프로젝트를 함께 변경."""
         if not self._ensure_idle():
             return
-        name = self.class_combo.currentText()
+        if self.project.task in OBJECT_TASKS:
+            # 객체 태스크는 상단 클래스 선택이 없으므로 삭제할 클래스를 직접 고른다.
+            options = region_classes(self.project)
+            if not options:
+                QMessageBox.warning(self, "클래스 삭제 불가", "삭제할 수 있는 클래스가 없습니다.")
+                return
+            current = self._class_filter if self._class_filter in options else options[0]
+            name, accepted = QInputDialog.getItem(
+                self, "클래스 삭제", "삭제할 클래스 (이 클래스의 영역도 함께 지웁니다):",
+                options, options.index(current), False)
+            if not accepted:
+                return
+        else:
+            name = self.class_combo.currentText()
         if not name:
             QMessageBox.warning(self, "클래스 삭제 불가", "삭제할 클래스 선택 필요")
             return
@@ -984,21 +1053,65 @@ class DatasetWidget(QWidget):
             return
         self._dataset_index = index
         self._dataset_thumbnails = thumbnails
-        stats = {}
-        for split in index["splits"]:
-            for name, count in split["classes"].items():
-                stats.setdefault(name, {})[split["split"]] = count
-        if not stats:
-            stats = {"images": {s["split"]: s["count"] for s in index["splits"]}}
-        self._update_stats_table(stats)
         total = len(index["images"])
+        if self.project.task in OBJECT_TASKS:
+            self._update_region_table(index)
+            regions = sum(sum(split.get("regions", {}).values()) for split in index["splits"])
+            self.summary_label.setText(
+                f"총 {total}장 | 영역 {regions}개 | {len(region_classes(self.project))}개 클래스")
+        else:
+            stats = {}
+            for split in index["splits"]:
+                for name, count in split["classes"].items():
+                    stats.setdefault(name, {})[split["split"]] = count
+            if not stats:
+                stats = {"images": {s["split"]: s["count"] for s in index["splits"]}}
+            self._update_stats_table(stats)
+            self.summary_label.setText(f"총 {total}장 | {len(index['class_names'])}개 클래스")
         self.project.data.image_count = total
-        self.summary_label.setText(f"총 {total}장 | {len(index['class_names'])}개 클래스")
         for split in SPLITS:
             self._refresh_browser(split)
 
+    def _update_region_table(self, index):
+        """객체 태스크 통계: 클래스별 '영역 수 · 영역이 있는 이미지 수'와 영역 없는 이미지 행.
+
+        ┌──────────┬─────────────┬────────┐
+        │ 클래스    │ Train       │ Val …  │
+        │ scratch  │ 12개 · 5장   │ …      │  ← 영역(blob/박스) 12개가 이미지 5장에 있음
+        │ 배경만    │ 3장          │        │  ← 정답은 있지만 클래스 영역이 없는 이미지
+        │ 미라벨    │ 7장          │        │  ← 정답 파일이 없는 이미지
+        └──────────┴─────────────┴────────┘
+        """
+        task = self.project.task
+        by_split = {split["split"]: split for split in index["splits"]}
+        rows = []
+        for name in region_classes(self.project):
+            cells = []
+            for split_name in SPLITS:
+                split = by_split.get(split_name, {})
+                regions = split.get("regions", {}).get(name, 0)
+                images = split.get("classes", {}).get(name, 0)
+                cells.append(f"{regions}개 · {images}장" if regions else "—")
+            rows.append((name, cells))
+        rows.append(("배경만" if task == "segment" else "객체 없음",
+                     [f"{by_split.get(s, {}).get('empty', 0)}장" for s in SPLITS]))
+        rows.append(("미라벨", [f"{by_split.get(s, {}).get('unlabeled', 0)}장" for s in SPLITS]))
+        self.stats_table.setRowCount(len(rows))
+        for row, (name, cells) in enumerate(rows):
+            self.stats_table.setItem(row, 0, QTableWidgetItem(name))
+            for column, text in enumerate(cells, start=1):
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self.stats_table.setItem(row, column, item)
+        unit = "마스크에서 같은 클래스 픽셀이 이어진 덩어리(blob)" if task == "segment" else "박스·폴리곤 하나"
+        self.stats_hint.setText(
+            f"클래스는 이미지 전체가 아니라 이미지 안의 영역마다 붙습니다. "
+            f"'12개 · 5장' = 영역 12개가 이미지 5장에 있음. 영역 = {unit}.")
+        self.stats_hint.show()
+
     def _update_stats_table(self, stats: dict):
         """통계 테이블 갱신"""
+        self.stats_hint.hide()
         self.stats_table.setRowCount(len(stats))
 
         total_all = 0
@@ -1172,8 +1285,26 @@ class DatasetWidget(QWidget):
         index = getattr(self, "_dataset_index", None)
         if index is None:
             return []
-        return [(row["path"], ", ".join(row["classes"]) or "미라벨") for row in index["images"]
-                if row["split"] == split_name and (filter_class == "전체" or filter_class in row["classes"])]
+        rows = [row for row in index["images"] if row["split"] == split_name]
+        if task not in OBJECT_TASKS:
+            return [(row["path"], ", ".join(row["classes"]) or "미라벨") for row in rows
+                    if filter_class == "전체" or filter_class in row["classes"]]
+
+        # 객체 태스크: 배지는 이미지 안의 클래스별 영역 수, 필터는 그 클래스 영역이 있는 이미지.
+        def matches(row):
+            regions = row.get("regions") or {}
+            if filter_class == "전체":
+                return True
+            if filter_class in regions:
+                return True
+            if filter_class in self.project.data.class_names:  # 같은 이름의 클래스가 우선
+                return False
+            if filter_class == FILTER_UNLABELED:
+                return not row["annotated"] and not row["error"]
+            if filter_class == empty_filter_label(task):
+                return row["annotated"] and not regions and not row["error"]
+            return False
+        return [(row["path"], region_summary(row, task)) for row in rows if matches(row)]
 
 
     # ══════════════════════════════════════════════════

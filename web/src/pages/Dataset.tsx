@@ -5,8 +5,10 @@ import { AnnotationEditor } from "../annotation-editor";
 import { useDraft } from "../drafts";
 import type { PageProps } from "../page-context";
 
-export interface DatasetImage { path: string; name: string; split: string; classes: string[]; annotated: boolean; error: string; revision: string }
-interface DatasetInfo { splits: { split: string; count: number; classes: Record<string, number> }[]; class_names: string[]; root: string }
+export interface DatasetImage { path: string; name: string; split: string; classes: string[]; regions?: Record<string, number>; annotated: boolean; error: string; revision: string }
+interface DatasetInfo { splits: { split: string; count: number; classes: Record<string, number>; regions?: Record<string, number>; empty?: number; unlabeled?: number }[]; class_names: string[]; root: string }
+// 객체 태스크(detect/obb/segment)는 클래스가 이미지가 아니라 이미지 안의 영역(박스·폴리곤·마스크 blob)에 붙는다.
+const OBJECT_TASKS = ["detect", "segment", "obb"];
 export function Dataset({ project, state, act, refresh, busy }: PageProps & { project: Project }) {
   const [root, setRoot] = useDraft(project.filepath, "dataset-root", project.data.root as string);
   const [data, setData] = useState<DatasetInfo | null>(null);
@@ -64,7 +66,11 @@ export function Dataset({ project, state, act, refresh, busy }: PageProps & { pr
     setJob(j.id); setSelected([]); setDialog(null); await refresh(); return j.id;
   };
   const toggle = (path: string) => setSelected(old => old.includes(path) ? old.filter(p => p !== path) : [...old, path]);
-  const counts = data?.splits.find(s => s.split === split)?.classes || {};
+  const splitInfo = data?.splits.find(s => s.split === split);
+  const counts = splitInfo?.classes || {};
+  const regionCounts = splitInfo?.regions || {};
+  const objectTask = OBJECT_TASKS.includes(project.task);
+  const emptyLabel = project.task === "segment" ? "배경만" : "객체 없음";
   const names: string[] = project.data.class_names;
   const reclassNames = project.task === "segment" ? names.slice(1) : names;
   useEffect(() => {
@@ -89,7 +95,9 @@ export function Dataset({ project, state, act, refresh, busy }: PageProps & { pr
         <h2>클래스</h2>
         {project.task === "segment" && <p className="muted">클래스 이름은 라벨을 만들기 전에도 추가할 수 있습니다. 이미지에서 클래스를 지정하려면 열어서 해당 영역을 폴리곤이나 브러시로 표시하고 저장하세요. 세그멘테이션 학습은 저장된 마스크가 필요합니다.</p>}
         <button className={!filter ? "class-filter active" : "class-filter"} onClick={() => setFilter("")}>전체 이미지 <span>{data?.splits.find(s => s.split === split)?.count || 0}</span></button>
-        {Array.from(new Set([...names, ...Object.keys(counts)])).map((n, i) => <button key={n} className={filter === n ? "class-filter active" : "class-filter"} onClick={() => setFilter(n)}><span className="class-marker" style={{ background: classColor(i) }} />{n}{project.task === "segment" && i === 0 && <small>배경 ID 0</small>}<span>{counts[n] || 0}</span></button>)}
+        {objectTask && <p className="muted">숫자: 영역 수 · 그 영역이 있는 이미지 수</p>}
+        {Array.from(new Set([...names, ...Object.keys(counts)])).map((n, i) => { const background = project.task === "segment" && i === 0;
+          return <button key={n} className={filter === n ? "class-filter active" : "class-filter"} onClick={() => setFilter(n)}><span className="class-marker" style={{ background: classColor(i) }} />{n}{background && <small>배경 ID 0 · 영역 아님</small>}<span>{objectTask && !background ? `${regionCounts[n] || 0} · ${counts[n] || 0}장` : counts[n] || 0}</span></button>; })}
         <div className="class-actions">
           <Field label="새 클래스 이름"><input value={name} onChange={e => setName(e.target.value)} placeholder="예: scratch" /></Field>
           <button disabled={busy || !name.trim()} onClick={() => act(async () => { await api("/classes", "POST", { name: name.trim() }); setName(""); await refresh(); })}>클래스 추가</button>
@@ -100,7 +108,7 @@ export function Dataset({ project, state, act, refresh, busy }: PageProps & { pr
       <section className="dataset-content">
         <div className="dataset-search">
           <input aria-label="이미지 검색" placeholder="파일 이름으로 검색" value={search} onChange={e => setSearch(e.target.value)} />
-          <select aria-label="라벨 상태" value={status} onChange={e => setStatus(e.target.value)}><option value="all">모든 라벨 상태</option><option value="unlabeled">미라벨 이미지</option><option value="error">정답 오류</option></select>
+          <select aria-label="라벨 상태" value={status} onChange={e => setStatus(e.target.value)}><option value="all">모든 라벨 상태</option><option value="unlabeled">미라벨 이미지</option>{objectTask && <option value="empty">{emptyLabel} 이미지</option>}<option value="error">정답 오류</option></select>
           <button disabled={loading} onClick={() => act(async () => { await api("/dataset?rescan=true"); setRevision(v => v + 1); })}>새로고침</button>
         </div>
         <div className="selection-bar">
@@ -115,7 +123,9 @@ export function Dataset({ project, state, act, refresh, busy }: PageProps & { pr
         {images.images.length ? <div className="dataset-grid-viewport"><div className="dataset-grid">{images.images.map(item => <article key={item.path} className={selected.includes(item.path) ? "image-card selected" : "image-card"}>
           <label className="image-select"><input type="checkbox" aria-label={`${item.name} 선택`} checked={selected.includes(item.path)} onChange={() => toggle(item.path)} /></label>
           <button className="image-open" aria-label={`${item.name} 열기`} onClick={() => { setAnnotationError(""); setOpened(item); }}><img loading="lazy" src={`/api/image?size=256&path=${encodeURIComponent(item.path)}&v=${item.revision}`} alt={item.name} /></button>
-          <div className="image-card-meta"><strong title={item.name}>{item.name}</strong><div>{item.classes.length ? item.classes.map(n => <span key={n} className="image-class">{n}</span>) : <span className="muted">{item.annotated ? "배경 / 정답 없음" : "미라벨"}</span>}</div>{item.error && <span className="error" title={item.error}>정답 오류</span>}</div>
+          <div className="image-card-meta"><strong title={item.name}>{item.name}</strong><div>{objectTask
+            ? (Object.keys(item.regions || {}).length ? Object.entries(item.regions || {}).map(([n, count]) => <span key={n} className="image-class" title={`${n} 영역 ${count}개`}>{n} {count}</span>) : <span className="muted">{item.annotated ? emptyLabel : "미라벨"}</span>)
+            : item.classes.length ? item.classes.map(n => <span key={n} className="image-class">{n}</span>) : <span className="muted">{item.annotated ? "배경 / 정답 없음" : "미라벨"}</span>}</div>{item.error && <span className="error" title={item.error}>정답 오류</span>}</div>
         </article>)}</div></div> : !loading && <Empty>조건에 맞는 이미지가 없습니다. 이미지를 추가하거나 필터를 변경하세요.</Empty>}
         <div className="pagination"><button disabled={!offset} onClick={() => { setOffset(Math.max(0, offset - 36)); setSelected([]); }}>이전</button><span>{images.total ? offset + 1 : 0}–{Math.min(offset + 36, images.total)} / {images.total}</span><button disabled={offset + 36 >= images.total} onClick={() => { setOffset(offset + 36); setSelected([]); }}>다음</button></div>
       </section>

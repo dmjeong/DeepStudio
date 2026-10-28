@@ -457,7 +457,9 @@ def create_app(state_dir=None):
                    and (not class_name or class_name in row["classes"])
                    and q.casefold() in row["name"].casefold()
                    and (status == "all" or status == "unlabeled" and not row["annotated"]
-                        or status == "error" and row["error"])]
+                        or status == "error" and row["error"]
+                        # 정답은 있지만 클래스 영역(박스·폴리곤·마스크 blob)이 없는 이미지
+                        or status == "empty" and row["annotated"] and not row.get("regions") and not row["error"])]
         return {"total": len(records), "images": records[offset:offset + limit]}
 
     @app.get("/api/dataset/annotations")
