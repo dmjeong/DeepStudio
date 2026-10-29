@@ -1,5 +1,5 @@
 """Review saved inference scores without changing model weights or raw results."""
-from dataclasses import asdict, replace
+from dataclasses import fields, replace
 from math import isfinite
 from pathlib import Path, PureWindowsPath
 
@@ -153,10 +153,18 @@ def review_record(record, threshold=None, segment_rules=None):
     return row
 
 
+def result_record(result):
+    """결과 객체 → 기록 dict (얕은 복사). asdict는 결함 목록·혼동 행렬까지 깊은 복사해 배치에서 느리다.
+
+    review_record는 details를 바꾸지 않으므로 얕은 복사로 충분하다.
+    """
+    return {field.name: getattr(result, field.name) for field in fields(result)}
+
+
 def effective_result(result, threshold=None, segment_rules=None):
     if threshold is None and segment_rules is None:
         return result
-    row = review_record(asdict(result), threshold, segment_rules)
+    row = review_record(result_record(result), threshold, segment_rules)
     changes = {key: row[key] for key in ("status", "summary", "color", "threshold")}
     return replace(result, **changes) if any(getattr(result, key) != value for key, value in changes.items()) else result
 

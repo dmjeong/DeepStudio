@@ -1,14 +1,13 @@
 """Sortable inference records with stable image identity and review-only thresholds."""
-from dataclasses import asdict
 
-from PySide6.QtCore import Qt, Signal, QSortFilterProxyModel, QSignalBlocker, QSettings
+from PySide6.QtCore import Qt, Signal, QSortFilterProxyModel, QSignalBlocker, QSettings, QTimer
 from PySide6.QtGui import QStandardItem, QStandardItemModel, QColor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QCheckBox, QPushButton, QDoubleSpinBox, QSpinBox, QSlider, QTableView, QAbstractItemView, QHeaderView,
     QSizePolicy)
 from core.inference_review import (review_record, review_filter_options, source_class, finite,
-                                   normalized_patchcore)
-from core.segment_defects import batch_truth_summary
+                                   normalized_patchcore, result_record)
+from core.segment_defects import batch_truth_summary, judge
 from core.inference_timing import format_result_timing, format_runtime_stages
 
 
@@ -176,6 +175,11 @@ class InferenceReview(QWidget):
         self.reset.clicked.connect(lambda: self.override.setChecked(False))
         self.min_area.valueChanged.connect(self._segment_rules_changed)
         self.min_score.valueChanged.connect(self._segment_rules_changed)
+        # 배치 요약(OK/NG 수·정답 비교)은 결과가 연달아 들어올 때 한 번만 다시 계산한다 (이미지마다 전체를 다시 세지 않음).
+        self._segment_timer = QTimer(self)
+        self._segment_timer.setSingleShot(True)
+        self._segment_timer.setInterval(150)
+        self._segment_timer.timeout.connect(self._sync_segment)
         self.set_saved_threshold(None)
 
     @property
@@ -243,7 +247,7 @@ class InferenceReview(QWidget):
         try:
             self._add_path(result.image_path)
             row = self.rows[result.image_path]
-            record = review_record(asdict(result), self.threshold, self.segment_rules)
+            record = review_record(result_record(result), self.threshold, self.segment_rules)
             values = {2: record["source_class"] or source_class(result.image_path, self.project) or "—",
                       4: record["decision"], 5: record["display_score"],
                       6: round(result.inference_sec * 1000, 3) if finite(result.inference_sec) else None}
@@ -261,7 +265,7 @@ class InferenceReview(QWidget):
             self._update_filters()
             self._sync_threshold()
             self._count()
-            self._sync_segment()
+            self._segment_timer.start()
 
     def _sync_segment(self):
         """분할 결과가 있으면 판정 기준과 배치 요약(OK/NG 수, 정답 비교)을 보여준다."""
@@ -270,7 +274,7 @@ class InferenceReview(QWidget):
         if not results:
             self.segment_summary.setText("추론하면 결함마다 클래스 · 위치 · 면적 · 점수를 보고 OK/NG를 판정합니다.")
             return
-        decisions = [review_record(asdict(r), None, self.segment_rules)["decision"] for r in results]
+        decisions = [judge(r.details, self.segment_rules)["decision"] for r in results]
         text = f"NG {decisions.count('NG')}장 · OK {decisions.count('OK')}장"
         names = (results[0].details or {}).get("class_names") or self.class_names
         summary = batch_truth_summary([r.details for r in results], self.segment_rules, names)
@@ -309,7 +313,7 @@ class InferenceReview(QWidget):
     def _sync_threshold(self):
         results = [r for r in self.raw.values() if r.task == "anomaly"]
         scored = [r for r in results if r.status != "error" and finite(r.score)]
-        normalized = self.score_normalized or (bool(scored) and all(normalized_patchcore(asdict(r)) for r in scored))
+        normalized = self.score_normalized or (bool(scored) and all(normalized_patchcore(result_record(r)) for r in scored))
         with QSignalBlocker(self.value):
             self.value.setRange(0, 1) if normalized else self.value.setRange(-1e12, 1e12)
         self.threshold_panel.setVisible(bool(results) or getattr(self.project, "task", "") == "anomaly" or self.saved_threshold is not None)

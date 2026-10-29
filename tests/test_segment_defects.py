@@ -12,7 +12,7 @@ pytest.importorskip("cv2")
 
 from core.inference_review import review_record  # noqa: E402
 from core.segment_defects import (analyze_segmentation, batch_truth_summary, judge,  # noqa: E402
-                                  load_truth, segment_split_dirs, truth_mask_path)
+                                  load_truth, segment_split_dirs, truth_mask_path, upsample_labels)
 
 NAMES = ["background", "scratch", "dent"]
 
@@ -27,7 +27,7 @@ def _scene():
     truth[3:6, 3:9] = 1
     truth[17:19, 1:3] = 2
     truth[0, 0] = 255  # 학습 제외 픽셀은 비교에서 뺀다
-    probabilities = np.zeros((3, 10, 15), np.float32)
+    probabilities = np.zeros((3, 20, 30), np.float32)  # 마스크와 같은 (모델) 해상도
     probabilities[0], probabilities[1], probabilities[2] = .2, .7, .1
     return labels, truth, probabilities
 
@@ -97,3 +97,58 @@ def test_review_record_judges_desktop_segmentation_and_leaves_web_records_alone(
     web = {"image_path": "a.png", "status": "ok", "task": "segment", "summary": "세그멘테이션",
            "details": {"pixel_counts": {0: 10}}}
     assert review_record(web)["decision"] == "세그멘테이션"
+
+
+def test_upsampling_matches_pil_nearest_exactly():
+    rng = np.random.default_rng(0)
+    for h, w, H, W in ((7, 9, 23, 31), (64, 48, 1000, 777), (50, 60, 31, 45), (512, 512, 2048, 2448)):
+        mask = rng.integers(0, 4, (h, w)).astype(np.uint8)
+        expected = np.asarray(Image.fromarray(mask.astype(np.int32)).resize((W, H), Image.Resampling.NEAREST))
+        assert np.array_equal(upsample_labels(mask, W, H), expected), (h, w, H, W)
+
+
+def test_model_resolution_analysis_equals_full_resolution_reference():
+    """결함은 모델 해상도에서 찾지만 박스·면적·점수·정답 비교는 원본 해상도에서 센 값과 같아야 한다."""
+    rng = np.random.default_rng(3)
+    key = lambda d: (d["class_id"], d["x"], d["y"], d["w"], d["h"], d["area"])  # noqa: E731
+    for trial in range(25):
+        h, w = rng.integers(8, 60, 2)
+        scale = rng.uniform(.6, 4)                      # 1 미만은 원본이 모델 입력보다 작은 경우
+        H, W = max(2, int(h * scale)), max(2, int(w * scale))
+        mask = ((rng.random((h, w)) < .1) * rng.integers(1, 3, (h, w))).astype(np.uint8)
+        probabilities = rng.random((3, h, w)).astype(np.float32)
+        truth = ((rng.random((H, W)) < .05) * rng.integers(1, 3, (H, W))).astype(np.uint8)
+        truth[rng.random((H, W)) < .01] = 255
+        full = upsample_labels(mask, W, H)
+        full_probabilities = np.stack([upsample_labels(p, W, H) for p in probabilities])
+        reference = analyze_segmentation(full, full_probabilities, class_names=NAMES, truth=truth, num_classes=3)
+        fast = analyze_segmentation(mask, probabilities, size=(W, H), class_names=NAMES, truth=truth, num_classes=3)
+        assert sorted(map(key, reference["defects"])) == sorted(map(key, fast["defects"])), trial
+        scores = {key(d): d["score"] for d in reference["defects"]}
+        assert all(abs(scores[key(d)] - d["score"]) < 2e-4 for d in fast["defects"]), trial
+        assert reference["ground_truth"]["confusion"] == fast["ground_truth"]["confusion"], trial
+        pairs = lambda r: sorted((key(r["defects"][p]), key(t)) for t in r["ground_truth"]["defects"]  # noqa: E731
+                                 for p in t["predicted"])
+        assert pairs(reference) == pairs(fast), trial
+
+
+def test_twelve_megapixel_image_post_processing_stays_fast():
+    """회귀: 원본 해상도(12MP)에서 결함을 찾던 버전은 0.4초(정답 비교 0.76초)였다. 지금은 수십 ms."""
+    import time
+    from core.spatial_preview import segmentation_labels, segmentation_preview
+    rng = np.random.default_rng(0)
+    mask = np.zeros((512, 512), np.uint8)
+    mask[100:120, 50:300] = 1
+    mask[300:340, 300:340] = 2
+    mask[rng.integers(0, 512, 200), rng.integers(0, 512, 200)] = 1
+    probabilities = rng.random((3, 512, 512)).astype(np.float32)
+    original = np.zeros((3000, 4096, 3), np.uint8)
+    labels = segmentation_labels(mask, 4096, 3000)
+    segmentation_preview(mask, original, 3, labels=labels, tint_background=False)  # 첫 실행의 메모리 준비 제외
+    started = time.perf_counter()
+    labels = segmentation_labels(mask, 4096, 3000)
+    segmentation_preview(mask, original, 3, labels=labels, tint_background=False)
+    analysis = analyze_segmentation(mask, probabilities, size=(4096, 3000), labels=labels, class_names=NAMES)
+    elapsed = time.perf_counter() - started
+    assert len(analysis["defects"]) > 100
+    assert elapsed < .4, f"12MP 후처리 {elapsed * 1000:.0f} ms"

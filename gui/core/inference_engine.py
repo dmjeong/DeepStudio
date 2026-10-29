@@ -219,7 +219,7 @@ class InferenceOperations:
                 base_preview = paste_crop_preview(original_np, base_preview, crop)
             prediction.details.update(pixel_counts=counts, class_names=list(self.class_names))
             if review is not None:
-                prediction = self._review_segmentation(prediction, image_path, labels, probabilities,
+                prediction = self._review_segmentation(prediction, image_path, pred_mask, labels, probabilities,
                                                        original_np.shape[1::-1], box if crop else None, review)
 
         # ── Grad-CAM 히트맵 생성 & 오버레이 ──
@@ -251,7 +251,7 @@ class InferenceOperations:
             self._set_info((getattr(self, "info", "") or "") + f" | 판정 범위: 중앙 {crop['width']}×{crop['height']} px")
         return prediction
 
-    def _review_segmentation(self, prediction, image_path, labels, probabilities, size, box, review):
+    def _review_segmentation(self, prediction, image_path, mask, labels, probabilities, size, box, review):
         """예측 마스크를 결함 목록(클래스·박스·면적·점수)으로 바꾸고 OK/NG를 판정한다.
 
         review = {"min_area", "min_score", "split_dirs": [(이미지 폴더, 마스크 폴더), ...]}.
@@ -269,12 +269,13 @@ class InferenceOperations:
                 note = f"정답 마스크를 읽지 못했습니다: {exc}"
         offset = (box[0], box[1]) if box else (0, 0)
         try:
-            analysis = analyze_segmentation(labels, probabilities, class_names=names, offset=offset,
-                                            truth=truth, num_classes=self.model.num_classes)
+            analysis = analyze_segmentation(mask, probabilities, size=labels.shape[::-1], labels=labels,
+                                            class_names=names, offset=offset, truth=truth,
+                                            num_classes=self.model.num_classes)
         except ValueError as exc:  # 정답 값 범위 오류는 비교만 빼고 결함은 보고한다
             note = f"정답 비교 생략: {exc}"
-            analysis = analyze_segmentation(labels, probabilities, class_names=names, offset=offset,
-                                            num_classes=self.model.num_classes)
+            analysis = analyze_segmentation(mask, probabilities, size=labels.shape[::-1], labels=labels,
+                                            class_names=names, offset=offset, num_classes=self.model.num_classes)
         details = dict(prediction.details)
         details.update(analysis, defect_rules={"min_area": int(review.get("min_area", 1)),
                                                "min_score": float(review.get("min_score", 0.0))})

@@ -1297,6 +1297,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.batch_time_label.setToolTip(self.batch_time_label.text())
         self.batch_time_label.show()
         self._refresh_grid()
+        self.result_review._sync_segment()  # 배치 요약은 결과가 몰릴 때 미뤄 두므로 끝에서 한 번 확정한다
         if self._current_image in self._inference_results:
             self._display_cached_result(self._current_image)
         self._inference_worker = None

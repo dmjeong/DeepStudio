@@ -33,74 +33,145 @@ def _components(binary):
 
 
 def _nearest_index(size, source):
-    """PIL NEAREST 확대와 같은 대응: 출력 픽셀 중심이 들어가는 입력 픽셀 번호."""
-    return np.minimum(((np.arange(size) + 0.5) * source / size).astype(np.int64), source - 1)
+    """PIL NEAREST 확대와 같은 대응: 출력 픽셀 i가 가져오는 입력 픽셀 번호.
+
+    식으로 흉내 내면 반올림이 한 픽셀씩 어긋나는 크기가 있어, 한 줄짜리 번호 이미지를 PIL로 직접 확대해 얻는다.
+    """
+    from PIL import Image
+    index = Image.fromarray(np.arange(source, dtype=np.int32)[None, :])
+    return np.asarray(index.resize((int(size), 1), Image.Resampling.NEAREST), dtype=np.int64)[0]
+
+
+def upsample_labels(mask, width, height):
+    """모델 해상도 클래스 맵을 (width, height)로 nearest 확대. PIL NEAREST와 같은 결과를 np.take로 만든다."""
+    mask = np.asarray(mask)
+    rows = _nearest_index(height, mask.shape[0])
+    cols = _nearest_index(width, mask.shape[1])
+    return np.take(np.take(mask, rows, axis=0), cols, axis=1)
+
+
+def _histogram(values):
+    """정수 맵의 값별 개수(길이 256 이상). uint8은 OpenCV로 센다 (np.bincount는 int64 변환에 12MP에서 0.4초)."""
+    values = np.asarray(values)
+    if values.dtype == np.uint8:
+        import cv2
+        return cv2.calcHist([np.ascontiguousarray(values)], [0], None, [256], [0, 256]).ravel().astype(np.int64)
+    return np.bincount(values.ravel().astype(np.int64), minlength=256)
+
+
+def _band(binary):
+    """참 픽셀을 모두 담는 행·열 범위 (y0, y1, x0, x1). 없으면 None. 큰 이미지에서 작은 결함만 다루기 위함."""
+    rows = np.flatnonzero(binary.any(axis=1))
+    if not rows.size:
+        return None
+    cols = np.flatnonzero(binary[rows[0]:rows[-1] + 1].any(axis=0))
+    return int(rows[0]), int(rows[-1]) + 1, int(cols[0]), int(cols[-1]) + 1
 
 
 def _name(class_names, class_id):
     return str(class_names[class_id]) if 0 <= class_id < len(class_names) else f"Class {class_id}"
 
 
-def analyze_segmentation(labels, probabilities=None, *, class_names=(), offset=(0, 0), truth=None,
-                         num_classes=None, max_defects=MAX_DEFECTS):
-    """예측 라벨 맵(원본 해상도)을 결함 목록으로 바꾸고, 정답이 있으면 비교한다.
+def analyze_segmentation(mask, probabilities=None, *, size=None, labels=None, class_names=(), offset=(0, 0),
+                         truth=None, num_classes=None, max_defects=MAX_DEFECTS):
+    """예측 마스크를 결함 목록으로 바꾸고, 정답이 있으면 비교한다.
 
-    labels: (H, W) 정수 클래스 맵. 0은 배경이라 결함이 아니다.
-    probabilities: (C, h, w) 모델 해상도 softmax. 결함 점수 = 그 결함 픽셀의 해당 클래스 평균 확률.
+    mask: 모델 해상도 (h, w) 정수 클래스 맵. 0은 배경이라 결함이 아니다.
+    probabilities: mask와 같은 해상도의 (C, h, w) softmax. 결함 점수 = 결함 픽셀의 그 클래스 평균 확률.
+    size: 결함 좌표를 낼 원본(판정 영역) 크기 (W, H). 없으면 mask 크기.
+    labels: 이미 확대해 둔 원본 크기 라벨 맵(정답 비교에만 쓴다. 없으면 만든다).
     offset: 중앙 크롭일 때 원본 이미지 좌표로 옮길 (x, y).
-    truth: labels와 같은 크기의 정답 맵(255 = 학습 제외, 비교에서 뺀다). 없으면 None.
+    truth: 원본(판정 영역) 크기 정답 맵(255 = 학습 제외, 비교에서 뺀다). 없으면 None.
+
+    속도: 결함은 모델 해상도(예: 512²)에서 찾고 원본 좌표로 옮긴다. nearest 확대에서 모델 픽셀 하나는
+    원본의 연속한 직사각형 블록이 되므로 연결 성분·박스·면적·평균 점수가 원본에서 계산한 값과 같다.
+
+        모델 픽셀 열 x ──▶ 원본 열 [start_x[x], start_x[x] + col_w[x])   (col_w = 그 열로 가는 원본 열 수)
+        면적 = Σ 성분 픽셀의 row_h × col_w,  점수 = Σ 확률 × 블록 면적 / 면적
+
+    12MP 이미지에서 원본 해상도 계산은 약 0.4초였고, 이 방식은 수 ms다.
     """
-    labels = np.asarray(labels)
-    if labels.ndim != 2:
+    mask = np.asarray(mask)
+    if mask.ndim != 2:
         raise ValueError("분할 결과는 2차원 클래스 맵이어야 합니다")
-    height, width = labels.shape
-    classes = int(num_classes or max(len(class_names), int(labels.max(initial=0)) + 1))
+    height, width = mask.shape
+    out_w, out_h = (int(size[0]), int(size[1])) if size else (width, height)
+    classes = int(num_classes or max(len(class_names), int(mask.max(initial=0)) + 1))
     ox, oy = int(offset[0]), int(offset[1])
+    rows, cols = _nearest_index(out_h, height), _nearest_index(out_w, width)
+    row_h, col_w = np.bincount(rows, minlength=height), np.bincount(cols, minlength=width)
     if probabilities is not None:
         probabilities = np.asarray(probabilities, dtype=np.float32)
-        rows = _nearest_index(height, probabilities.shape[1])
-        cols = _nearest_index(width, probabilities.shape[2])
+        if probabilities.shape[1:] != mask.shape:
+            raise ValueError("확률 맵과 마스크 해상도가 다릅니다")
+    if (row_h == 0).any() or (col_w == 0).any():
+        # 원본이 모델 입력보다 작으면(축소) 사라지는 모델 픽셀이 있어 원본 해상도에서 그대로 센다 (작아서 빠르다).
+        mask = labels if labels is not None else upsample_labels(mask, out_w, out_h)
+        if probabilities is not None:
+            probabilities = np.take(np.take(probabilities, rows, axis=1), cols, axis=2)
+        labels = mask
+        rows, cols = np.arange(out_h), np.arange(out_w)
+        row_h, col_w = np.ones(out_h, np.int64), np.ones(out_w, np.int64)
+    start_y = np.concatenate([[0], np.cumsum(row_h)[:-1]])
+    start_x = np.concatenate([[0], np.cumsum(col_w)[:-1]])
+    pixel_area = (row_h[:, None] * col_w[None, :]).astype(np.float64)  # 모델 픽셀 하나가 덮는 원본 픽셀 수
+    histogram = None
     if truth is not None:
         truth = np.asarray(truth)
-        if truth.shape != labels.shape:
+        if truth.shape != (out_h, out_w):
             raise ValueError("정답 마스크와 예측 크기가 다릅니다")
-        valid = truth != 255
-        if np.any(truth[valid] >= classes):
+        if labels is None:
+            labels = upsample_labels(mask, out_w, out_h)
+        histogram = _histogram(truth)
+        if histogram[classes:255].any() or len(histogram) > 256:
             raise ValueError("정답 마스크에 모델 클래스 범위를 벗어난 값이 있습니다")
     defects, truth_defects, pairs = [], [], []
     for class_id in range(1, classes):
-        predicted = labels == class_id
-        expected = (truth == class_id) if truth is not None else None
-        if not predicted.any() and (expected is None or not expected.any()):
+        predicted = mask == class_id
+        in_truth = histogram is not None and histogram[class_id] > 0
+        if not predicted.any() and not in_truth:
             continue
         count, components, stats = _components(predicted)
-        scores = None
-        if count > 1 and probabilities is not None and class_id < probabilities.shape[0]:
-            # 모델 해상도 확률을 원본 해상도로 nearest 대응시켜 성분별 평균을 한 번에 구한다.
-            full = probabilities[class_id][rows[:, None], cols[None, :]]
-            sums = np.bincount(components.ravel(), weights=full.ravel(), minlength=count)
-            scores = sums / np.maximum(stats[:, 4], 1)
+        if count > 1:
+            flat = components.ravel()
+            areas = np.bincount(flat, weights=pixel_area.ravel(), minlength=count)
+            scores = None
+            if probabilities is not None and class_id < probabilities.shape[0]:
+                weighted = (probabilities[class_id] * pixel_area).ravel()
+                scores = np.bincount(flat, weights=weighted, minlength=count) / np.maximum(areas, 1)
         first = len(defects)
         for index in range(1, count):
-            x, y, w, h, area = (int(v) for v in stats[index])
+            x, y, w, h = (int(v) for v in stats[index][:4])
+            left, top = int(start_x[x]), int(start_y[y])
             defects.append({"id": len(defects), "class_id": class_id, "class_name": _name(class_names, class_id),
-                            "x": x + ox, "y": y + oy, "w": w, "h": h, "area": area,
+                            "x": left + ox, "y": top + oy,
+                            "w": int(start_x[x + w - 1] + col_w[x + w - 1]) - left,
+                            "h": int(start_y[y + h - 1] + row_h[y + h - 1]) - top,
+                            "area": int(round(areas[index])),
                             "score": None if scores is None else round(float(scores[index]), 4),
-                            "truth": [], "_component": index})
-        if expected is None:
+                            "truth": []})
+        if truth is None:
             continue
-        truth_count, truth_components, truth_stats = _components(expected & valid)
+        if not in_truth:
+            continue
+        # 정답 결함은 그 클래스 픽셀이 있는 범위만 잘라 센다 (원본 전체 연결 성분 계산을 피한다).
+        expected = truth == class_id
+        y0, y1, x0, x1 = _band(expected)
+        expected = expected[y0:y1, x0:x1]
+        truth_count, truth_components, truth_stats = _components(expected)
         base = len(truth_defects)
         for index in range(1, truth_count):
             x, y, w, h, area = (int(v) for v in truth_stats[index])
             truth_defects.append({"id": len(truth_defects), "class_id": class_id,
                                   "class_name": _name(class_names, class_id),
-                                  "x": x + ox, "y": y + oy, "w": w, "h": h, "area": area, "predicted": []})
-        # 같은 클래스의 예측 결함과 정답 결함이 한 픽셀이라도 겹치면 짝이다.
-        both = (components > 0) & (truth_components > 0)
-        if both.any():
-            keys = np.unique(components[both].astype(np.int64) * truth_count + truth_components[both])
-            pairs.extend((first + int(k // truth_count) - 1, base + int(k % truth_count) - 1) for k in keys)
+                                  "x": x + x0 + ox, "y": y + y0 + oy, "w": w, "h": h, "area": area, "predicted": []})
+        if count > 1 and truth_count > 1:
+            # 같은 클래스의 예측 결함과 정답 결함이 한 픽셀이라도 겹치면 짝이다 (같은 범위의 원본 해상도에서 비교).
+            full = np.take(np.take(components, rows[y0:y1], axis=0), cols[x0:x1], axis=1)
+            both = (full > 0) & (truth_components > 0)
+            if both.any():
+                keys = np.unique(full[both].astype(np.int64) * truth_count + truth_components[both])
+                pairs.extend((first + int(k // truth_count) - 1, base + int(k % truth_count) - 1) for k in keys)
     for predicted_id, truth_id in pairs:
         defects[predicted_id]["truth"].append(truth_id)
         truth_defects[truth_id]["predicted"].append(predicted_id)
@@ -110,17 +181,23 @@ def analyze_segmentation(labels, probabilities=None, *, class_names=(), offset=(
     renumber = {old: new for new, old in enumerate(kept)}
     result = []
     for old in kept:
-        item = {key: value for key, value in defects[old].items() if key != "_component"}
+        item = dict(defects[old])
         item["id"] = renumber[old]
         result.append(item)
     for item in truth_defects:
         item["predicted"] = sorted(renumber[i] for i in item["predicted"] if i in renumber)
     analysis = {"defects": result, "defects_dropped": len(defects) - len(result)}
     if truth is not None:
-        flat = truth[valid].astype(np.int64) * classes + labels[valid].astype(np.int64)
+        # 배경-배경 픽셀이 대부분이므로 결함(예측 또는 정답)이 있는 픽셀만 세고, [0, 0]은 나머지로 채운다.
+        foreground = np.flatnonzero(((labels != 0) | (truth != 0)).ravel())
+        truth_values = truth.ravel()[foreground].astype(np.int64)
+        predicted_values = labels.ravel()[foreground].astype(np.int64)
+        keep = truth_values != 255  # 학습 제외 픽셀은 비교하지 않는다
+        flat = truth_values[keep] * classes + predicted_values[keep]
         confusion = np.bincount(flat, minlength=classes * classes).reshape(classes, classes)
+        confusion[0, 0] = truth.size - int(histogram[255]) - int(confusion.sum())
         analysis["ground_truth"] = {"confusion": confusion.tolist(), "defects": truth_defects,
-                                    "ignored_pixels": int((~valid).sum())}
+                                    "ignored_pixels": int(histogram[255])}
     return analysis
 
 
@@ -238,7 +315,7 @@ def load_truth(path, size, box=None):
             return None
         if source.size != tuple(size):
             return None
-        truth = np.asarray(source).astype(np.int64)
+        truth = np.asarray(source)  # uint8 그대로 (정수 변환은 비교할 때 필요한 만큼만)
     if box is not None:
         truth = truth[box[1]:box[3], box[0]:box[2]]
     return truth
