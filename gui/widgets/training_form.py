@@ -389,7 +389,7 @@ class TrainingForm:
         self.input_size_spin.valueChanged.connect(self._on_patchcore_settings_changed)
 
         # ── 분할 패치 학습: 큰 이미지의 작은 결함을 줄이지 않고 원본 해상도로 학습 ──
-        self.patch_check = QCheckBox("원본 해상도 패치 학습 (입력 크기 = 패치 크기)")
+        self.patch_check = QCheckBox("패치 학습 (입력 크기 = 패치 크기, 끄면 전체 이미지 축소)")
         self.patch_check.setToolTip(
             "이미지를 입력 크기로 줄이지 않고, 원본(크롭 후) 해상도에서 입력 크기만큼 잘라 학습합니다.\n"
             "패치의 절반은 결함 위치에서, 나머지는 임의 위치에서 자릅니다(epoch마다 새 위치).\n"

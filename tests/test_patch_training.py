@@ -171,13 +171,18 @@ def test_training_page_saves_patch_settings_for_segmentation(tmp_path):
     widget.input_size_spin.setValue(512)
     widget.patch_check.setChecked(True)
     widget.patch_count_spin.setValue(24)
-    assert widget.patch_count_spin.isVisibleTo(widget) and "512×512" in widget.patch_info.text()
+    assert widget.patch_count_spin.isVisibleTo(widget) and "512px 패치" in widget.patch_info.text()
     widget.pc_crop_check.setChecked(True)
     widget.pc_crop_width_spin.setValue(3500)
     widget.pc_crop_height_spin.setValue(1504)
     widget.patch_scale_combo.setCurrentIndex(widget.patch_scale_combo.findData(.5))
     # 배율을 고르면 줄인 크기와 추론 계산량을 바로 보여 준다
     assert "1750×752" in widget.patch_info.text() and "25%" in widget.patch_info.text()
+    assert "⚠" not in widget.patch_info.text()
+    # 25%면 875×376: 512 패치가 영역보다 커서 입력 크기를 줄이라고 알린다
+    widget.patch_scale_combo.setCurrentIndex(widget.patch_scale_combo.findData(.25))
+    assert "875×376" in widget.patch_info.text() and "352 이하" in widget.patch_info.text()
+    widget.patch_scale_combo.setCurrentIndex(widget.patch_scale_combo.findData(.5))
     widget._sync_config()
     assert project.training.patch_training is True and project.training.patches_per_image == 24
     assert project.training.patch_scale == .5

@@ -475,17 +475,21 @@ class TrainingWidget(TrainingForm, QWidget):
         if patch:
             size = self.input_size_spin.value()
             scale = float(self.patch_scale_combo.currentData() or 1.0)
+            area, small = "원본" + (f" × {scale:.0%}" if scale != 1 else ""), False
             if self.pc_crop_check.isChecked():
-                width, height = self.pc_crop_width_spin.value(), self.pc_crop_height_spin.value()
-                area = (f"중앙 {width}×{height} px → 배율 적용 {max(1, round(width * scale))}×"
-                        f"{max(1, round(height * scale))} px" if scale != 1 else f"중앙 {width}×{height} px")
-            else:
-                area = "원본 이미지" + (f" × {scale:.0%}" if scale != 1 else "")
+                width = max(1, round(self.pc_crop_width_spin.value() * scale))
+                height = max(1, round(self.pc_crop_height_spin.value() * scale))
+                area, small = f"{width}×{height} px", size > min(width, height)
+            # 두 줄 이내 (폼 레이아웃은 긴 줄바꿈 라벨의 높이를 덜 잡아 겹친다)
             self.patch_info.setText(
-                f"{area}에서 {size}×{size} 패치를 잘라 학습합니다"
-                + ("(줄이지 않음)" if scale == 1 else "") + ". 추론은 같은 배율로 판정 영역 전체를 한 번에 계산합니다"
-                f"(메모리가 모자라면 {size}px 타일). 추론 계산량 ≈ 원본 해상도의 {scale * scale:.0%}. "
-                "배치 크기는 패치 수 기준입니다.")
+                f"{area}에서 {size}px 패치로 학습 · 추론은 같은 배율로 한 번에(계산량 원본의 {scale * scale:.0%})"
+                + (f"\n⚠ 패치가 줄인 영역보다 큽니다. 입력 크기를 {min(width, height) // 32 * 32 or 32} 이하로 줄이세요."
+                   if small else ""))
+            self.patch_info.setStyleSheet("color: #E5A832;" if small else "")
+            if self.pc_crop_check.isChecked():  # 크롭 설명의 '→ 모델 입력 N×N'은 전체 축소일 때만 맞다
+                self.pc_crop_info.setText(
+                    f"중앙 {self.pc_crop_width_spin.value()}×{self.pc_crop_height_spin.value()} px를 자른 뒤 "
+                    "패치 학습합니다(위 설정). 박스와 마스크도 함께 자르고, 저장한 모델의 추론에도 같은 크롭을 적용합니다.")
         elif segment and sam2:
             self.patch_info.setText("SAM2는 패치 학습을 쓰지 않습니다.")
         self.selection_combo.setEnabled(not is_pc and not resume)
