@@ -46,6 +46,7 @@ from PySide6.QtGui import (
 
 from core.project import ProjectData, SUPPORTED_TASKS
 from core.class_management import ClassManager, move_image_with_sidecars
+from core.segmentation_classes import needs_first_class_repair
 # 휠 오조작 방지 콤보박스 (분할/클래스 선택이 스크롤 중 바뀌지 않도록)
 from widgets.common import NoWheelComboBox
 
@@ -73,7 +74,7 @@ def empty_filter_label(task):
 
 
 def region_classes(project):
-    """영역으로 지정할 수 있는 클래스. 시맨틱 분할의 0번(배경)은 영역이 아니다."""
+    """영역 편집·삭제용 전경 목록. 등록 클래스의 표시·필터에는 사용하지 않는다."""
     names = list(project.data.class_names)
     return names[1:] if project.task == "segment" else names
 
@@ -548,6 +549,11 @@ class DatasetWidget(QWidget):
 
         add_layout.addStretch()
 
+        self.class_issue_label = QLabel()
+        self.class_issue_label.setWordWrap(True)
+        self.class_issue_label.hide()
+        add_outer.addWidget(self.class_issue_label)
+
         # 드래그&드롭 안내
         drop_label = QLabel(
             "파일을 끌어다 놓아 추가  ·  우클릭 또는 드래그로 분할 간 이동"
@@ -751,7 +757,7 @@ class DatasetWidget(QWidget):
         if project.task == "anomaly":
             return ["전체", "good", "defect"]
         if project.task in OBJECT_TASKS:
-            return ["전체", *region_classes(project), FILTER_UNLABELED, empty_filter_label(project.task)]
+            return ["전체", *project.data.class_names, FILTER_UNLABELED, empty_filter_label(project.task)]
         return ["전체", *project.data.class_names]
 
     def set_project(self, project: ProjectData):
@@ -761,8 +767,14 @@ class DatasetWidget(QWidget):
             self._class_filter = "전체"
         self._filter_project_key = project_key
         self.project = project
-        from core.segmentation_classes import needs_first_class_repair
-        self.repair_class_btn.setVisible(needs_first_class_repair(project))
+        needs_repair = needs_first_class_repair(project)
+        self.repair_class_btn.setVisible(needs_repair)
+        self.class_issue_label.setText(
+            f"첫 클래스 '{project.data.class_names[0]}'가 배경 전용 번호인 0번으로 저장되어 있습니다. "
+            "목록에는 표시하지만 결함 영역으로 집계할 수 없습니다. '첫 클래스 복구'를 누르면 "
+            "원본을 백업하고 사용할 수 있는 클래스 번호로 옮깁니다."
+            if needs_repair else "")
+        self.class_issue_label.setVisible(needs_repair)
         self.annotation_row.setVisible(project.task in OBJECT_TASKS)
         available = self._filter_options(project)
         if self._class_filter != "전체" and self._class_filter not in available:
@@ -822,6 +834,11 @@ class DatasetWidget(QWidget):
             if filter_combo:
                 filter_combo.clear()
                 filter_combo.addItems(available)
+                if project.task == "segment" and project.data.class_names:
+                    filter_combo.setItemData(
+                        1, self.class_issue_label.text() if needs_repair else
+                        "배경(0) 픽셀이 있는 이미지와 라벨 없는 자동 배경 이미지",
+                        Qt.ItemDataRole.ToolTipRole)
                 filter_combo.setCurrentText(self._class_filter)
 
         self._syncing = False
@@ -1128,7 +1145,9 @@ class DatasetWidget(QWidget):
             self._update_size_table(index)
             regions = sum(sum(split.get("regions", {}).values()) for split in index["splits"])
             self.summary_label.setText(
-                f"총 {total}장 | 영역 {regions}개 | {len(region_classes(self.project))}개 클래스")
+                f"총 {total}장 | 영역 {regions}개 | 등록 클래스 {len(self.project.data.class_names)}개"
+                + (" (0번 클래스 복구 필요)" if needs_first_class_repair(self.project) else
+                   " (배경 포함)" if self.project.task == "segment" else ""))
         else:
             self.size_table.hide()
             self.size_warning.hide()
@@ -1254,20 +1273,30 @@ class DatasetWidget(QWidget):
         task = self.project.task
         by_split = {split["split"]: split for split in index["splits"]}
         rows = []
-        for name in region_classes(self.project):
+        needs_repair = needs_first_class_repair(self.project)
+        for class_id, name in enumerate(self.project.data.class_names):
             cells = []
             for split_name in SPLITS:
                 split = by_split.get(split_name, {})
                 regions = split.get("regions", {}).get(name, 0)
                 images = split.get("classes", {}).get(name, 0)
-                cells.append(f"{regions}개 · {images}장" if regions else "—")
+                if task == "segment" and class_id == 0:
+                    cells.append("복구 필요" if needs_repair else
+                                 f"배경 · {images + split.get('unlabeled', 0)}장")
+                else:
+                    cells.append(f"{regions}개 · {images}장")
             rows.append((name, cells))
         rows.append(("배경만" if task == "segment" else "객체 없음",
                      [f"{by_split.get(s, {}).get('empty', 0)}장" for s in SPLITS]))
         rows.append(("자동 배경 (미라벨)" if task == "segment" else "미라벨", [f"{by_split.get(s, {}).get('unlabeled', 0)}장" for s in SPLITS]))
         self.stats_table.setRowCount(len(rows))
         for row, (name, cells) in enumerate(rows):
-            self.stats_table.setItem(row, 0, QTableWidgetItem(name))
+            label = QTableWidgetItem(name)
+            if row == 0 and task == "segment" and self.project.data.class_names:
+                label.setToolTip(self.class_issue_label.text() if needs_repair else
+                                 "배경 ID 0 (자동). 배경 픽셀이 있는 이미지와 자동 배경 이미지를 셉니다. "
+                                 "배경은 그리기·영역 변경·삭제 대상이 아닙니다.")
+            self.stats_table.setItem(row, 0, label)
             for column, text in enumerate(cells, start=1):
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -1355,10 +1384,13 @@ class DatasetWidget(QWidget):
 
         if not display_images:
             scope = split_name.upper() if filter_class == "전체" else f"{split_name.upper()} / {filter_class}"
+            legacy_first = (needs_first_class_repair(self.project)
+                            and filter_class == self.project.data.class_names[0])
             placeholder = QLabel(
-                f"{scope}에 이미지가 없습니다.\n"
-                f"위의 '이미지 추가' 버튼을 사용하세요."
-            )
+                f"'{filter_class}'는 배경 번호 0번과 겹쳐 영역을 표시할 수 없습니다.\n"
+                "위의 '첫 클래스 복구'를 누른 뒤 정답 영역을 확인하세요."
+                if legacy_first else
+                f"{scope}에 이미지가 없습니다.\n위의 '이미지 추가' 버튼을 사용하세요.")
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
             placeholder.setStyleSheet("color: #8A92A4; padding: 40px;")
             grid.addWidget(placeholder, 0, 0)
@@ -1528,6 +1560,11 @@ class DatasetWidget(QWidget):
             regions = row.get("regions") or {}
             if filter_class == "전체":
                 return True
+            if (task == "segment" and self.project.data.class_names
+                    and filter_class == self.project.data.class_names[0]):
+                # ID 0 is never a defect blob, even if a legacy project named it as one.
+                return (not needs_first_class_repair(self.project) and not row["error"]
+                        and (filter_class in row["classes"] or not row["annotated"]))
             if filter_class in regions:
                 return True
             if filter_class in self.project.data.class_names:  # 같은 이름의 클래스가 우선
