@@ -13,7 +13,8 @@ from pathlib import Path
 import sys
 import tempfile
 
-from builtin_assets import ASSET_FILES, _manifest, file_sha256, official_torchvision_url, verify_local_asset
+from builtin_assets import (ASSET_FILES, SEGMENTATION_ASSET_IDS, _manifest, builtin_asset_root,
+                            file_sha256, official_torchvision_url, verify_local_asset)
 from model_download import cached_imagenet_weights, enable_requests_native_ca
 from sam2_assets import download_sam2_pretrained
 
@@ -111,14 +112,36 @@ def main(argv=None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Download packaged Deep Vision Studio basic-model weights")
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--only", default="",
+    parser.add_argument("--output", type=Path, default=None,
+                        help="생략하면 앱이 사용하는 기본 가중치 폴더 (DVS_BUILTIN_ASSETS_DIR 포함)")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--only", default="",
                         help="쉼표로 구분한 가중치 ID만 받는다 (예: resnet18,resnet34). 생략하면 전부")
+    selection.add_argument("--group", choices=["segment"], help="세그멘테이션 기본 가중치 6종")
+    parser.add_argument("--check", action="store_true", help="다운로드/파일 변경 없이 가중치 상태 검사")
     parser.add_argument("--register-existing", action="store_true",
                         help="다운로드 없이 검증된 로컬 파일만 manifest에 등록")
     args = parser.parse_args(argv)
+    root = (args.output or builtin_asset_root()).expanduser().resolve()
+    selected = (list(SEGMENTATION_ASSET_IDS) if args.group == "segment" else
+                [v.strip() for v in args.only.split(",") if v.strip()] or list(ASSET_FILES))
+    unknown = [model_id for model_id in selected if model_id not in ASSET_FILES]
+    if unknown:
+        parser.error(f"알 수 없는 가중치 ID: {unknown}")
+    print(f"[assets] {root}", flush=True)
+    if args.check:
+        failed = 0
+        for model_id in selected:
+            try:
+                verify_local_asset(model_id, root)
+                print(f"[ready] {model_id}: {root / ASSET_FILES[model_id]}", flush=True)
+            except (OSError, ValueError, RuntimeError) as exc:
+                failed += 1
+                print(f"[failed] {model_id}: {exc}", flush=True)
+        print(f"[check] {len(selected) - failed}/{len(selected)} ready", flush=True)
+        return 1 if failed else 0
     try:
-        prepare(args.output, [v.strip() for v in args.only.split(",") if v.strip()] or None,
+        prepare(root, selected,
                 register_existing=args.register_existing)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[error] {exc}", file=sys.stderr)

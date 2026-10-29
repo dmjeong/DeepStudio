@@ -64,7 +64,7 @@ def test_non_official_filename_cannot_bypass_manifest(tmp_path, monkeypatch):
     path.parent.mkdir(parents=True)
     path.write_bytes(b'arbitrary checkpoint')
     monkeypatch.setenv('DVS_BUILTIN_ASSETS_DIR', str(tmp_path))
-    with pytest.raises(RuntimeError, match='manifest'):
+    with pytest.raises(RuntimeError, match='SHA256'):
         assets.builtin_asset_path('sam2_hiera_tiny')
 
 
@@ -194,7 +194,8 @@ def test_prepare_cli_reports_failure_without_success(tmp_path, monkeypatch, caps
 def test_resnet_batch_can_run_from_another_working_directory():
     script = (Path(__file__).resolve().parents[1] / 'gui/prepare_resnet_weights.bat').read_text()
     assert 'cd /d "%~dp0"' in script
-    assert '--output builtin_assets --only resnet18,resnet34,resnet50' in script
+    assert '--only resnet18,resnet34,resnet50' in script
+    assert '--output' not in script
     assert '"%~1"=="offline"' in script and '--register-existing' in script
     assert 'if errorlevel 1' in script and 'exit /b 1' in script
     assert 'build_exe.py' not in script and 'powershell' not in script.lower()

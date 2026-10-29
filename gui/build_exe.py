@@ -155,7 +155,7 @@ def build():
         sys.exit(1)
     if PYTHON_DIR not in sys.path:
         sys.path.insert(0, PYTHON_DIR)
-    from builtin_assets import builtin_assets_ready
+    from builtin_assets import builtin_assets_ready, builtin_asset_root
     if not builtin_assets_ready():
         raise RuntimeError("기본 모델 가중치 묶음이 없거나 손상되었습니다. build.bat으로 빌드를 시작하세요.")
 
@@ -178,7 +178,7 @@ def build():
 
         # 데이터 파일 포함
         "--add-data", f"{RESOURCES_DIR}{os.pathsep}resources",
-        "--add-data", f"{BUILTIN_ASSETS_DIR}{os.pathsep}builtin_assets",
+        "--add-data", f"{builtin_asset_root()}{os.pathsep}builtin_assets",
         "--add-data", f"{PYTHON_DIR}{os.pathsep}python",
         "--add-data", f"{os.path.join(PROJECT_ROOT, 'model_sdk', 'schemas')}{os.pathsep}model_sdk/schemas",
         "--add-data", f"{MODEL_CATALOG_DIR}{os.pathsep}packaging/windows/models",

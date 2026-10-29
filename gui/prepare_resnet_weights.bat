@@ -13,7 +13,7 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-python ..\python\prepare_builtin_assets.py --output builtin_assets --only resnet18,resnet34,resnet50 %DVS_REGISTER_FLAG%
+python ..\python\prepare_builtin_assets.py --only resnet18,resnet34,resnet50 %DVS_REGISTER_FLAG%
 if errorlevel 1 (
     echo.
     echo Some weights could not be prepared. See each [failed] message above.
@@ -22,7 +22,7 @@ if errorlevel 1 (
     exit /b 1
 )
 echo.
-echo ResNet weights are ready in %CD%\builtin_assets\torchvision
+echo ResNet weights are ready in the [assets] directory shown above.
 echo Restart Deep Vision Studio to use them. No EXE rebuild is needed for source mode.
 pause
 exit /b 0

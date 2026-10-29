@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-10-29T03:42:28.239669+00:00",
+  "lastUpdated": "2026-10-29T05:08:42.267289+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -8,9 +8,10 @@
     "annotation-workspace",
     "segmentation-background-contract",
     "dataset-first-class-visibility",
-    "pretrained-manifest-recovery"
+    "pretrained-manifest-recovery",
+    "segmentation-weight-preparation"
   ],
-  "primaryFeature": "segmentation-result-display",
+  "primaryFeature": "segmentation-weight-preparation",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -362,9 +363,32 @@
       ],
       "open": [
         "SAM2 prompt/semantic inference integration",
-        "User Windows failure model, stage and error message requested"
+        "User Windows asset preparation confirmation"
       ],
-      "artifact": "docs/03-analysis/artifacts/segmentation-model-audit.json"
+      "artifact": "docs/03-analysis/artifacts/segmentation-model-audit.json",
+      "latest_user_report": "All models other than DeepLab report missing weights; Windows Python execution"
+    },
+    "segmentation-weight-preparation": {
+      "phase": "completed",
+      "status": "completed",
+      "documents": {
+        "plan": "docs/01-plan/features/segmentation-weight-preparation.plan.md",
+        "design": "docs/02-design/features/segmentation-weight-preparation.design.md",
+        "analysis": "docs/03-analysis/segmentation-weight-preparation.analysis.md",
+        "report": "docs/04-report/segmentation-weight-preparation.report.md"
+      },
+      "validation": {
+        "targeted": "69 passed; exit 0",
+        "official_sam2": "4/4 download, SHA256, manifest-free load and image encoder forward; macOS CPU",
+        "windows": "not executed",
+        "full": "1258 passed, 12 skipped; exit 0",
+        "final_path_changes": "46 passed; exit 0",
+        "user_windows_confirmation": "pending; not a SAM2 semantic inference completion claim"
+      },
+      "timestamps": {
+        "lastUpdated": "2026-10-29T05:08:42.267289+00:00"
+      },
+      "completedAt": "2026-10-29T05:08:42.267289+00:00"
     }
   },
   "pipeline": {

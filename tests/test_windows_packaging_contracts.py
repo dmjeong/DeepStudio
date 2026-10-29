@@ -75,7 +75,7 @@ def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk()
     assert '"--collect-all", "libreyolo"' in script
     assert '"--collect-all", "sam2"' in script
     assert '"--hidden-import", "huggingface_hub"' in script
-    assert '"--add-data", f"{BUILTIN_ASSETS_DIR}{os.pathsep}builtin_assets"' in script
+    assert '"--add-data", f"{builtin_asset_root()}{os.pathsep}builtin_assets"' in script
 
 
 def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():
@@ -84,7 +84,8 @@ def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():
     assert 'set "DVS_ACCELERATOR=auto"' in script
     assert "python -m pip install -r requirements.txt" in script
     assert "SAM2_BUILD_CUDA=0" in script
-    assert "prepare_builtin_assets.py --output builtin_assets" in script
+    assert "python ..\\python\\prepare_builtin_assets.py" in script
+    assert "prepare_builtin_assets.py --output builtin_assets" not in script
     assert "pip show pyinstaller" not in script
 
 

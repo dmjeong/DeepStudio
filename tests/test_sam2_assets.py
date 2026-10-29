@@ -24,23 +24,21 @@ def test_sam2_assets_cover_every_shipped_hiera_variant():
         get_sam2_asset("sam2_hiera_xl")
 
 
-def test_download_uses_the_official_repo_and_selected_absolute_cache(tmp_path, monkeypatch):
+def test_download_uses_pinned_official_file_and_selected_absolute_cache(tmp_path, monkeypatch):
     from sam2_assets import download_sam2_pretrained
+    import model_download
 
     calls = []
-    hub = ModuleType("huggingface_hub")
-
-    def download(**kwargs):
-        calls.append(kwargs)
-        destination = Path(kwargs["local_dir"]) / kwargs["filename"]
+    def download(url, destination, sha256):
+        calls.append((url, destination, sha256))
         destination.write_bytes(b"official-checkpoint")
-        return str(destination)
+        return destination
 
-    hub.hf_hub_download = download
-    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setattr(model_download, "cached_https_weights", download)
     output = download_sam2_pretrained("sam2_hiera_tiny", tmp_path)
     assert output == (tmp_path / "sam2.1_hiera_tiny.pt").resolve()
-    assert calls == [{"repo_id": "facebook/sam2.1-hiera-tiny", "filename": "sam2.1_hiera_tiny.pt", "local_dir": str(tmp_path)}]
+    assert calls == [("https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt",
+                      output, "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69")]
     with pytest.raises(ValueError, match="절대 경로"):
         download_sam2_pretrained("sam2_hiera_tiny", "relative-cache")
 

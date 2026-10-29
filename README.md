@@ -46,8 +46,20 @@ Python 3.11 환경에서 이 폴더로 이동합니다.
 
 ```sh
 python -m pip install -r gui/requirements.txt
+python python/prepare_builtin_assets.py
 python gui/main.py
 ```
+
+Windows에서 처음 준비할 때는 `gui\build.bat setup gpu`를 실행하면 GPU 런타임과
+전체 기본 가중치를 준비하고 끝납니다(EXE 생성 없음). 이미 Python으로 실행 중인데
+가중치가 없다고 나오면 `gui\prepare_model_weights.bat`을 실행하세요.
+세그멘테이션만 복구하려면 `gui\build.bat weights segment`로 U-Net의 ResNet18,
+DeepLab의 ResNet34, SAM2 Tiny/Small/Base+/Large를 한 번에 받습니다.
+정상 파일은 재다운로드하지 않습니다. `gui\build.bat weights check`는 다운로드 없이 검사합니다.
+저장 위치는 앱과 동일한 `gui/builtin_assets`이며 `DVS_BUILTIN_ASSETS_DIR`를 설정했다면
+그 경로를 사용합니다. 공식 SAM2 수동 파일도 SHA256이 일치하면 manifest 없이 인식합니다.
+환경변수에는 절대 경로를 권장합니다. 상대 경로는 Python 실행 시 저장소 루트,
+EXE에서는 실행파일 폴더를 기준으로 해석하므로 실행한 작업 폴더에 영향을 받지 않습니다.
 
 빌드 환경이 이미 준비된 Windows PC에서 소스 변경을 확인할 때는 저장소 폴더에서
 다음과 같이 실행합니다. `build.bat`으로 EXE를 다시 만들 필요는 없습니다.

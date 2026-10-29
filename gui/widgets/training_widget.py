@@ -71,6 +71,18 @@ class TrainingWidget(TrainingForm, QWidget):
             help_text = "Settings에서 추가한 모델의 .dvmodel 팩에 포함된 학습 코드와 가중치를 사용합니다."
             if not self._selected_container_spec()[1]:
                 help_text = "선택한 추가 모델 팩이 설치되지 않았습니다. Settings에서 .dvmodel을 설치하세요."
+        elif self.project is not None:
+            from builtin_assets import builtin_asset_path, required_pretrained_asset
+            asset = required_pretrained_asset(
+                self.project.task, str(mode), self.model_id_combo.currentData() or "",
+                efficientnet_model=self.efficientnet_model_combo.currentData() or "efficientnet_b0")
+            if asset:
+                try:
+                    path = builtin_asset_path(asset, verify=False)
+                    help_text += f"\n기본 가중치 파일 있음: {path.name} (학습 시작 시 무결성 검사)"
+                except (OSError, ValueError, RuntimeError):
+                    help_text += (f"\n기본 가중치 준비 필요: {asset}. "
+                                  "Python 실행은 gui/prepare_model_weights.bat을 먼저 실행하세요.")
         self.mode_help.setText(help_text)
         self.hp_group.setEnabled(True)
         self.aug_group.setEnabled(mode not in {"efficientnet_resume"})
@@ -843,9 +855,10 @@ class TrainingWidget(TrainingForm, QWidget):
             patchcore_source=cfg.patchcore_weight_source, patchcore_backbone=cfg.patchcore_backbone)
         if asset:
             try:
-                builtin_asset_path(asset, verify=False)
-            except (FileNotFoundError, RuntimeError, ValueError):
-                QMessageBox.warning(self, "사전학습 가중치 없음", missing_asset_help(asset))
+                builtin_asset_path(asset)
+            except (OSError, RuntimeError, ValueError) as exc:
+                title = "사전학습 가중치 없음" if isinstance(exc, FileNotFoundError) else "사전학습 가중치 확인 실패"
+                QMessageBox.warning(self, title, f"{exc}\n\n{missing_asset_help(asset)}")
                 return
 
         # ── 모드별 유효성 검사 ──

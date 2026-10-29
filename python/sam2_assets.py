@@ -1,7 +1,7 @@
 """Official SAM2.1 pretrained-asset discovery, download, and model loading.
 
 The Studio keeps the large checkpoint files out of source control.  The release
-builder obtains them from Meta's official Hugging Face repositories, verifies
+builder obtains them from Meta's official download servers or Hugging Face mirror, verifies
 them in the bundled asset manifest, and the application loads them through the
 official SAM-2 package. This mapping is shared by native inference, fine-tuning
 and ONNX export.
@@ -12,7 +12,6 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -23,12 +22,25 @@ class Sam2Asset:
     filename: str
     config_name: str
 
+    @property
+    def sha256(self) -> str:
+        return SAM2_SHA256[self.model_id]
+
 
 SAM2_ASSETS: dict[str, Sam2Asset] = {
     "sam2_hiera_tiny": Sam2Asset("sam2_hiera_tiny", "Hiera Tiny", "facebook/sam2.1-hiera-tiny", "sam2.1_hiera_tiny.pt", "configs/sam2.1/sam2.1_hiera_t.yaml"),
     "sam2_hiera_small": Sam2Asset("sam2_hiera_small", "Hiera Small", "facebook/sam2.1-hiera-small", "sam2.1_hiera_small.pt", "configs/sam2.1/sam2.1_hiera_s.yaml"),
     "sam2_hiera_base_plus": Sam2Asset("sam2_hiera_base_plus", "Hiera Base+", "facebook/sam2.1-hiera-base-plus", "sam2.1_hiera_base_plus.pt", "configs/sam2.1/sam2.1_hiera_b+.yaml"),
     "sam2_hiera_large": Sam2Asset("sam2_hiera_large", "Hiera Large", "facebook/sam2.1-hiera-large", "sam2.1_hiera_large.pt", "configs/sam2.1/sam2.1_hiera_l.yaml"),
+}
+
+# Publisher LFS SHA256 (not the Xet hash), verified on 2026-10-29 at
+# https://huggingface.co/facebook/sam2.1-hiera-{variant}/blob/main/{filename}
+SAM2_SHA256 = {
+    "sam2_hiera_tiny": "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69",
+    "sam2_hiera_small": "6d1aa6f30de5c92224f8172114de081d104bbd23dd9dc5c58996f0cad5dc4d38",
+    "sam2_hiera_base_plus": "a2345aede8715ab1d5d31b4a509fb160c5a4af1970f199d9054ccfb746c004c5",
+    "sam2_hiera_large": "2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318",
 }
 
 
@@ -40,26 +52,28 @@ def get_sam2_asset(model_id: str) -> Sam2Asset:
 
 
 def download_sam2_pretrained(model_id: str, cache_dir: str | Path | None = None) -> Path:
-    """Download exactly one official checkpoint through Hugging Face Hub."""
+    """Fetch a pinned official file using the same native CA support as ResNet."""
+    from model_download import cached_https_weights
+    from urllib.error import URLError
+
     asset = get_sam2_asset(model_id)
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as exc:
-        raise RuntimeError("SAM2 사전학습 가중치 다운로드 구성요소가 없습니다. Deep Vision Studio 설치본을 다시 빌드하세요.") from exc
-    kwargs: dict[str, Any] = {"repo_id": asset.hub_model_id, "filename": asset.filename}
-    if cache_dir is not None:
-        target = Path(cache_dir).expanduser()
-        if not target.is_absolute():
-            raise ValueError("SAM2 가중치 저장 위치는 절대 경로여야 합니다.")
-        target.mkdir(parents=True, exist_ok=True)
-        kwargs["local_dir"] = str(target)
-    try:
-        path = Path(hf_hub_download(**kwargs))
-    except Exception as exc:
-        raise RuntimeError(f"SAM2.1 {asset.variant} 공식 가중치 다운로드 실패: {exc}") from exc
-    if not path.is_file() or path.stat().st_size == 0:
-        raise RuntimeError("SAM2.1 가중치 다운로드가 완료되지 않았습니다.")
-    return path.resolve()
+    target = (Path(cache_dir).expanduser() if cache_dir is not None else
+              Path.home() / ".cache" / "deepvisionstudio" / "sam2")
+    if not target.is_absolute():
+        raise ValueError("SAM2 가중치 저장 위치는 절대 경로여야 합니다.")
+    # Both are publisher-owned sources of the exact same checkpoint. A failed
+    # network connection may try the mirror; a hash mismatch must remain fatal.
+    urls = (
+        f"https://dl.fbaipublicfiles.com/segment_anything_2/092824/{asset.filename}",
+        f"https://huggingface.co/{asset.hub_model_id}/resolve/main/{asset.filename}",
+    )
+    errors = []
+    for url in urls:
+        try:
+            return cached_https_weights(url, target / asset.filename, asset.sha256).resolve()
+        except (URLError, OSError) as exc:
+            errors.append(f"{url}: {exc}")
+    raise RuntimeError(f"SAM2.1 {asset.variant} 공식 가중치 다운로드 실패:\n" + "\n".join(errors))
 
 
 def load_sam2_pretrained(model_id: str, *, device: str = "cpu", checkpoint_path: str | Path | None = None):
