@@ -323,7 +323,9 @@ class InferenceOperations:
             target_w, target_h = scaled_size(width, height, scale)
             # 학습 때와 같은 보간. 규칙에 보간이 없는 모델(9.33 첫 빌드)은 그때 학습한 INTER_LINEAR_EXACT.
             image = scale_image(image, (target_h, target_w), tiling.get("interpolation", "INTER_LINEAR_EXACT"))
-        if getattr(self, "_patch_mode", "auto") != "tiles":
+        # ViT(DINOv2)는 주의가 입력 전체를 본다: 큰 영역을 한 번에 넣으면 학습(패치)과 다른 함수이고 메모리도
+        # 토큰 수에 비례해 커진다 → 학습한 패치 크기의 타일로 추론한다. 합성곱 모델만 한 번에 계산한다.
+        if getattr(self, "_patch_mode", "auto") != "tiles" and not getattr(self.model, "global_attention", False):
             try:
                 probabilities = self._whole_probabilities(image, mean, std, device)
                 self._patch_run, self._tile_count = "whole", 1

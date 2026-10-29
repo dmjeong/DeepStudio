@@ -440,6 +440,138 @@
       "metadata": {}
     },
     {
+      "model_id": "dinov2_vits14_cls",
+      "family": "DINOv2",
+      "variant": "ViT-S/14",
+      "task": "classify",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "facebookresearch/dinov2 dinov2_vits14_pretrain (LVD-142M)",
+      "notes": "자기지도 ViT 백본(패치 14px); [CLS, 패치 평균] 선형 분류. 장수가 적을 때 강함",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
+      "model_id": "dinov2_vits14_seg",
+      "family": "DINOv2",
+      "variant": "ViT-S/14",
+      "task": "segment",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        448,
+        448
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "facebookresearch/dinov2 dinov2_vits14_pretrain (LVD-142M)",
+      "notes": "ViT 의미 특징(1/14) + 합성곱 세부 경로(1/2·1/4) 디코더; 1~2px 결함은 U-Net 원본 해상도가 낫다",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
+      "model_id": "dinov2_vitb14_cls",
+      "family": "DINOv2",
+      "variant": "ViT-B/14",
+      "task": "classify",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "facebookresearch/dinov2 dinov2_vitb14_pretrain (LVD-142M)",
+      "notes": "자기지도 ViT 백본(패치 14px); [CLS, 패치 평균] 선형 분류. 장수가 적을 때 강함",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
+      "model_id": "dinov2_vitb14_seg",
+      "family": "DINOv2",
+      "variant": "ViT-B/14",
+      "task": "segment",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        448,
+        448
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "facebookresearch/dinov2 dinov2_vitb14_pretrain (LVD-142M)",
+      "notes": "ViT 의미 특징(1/14) + 합성곱 세부 경로(1/2·1/4) 디코더; 1~2px 결함은 U-Net 원본 해상도가 낫다",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
       "model_id": "sam2_hiera_tiny",
       "family": "SAM2",
       "variant": "Hiera Tiny",

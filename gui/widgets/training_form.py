@@ -52,7 +52,7 @@ class TrainingForm:
         try:
             from core.model_registry import registry_with_installed_packs
             registry, _ = registry_with_installed_packs()
-            for spec in registry.list():
+            for spec in registry.list(surface="desktop"):
                 self.model_id_combo.addItem(
                     spec.display_name,
                     spec.model_id)

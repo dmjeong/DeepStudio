@@ -62,6 +62,9 @@ def _fetch(model_id: str, target: Path) -> None:
         cached_imagenet_weights(VARIANTS[model_id].url, target.parent)
     elif model_id in _TORCHVISION_URLS:
         cached_imagenet_weights(_TORCHVISION_URLS[model_id], target.parent)
+    elif model_id.startswith("dinov2_"):
+        from builtin_assets import PINNED_SHA256, SOURCE_URLS
+        cached_imagenet_weights(SOURCE_URLS[model_id], target.parent, sha256=PINNED_SHA256[target.name])
     elif model_id.startswith(("libreyolo_", "re_detr_")):
         _download_upstream(model_id, target)
     else:

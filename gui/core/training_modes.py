@@ -7,7 +7,7 @@ MODE_LABELS = {
     "efficientnet_transfer": "EfficientNet 내 가중치로 추가 학습",
     "efficientnet_resume": "EfficientNet 중단한 학습 재개",
     "efficientnet_scratch": "EfficientNet 무작위 초기화로 시작",
-    "builtin_finetune": "선택 모델의 ImageNet 가중치로 시작",
+    "builtin_finetune": "선택 모델의 사전학습 가중치로 시작",
     "builtin_transfer": "선택 모델의 로컬 가중치로 시작",
     "builtin_scratch": "선택 모델을 무작위 초기화로 시작",
     "upstream_finetune": "선택 모델의 사전학습 가중치로 시작",
@@ -23,7 +23,7 @@ MODE_HELP = {
     "efficientnet_transfer": "로컬 가중치에서 새 학습을 시작합니다. 클래스가 다르면 분류기를 교체합니다.",
     "efficientnet_resume": "중단한 학습의 모델, optimizer, 스케줄러와 난수 상태를 복원합니다.",
     "efficientnet_scratch": "선택한 EfficientNet B0/B1 구조를 무작위 초기화하고 처음부터 학습합니다.",
-    "builtin_finetune": "선택한 모델의 설치본 ImageNet 가중치를 검증 후 로드합니다. 분할 모델은 백본만 사전학습되어 있고 분할 헤드는 새로 학습합니다.",
+    "builtin_finetune": "선택한 모델의 설치본 사전학습 가중치를 검증 후 로드합니다(DINOv2는 LVD-142M 자기지도, 나머지는 ImageNet). 분할 모델은 백본만 사전학습되어 있고 분할 헤드는 새로 학습합니다.",
     "builtin_transfer": "같은 모델의 Deep Vision Studio 체크포인트 또는 해당 torchvision 백본의 .pth를 선택하세요. 새 데이터의 클래스로 학습을 시작합니다.",
     "builtin_scratch": "선택한 기본 모델 구조를 무작위 초기화하고 처음부터 학습합니다.",
     "upstream_finetune": "선택한 기본 제공 모델의 공식 사전학습 가중치로 시작합니다.",
@@ -38,6 +38,7 @@ MODE_HELP = {
 BUILTIN_ADAPTER_IDS = frozenset({
     "resnet18", "resnet50", "convnext_v1_tiny",
     "deeplabv3plus_resnet34", "unet_resnet18",
+    "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg",
 })
 
 UPSTREAM_ADAPTER_IDS = frozenset({

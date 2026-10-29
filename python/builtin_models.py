@@ -29,6 +29,29 @@ BUILTIN_MODEL_SPECS = {
     "convnext_v1_tiny": BuiltinModelSpec("convnext_v1_tiny", "classify", (224, 224), (3,)),
     "deeplabv3plus_resnet34": BuiltinModelSpec("deeplabv3plus_resnet34", "segment", (512, 512), (3,)),
     "unet_resnet18": BuiltinModelSpec("unet_resnet18", "segment", (512, 512), (1, 3)),
+    # DINOv2 (자기지도 ViT, 패치 14px). 224·448은 14와 32의 공배수라 학습 화면의 입력 크기 단계(32)와 맞는다.
+    "dinov2_vits14_cls": BuiltinModelSpec("dinov2_vits14_cls", "classify", (224, 224), (1, 3)),
+    "dinov2_vitb14_cls": BuiltinModelSpec("dinov2_vitb14_cls", "classify", (224, 224), (1, 3)),
+    "dinov2_vits14_seg": BuiltinModelSpec("dinov2_vits14_seg", "segment", (448, 448), (1, 3)),
+    "dinov2_vitb14_seg": BuiltinModelSpec("dinov2_vitb14_seg", "segment", (448, 448), (1, 3)),
+}
+
+# 새로 학습하는 머리 부분(나머지는 사전학습 백본: 백본 학습률 배수·동결 대상)과,
+# 클래스 순서가 다른 체크포인트로 추가 학습할 때 버리는 마지막 분류층.
+HEAD_PREFIXES = {
+    "resnet18": ("fc.",), "resnet50": ("fc.",),
+    "convnext_v1_tiny": ("classifier.",),
+    "deeplabv3plus_resnet34": ("aspp.", "low_projection.", "decoder."),
+    "unet_resnet18": ("dec", "head."),
+    "dinov2_vits14_cls": ("head.",), "dinov2_vitb14_cls": ("head.",),
+    "dinov2_vits14_seg": ("neck.", "detail", "fuse", "head."),
+    "dinov2_vitb14_seg": ("neck.", "detail", "fuse", "head."),
+}
+CLASS_HEAD_PREFIX = {
+    "resnet18": "fc.", "resnet50": "fc.", "convnext_v1_tiny": "classifier.2.",
+    "deeplabv3plus_resnet34": "decoder.6.", "unet_resnet18": "head.",
+    "dinov2_vits14_cls": "head.", "dinov2_vitb14_cls": "head.",
+    "dinov2_vits14_seg": "head.", "dinov2_vitb14_seg": "head.",
 }
 
 # Pin a concrete revision rather than torchvision's mutable DEFAULT alias.
@@ -75,6 +98,8 @@ _GRADCAM_TARGET_LAYERS = {
     "convnext_v1_tiny": "features.7",
     "deeplabv3plus_resnet34": "layer4",
     "unet_resnet18": "enc4",
+    "dinov2_vits14_cls": "feature_map", "dinov2_vitb14_cls": "feature_map",  # 패치 토큰을 펼친 (B, D, h, w) 지도
+    "dinov2_vits14_seg": "neck", "dinov2_vitb14_seg": "neck",
 }
 
 
@@ -120,7 +145,49 @@ def _classification_model(model_id: str, num_classes: int, in_channels: int, **w
         model.features[0][0] = _replace_conv_in_channels(first, in_channels)
         model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
         return model
+    if model_id in ("dinov2_vits14_cls", "dinov2_vitb14_cls"):
+        return DinoV2Classifier(model_id.removeprefix("dinov2_").removesuffix("_cls"), num_classes, in_channels, **weights)
     raise ValueError(f"Unsupported classification adapter: {model_id}")
+
+
+def _dinov2_backbone(variant, in_channels, *, pretrained=False, weights_path=None):
+    """DINOv2 백본. pretrained면 공식 가중치(설치본·사용자 폴더), weights_path면 같은 키의 로컬 파일."""
+    from builtin_assets import SOURCE_URLS, builtin_asset_path
+    from dinov2 import VARIANTS, DinoV2ViT, load_pretrained
+
+    if pretrained and weights_path:
+        raise ValueError("공식 가중치와 로컬 가중치를 동시에 지정할 수 없습니다")
+    backbone = DinoV2ViT(**VARIANTS[variant])
+    provenance = {"source": "random", "backbone": f"dinov2_{variant}"}
+    if pretrained:
+        asset = f"dinov2_{variant}"
+        load_pretrained(backbone, builtin_asset_path(asset))
+        provenance.update(source="dinov2_lvd142m", weights=asset, url=SOURCE_URLS[asset])
+    elif weights_path:
+        load_pretrained(backbone, Path(weights_path))
+        provenance.update(source="local_backbone", file=Path(weights_path).name)
+    # 1채널(흑백): RGB 필터 합 → 회색을 RGB로 복제했을 때와 같은 응답 (ResNet과 같은 규칙)
+    backbone.patch_embed.proj = _replace_conv_in_channels(backbone.patch_embed.proj, in_channels)
+    backbone.weight_provenance = provenance
+    return backbone
+
+
+class DinoV2Classifier(nn.Module):
+    """DINOv2 분류: [CLS 토큰, 패치 토큰 평균]을 이어 붙여 선형 분류 (DINOv2 선형 평가와 같은 특징)."""
+
+    def __init__(self, variant: str, num_classes: int, in_channels: int = 3, **weights):
+        super().__init__()
+        self.backbone = _dinov2_backbone(variant, in_channels, **weights)
+        self.weight_provenance = self.backbone.weight_provenance
+        self.feature_map = nn.Identity()  # Grad-CAM이 붙는 (B, D, h, w) 패치 특징 지도
+        self.head = nn.Linear(self.backbone.embed_dim * 2, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        from dinov2 import tokens_to_map
+
+        cls, patches, grid, _ = self.backbone(x)
+        patch_map = self.feature_map(tokens_to_map(patches, grid))
+        return self.head(torch.cat((cls, patch_map.mean(dim=(2, 3))), dim=1))
 
 
 class _ConvBlock(nn.Module):
@@ -229,6 +296,54 @@ class UNetResNet18(nn.Module):
         return self.head(F.interpolate(y, size=original_size, mode="bilinear", align_corners=False))
 
 
+class DinoV2Segmenter(nn.Module):
+    """DINOv2 분할: ViT 의미 특징(1/14) + 얕은 합성곱 세부 경로(1/2·1/4)로 원본 해상도까지 복원.
+
+        이미지 ─▶ DINOv2 블록 3·6·9·12 (1/14) ─▶ 이어 붙임 ─▶ neck 1×1 (256)
+           │                                              │ 1/4로 확대
+           ├─▶ detail1 3×3 s2 (32, 1/2) ─▶ detail2 3×3 s2 (64, 1/4) ─┴▶ fuse4 ─▶ 1/2로 확대 ─▶ fuse2 ─▶ head
+           └──────────────────────────────────────────────────────────────────┘ (detail1과 합침)
+
+    14px 패치 특징만으로는 경계가 14px 단위로 뭉개진다. 세부 경로(처음부터 학습)가 가장자리·가는 결함 위치를 준다.
+    ViT 주의(attention)는 이미지 전체를 보므로 패치 학습 모델은 학습과 같은 크기의 타일로 추론한다(global_attention).
+    """
+
+    LAYERS = (2, 5, 8, 11)
+
+    def __init__(self, variant: str, num_classes: int, in_channels: int = 3, **weights):
+        super().__init__()
+        self.backbone = _dinov2_backbone(variant, in_channels, **weights)
+        self.weight_provenance = self.backbone.weight_provenance
+        dim = self.backbone.embed_dim
+        self.neck = nn.Sequential(nn.Conv2d(dim * len(self.LAYERS), 256, 1, bias=False),
+                                  nn.BatchNorm2d(256), nn.ReLU(inplace=True))
+        self.detail1 = nn.Sequential(nn.Conv2d(in_channels, 32, 3, stride=2, padding=1, bias=False),
+                                     nn.BatchNorm2d(32), nn.ReLU(inplace=True))
+        self.detail2 = nn.Sequential(nn.Conv2d(32, 64, 3, stride=2, padding=1, bias=False),
+                                     nn.BatchNorm2d(64), nn.ReLU(inplace=True))
+        self.fuse4 = _ConvBlock(256 + 64, 128)
+        self.fuse2 = _ConvBlock(128 + 32, 64)
+        self.head = nn.Conv2d(64, num_classes, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        from dinov2 import tokens_to_map
+
+        height, width = int(x.shape[-2]), int(x.shape[-1])  # 고정 크기 ONNX 추출에서도 상수
+        # 먼저 14의 배수로 채워(오른쪽·아래 0) 모든 경로를 같은 크기에서 계산하고, 마지막에 원래 크기로 자른다.
+        # 그래야 ViT 격자(채운 크기 / 14)와 세부 경로·출력 픽셀이 정확히 겹친다.
+        x = F.pad(x, (0, (-width) % 14, 0, (-height) % 14))
+        _, _, grid, layers = self.backbone(x, layers=self.LAYERS)
+        semantic = self.neck(torch.cat([tokens_to_map(tokens, grid) for tokens in layers], dim=1))
+        half = self.detail1(x)
+        quarter = self.detail2(half)
+        y = F.interpolate(semantic, size=quarter.shape[-2:], mode="bilinear", align_corners=False)
+        y = self.fuse4(torch.cat((y, quarter), dim=1))
+        y = F.interpolate(y, size=half.shape[-2:], mode="bilinear", align_corners=False)
+        y = self.fuse2(torch.cat((y, half), dim=1))
+        y = F.interpolate(self.head(y), size=x.shape[-2:], mode="bilinear", align_corners=False)
+        return y[..., :height, :width]
+
+
 def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *,
                         pretrained: bool = False, backbone_weights=None) -> nn.Module:
     """Construct the adapter; pretrained/local loading must be requested explicitly."""
@@ -246,6 +361,9 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
     elif model_id == "unet_resnet18":
         model = UNetResNet18(int(num_classes), in_channels,
                             pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id in ("dinov2_vits14_seg", "dinov2_vitb14_seg"):
+        model = DinoV2Segmenter(model_id.removeprefix("dinov2_").removesuffix("_seg"), int(num_classes),
+                                in_channels, pretrained=pretrained, weights_path=backbone_weights)
     else:
         raise ValueError(f"Unsupported segmentation adapter: {model_id}")
 
@@ -255,6 +373,12 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
     model.in_channels = int(in_channels)
     model.num_classes = int(num_classes)
     model.gradcam_target_layer = _GRADCAM_TARGET_LAYERS[model_id]
+    # ViT는 주의(attention)가 입력 전체를 본다: 패치 학습 모델을 큰 영역에 한 번에 넣으면 학습과 다른 함수가 된다.
+    # 추론 엔진은 이 표시가 있으면 학습한 패치 크기의 타일로 추론한다 (합성곱 모델은 한 번에).
+    model.global_attention = model_id.startswith("dinov2_")
+    # ViT 미세조정은 합성곱보다 훨씬 작은 백본 학습률이 필요하다. 클래스당 10장 분류(20 epoch)에서
+    # 백본 lr 1e-4(기본 배수 0.1)는 정확도가 우연 수준(0.33)으로 무너졌고, 1e-5(×0.1 더)는 0.97이었다.
+    model.backbone_lr_scale = 0.1 if model_id.startswith("dinov2_") else 1.0
     return model
 
 

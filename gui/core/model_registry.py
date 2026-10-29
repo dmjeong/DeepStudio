@@ -218,6 +218,18 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         ModelSpec("deeplabv3plus_resnet34", "DeepLab V3+", "ResNet34", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", pretrained_asset="ResNet34_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
         ModelSpec("unet_resnet18", "U-Net", "ResNet18", "segment", ("windows_native", "onnx"), common, (512, 512), (1, 3), "export_verified", pretrained_asset="ResNet18_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
     ])
+    # DINOv2: 데스크톱 앱에만 보인다(surfaces). 웹 화면의 모델 목록은 바꾸지 않는다.
+    desktop = {"surfaces": ["desktop"]}
+    for variant, label in (("vits14", "ViT-S/14"), ("vitb14", "ViT-B/14")):
+        asset = f"facebookresearch/dinov2 dinov2_{variant}_pretrain (LVD-142M)"
+        specs.append(ModelSpec(
+            f"dinov2_{variant}_cls", "DINOv2", label, "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3),
+            "export_verified", pretrained_asset=asset, metadata=desktop,
+            notes="자기지도 ViT 백본(패치 14px); [CLS, 패치 평균] 선형 분류. 장수가 적을 때 강함"))
+        specs.append(ModelSpec(
+            f"dinov2_{variant}_seg", "DINOv2", label, "segment", ("windows_native", "onnx"), common, (448, 448), (1, 3),
+            "export_verified", pretrained_asset=asset, metadata=desktop,
+            notes="ViT 의미 특징(1/14) + 합성곱 세부 경로(1/2·1/4) 디코더; 1~2px 결함은 U-Net 원본 해상도가 낫다"))
     sam2_contract = {"contracts": {"graphs": {
         "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},
                     "outputs": ["image_embeddings", "image_features_0", "image_features_1"]},
@@ -308,8 +320,15 @@ class ModelRegistry:
         except KeyError as exc:
             raise ModelRegistryError(f"unknown model: {model_id}") from exc
 
-    def list(self, task: str | None = None, *, release_ready: bool = False) -> tuple[ModelSpec, ...]:
-        values = tuple(self._models.values())
+    def list(self, task: str | None = None, *, release_ready: bool = False,
+             surface: str | None = None) -> tuple[ModelSpec, ...]:
+        """모델 목록. metadata["surfaces"]가 있는 모델은 그 화면을 지정했을 때만 포함한다.
+
+        surface=None(웹·API·공용 목록): 제한 없는 모델만. surface="desktop": 데스크톱 전용 모델(DINOv2)도.
+        get()은 화면과 관계없이 모든 모델을 찾는다(데스크톱 작업자 프로세스가 쓴다).
+        """
+        values = tuple(spec for spec in self._models.values()
+                       if "surfaces" not in spec.metadata or surface in spec.metadata["surfaces"])
         if task is not None:
             values = tuple(spec for spec in values if spec.task == task)
         if release_ready:

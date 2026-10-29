@@ -194,6 +194,7 @@ def build():
         "--add-data", f"{RESOURCES_DIR}{os.pathsep}resources",
         "--add-data", f"{BUILTIN_ASSETS_DIR}{os.pathsep}builtin_assets",
         "--add-data", f"{PYTHON_DIR}{os.pathsep}python",
+        "--add-data", f"{os.path.join(PROJECT_ROOT, 'licenses')}{os.pathsep}licenses",  # DINOv2 Apache-2.0 고지
         "--add-data", f"{os.path.join(PROJECT_ROOT, 'model_sdk', 'schemas')}{os.pathsep}model_sdk/schemas",
         "--add-data", f"{MODEL_CATALOG_DIR}{os.pathsep}packaging/windows/models",
 
@@ -225,6 +226,7 @@ def build():
         "--hidden-import", "onnx",
         "--hidden-import", "onnxruntime",
         "--hidden-import", "model_crypto",
+        "--hidden-import", "dinov2",
         "--hidden-import", "cryptography.hazmat.primitives.ciphers.aead",
         "--hidden-import", "psutil",
         "--collect-submodules", "truststore",

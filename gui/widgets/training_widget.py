@@ -92,7 +92,8 @@ class TrainingWidget(TrainingForm, QWidget):
         model_id = self.model_id_combo.currentData() or ""
         name = self.model_id_combo.currentText()
         if model_id in BUILTIN_ADAPTER_IDS:
-            choices = [("builtin_finetune", f"{name} ImageNet 가중치로 시작"),
+            source = "LVD-142M" if model_id.startswith("dinov2_") else "ImageNet"  # DINOv2는 자기지도 사전학습
+            choices = [("builtin_finetune", f"{name} {source} 가중치로 시작"),
                        ("builtin_transfer", f"{name} 로컬 가중치로 시작"),
                        ("builtin_scratch", f"{name} 처음부터 학습")]
             scope = "분류 모델" if self.project.task == "classify" else "백본 (분할 헤드는 새로 학습)"
@@ -139,7 +140,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self.model_id_combo.blockSignals(True)
         try:
             self.model_id_combo.clear()
-            for spec in registry.list(project.task):
+            for spec in registry.list(project.task, surface="desktop"):
                 self.model_id_combo.addItem(
                     spec.display_name, spec.model_id)
             if model_id and self.model_id_combo.findData(model_id) < 0:
@@ -876,7 +877,7 @@ class TrainingWidget(TrainingForm, QWidget):
         시작') 모델을 바꾸는 추천에서 틀린 이름이 되므로, 기본 모델 방식은 모델 없는 이름을 쓴다."""
         def labels(combo):
             return {combo.itemData(i): combo.itemText(i) for i in range(combo.count())}
-        modes = {**labels(self.mode_combo), "builtin_finetune": "ImageNet 가중치로 시작",
+        modes = {**labels(self.mode_combo), "builtin_finetune": "사전학습 가중치로 시작",
                  "builtin_transfer": "로컬 가중치로 시작", "builtin_scratch": "처음부터 학습"}
         return {"model_id": {"": "Custom CSP", **labels(self.model_id_combo)}, "training_mode": modes,
                 "segmentation_loss": labels(self.segmentation_loss_combo),

@@ -15,7 +15,7 @@ from gui.core.model_registry import ModelRegistry  # noqa: E402
 
 def build_catalog(*, release_ready_only: bool = False) -> dict:
     registry = ModelRegistry.builtin()
-    models = registry.list(release_ready=release_ready_only)
+    models = registry.list(release_ready=release_ready_only, surface="desktop")  # 설치본 = 데스크톱 앱
     return {
         "schema_version": 1,
         "catalog_id": "deepvisionstudio-builtin-models",

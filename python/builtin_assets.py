@@ -32,6 +32,8 @@ ASSET_FILES = {
     "resnet50": "torchvision/resnet50-0676ba61.pth",
     "wide_resnet50_2": "torchvision/wide_resnet50_2-95faca4d.pth",
     "convnext_v1_tiny": "torchvision/convnext_tiny-983f1562.pth",
+    "dinov2_vits14": "dinov2/dinov2_vits14_pretrain.pth",
+    "dinov2_vitb14": "dinov2/dinov2_vitb14_pretrain.pth",
     "libreyolo_classify_mobilenetv4_small": "libreyolo/LibreMobileNetV4s-cls.pt",
     "libreyolo_detect_9t": "libreyolo/LibreYOLO9t.pt",
     "re_detr_v4_small": "libreyolo/LibreRTDETRv4s.pt",
@@ -53,6 +55,8 @@ SOURCE_URLS = {
     "resnet50": "https://download.pytorch.org/models/resnet50-0676ba61.pth",
     "wide_resnet50_2": "https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth",
     "convnext_v1_tiny": "https://download.pytorch.org/models/convnext_tiny-983f1562.pth",
+    "dinov2_vits14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth",
+    "dinov2_vitb14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth",
     "libreyolo_classify_mobilenetv4_small":
         "https://huggingface.co/LibreYOLO/LibreMobileNetV4s-cls/resolve/main/LibreMobileNetV4s-cls.pt",
     "libreyolo_detect_9t": "https://huggingface.co/LibreYOLO/LibreYOLO9t/resolve/main/LibreYOLO9t.pt",
@@ -64,6 +68,14 @@ SOURCE_URLS = {
     "sam2_hiera_base_plus":
         "https://huggingface.co/facebook/sam2.1-hiera-base-plus/resolve/main/sam2.1_hiera_base_plus.pt",
     "sam2_hiera_large": "https://huggingface.co/facebook/sam2.1-hiera-large/resolve/main/sam2.1_hiera_large.pt",
+}
+
+
+# 공식 파일 이름에 해시가 없는 가중치의 전체 SHA-256 (공식 주소에서 받은 파일, 2026-10 확인).
+# manifest가 없어도(직접 받은 파일) 이 값과 같아야 쓴다.
+PINNED_SHA256 = {
+    "dinov2_vits14_pretrain.pth": "b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9",
+    "dinov2_vitb14_pretrain.pth": "0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73",
 }
 
 
@@ -103,8 +115,8 @@ def _candidates(model_id: str):
     name = Path(relative).name
     user = user_asset_root()
     found = [(builtin_asset_root(), relative), (user, relative), (user, name)]
-    if relative.startswith("torchvision/"):
-        found.append((_torch_hub_dir(), name))
+    if relative.startswith(("torchvision/", "dinov2/")):
+        found.append((_torch_hub_dir(), name))  # torch.hub.load('facebookresearch/dinov2')도 같은 곳에 받는다
     return found
 
 
@@ -134,8 +146,15 @@ def _check_file(path: Path, expected_name: str) -> None:
     """manifest 없이 할 수 있는 확인.
 
     torchvision 파일 이름의 해시(resnet18-f37072fd.pth의 f37072fd)는 SHA-256 앞자리다 → 비교.
+    이름에 해시가 없는 DINOv2는 고정한 전체 SHA-256(PINNED_SHA256)과 비교한다.
     그 밖(LibreYOLO·SAM2)은 PyTorch 저장 형식(zip)인지 본다. 구조는 불러올 때 strict로 다시 검사한다.
     """
+    pinned = PINNED_SHA256.get(expected_name)
+    if pinned is not None:
+        if _sha256(path) != pinned:
+            raise RuntimeError(f"{path.name}은(는) 공식 {expected_name}과 다른 파일입니다(해시 불일치). "
+                               "다운로드가 끊겼거나 다른 모델 파일입니다. 다시 받아 주세요.")
+        return
     match = re.search(r"-([0-9a-f]{8,})\.pth$", expected_name)
     if match:
         if not _sha256(path).startswith(match.group(1)):
@@ -237,6 +256,9 @@ BUILTIN_BACKBONE_ASSETS = {
     "convnext_v1_tiny": "convnext_v1_tiny",
     "unet_resnet18": "resnet18",
     "deeplabv3plus_resnet34": "resnet34",
+    # 모델 ID(…_cls 분류, …_seg 분할)는 main의 DINOv2 분할(dinov2_vits14)과 겹치지 않게, 가중치 ID는 같은 공식 파일이라 공유
+    "dinov2_vits14_cls": "dinov2_vits14", "dinov2_vits14_seg": "dinov2_vits14",
+    "dinov2_vitb14_cls": "dinov2_vitb14", "dinov2_vitb14_seg": "dinov2_vitb14",
 }
 
 

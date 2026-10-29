@@ -105,7 +105,7 @@ class ModelManagerWidget(QWidget):
         self.catalog.clear()
         registry, errors = registry_with_installed_packs()
         builtins = {spec.model_id for spec in builtin_model_specs()}
-        for spec in registry.list():
+        for spec in registry.list(surface="desktop"):
             category = "기본 제공" if spec.model_id in builtins else "추가 Docker 모델"
             runtime = "내장" if "windows_native" in spec.runtimes else "Docker 팩"
             item = QTreeWidgetItem([

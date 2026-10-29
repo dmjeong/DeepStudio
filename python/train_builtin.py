@@ -19,7 +19,8 @@ from typing import Iterable
 import torch
 from torch import nn
 
-from builtin_models import build_builtin_model, get_builtin_spec, make_builtin_checkpoint
+from builtin_models import (CLASS_HEAD_PREFIX, HEAD_PREFIXES, build_builtin_model, get_builtin_spec,
+                            make_builtin_checkpoint)
 from dataset import create_classification_loaders, create_segmentation_loaders
 
 
@@ -279,9 +280,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if initial_checkpoint is not None:
         # Class order matters even when the number of classes is unchanged.
         source = dict(initial_checkpoint["model_state_dict"])
-        head = {"resnet18": "fc.", "resnet50": "fc.",
-                "convnext_v1_tiny": "classifier.2.",
-                "deeplabv3plus_resnet34": "decoder.6.", "unet_resnet18": "head."}[model_id]
+        head = CLASS_HEAD_PREFIX[model_id]
         # Older segmentation checkpoints stored placeholder names "0".."N-1". They
         # differ from real project names, so only their backbone is transferred.
         if list(initial_checkpoint.get("class_names", [])) != class_names:
@@ -294,12 +293,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         model.weight_provenance = {"source": "local_checkpoint", "file": Path(initial_weights).name}
     model = model.to(target)
     log(f"가중치 로드 완료: {model_id} / {model.weight_provenance}")
-    head_prefixes = {
-        "resnet18": ("fc.",), "resnet50": ("fc.",),
-        "convnext_v1_tiny": ("classifier.",),
-        "deeplabv3plus_resnet34": ("aspp.", "low_projection.", "decoder."),
-        "unet_resnet18": ("dec", "head."),
-    }[model_id]
+    head_prefixes = HEAD_PREFIXES[model_id]
     head_parameters, backbone_parameters = [], []
     for name, parameter in model.named_parameters():
         is_head = any(name.startswith(prefix) for prefix in head_prefixes)
@@ -308,9 +302,15 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         (head_parameters if is_head else backbone_parameters).append(parameter)
     parameter_groups = [{"params": head_parameters, "lr": learning_rate}]
     trainable_backbone = [parameter for parameter in backbone_parameters if parameter.requires_grad]
+    # 모델이 요구하는 추가 백본 배수 (DINOv2 ViT 0.1: lr 1e-3 × 0.1 × 0.1 = 1e-5).
+    backbone_scale = float(getattr(model, "backbone_lr_scale", 1.0))
     if trainable_backbone:
         parameter_groups.append({"params": trainable_backbone,
-                                 "lr": learning_rate * backbone_lr_mult})
+                                 "lr": learning_rate * backbone_lr_mult * backbone_scale})
+        if backbone_scale != 1:
+            log(f"백본 학습률 {learning_rate * backbone_lr_mult * backbone_scale:.1e} "
+                f"(학습률 × 백본 배수 {backbone_lr_mult:g} × {model_id} 권장 {backbone_scale:g}): "
+                "ViT는 큰 학습률에서 사전학습 특징이 무너진다")
     optimizer_types = {"adamw": torch.optim.AdamW, "adam": torch.optim.Adam,
                        "sgd": torch.optim.SGD}
     optimizer_kwargs = {"lr": learning_rate, "weight_decay": weight_decay}
@@ -495,7 +495,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
 
 def main() -> None:
     specs = tuple(get_builtin_spec(model_id) for model_id in (
-        "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18"))
+        "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18",
+        "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg"))
     parser = argparse.ArgumentParser(description="Train a built-in Deep Vision Studio adapter")
     parser.add_argument("--model", choices=[spec.model_id for spec in specs], required=True)
     parser.add_argument("--data_root", required=True)
