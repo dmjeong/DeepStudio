@@ -155,9 +155,23 @@ def build():
         sys.exit(1)
     if PYTHON_DIR not in sys.path:
         sys.path.insert(0, PYTHON_DIR)
-    from builtin_assets import builtin_assets_ready
-    if not builtin_assets_ready():
-        raise RuntimeError("기본 모델 가중치 묶음이 없거나 손상되었습니다. build.bat으로 빌드를 시작하세요.")
+    # 빠진 사전학습 가중치는 빌드를 막지 않는다. 그 모델을 쓸 때 앱의 Settings · 모델 관리에서 가져온다.
+    os.makedirs(BUILTIN_ASSETS_DIR, exist_ok=True)
+    from builtin_assets import SOURCE_URLS, missing_assets
+    previous = os.environ.get("DVS_BUILTIN_ASSETS_DIR")
+    os.environ["DVS_BUILTIN_ASSETS_DIR"] = BUILTIN_ASSETS_DIR
+    try:
+        missing = missing_assets(bundle_only=True)
+    finally:
+        if previous is None:
+            os.environ.pop("DVS_BUILTIN_ASSETS_DIR", None)
+        else:
+            os.environ["DVS_BUILTIN_ASSETS_DIR"] = previous
+    if missing:
+        print(f"[warning] 설치본에 넣지 못한 사전학습 가중치 {len(missing)}개 (빌드는 계속):")
+        for model_id in missing:
+            print(f"   - {model_id}: {SOURCE_URLS[model_id]}")
+        print("          앱 실행 후 Settings · 모델 관리 → 사전학습 가중치에서 받은 파일을 가져오세요.")
 
     print("=" * 60)
     print(f"{APP_NAME} 빌드 시작")

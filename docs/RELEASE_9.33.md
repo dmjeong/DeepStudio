@@ -93,9 +93,27 @@ Dice_c = (2·Σ p_c·y_c + 1) / (Σ p_c + Σ y_c + 1)   (255 픽셀은 p, y 모�
   - PatchCore ImageNet 백본
 - 없으면 어떤 파일이 없는지, 설치본이면 `build.bat`, 소스 실행이면 아래 명령, 또는 "무작위 초기화로 시작"을 안내하고 학습을 시작하지 않는다.
   - `python python/prepare_builtin_assets.py --output gui/builtin_assets --only resnet18`
-- `prepare_builtin_assets.py --only`는 지정한 모델만 받고 기존 manifest에 합친다(SHA-256 검증 동일). `build.bat`은 지금처럼 전부 받는다.
+- `prepare_builtin_assets.py --only`는 지정한 모델만 받고 기존 manifest에 합친다(SHA-256 검증 동일). `build.bat`은 전부 받으려고 하되 실패한 것은 건너뛴다(아래).
 - 확인 결과: resnet18·resnet34를 각각 받으면 manifest가 합쳐졌고, 이 가중치로 UNet·DeepLabV3+가 ImageNet 사전학습 상태(`weight_provenance.source = imagenet`)에서 학습을 마쳤다.
 - 회귀 테스트 `tests/test_pretrained_assets.py`(13개). 학습 화면 확인 테스트는 수정 전 코드에서 실패한다.
+
+**빌드 실패·수동 다운로드가 막히던 문제.** 위 변경만으로는 회사망에서 여전히 막혔다.
+- `build.bat`은 가중치 16개(SAM2 Large 약 900MB 포함)를 전부 받아야만 빌드를 진행했다. Hugging Face나 프록시에서 하나만 막혀도 빌드 전체가 멈췄고, `build_exe.py`도 하나라도 빠지면 실패했다.
+- 파일을 직접 받아 넣어도 `manifest.json`에 그 파일의 SHA-256 항목이 없으면 "manifest가 없습니다/항목이 없습니다"로 거부했다. `--only resnet34`로 DeepLab용 가중치만 받은 설치본에서는 manifest에 resnet34만 있어서, 수동으로 넣은 나머지 파일이 전부 거부됐다. 그래서 DeepLab만 학습됐다.
+
+```
+이전  설치본 폴더 + manifest 항목 필수 ──▶ 없으면 거부, build.bat 다시 실행
+이후  설치본 묶음 (build.bat)              ─┐
+      사용자 가중치 폴더 (가져오기·직접 넣기) ─┼─▶ 확인 후 사용 (다시 빌드하지 않음)
+      torch hub 캐시                        ─┘
+```
+
+- 확인 방법: manifest 항목이 있으면 SHA-256이 같아야 한다(빌드 묶음·가져온 파일). 항목이 없으면 torchvision 파일은 공식 이름의 해시(`resnet18-f37072fd`의 `f37072fd` = SHA-256 앞자리)와 비교하고, LibreYOLO·SAM2는 PyTorch 저장 형식(zip)인지 본다. HTML 다운로드 페이지나 끊긴 파일은 이유와 함께 거부한다. 구조는 불러올 때 strict로 다시 검사한다. 큰 파일의 해시는 한 번만 계산한다.
+- 사용자 가중치 폴더: Windows `%LOCALAPPDATA%\DeepVisionStudio\weights`. 하위 폴더 없이 파일만 넣어도 된다. torchvision이 받아 둔 `~/.cache/torch/hub/checkpoints`도 찾는다.
+- **Settings · 모델 관리 → 사전학습 가중치**: 가중치마다 쓰는 모델과 상태(사용 가능/없음/손상·다른 파일)를 보여준다. `가중치 가져오기...`는 브라우저가 이름을 바꾼 파일(`(1)` 등)도 받아 확인 후 사용자 폴더에 넣고 해시를 기록한다. `다운로드 주소 복사`와 `가중치 폴더 열기`도 있다.
+- 학습 시작 때 가중치가 없으면 다운로드 주소와 넣을 폴더를 보여주고, 그 자리에서 가져오면 학습을 이어서 시작한다.
+- `build.bat`(`prepare_builtin_assets.py`)은 받지 못한 가중치를 `[failed]`로 알리고 계속한다. 끝에 수동 다운로드 주소 목록을 출력하고, 받은 파일만 manifest에 기록한다(기존 항목 유지). 이전처럼 모두 받아야 하면 `--strict`.
+- 앱은 여전히 실행 중에 몰래 받지 않는다. 파일은 사용자가 받아 넣는다.
 
 ### 데이터셋 화면: 이미지가 아닌 영역 단위 클래스
 

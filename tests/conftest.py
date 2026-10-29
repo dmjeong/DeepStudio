@@ -73,3 +73,11 @@ def _release_qt_keyboard_modifiers():
     for key in (Qt.Key.Key_Shift, Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
         QTest.keyRelease(target, key)
     target.deleteLater()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_weight_folders(tmp_path_factory, monkeypatch):
+    """사용자 가중치 폴더와 torch 캐시를 테스트마다 비운다 (개발 PC에 받아 둔 파일이 결과를 바꾸지 않게)."""
+    if "DVS_USER_WEIGHTS_DIR" not in os.environ:
+        monkeypatch.setenv("DVS_USER_WEIGHTS_DIR", str(tmp_path_factory.mktemp("user_weights")))
+    yield

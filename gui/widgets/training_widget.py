@@ -835,7 +835,7 @@ class TrainingWidget(TrainingForm, QWidget):
 
         # 사전학습 가중치가 설치본에 없으면 학습을 시작한 뒤가 아니라 지금 알리고 받는 방법을 안내한다
         cfg = self.project.training
-        from builtin_assets import builtin_asset_path, missing_asset_help, required_pretrained_asset
+        from builtin_assets import builtin_asset_path, required_pretrained_asset
         asset = required_pretrained_asset(
             self.project.task, cfg.training_mode,
             cfg.efficientnet_model if cfg.training_mode.startswith("efficientnet") else getattr(self.project.model, "model_id", ""),
@@ -843,10 +843,13 @@ class TrainingWidget(TrainingForm, QWidget):
             patchcore_source=cfg.patchcore_weight_source, patchcore_backbone=cfg.patchcore_backbone)
         if asset:
             try:
-                builtin_asset_path(asset, verify=False)
+                # 손상·다른 파일도 지금 거른다 (해시는 파일마다 한 번만 계산)
+                builtin_asset_path(asset)
             except (FileNotFoundError, RuntimeError, ValueError):
-                QMessageBox.warning(self, "사전학습 가중치 없음", missing_asset_help(asset))
-                return
+                # 받는 주소·넣는 곳을 알리고 그 자리에서 가져오게 한다. 가져오면 그대로 학습을 시작한다.
+                from widgets.pretrained_weights import offer_weight_import
+                if not offer_weight_import(self, asset):
+                    return
 
         # ── 모드별 유효성 검사 ──
         mode = self.project.training.training_mode

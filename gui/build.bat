@@ -64,8 +64,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM 1.5. 모든 기본 모델의 사전학습 가중치를 빌드 시 한 번만 받아 EXE에 포함한다.
-REM 앱 실행 중 Settings/학습/추론 화면에서 모델 파일을 추가로 받지 않는다.
+REM 1.5. 기본 모델의 사전학습 가중치를 빌드 시 받아 EXE에 포함한다.
+REM 회사망 등으로 받지 못한 가중치는 경고와 다운로드 주소만 출력하고 빌드를 계속한다.
+REM 그 파일은 앱의 Settings - 모델 관리 - 사전학습 가중치에서 나중에 가져온다.
+REM 모두 받아야만 빌드하려면 아래 명령에 --strict 를 붙인다.
 echo Downloading/verifying packaged basic-model weights...
 python ..\python\prepare_builtin_assets.py --output builtin_assets
 if errorlevel 1 (

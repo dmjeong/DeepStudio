@@ -65,6 +65,11 @@ class ModelManagerWidget(QWidget):
         catalog_layout.addWidget(self.catalog_notice)
         layout.addWidget(catalog_group, stretch=1)
 
+        # 사전학습 가중치: 빌드 때 받지 못한 파일을 여기서 가져온다
+        from widgets.pretrained_weights import PretrainedWeightsGroup
+        self.weights_group = PretrainedWeightsGroup()
+        layout.addWidget(self.weights_group, stretch=1)
+
         add_group = QGroupBox("추가 Docker 모델")
         add_layout = QVBoxLayout(add_group)
         note = QLabel(
