@@ -532,6 +532,11 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self._reclass(self.selected_indices, self._active_class_id())
 
     def _reclass(self, indices, class_id):
+        if self.task == "segment" and class_id == 0:
+            # 분할의 0번은 배경이다. 배경으로 '클래스 변경'하면 객체 픽셀이 지워져 사라진다
+            # (클래스 목록 맨 위 항목이라 첫 번째 클래스로 오해하기 쉽다). 지우기는 삭제로만 한다.
+            self.status.setText("0번은 배경입니다. 선택 영역을 지우려면 '선택 삭제'를 쓰세요.")
+            return
         indices = {
             i
             for i in indices
@@ -861,7 +866,9 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         with QSignalBlocker(self.class_list):
             self.class_list.clear()
             for i, name in enumerate(self.names):
-                self.class_list.addItem(f"{i}  {name}")
+                # 분할의 0번은 클래스가 아니라 배경 (선택 영역에 적용하지 않는다)
+                suffix = "  · 배경" if self.task == "segment" and i == 0 else ""
+                self.class_list.addItem(f"{i}  {name}{suffix}")
         self._filter_classes(self.class_search.text())
         self.history.clear()
         for label, _ in reversed(self.undo_stack):

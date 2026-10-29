@@ -239,3 +239,18 @@ def test_detection_shift_click_selects_and_never_deletes_boxes(tmp_path):
         dialog.reject()
         dialog.deleteLater()
         app.processEvents()
+
+
+def test_background_is_never_applied_as_a_class(two_objects):
+    """Class 0 is background: 'changing' objects to it erased them (it is the first list entry)."""
+    app, dialog, _saved = two_objects
+    dialog._set_mode("select")
+    _shift_click(app, dialog, 28, 24)
+    _shift_click(app, dialog, 122, 96)
+    before = dialog.document.render().copy()
+    dialog.class_list.setCurrentRow(0)          # pick background in the class list
+    dialog._apply_class()                       # ... and press "선택에 적용"
+    dialog._change_class(dialog.selected, 0)    # ... or the object table's class combo
+    app.processEvents()
+    assert np.array_equal(before, dialog.document.render())
+    assert "배경" in dialog.status.text() and "배경" in dialog.class_list.item(0).text()
