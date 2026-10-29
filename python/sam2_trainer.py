@@ -202,7 +202,9 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
         flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
     train_data = _validate_prompt_masks(train_loader, "train", class_names)
     val_data = _validate_prompt_masks(val_loader, "val", class_names)
-    emit({"event": "dataset_validated", "train": train_data, "val": val_data})
+    from dataset import unlabeled_message
+    emit({"event": "dataset_validated", "train": train_data, "val": val_data,
+          "unlabeled": unlabeled_message(train_loader, val_loader)})
 
     # Check the data contract before allocating/downloading SAM2 weights. This
     # makes the common missing-mask/background-only error immediate and clear.

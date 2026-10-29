@@ -164,7 +164,7 @@ class AnnotationShortcuts(QObject):
         hint = self.workspace.findChild(QLabel, "annotation-shortcut-hint")
         if hint is not None:
             hint.setText(
-                "Space 이동\n휠 확대\n"
+                "Space·휠버튼 드래그 이동\n휠 확대\n"
                 + (self.bindings["undo"] or "—")
                 + " 취소\n"
                 + (self.bindings["previous"] or "—")

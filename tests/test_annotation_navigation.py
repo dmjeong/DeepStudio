@@ -45,11 +45,17 @@ def test_navigating_images_releases_each_previous_workspace(tmp_path):
         if not shown or ("dialog" in previous and shown[0] is previous["dialog"]()):
             return
         dialog = shown[0]
-        if "canvas" in previous:  # the window before this one must be gone already
-            released.append(previous["canvas"]() is None)
-        alive.append(len(page.findChildren(SegmentationAnnotationDialog)))
         # Weak references only: the test itself must not keep a window alive.
+        previous_canvas = previous.get("canvas")
         previous.update(dialog=weakref.ref(dialog), canvas=weakref.ref(dialog.view))
+
+        def measure():
+            # The next window is shown just before the previous one hides (no blank moment), so
+            # both exist for an instant. Count once that hand-off has finished.
+            if previous_canvas is not None:  # the window before this one must be gone
+                released.append(previous_canvas() is None)
+            alive.append(len(page.findChildren(SegmentationAnnotationDialog)))
+            QTimer.singleShot(0, next_image)
 
         def next_image(d=dialog):
             # The real "next" button: confirming "background only" saves the empty
@@ -60,7 +66,7 @@ def test_navigating_images_releases_each_previous_workspace(tmp_path):
             else:
                 d.dirty = False
                 QDialog.reject(d)
-        QTimer.singleShot(0, next_image)
+        QTimer.singleShot(50, measure)
 
     with patch.object(DatasetWidget, "_scan_all"):
         page = DatasetWidget()

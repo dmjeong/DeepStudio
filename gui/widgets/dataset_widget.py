@@ -1425,7 +1425,17 @@ class DatasetWidget(QWidget):
                         following = build(target)
                     except (OSError, ValueError):
                         return  # 기존 흐름: 이 창을 닫은 뒤 다시 만들며 오류를 알린다
-                    following.show()
+                    # 최대화·전체 화면: 창 관리자가 상태를 반영하기 전에도 같은 크기이도록 이전 창의 실제
+                    # 크기를 먼저 준다 (아니면 원래 크기로 한 번 그려지고, 화면 맞춤이 그 크기로 계산된다).
+                    # 최대화를 풀면 restoreGeometry가 기억한 원래 크기로 돌아간다.
+                    if current.isFullScreen() or current.isMaximized():
+                        following.setGeometry(current.geometry())
+                    if current.isFullScreen():
+                        following.showFullScreen()
+                    elif current.isMaximized():
+                        following.showMaximized()
+                    else:
+                        following.show()
                     following.raise_()
                     following.activateWindow()
                     if hasattr(following, "_fit") and following.layout() is not None:

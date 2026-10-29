@@ -402,6 +402,7 @@ class SegmentationDataset(Dataset):
         self._mask_cache_limit = 64 * 1024 * 1024
 
         # 이미지-마스크 쌍 매칭
+        self.unlabeled = []
         self.pairs = self._find_pairs()
 
         if len(self.pairs) == 0:
@@ -413,10 +414,18 @@ class SegmentationDataset(Dataset):
 
         print("Segmentation 데이터셋 로드")
         print(f"   이미지-마스크 쌍: {len(self.pairs)}")
+        if self.unlabeled:
+            print(f"   마스크 없는 이미지 {len(self.unlabeled)}장은 학습에서 제외 (아직 라벨링 안 함)")
 
     def _find_pairs(self) -> List[Tuple[str, str]]:
-        from spatial_data import semantic_pairs
-        return semantic_pairs(self.img_dir, self.mask_dir)
+        from spatial_data import labeled_semantic_pairs
+        # 마스크가 없는 이미지(아직 라벨링 안 함)는 학습에서 빼고 개수를 남긴다 (spatial_data 참고).
+        pairs, self.unlabeled = labeled_semantic_pairs(self.img_dir, self.mask_dir)
+        if not pairs and self.unlabeled:
+            raise ValueError(
+                f"라벨링한 이미지가 없습니다: {self.img_dir} (마스크 없는 이미지 {len(self.unlabeled)}장). "
+                "데이터셋 화면에서 이미지를 열어 결함 영역을 그리거나, 결함이 없으면 '배경만 있음 확인' 후 저장하세요.")
+        return pairs
 
     def _resized_mask(self, mask_path: str) -> Tuple[np.ndarray, Tuple[int, int]]:
         """학습 크기로 줄인 클래스 마스크(복사본)와 원본 (W, H)."""
@@ -843,6 +852,17 @@ def create_classification_loaders(
     )
 
     return train_loader, val_loader, class_names
+
+
+def unlabeled_message(*loaders) -> str:
+    """학습에서 뺀 미라벨 이미지(마스크 없음) 안내 문구. 없으면 빈 문자열."""
+    counts = [(name, len(getattr(getattr(loader, "dataset", None), "unlabeled", []) or []))
+              for name, loader in zip(("train", "val"), loaders)]
+    if not any(count for _, count in counts):
+        return ""
+    detail = ", ".join(f"{name} {count}장" for name, count in counts if count)
+    return (f"마스크 없는 이미지({detail})는 아직 라벨링하지 않은 것으로 보고 학습에서 제외합니다. "
+            "결함이 없는 이미지는 작업실에서 '배경만 있음 확인' 후 저장하면 학습에 들어갑니다.")
 
 
 def create_segmentation_loaders(

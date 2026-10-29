@@ -845,7 +845,7 @@ class TrainWorker(TrainingEngine):
                 return result
 
             elif task == "segment":
-                return create_segmentation_loaders(
+                loaders = create_segmentation_loaders(
                     data_root=data_root,
                     input_size=input_size,
                     batch_size=cfg.batch_size,
@@ -855,6 +855,10 @@ class TrainWorker(TrainingEngine):
                     flip_prob=flip_prob,
                     num_classes=data_cfg.num_classes,
                 )
+                from dataset import unlabeled_message
+                if unlabeled_message(*loaders):
+                    self.signals.log_message.emit("  " + unlabeled_message(*loaders))
+                return loaders
 
             elif task == "detect":
                 self.signals.log_message.emit(

@@ -1,0 +1,139 @@
+"""Annotation workspace input: Space panning from any control, brush continuation, unlabeled images."""
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+from PIL import Image
+
+pytest.importorskip("PySide6")
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QLineEdit, QPushButton
+
+from core.mask_annotations import MaskDocument
+from widgets.segmentation_annotation import SegmentationAnnotationDialog
+
+
+@pytest.fixture
+def workspace(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    image = tmp_path / "a.png"
+    Image.new("RGB", (200, 160), 90).save(image)
+    dialog = SegmentationAnnotationDialog(str(image), ["background", "scratch", "dent"],
+                                          MaskDocument(200, 160, 3), lambda values: {})
+    dialog.show()
+    app.processEvents()
+    dialog._fit()
+    app.processEvents()
+    yield app, dialog
+    dialog.dirty = False
+    dialog.reject()
+    dialog.deleteLater()
+    app.processEvents()
+
+
+def _drag(app, dialog, points):
+    viewport = dialog.view.viewport()
+    mapped = [dialog.view.mapFromScene(x, y) for x, y in points]
+    QTest.mousePress(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, mapped[0])
+    for start, end in zip(mapped, mapped[1:]):
+        for step in range(1, 6):
+            QTest.mouseMove(viewport, start + (end - start) * step / 5)
+            app.processEvents()
+    QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, mapped[-1])
+    app.processEvents()
+
+
+# ── Space ──────────────────────────────────────────────────────
+
+def test_space_pans_the_canvas_instead_of_pressing_the_focused_control(workspace):
+    """Space used to click whichever button/checkbox/combo last took the keyboard focus."""
+    app, dialog = workspace
+    controls = dialog.findChildren(QPushButton) + dialog.findChildren(QCheckBox) + dialog.findChildren(QComboBox)
+    assert controls and all(c.focusPolicy() == Qt.FocusPolicy.NoFocus for c in controls)
+    check = dialog.empty_confirm
+    check.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # worst case: a control holds the focus anyway
+    check.setFocus()
+    app.processEvents()
+    before = check.isChecked()
+    QTest.keyPress(check, Qt.Key.Key_Space)
+    app.processEvents()
+    assert check.isChecked() == before and dialog.view.space and app.focusWidget() is dialog.view
+    QTest.keyRelease(dialog.view, Qt.Key.Key_Space)
+    assert not dialog.view.space
+
+
+def test_text_fields_still_type_spaces(workspace):
+    app, dialog = workspace
+    search = next(e for e in dialog.findChildren(QLineEdit) if e.placeholderText() == "클래스 검색")
+    search.setFocus()
+    app.processEvents()
+    QTest.keyClicks(search, "a b")
+    assert search.text() == "a b" and not dialog.view.space
+
+
+# ── brush continuation ─────────────────────────────────────────
+
+def test_brush_after_a_rectangle_starts_a_new_object(workspace):
+    """A brush stroke used to join the just-drawn box, so the touching parts could never be split."""
+    app, dialog = workspace
+    dialog.class_combo.setCurrentIndex(dialog.class_combo.findData(1))
+    dialog._set_mode("rectangle")
+    _drag(app, dialog, [(20, 20), (80, 70)])
+    dialog._set_mode("brush")
+    _drag(app, dialog, [(70, 60), (150, 120)])
+    kinds = sorted(sorted({s["kind"] for i, s in enumerate(dialog.document.shapes)
+                           if dialog.document.key(i) == dialog._key(index)}) for index in dialog._indices())
+    assert kinds == [["polygon"], ["stroke"]]
+
+
+def test_consecutive_brush_strokes_still_paint_one_object_that_can_be_split(workspace):
+    from unittest.mock import patch
+    from PySide6.QtWidgets import QDialog
+
+    app, dialog = workspace
+    dialog.class_combo.setCurrentIndex(dialog.class_combo.findData(1))
+    dialog._set_mode("brush")
+    _drag(app, dialog, [(20, 20), (60, 20)])
+    _drag(app, dialog, [(20, 120), (60, 120)])
+    assert len(dialog._indices()) == 1
+    dialog._select(dialog._indices()[0])
+    with patch.object(QDialog, "exec", lambda self: 1), patch.object(QDialog, "result", lambda self: 1):
+        dialog._split_components()
+    assert len(dialog._indices()) == 2
+
+
+# ── unlabeled images ───────────────────────────────────────────
+
+def test_training_skips_images_without_masks_and_says_so(tmp_path):
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
+    from spatial_data import labeled_semantic_pairs, semantic_pairs
+    from dataset import SegmentationDataset, unlabeled_message
+
+    images, masks = tmp_path / "images", tmp_path / "masks"
+    images.mkdir()
+    masks.mkdir()
+    for index in range(3):
+        Image.new("L", (16, 16), 40).save(images / f"{index}.png")
+    Image.fromarray(np.zeros((16, 16), np.uint8), "L").save(masks / "0.png")  # background only, confirmed
+    Image.fromarray(np.ones((16, 16), np.uint8), "L").save(masks / "1.png")
+    pairs, unlabeled = labeled_semantic_pairs(images, masks)
+    assert [Path(p).stem for p, _ in pairs] == ["0", "1"] and [Path(p).stem for p in unlabeled] == ["2"]
+    with pytest.raises(ValueError, match="마스크 누락"):  # the strict helper is unchanged
+        semantic_pairs(images, masks)
+    dataset = SegmentationDataset(str(images), str(masks), input_size=(16, 16), in_channels=1,
+                                  is_train=False, num_classes=2)
+    assert len(dataset) == 2 and len(dataset.unlabeled) == 1
+
+    class Loader:
+        pass
+    loader = Loader()
+    loader.dataset = dataset
+    assert "train 1장" in unlabeled_message(loader, None)
+    (masks / "0.png").unlink()
+    (masks / "1.png").unlink()
+    with pytest.raises(ValueError, match="라벨링한 이미지가 없습니다"):
+        SegmentationDataset(str(images), str(masks), input_size=(16, 16), in_channels=1,
+                            is_train=False, num_classes=2)

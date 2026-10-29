@@ -245,6 +245,9 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             num_workers=num_workers, pin_memory=pin_memory,
             in_channels=in_channels, num_classes=num_classes,
             flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
+        from dataset import unlabeled_message
+        if unlabeled_message(train_loader, val_loader):
+            log(unlabeled_message(train_loader, val_loader))
         # Mask pixel values carry no names: the project's ordered class list is
         # what export, the SDK JSON and class-order checks below rely on.
         class_names = (_legacy_class_names(num_classes) if class_names is None

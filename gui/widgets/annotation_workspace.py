@@ -8,14 +8,18 @@ from pathlib import Path
 
 import numpy as np
 from core.annotation_tools import AnnotationDraftStore, fingerprint
-from PySide6.QtCore import QRectF, QSignalBlocker, Qt, QTimer, Slot
+from PySide6.QtCore import QEvent, QObject, QRectF, QSignalBlocker, Qt, QTimer, Slot
 from PySide6.QtGui import QImage, QPixmap, QTransform
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QInputDialog,
     QPushButton,
     QTableWidgetItem,
+    QToolButton,
+    QWidget,
 )
 from widgets.annotation_grid_dialog import GridDialog
 from widgets.annotation_io import AnnotationWrite, ImagePrefetcher
@@ -23,6 +27,43 @@ from widgets.annotation_navigation import hand_off_navigation
 from widgets.annotation_workspace_state import AnnotationWorkspaceState
 from widgets.annotation_workspace_ui import AnnotationWorkspaceUI
 from widgets.common import NoWheelComboBox
+
+
+class SpacePan(QObject):
+    """작업실 어디에 포커스가 있든 Space는 캔버스 화면 이동(누른 채 드래그)으로 보낸다.
+
+    Space는 캔버스에 포커스가 있을 때만 화면 이동이었다. 도구 버튼·체크박스·콤보를 한 번 누르면
+    포커스가 그쪽으로 가서, Space가 그 버튼을 다시 누르거나 체크를 바꾸거나 목록을 열었다.
+    글자를 입력하는 칸(클래스 이름, 숫자 칸, 단축키 입력)은 Space를 그대로 쓴다. 작업실 위에 뜬
+    다른 창(격자·단축키 설정)은 건드리지 않는다.
+    """
+
+    def __init__(self, workspace):
+        super().__init__(workspace)
+        self.workspace = workspace
+
+    @staticmethod
+    def _text_entry(widget):
+        from PySide6.QtWidgets import QAbstractSpinBox, QKeySequenceEdit, QLineEdit, QPlainTextEdit, QTextEdit
+
+        return isinstance(widget, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QKeySequenceEdit))
+
+    def eventFilter(self, watched, event):
+        if event.type() not in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            return False
+        if event.key() != Qt.Key.Key_Space or not isinstance(watched, QWidget):
+            return False
+        view = getattr(self.workspace, "view", None)
+        if view is None or watched.window() is not self.workspace or self._text_entry(watched):
+            return False
+        if watched is view or view.isAncestorOf(watched):
+            return False  # 캔버스는 원래 처리 (누르면 이동 커서, 떼면 해제)
+        if event.type() == QEvent.Type.KeyPress:
+            view.setFocus()  # 이후 드래그·단축키가 캔버스로 간다
+            view.keyPressEvent(event)
+        else:
+            view.keyReleaseEvent(event)
+        return True  # 포커스를 가진 버튼·체크박스·콤보가 Space로 눌리지 않게 막는다
 
 
 class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDialog):
@@ -128,6 +169,14 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self.shortcuts = AnnotationShortcuts(self)
         for button in self.findChildren(QPushButton):
             button.setAutoDefault(False)
+        # 버튼·체크박스·콤보는 클릭해도 키보드 포커스를 가져가지 않는다: Space(이동)·Enter(다각형 완료)·
+        # K/J 같은 단축키가 계속 캔버스로 간다. 글자·숫자 입력칸은 그대로 포커스를 받는다.
+        for kind in (QPushButton, QToolButton, QCheckBox, QComboBox):
+            for widget in self.findChildren(kind):
+                if not (isinstance(widget, QComboBox) and widget.isEditable()):
+                    widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._space_pan = SpacePan(self)
+        QApplication.instance().installEventFilter(self._space_pan)
         self._restore_preferences()
         self._load_draft()
         # 초안 복원은 문서를 렌더링된 새 객체로 바꾸므로, 어느 경우든 캐시가 지금 문서와 일치한다.
@@ -152,6 +201,9 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
                 worker.requestInterruption()
             except RuntimeError:  # finished loader already deleted itself
                 pass
+        if getattr(self, "_space_pan", None) is not None:
+            QApplication.instance().removeEventFilter(self._space_pan)
+            self._space_pan = None
         hand_off_navigation(self, result)  # 다음 이미지 창을 먼저 같은 자리에 띄운 뒤 숨는다
         super().done(result)
 
@@ -366,13 +418,17 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
 
     def _selection_options(self):
         if self.task == "segment":
+            # 브러시는 선택한 '브러시 객체'에만 이어 그린다 (한 결함을 여러 획으로 칠하기).
+            # 사각형·다각형·AI·분리로 만든 객체가 선택돼 있을 때 이어 그리면 그 객체에 합쳐져서,
+            # 맞닿은 브러시 영역을 다시 나눌 수 없었다. 이때는 새 객체로 시작한다.
             chosen = self.selected if self.selected >= 0 else -1
-            self.view.brush_object = (
-                self._key(chosen)
-                if chosen >= 0
-                and self.document.shapes[chosen]["class_id"] == self._active_class_id()
-                else None
-            )
+            continue_brush = False
+            if chosen >= 0 and self.document.shapes[chosen]["class_id"] == self._active_class_id():
+                key = self._key(chosen)
+                kinds = {s["kind"] for i, s in enumerate(self.document.shapes)
+                         if s.get("operation") != "erase" and self.document.key(i) == key}
+                continue_brush = kinds == {"stroke"}
+            self.view.brush_object = self._key(chosen) if continue_brush else None
 
     def _table_selection(self):
         if self._table_updating:

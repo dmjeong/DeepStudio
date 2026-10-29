@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PIL import Image
 from center_crop import center_crop_box, load_crop_image, validate_center_crop
-from spatial_data import image_files, read_spatial_labels, semantic_pairs
+from spatial_data import image_files, labeled_semantic_pairs, read_spatial_labels
 
 
 def crop_spatial_rows(rows, task, image_size, crop):
@@ -73,7 +73,8 @@ def prepare_crop_dataset(root, output_parent, task, crop, *, native=False,
     files = image_files(root / "images" if spatial else root)
     if not files:
         raise ValueError("중앙 크롭할 이미지가 없습니다")
-    pairs = dict(semantic_pairs(root / "images", root / "masks")) if semantic else {}
+    # 마스크 없는(미라벨) 이미지는 크롭한 이미지만 두고 마스크는 만들지 않는다. 학습 로더가 제외한다.
+    pairs = dict(labeled_semantic_pairs(root / "images", root / "masks")[0]) if semantic else {}
     parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".center-crop-", dir=parent))
     final = parent / staging.name.lstrip(".")
@@ -107,7 +108,7 @@ def prepare_crop_dataset(root, output_parent, task, crop, *, native=False,
                     target = staging / relative
                     target.parent.mkdir(parents=True, exist_ok=True)
                     image.save(target, format="PNG")
-                if semantic:
+                if semantic and str(path) in pairs:
                     with Image.open(pairs[str(path)]) as mask:
                         if mask.size != size:
                             raise ValueError("이미지와 정답 마스크의 원본 크기가 다릅니다")

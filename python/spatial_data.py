@@ -11,6 +11,29 @@ def image_files(root):
                   and not any(part.startswith('.') for part in p.relative_to(root).parts))
 
 
+def labeled_semantic_pairs(image_root, mask_root):
+    """학습용 (이미지, 마스크) 쌍과 아직 라벨링하지 않은(마스크 없는) 이미지 목록.
+
+    데이터셋 화면의 '미라벨' 이미지는 결함이 있어도 아직 표시하지 않았을 수 있어 배경으로 쓰면 안 된다.
+    학습에서 빼고 개수를 알린다. 배경만 있는 이미지는 작업실의 '배경만 있음 확인'이 빈 마스크를 저장하므로
+    여기서 쌍으로 들어간다. 이미지 없는 마스크와 이름 중복은 여전히 오류다.
+    """
+    def indexed(root):
+        result = {}
+        for path in image_files(root):
+            key = path.relative_to(root).with_suffix('')
+            if key in result:
+                raise ValueError(f'이미지/마스크 이름 중복: {result[key]}, {path}')
+            result[key] = path
+        return result
+    images, masks = indexed(Path(image_root)), indexed(Path(mask_root)) if Path(mask_root).is_dir() else {}
+    for key in masks.keys() - images.keys():
+        raise ValueError(f'마스크에 대응하는 이미지 누락: {masks[key]}')
+    pairs = [(str(image), str(masks[key])) for key, image in images.items() if key in masks]
+    unlabeled = sorted(str(image) for key, image in images.items() if key not in masks)
+    return pairs, unlabeled
+
+
 def semantic_pairs(image_root, mask_root):
     """동일 상대 경로의 이미지/마스크를 연결하고 누락과 중복을 알린다."""
     def indexed(root):

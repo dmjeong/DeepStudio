@@ -345,6 +345,8 @@ def _train_sam2_project(context, project, device):
 
     def progress(event):
         if event.get("event") == "dataset_validated":
+            if event.get("unlabeled"):
+                context.emit("log_message", [event["unlabeled"]])
             for split, summary in (("train", event["train"]), ("val", event["val"])):
                 context.emit("log_message", [
                     f"SAM2 {split} 마스크 확인: {summary['images']}장 | "
