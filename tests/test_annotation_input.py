@@ -106,7 +106,8 @@ def test_consecutive_brush_strokes_still_paint_one_object_that_can_be_split(work
 
 # ── unlabeled images ───────────────────────────────────────────
 
-def test_training_skips_images_without_masks_and_says_so(tmp_path):
+def test_images_without_masks_train_as_background_and_say_so(tmp_path):
+    """Unlabelled images used to stop training ("정답 마스크 누락"); they train as all-background."""
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
     from spatial_data import labeled_semantic_pairs, semantic_pairs
@@ -117,7 +118,7 @@ def test_training_skips_images_without_masks_and_says_so(tmp_path):
     masks.mkdir()
     for index in range(3):
         Image.new("L", (16, 16), 40).save(images / f"{index}.png")
-    Image.fromarray(np.zeros((16, 16), np.uint8), "L").save(masks / "0.png")  # background only, confirmed
+    Image.fromarray(np.zeros((16, 16), np.uint8), "L").save(masks / "0.png")
     Image.fromarray(np.ones((16, 16), np.uint8), "L").save(masks / "1.png")
     pairs, unlabeled = labeled_semantic_pairs(images, masks)
     assert [Path(p).stem for p, _ in pairs] == ["0", "1"] and [Path(p).stem for p in unlabeled] == ["2"]
@@ -125,16 +126,19 @@ def test_training_skips_images_without_masks_and_says_so(tmp_path):
         semantic_pairs(images, masks)
     dataset = SegmentationDataset(str(images), str(masks), input_size=(16, 16), in_channels=1,
                                   is_train=False, num_classes=2)
-    assert len(dataset) == 2 and len(dataset.unlabeled) == 1
+    assert len(dataset) == 3 and len(dataset.unlabeled) == 1
+    _image, target = dataset[2]  # the mask-less image
+    assert int(np.asarray(target).max()) == 0
+    assert dataset.class_pixel_counts(2) == [256 * 2, 256]
 
     class Loader:
         pass
     loader = Loader()
     loader.dataset = dataset
-    assert "train 1장" in unlabeled_message(loader, None)
+    assert "train 1장" in unlabeled_message(loader, None) and "배경으로 학습" in unlabeled_message(loader, None)
     (masks / "0.png").unlink()
     (masks / "1.png").unlink()
-    with pytest.raises(ValueError, match="라벨링한 이미지가 없습니다"):
+    with pytest.raises(ValueError, match="정답 마스크가 하나도 없습니다"):
         SegmentationDataset(str(images), str(masks), input_size=(16, 16), in_channels=1,
                             is_train=False, num_classes=2)
 
@@ -205,15 +209,24 @@ def test_shift_drag_still_erases_with_the_brush(two_objects):
     assert dialog.document.shapes[-1].get("operation") == "erase"
 
 
-def test_picking_the_next_class_does_not_relabel_the_object_just_drawn(workspace):
+def test_picking_a_class_right_after_drawing_labels_that_object(workspace):
+    """Two rectangles kept the same class: picking a class after drawing did not reach the new box."""
+    from PySide6.QtCore import Qt as _Qt
+
     app, dialog = workspace
-    dialog.class_combo.setCurrentIndex(dialog.class_combo.findData(1))
+    dialog.class_list.setCurrentRow(1)
     dialog._set_mode("rectangle")
-    _drag(app, dialog, [(150, 20), (180, 50)])
-    drawn = dialog.selected
-    dialog.class_list.setCurrentRow(2)
+    _drag(app, dialog, [(20, 20), (60, 60)])
+    first = dialog.selected
+    _drag(app, dialog, [(100, 80), (150, 130)])
+    second = dialog.selected
+    dialog.class_list.setCurrentRow(2)           # draw, then label
     app.processEvents()
-    assert dialog._class_id(drawn) == 1 and dialog._active_class_id() == 2
+    assert (dialog._class_id(first), dialog._class_id(second)) == (1, 2)
+    QTest.keyClick(dialog.view, _Qt.Key.Key_Escape)  # deselect: the next pick only sets the drawing class
+    dialog.class_list.setCurrentRow(1)
+    app.processEvents()
+    assert (dialog._class_id(first), dialog._class_id(second)) == (1, 2) and dialog._active_class_id() == 1
 
 
 def test_detection_shift_click_selects_and_never_deletes_boxes(tmp_path):

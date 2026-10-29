@@ -170,6 +170,182 @@ def _remap_mask(path, deleted, count):
         return result, source.format, removed, remapped
 
 
+# 분할 0번 클래스로 인정하는 배경 이름. 마스크 픽셀 0은 이름과 관계없이 '라벨 없음 = 배경'이다.
+BACKGROUND_NAMES = frozenset({"background", "_background_", "bg", "배경", "none", "normal", "ok"})
+
+
+def is_background_name(name):
+    """대소문자·공백·밑줄 차이를 무시하고 배경으로 쓰는 이름인지 본다."""
+    return name.strip().casefold().replace(" ", "") in BACKGROUND_NAMES
+
+
+def with_background(class_names):
+    """분할 클래스 목록의 0번을 배경으로 맞춘다.
+
+    분할 마스크에서 0번은 '아무것도 그리지 않은 픽셀'이라 첫 클래스는 그릴 수 없다.
+    'scratch, dent'처럼 결함만 입력하면 scratch가 배경 자리를 차지해 등록이 안 되므로
+    배경을 맨 앞에 넣는다. 배경 이름이 뒤에 있으면 맨 앞으로 옮긴다(새 프로젝트 전용).
+
+        입력 [scratch, dent]              → [background, scratch, dent]
+        입력 [dent, background]           → [background, dent]
+        입력 [background, scratch]        → 그대로
+    """
+    names = list(class_names)
+    for index, name in enumerate(names):
+        if is_background_name(name):
+            return [name] + names[:index] + names[index + 1:]
+    return ["background"] + names
+
+
+def _shift_mask(path, count):
+    """배경 삽입용: 픽셀 1~count-1을 한 칸씩 올린다. 0(배경)과 255(학습 제외)는 그대로."""
+    if path.suffix.lower() not in LOSSLESS_MASK_EXTENSIONS:
+        raise ValueError(f"손실 없는 정수 클래스 마스크만 변경 가능합니다: {path}")
+    mapping = [0] + [value + 1 for value in range(1, 255)] + [255]
+    with Image.open(path) as source:
+        if source.mode not in ("L", "P", "I", "I;16", "I;16L", "I;16B") or getattr(source, "n_frames", 1) != 1:
+            raise ValueError(f"단일 프레임 정수/팔레트 마스크가 필요합니다: {path}")
+        source.load()
+        if source.mode in ("L", "P"):
+            counts = source.histogram()
+            if any(counts[count:255]):
+                raise ValueError(f"클래스 범위를 벗어난 마스크 값: {path}")
+            shifted = sum(counts[1:count])
+            result = source.point(mapping)
+        else:
+            values = list(source.getdata())
+            if any(value != 255 and (value < 0 or value >= count) for value in values):
+                raise ValueError(f"클래스 범위를 벗어난 마스크 값: {path}")
+            shifted = sum(0 < value < 255 for value in values)
+            # I;16의 putdata는 Pillow 버전에 따라 바이트를 잘못 해석하므로 I 경유.
+            result = Image.new("I", source.size)
+            result.putdata([mapping[value] for value in values])
+            result = result.convert(source.mode)
+        if source.mode == "P":
+            palette = source.getpalette()
+            if palette:
+                # 색은 클래스 이름을 따라간다: 새 k+1번 = 이전 k번의 색, 0번(배경)은 유지.
+                palette = (palette + [0] * 768)[:768]
+                palette[3:255 * 3] = palette[0:254 * 3]
+                result.putpalette(palette)
+            transparency = source.info.get("transparency")
+            if isinstance(transparency, int):
+                result.info["transparency"] = mapping[transparency]
+            elif isinstance(transparency, bytes):
+                alpha = (transparency + b"\xff" * 256)[:256]
+                result.info["transparency"] = alpha[:1] + alpha[0:254] + alpha[255:]
+        return result, source.format, shifted
+
+
+def _shift_labels(path, count, task):
+    """배경 삽입용: 폴리곤 라벨의 클래스 번호 k를 k+1로 올린다.
+
+    폴리곤은 사용자가 명시적으로 그린(또는 YOLO 형식으로 가져온) 객체이므로 0번도 올려
+    '이전 0번 이름'의 객체로 남긴다. 마스크 픽셀 0은 '그리지 않음'이라 그대로 둔다.
+    """
+    # 형식·범위 검증만 재사용한다. 삭제 번호를 count로 주면 지워지거나 바뀌는 줄이 없다.
+    _remap_labels(path, count, count, task)
+    text = path.read_text(encoding="utf-8-sig")
+    output, shifted = [], 0
+    for line in text.splitlines(keepends=True):
+        if line.split():
+            line = re.sub(r"^(\s*)([0-9]+)", lambda m: m.group(1) + str(int(m.group(2)) + 1), line, count=1)
+            shifted += 1
+        output.append(line)
+    return "".join(output).encode("utf-8"), shifted
+
+
+def _derived_files(project, folders=()):
+    """학습 때 다시 만드는 설정·라벨 캐시. 이전 클래스 번호를 담을 수 있어 보관 폴더로 옮긴다."""
+    return tuple(str(p) for p in _walk_files(project.data.root)
+                 if (p.suffix.lower() == ".cache" or p == Path(project.data.root) / "dataset.yaml")
+                 and not any(_inside(p, Path(folder)) for folder in folders))
+
+
+def _commit_class_change(project, files, rewrite, moves, update, record, action):
+    """백업 준비 -> 데이터 변경 -> 프로젝트 원자 저장. 실패 시 역순 복구.
+
+    files의 각 경로는 rewrite(path)가 (내용, 이미지 형식) 또는 변경 없음(None)을 돌려준다.
+    내용이 bytes면 그대로, 이미지면 그 형식으로 저장한다. moves는 보관 폴더로 옮길 경로,
+    update()는 프로젝트 모델을 새 클래스 구성으로 바꾸는 함수, record는 manifest에 남길 정보.
+    """
+    root = _plain_path(project.data.root)
+    archive_base = root.parent / ".deep_studio_class_archive"
+    active_dirs = [root, *(_plain_path(getattr(project.data, f"{s}_dir")) for s in SPLITS
+                          if getattr(project.data, f"{s}_dir", ""))]
+    if any(_inside(archive_base, active) for active in active_dirs):
+        raise ValueError("백업 위치가 활성 데이터 경로에 포함됩니다. 데이터 경로를 분리해 주세요.")
+    archive = _plain_path(archive_base / (datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]))
+    archive.mkdir(parents=True)
+    old_names = list(project.data.class_names)
+    old_count, old_images, old_modified = project.data.num_classes, project.data.image_count, project.modified
+    staged, applied, moved, manifest = [], [], [], []
+    try:
+        # 모든 변환과 원본 백업을 성공시킨 뒤 활성 데이터 변경 시작.
+        for path_string in files:
+            path = Path(path_string)
+            change = rewrite(path)
+            if change is None:
+                continue
+            content, image_format = change
+            backup = archive / f"original_{len(manifest):06d}{path.suffix}"
+            shutil.copy2(path, backup)
+            manifest.append({"source": str(path), "backup": backup.name, "kind": "file"})
+            fd, temporary = tempfile.mkstemp(prefix=".class_edit_", suffix=".pending", dir=path.parent)
+            os.close(fd)
+            staged.append((path, Path(temporary), backup))
+            if isinstance(content, bytes):
+                Path(temporary).write_bytes(content)
+            else:
+                content.save(temporary, format=image_format)
+        for path_string in moves:
+            path = Path(path_string)
+            backup = archive / f"removed_{len(manifest):06d}{path.suffix}"
+            # 폴더 이동은 동일 파일시스템의 원자 rename만 사용. 부분 복사 방지.
+            if path.stat().st_dev != archive.stat().st_dev:
+                raise ValueError(f"백업과 데이터가 다른 파일시스템입니다: {path}")
+            manifest.append({"source": str(path), "backup": backup.name, "kind": "move"})
+        active_path = getattr(project, "_active_filepath", "")
+        if active_path and Path(active_path).is_file():
+            shutil.copy2(active_path, archive / "project_before.dvproj")
+        (archive / "manifest.json").write_text(json.dumps({
+            **record, "task": project.task, "class_names_before": old_names, "files": manifest,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        for path, temporary, backup in staged:
+            os.replace(temporary, path)
+            applied.append((path, backup))
+        for item in manifest:
+            if item["kind"] == "move":
+                source, backup = Path(item["source"]), archive / item["backup"]
+                os.replace(source, backup)
+                moved.append((source, backup))
+        update()
+        ProjectManager.save(project)
+    except Exception as original:
+        project.data.class_names = old_names
+        project.data.num_classes, project.data.image_count, project.modified = old_count, old_images, old_modified
+        failures = []
+        for source, backup in reversed(moved):
+            try:
+                os.replace(backup, source)
+            except OSError as exc:
+                failures.append(f"{source}: {exc}")
+        for source, backup in reversed(applied):
+            try:
+                shutil.copy2(backup, source)
+            except OSError as exc:
+                failures.append(f"{source}: {exc}")
+        if failures:
+            raise RuntimeError(f"{action} 및 일부 복구 실패. 원본 백업: {archive}\n" + "\n".join(failures)) from original
+        shutil.rmtree(archive)
+        raise
+    finally:
+        for _, temporary, _ in staged:
+            temporary.unlink(missing_ok=True)
+    # 저장 이후 실패 가능한 추가 파일 작업을 수행하지 않음. manifest는 복구용 원본 기록.
+    return str(archive)
+
+
 @dataclass(frozen=True)
 class DeletePreview:
     class_name: str
@@ -250,9 +426,7 @@ class ClassManager:
                         changed += bool(nr + ns)
                         fingerprints.append((str(path), _digest(path)))
         # 학습 시 다시 생성되는 설정과 라벨 캐시는 이전 번호를 담을 수 있음.
-        derived = tuple(str(p) for p in _walk_files(project.data.root)
-                        if (p.suffix.lower() == ".cache" or p == Path(project.data.root) / "dataset.yaml")
-                        and not any(_inside(p, Path(folder)) for folder in folders))
+        derived = _derived_files(project, folders)
         fingerprints.extend((p, _digest(Path(p))) for p in derived)
         return DeletePreview(class_name, deleted, names, project.task, tuple(folders), tuple(labels),
                              tuple(masks), derived, tuple(fingerprints), image_count, removed, remapped,
@@ -264,90 +438,78 @@ class ClassManager:
         if preview is not None and preview != current:
             raise ValueError("미리보기 이후 데이터가 변경되었습니다. 삭제 내용을 다시 확인해 주세요.")
         preview = current
-        root = _plain_path(project.data.root)
-        archive_base = root.parent / ".deep_studio_class_archive"
-        active_dirs = [root, *(_plain_path(getattr(project.data, f"{s}_dir")) for s in SPLITS
-                              if getattr(project.data, f"{s}_dir", ""))]
-        if any(_inside(archive_base, active) for active in active_dirs):
-            raise ValueError("백업 위치가 활성 데이터 경로에 포함됩니다. 데이터 경로를 분리해 주세요.")
-        archive = _plain_path(archive_base / (datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]))
-        archive.mkdir(parents=True)
-        old_names = list(project.data.class_names)
-        old_count, old_images, old_modified = project.data.num_classes, project.data.image_count, project.modified
-        staged, applied, moved, manifest = [], [], [], []
-        try:
-            # 모든 변환과 원본 백업을 성공시킨 뒤 활성 데이터 변경 시작.
-            for path_string in (*preview.labels, *preview.masks):
-                path = Path(path_string)
-                if path_string in preview.labels:
-                    content, removed, remapped = _remap_labels(path, preview.class_index, len(old_names), project.task)
-                    if not removed + remapped:
-                        continue
-                    def writer(target, data=content):
-                        Path(target).write_bytes(data)
-                else:
-                    mask, image_format, removed, remapped = _remap_mask(path, preview.class_index, len(old_names))
-                    if not removed + remapped:
-                        continue
-                    def writer(target, image=mask, fmt=image_format):
-                        image.save(target, format=fmt)
-                backup = archive / f"original_{len(manifest):06d}{path.suffix}"
-                shutil.copy2(path, backup)
-                manifest.append({"source": str(path), "backup": backup.name, "kind": "file"})
-                fd, temporary = tempfile.mkstemp(prefix=".class_edit_", suffix=".pending", dir=path.parent)
-                os.close(fd)
-                staged.append((path, Path(temporary), backup))
-                writer(temporary)
-            for path_string in (*preview.folders, *preview.derived):
-                path = Path(path_string)
-                backup = archive / f"removed_{len(manifest):06d}{path.suffix}"
-                # 폴더 이동은 동일 파일시스템의 원자 rename만 사용. 부분 복사 방지.
-                if path.stat().st_dev != archive.stat().st_dev:
-                    raise ValueError(f"백업과 데이터가 다른 파일시스템입니다: {path}")
-                manifest.append({"source": str(path), "backup": backup.name, "kind": "move"})
-            active_path = getattr(project, "_active_filepath", "")
-            if active_path and Path(active_path).is_file():
-                shutil.copy2(active_path, archive / "project_before.dvproj")
-            (archive / "manifest.json").write_text(json.dumps({
-                "purpose": "originals_before_class_deletion", "task": project.task, "class_names_before": old_names,
-                "deleted_class": class_name, "files": manifest,
-            }, ensure_ascii=False, indent=2), encoding="utf-8")
-            for path, temporary, backup in staged:
-                os.replace(temporary, path)
-                applied.append((path, backup))
-            for record in manifest:
-                if record["kind"] == "move":
-                    source, backup = Path(record["source"]), archive / record["backup"]
-                    os.replace(source, backup)
-                    moved.append((source, backup))
-            project.data.class_names = [name for name in old_names if name != class_name]
+        names = list(preview.class_names)
+
+        def rewrite(path):
+            if str(path) in preview.labels:
+                content, removed, remapped = _remap_labels(path, preview.class_index, len(names), project.task)
+                return (content, None) if removed + remapped else None
+            mask, image_format, removed, remapped = _remap_mask(path, preview.class_index, len(names))
+            return (mask, image_format) if removed + remapped else None
+
+        def update():
+            project.data.class_names = [name for name in names if name != class_name]
             project.data.num_classes = len(project.data.class_names)
             if project.task == "classify":
-                project.data.image_count = max(0, old_images - preview.image_count)
-            ProjectManager.save(project)
-        except Exception as original:
-            project.data.class_names = old_names
-            project.data.num_classes, project.data.image_count, project.modified = old_count, old_images, old_modified
-            failures = []
-            for source, backup in reversed(moved):
-                try:
-                    os.replace(backup, source)
-                except OSError as exc:
-                    failures.append(f"{source}: {exc}")
-            for source, backup in reversed(applied):
-                try:
-                    shutil.copy2(backup, source)
-                except OSError as exc:
-                    failures.append(f"{source}: {exc}")
-            if failures:
-                raise RuntimeError(f"클래스 삭제 및 일부 복구 실패. 원본 백업: {archive}\n" + "\n".join(failures)) from original
-            shutil.rmtree(archive)
-            raise
-        finally:
-            for _, temporary, _ in staged:
-                temporary.unlink(missing_ok=True)
-        # 저장 이후 실패 가능한 추가 파일 작업을 수행하지 않음. manifest는 복구용 원본 기록.
-        return str(archive)
+                project.data.image_count = max(0, project.data.image_count - preview.image_count)
+
+        return _commit_class_change(
+            project, (*preview.labels, *preview.masks), rewrite, (*preview.folders, *preview.derived), update,
+            {"purpose": "originals_before_class_deletion", "deleted_class": class_name}, "클래스 삭제")
+
+
+    @staticmethod
+    def needs_background(project):
+        """분할 프로젝트의 0번 클래스가 배경 이름이 아니면 True (첫 클래스를 그릴 수 없는 상태)."""
+        names = list(getattr(project.data, "class_names", []) or [])
+        return project.task == "segment" and bool(names) and not is_background_name(names[0])
+
+    @staticmethod
+    def insert_background(project, name="background"):
+        """0번에 배경 클래스를 끼워 넣고 기존 클래스 번호를 하나씩 올린다.
+
+            이전  0:scratch(그릴 수 없음)  1:dent
+            이후  0:background  1:scratch  2:dent
+
+        마스크 픽셀: 0(그리지 않음)→0, k→k+1, 255→255.  폴리곤 라벨: k→k+1.
+        원본은 보관 폴더에 백업하고, 실패하면 모두 되돌린다. (보관 폴더, 올린 픽셀 수, 올린 라벨 수)
+        """
+        validate_class_name(name)
+        if project.task != "segment":
+            raise ValueError("배경 클래스는 분할 프로젝트에서만 추가합니다.")
+        names = list(project.data.class_names)
+        for existing in names:
+            validate_class_name(existing)
+        if not ClassManager.needs_background(project):
+            raise ValueError("0번 클래스가 이미 배경입니다.")
+        if any(is_background_name(existing) for existing in names) or name.casefold() in {
+                existing.casefold() for existing in names}:
+            raise ValueError("배경 이름의 클래스가 0번이 아닌 위치에 있습니다. 그 클래스를 삭제한 뒤 다시 시도해 주세요.")
+        if len(names) + 1 > 255:
+            raise ValueError("255는 학습 제외 픽셀 번호입니다. 배경을 포함해 255개 이하 클래스만 지원합니다.")
+        labels = [path for directory in _split_dirs(project, "labels") for path in _walk_files(directory)
+                  if path.suffix.lower() == ".txt"]
+        masks = [path for directory in _split_dirs(project, "masks") for path in _walk_files(directory)
+                 if path.suffix.lower() in IMAGE_EXTENSIONS]
+        totals = {"pixels": 0, "labels": 0}
+
+        def rewrite(path):
+            if path.suffix.lower() == ".txt":
+                content, shifted = _shift_labels(path, len(names), project.task)
+                totals["labels"] += shifted
+                return (content, None) if shifted else None
+            mask, image_format, shifted = _shift_mask(path, len(names))
+            totals["pixels"] += shifted
+            return (mask, image_format) if shifted else None
+
+        def update():
+            project.data.class_names = [name] + names
+            project.data.num_classes = len(project.data.class_names)
+
+        archive = _commit_class_change(
+            project, [str(path) for path in labels + masks], rewrite, _derived_files(project), update,
+            {"purpose": "originals_before_background_insert", "inserted_class": name}, "배경 클래스 추가")
+        return archive, totals["pixels"], totals["labels"]
 
     @staticmethod
     def add(project, class_name):

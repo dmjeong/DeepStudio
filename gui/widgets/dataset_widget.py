@@ -538,6 +538,16 @@ class DatasetWidget(QWidget):
         self.del_class_btn.clicked.connect(self._delete_class)
         add_layout.addWidget(self.del_class_btn)
 
+        # 분할 0번이 결함 이름이면(배경 없이 만든 프로젝트) 그 클래스는 그릴 수 없다 → 배경을 끼워 넣는 버튼
+        self.fix_background_btn = QPushButton("0번에 배경 추가")
+        self.fix_background_btn.setProperty("cssClass", "primary")
+        self.fix_background_btn.setToolTip(
+            "분할에서 0번 클래스는 '그리지 않은 픽셀 = 배경'이라 그릴 수 없습니다.\n"
+            "0번에 background를 넣고 기존 클래스와 정답 번호를 한 칸씩 올립니다(원본은 백업).")
+        self.fix_background_btn.clicked.connect(self._insert_background)
+        self.fix_background_btn.hide()
+        add_layout.addWidget(self.fix_background_btn)
+
         add_layout.addStretch()
 
         # 드래그&드롭 안내
@@ -784,6 +794,8 @@ class DatasetWidget(QWidget):
             self.add_class_btn.show()
             self.del_class_btn.show()
 
+        self.fix_background_btn.setVisible(ClassManager.needs_background(project))
+
         # Anomaly는 val 분할을 쓰지 않음 (train=good만, test=good/defect)
         self.split_combo.clear()
         if project.task == "anomaly":
@@ -968,6 +980,33 @@ class DatasetWidget(QWidget):
             lambda: ClassManager.add(self.project, name),
             lambda _: self._classes_updated(f"클래스 '{name}' 추가 및 저장 완료"),
             "클래스 추가 중...",
+        )
+
+    def _insert_background(self):
+        """0번에 배경 클래스를 끼워 넣어, 배경 자리에 있던 첫 클래스를 그릴 수 있게 한다."""
+        if not self._ensure_idle() or not ClassManager.needs_background(self.project):
+            return
+        first = self.project.data.class_names[0]
+        answer = QMessageBox.question(
+            self, "0번에 배경 추가",
+            f"지금 0번 클래스 '{first}'는 배경 자리라서 그릴 수 없습니다.\n\n"
+            f"0번에 'background'를 넣고 '{first}'부터 한 칸씩 뒤로 옮깁니다.\n"
+            "  이전  0:" + first + "  1:…\n"
+            "  이후  0:background  1:" + first + "  2:…\n\n"
+            "그려 둔 마스크·폴리곤의 클래스 번호도 함께 올리고 원본은 보관 폴더에 백업합니다.\n"
+            "이전 학습 모델의 클래스 번호와는 달라지므로 다시 학습해야 합니다.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+        )
+        if answer != QMessageBox.Yes or not self._ensure_idle():
+            return
+        self.about_to_change.emit()
+        self._start_class_operation(
+            lambda: ClassManager.insert_background(self.project),
+            lambda result: self._classes_updated(
+                f"0번에 background 추가 완료 · '{first}'는 이제 1번으로 그릴 수 있습니다. "
+                f"번호를 올린 픽셀 {result[1]:,}개, 폴리곤 {result[2]}개 · 원본 보관: {result[0]}"
+            ),
+            "배경 클래스 추가 및 정답 번호 조정 중...",
         )
 
     def _delete_class(self):
@@ -1228,7 +1267,9 @@ class DatasetWidget(QWidget):
             rows.append((name, cells))
         rows.append(("배경만" if task == "segment" else "객체 없음",
                      [f"{by_split.get(s, {}).get('empty', 0)}장" for s in SPLITS]))
-        rows.append(("미라벨", [f"{by_split.get(s, {}).get('unlabeled', 0)}장" for s in SPLITS]))
+        # 분할 학습은 마스크 없는 이미지를 전부 배경(결함 없음)으로 학습한다
+        rows.append(("미라벨 (배경 학습)" if task == "segment" else "미라벨",
+                     [f"{by_split.get(s, {}).get('unlabeled', 0)}장" for s in SPLITS]))
         self.stats_table.setRowCount(len(rows))
         for row, (name, cells) in enumerate(rows):
             self.stats_table.setItem(row, 0, QTableWidgetItem(name))

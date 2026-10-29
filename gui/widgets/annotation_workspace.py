@@ -351,8 +351,10 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             self.selected = self.document.representative(shape["object_id"])
             self.selected_indices = {self.selected}
         self._changed(region)
-        # 방금 그린 객체의 자동 선택: 다음에 그릴 클래스를 골라도 이 객체의 클래스는 바꾸지 않는다.
-        self._auto_selected = True
+        if shape.get("operation") != "erase":
+            # 그린 직후 클래스를 고르면 이 객체에 적용된다 (그리고 → 클래스 고르기).
+            self.status.setText("그린 영역이 선택됐습니다 · 클래스를 고르면 이 영역에 적용 · "
+                                "다음 영역 클래스만 바꾸려면 Esc로 선택 해제 후 고르세요")
 
     def _edit(self, index, shape):
         self._edit_many({index: shape})
@@ -382,7 +384,6 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self._changed()
 
     def _select(self, index):
-        self._auto_selected = False  # 사용자가 고른 선택
         self.selected = index
         if index == -1:
             self.selected_indices = set()
@@ -403,7 +404,6 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self._select(index)
 
     def _select_many(self, indices):
-        self._auto_selected = False  # 사용자가 고른 선택
         self.selected_indices = set(indices)
         self.view.selected_set = set(indices)
         if self.selected not in indices:
@@ -488,13 +488,13 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         return -index - 2 if index < -1 else self._items()[index]["class_id"]
 
     def _class_picked(self, *_):
-        """클래스 목록·콤보·숫자키로 클래스를 고르면, 사용자가 직접 고른 객체가 있을 때 그 객체들에 적용한다.
+        """클래스 목록·콤보·숫자키로 클래스를 고르면 선택한 객체(방금 그린 객체 포함)에 적용한다.
 
         예전에는 활성(그리기) 클래스만 바뀌고 선택 객체는 그대로라 '선택에 적용'을 따로 눌러야 했다.
-        Shift로 여러 객체를 고른 뒤 클래스를 골라도 저장해 보면 바뀌지 않았다. 방금 그려 자동 선택된
-        객체는 바꾸지 않는다(다음에 그릴 클래스를 고르는 경우). 분할의 배경(0)은 적용하지 않는다(삭제로).
+        그래서 사각형 두 개를 그리고 클래스를 골라도 둘 다 처음 클래스로 남았다. 다음에 그릴 클래스만
+        바꾸려면 Esc로 선택을 해제한 뒤 고른다. 분할의 배경(0)은 적용하지 않는다(삭제로).
         """
-        if getattr(self, "_auto_selected", True) or not self.selected_indices:
+        if not self.selected_indices:
             return
         class_id = self._active_class_id()
         indices = {i for i in self.selected_indices if i in self._indices()}

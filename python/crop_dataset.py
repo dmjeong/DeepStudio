@@ -73,7 +73,7 @@ def prepare_crop_dataset(root, output_parent, task, crop, *, native=False,
     files = image_files(root / "images" if spatial else root)
     if not files:
         raise ValueError("중앙 크롭할 이미지가 없습니다")
-    # 마스크 없는(미라벨) 이미지는 크롭한 이미지만 두고 마스크는 만들지 않는다. 학습 로더가 제외한다.
+    # 마스크 없는(미라벨) 이미지는 크롭한 이미지만 두고 마스크는 만들지 않는다. 학습 로더가 전부 배경으로 학습한다.
     pairs = dict(labeled_semantic_pairs(root / "images", root / "masks")[0]) if semantic else {}
     parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".center-crop-", dir=parent))

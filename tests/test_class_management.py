@@ -12,7 +12,7 @@ from unittest.mock import patch
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gui"))
-from core.class_management import ClassManager, move_image_with_sidecars
+from core.class_management import ClassManager, move_image_with_sidecars, with_background
 from core.project import ProjectManager, RunRecord
 
 
@@ -298,6 +298,72 @@ class ClassManagementTests(_FilesystemTests):
             with self.assertRaises(OSError):
                 ClassManager.delete(project, "scratch")
         self.assertEqual(path.read_bytes(), before)
+
+
+
+class BackgroundInsertTests(_FilesystemTests):
+    """분할 0번은 '그리지 않은 픽셀 = 배경'. 결함 이름이 0번에 있으면 그 클래스를 그릴 수 없다."""
+
+    def test_new_segment_class_list_puts_background_first(self):
+        self.assertEqual(with_background(["scratch", "dent"]), ["background", "scratch", "dent"])
+        self.assertEqual(with_background(["dent", "Background"]), ["Background", "dent"])
+        self.assertEqual(with_background(["배경", "dent"]), ["배경", "dent"])
+
+    def test_insert_shifts_masks_palette_and_polygons_keeping_background_and_ignore(self):
+        project = self.project("segment", ["scratch", "dent"])
+        self.assertTrue(ClassManager.needs_background(project))
+        root = Path(project.data.root)
+        palette = [0] * 768
+        palette[0:3], palette[3:6], palette[765:768] = [9, 9, 9], [0, 255, 0], [255, 255, 255]
+        indexed = root / "masks/train/a.png"
+        mask = Image.new("P", (4, 1))
+        mask.putdata([0, 1, 1, 255])   # 0번(scratch)은 그릴 수 없어 0은 배경, 1번 dent만 그려져 있다
+        mask.putpalette(palette)
+        mask.save(indexed)
+        wide = root / "masks/val/b.tiff"
+        image = Image.new("I", (3, 1))
+        image.putdata([0, 1, 255])
+        image.convert("I;16").save(wide)
+        label = self.write(root / "labels/test/c.txt", "0 0.1 0.1 0.2 0.2 0.3 0.1\n1 0.1 0.1 0.2 0.2 0.3 0.1\n")
+        archive, pixels, polygons = ClassManager.insert_background(project)
+        self.assertEqual((pixels, polygons), (3, 2))
+        loaded = ProjectManager.load(ProjectManager.get_active_filepath(project))
+        self.assertEqual(loaded.data.class_names, ["background", "scratch", "dent"])
+        self.assertFalse(ClassManager.needs_background(loaded))
+        with Image.open(indexed) as output:
+            self.assertEqual(output.mode, "P")
+            self.assertEqual(list(output.getdata()), [0, 2, 2, 255])
+            # 색은 클래스를 따라간다: dent(이전 1 → 2)의 초록, 배경 색과 255는 유지
+            self.assertEqual(output.getpalette()[0:3], [9, 9, 9])
+            self.assertEqual(output.getpalette()[6:9], [0, 255, 0])
+            self.assertEqual(output.getpalette()[765:768], [255, 255, 255])
+        with Image.open(wide) as output:
+            self.assertEqual(output.mode, "I;16")
+            self.assertEqual(list(output.getdata()), [0, 2, 255])
+        self.assertEqual(label.read_text(), "1 0.1 0.1 0.2 0.2 0.3 0.1\n2 0.1 0.1 0.2 0.2 0.3 0.1\n")
+        manifest = json.loads((Path(archive) / "manifest.json").read_text())
+        self.assertEqual(manifest["purpose"], "originals_before_background_insert")
+        self.assertEqual(len(manifest["files"]), 3)
+
+    def test_insert_rolls_back_on_save_failure_and_refuses_when_not_needed(self):
+        project = self.project("segment", ["scratch", "dent"])
+        path = Path(project.data.root) / "masks/train/a.png"
+        mask = Image.new("L", (2, 1))
+        mask.putdata([0, 1])
+        mask.save(path)
+        before = path.read_bytes()
+        with patch.object(ProjectManager, "save", side_effect=OSError("full")):
+            with self.assertRaises(OSError):
+                ClassManager.insert_background(project)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(project.data.class_names, ["scratch", "dent"])
+        ClassManager.insert_background(project)
+        with self.assertRaisesRegex(ValueError, "이미 배경"):
+            ClassManager.insert_background(project)
+        # 배경 이름이 0번이 아닌 곳에 있으면 번호가 꼬이므로 거부
+        project.data.class_names = ["dent", "background"]
+        with self.assertRaisesRegex(ValueError, "0번이 아닌 위치"):
+            ClassManager.insert_background(project)
 
 
 class SidecarMoveTests(_FilesystemTests):

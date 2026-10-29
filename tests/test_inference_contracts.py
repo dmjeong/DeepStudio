@@ -201,7 +201,8 @@ class InferenceContractTests(unittest.TestCase):
         widget._inference_results = {}
         items = []
         widget.project = None
-        widget.result_review = SimpleNamespace(threshold=None, set_context=lambda *_: items.clear(),
+        widget.class_names = []  # 실제 위젯은 __init__에서 빈 목록으로 둔다 (배치 결과 필터가 읽음)
+        widget.result_review = SimpleNamespace(threshold=None, set_context=lambda *_, **__: items.clear(),
                                                update_result=items.append)
         widget.batch_time_label = Label()
         with tempfile.TemporaryDirectory() as temp:

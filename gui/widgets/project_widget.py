@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QEvent, QTimer
 from PySide6.QtGui import QFont
 
+from core.class_management import with_background
 from core.project import (
     ProjectManager, SUPPORTED_TASKS,
 )
@@ -309,8 +310,8 @@ class ProjectWidget(QWidget):
                 "예: OK, NG_scratch, NG_dent"
             ),
             "segment": (
-                "세그멘테이션 클래스 이름을 쉼표(,)로 구분하여 입력하세요.\n"
-                "예: background, defect, crack"
+                "그릴 결함 클래스 이름을 쉼표(,)로 구분하여 입력하세요.\n"
+                "예: scratch, dent  (0번 배경은 자동 추가 · 그리지 않은 곳은 배경으로 학습)"
             ),
             "detect": (
                 "탐지할 객체 클래스 이름을 쉼표(,)로 구분하여 입력하세요.\n"
@@ -373,12 +374,26 @@ class ProjectWidget(QWidget):
         else:
             class_names = []
 
+        # 분할은 0번이 '그리지 않은 픽셀(배경)'이다. 결함만 입력해도 첫 결함을 그릴 수 있게 배경을 앞에 둔다.
+        background_added = False
+        if self._selected_task == "segment" and class_names:
+            ordered = with_background(class_names)
+            background_added = len(ordered) > len(class_names)
+            class_names = ordered
+
         # Classification/Segment/Detect는 클래스 필수
         if self._selected_task in ("classify", "segment", "detect", "obb") and not class_names:
             QMessageBox.warning(
                 self, "알림",
                 "클래스 이름을 입력해 주세요.\n"
                 "예: OK, NG_scratch, NG_dent"
+            )
+            return
+
+        if self._selected_task == "segment" and len(class_names) < 2:
+            QMessageBox.warning(
+                self, "알림",
+                "배경 말고 그릴 클래스를 하나 이상 입력해 주세요.\n예: scratch, dent"
             )
             return
 
@@ -409,7 +424,11 @@ class ProjectWidget(QWidget):
                 f"프로젝트가 생성되었습니다.\n\n"
                 f"위치: {project_dir}\n"
                 f"태스크: {task_name}\n"
-                f"클래스: {', '.join(class_names) if class_names else '(자동)'}\n\n"
+                f"클래스: {', '.join(class_names) if class_names else '(자동)'}\n"
+                + (f"(0번 '{class_names[0]}'은 배경입니다. 그리지 않은 곳은 배경으로 학습합니다.)\n"
+                   if self._selected_task == "segment" else "")
+                + ("배경 클래스를 자동으로 추가했습니다.\n" if background_added else "")
+                + "\n"
                 f"데이터 폴더 구조가 자동으로 구성되었습니다:\n"
                 f"{data_path}\n\n"
                 f"Dataset 탭에서 이미지를 추가하세요."

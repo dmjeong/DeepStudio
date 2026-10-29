@@ -109,6 +109,8 @@ def _validate_prompt_masks(loader, split: str, class_names: list[str] | None = N
     seen_foreground = set()
     annotated = 0
     for image_path, mask_path in pairs:
+        if mask_path is None:  # 마스크 없는 이미지 = 전부 배경 (전경 프롬프트 없음)
+            continue
         with Image.open(image_path) as source_image:
             image_size = source_image.size
         with Image.open(mask_path) as source:

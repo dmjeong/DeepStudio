@@ -222,7 +222,7 @@ def test_segmentation_dataset_page_shows_regions_not_image_classes(page):
         widget.tab_filters["train"].setCurrentText(text)
         assert {Path(t.image_path).stem for t in widget._thumbs["train"]} == expected, text
     table = [[widget.stats_table.item(r, c).text() for c in range(2)] for r in range(widget.stats_table.rowCount())]
-    assert table == [["scratch", "3개 · 1장"], ["dent", "1개 · 1장"], ["배경만", "1장"], ["미라벨", "1장"]]
+    assert table == [["scratch", "3개 · 1장"], ["dent", "1개 · 1장"], ["배경만", "1장"], ["미라벨 (배경 학습)", "1장"]]
     assert "영역 4개" in widget.summary_label.text()
 
 
@@ -334,3 +334,61 @@ def test_object_task_class_delete_asks_which_class(page):
         widget._delete_class()
     assert asked["items"] == ["scratch", "dent"]  # background (0) cannot be deleted
     start.assert_not_called()
+
+
+# ── segmentation background (class 0) ──────────────────────────
+
+def test_new_segment_project_gets_background_so_first_defect_is_drawable(tmp_path):
+    """'scratch, dent'만 입력해도 0번에 배경이 들어가 scratch가 1번(그릴 수 있는 클래스)이 된다."""
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    from widgets.project_widget import ProjectWidget
+
+    QApplication.instance() or QApplication([])
+    widget = ProjectWidget()
+    created = []
+    widget.project_created.connect(created.append)
+    widget._on_task_selected("segment")
+    widget.name_edit.setText("defects")
+    widget.path_edit.setText(str(tmp_path))
+    with patch.object(QMessageBox, "information") as info, patch.object(QMessageBox, "warning") as warning:
+        widget.class_edit.setText("background")  # 배경만으로는 그릴 클래스가 없다
+        widget._create_project()
+        assert not created and warning.called
+        widget.class_edit.setText("scratch, dent")
+        widget._create_project()
+    assert created[0].data.class_names == ["background", "scratch", "dent"]
+    assert "배경 클래스를 자동으로 추가" in info.call_args.args[2]
+    widget.deleteLater()
+
+
+def test_dataset_page_inserts_background_into_project_without_one(tmp_path):
+    """배경 없이 만든 기존 프로젝트: 버튼으로 0번에 배경을 넣고 마스크 번호를 한 칸씩 올린다."""
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    from widgets.dataset_widget import DatasetWidget
+
+    app = QApplication.instance() or QApplication([])
+    project = ProjectManager.create_new("legacy", "segment", str(tmp_path / "p"), ["scratch", "dent"])
+    ProjectManager.save(project)
+    masks = Path(project.data.root) / "masks" / "train"
+    masks.mkdir(parents=True, exist_ok=True)
+    mask = np.zeros((4, 4), np.uint8)
+    mask[0, 0] = 1  # dent (scratch는 0번이라 그릴 수 없었다)
+    Image.fromarray(mask, "L").save(masks / "a.png")
+    with patch.object(DatasetWidget, "_scan_all"):
+        widget = DatasetWidget()
+        widget.set_project(project)
+        widget.show()
+        assert widget.fix_background_btn.isVisible()
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes), \
+                patch.object(widget, "_start_class_operation",
+                             side_effect=lambda operation, callback, _message: callback(operation())):
+            widget._insert_background()
+        assert project.data.class_names == ["background", "scratch", "dent"]
+        assert np.asarray(Image.open(masks / "a.png"))[0, 0] == 2
+        assert not widget.fix_background_btn.isVisible()
+        assert "1번으로 그릴 수 있습니다" in widget.summary_label.text()
+        widget.close()
+        widget.deleteLater()
+    app.processEvents()

@@ -50,3 +50,26 @@ def tmp_project(tmp_path):
         class_names=["OK", "NG"],
     )
     return project
+
+
+@pytest.fixture(autouse=True)
+def _release_qt_keyboard_modifiers():
+    """QTest 클릭에 준 Shift·Ctrl은 Qt의 '현재 수정키' 상태로 남아 다음 테스트로 새어 나간다.
+
+    (예: QTableView.selectRow가 Shift를 보고 범위 선택을 한다.) 실제 키보드에서는 놓을 때
+    해제되므로, 테스트가 끝날 때마다 수정키를 놓은 상태로 되돌린다. Qt를 쓰지 않은 테스트는 건너뛴다.
+    """
+    yield
+    if "PySide6.QtWidgets" not in sys.modules:
+        return
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is None or app.keyboardModifiers() == Qt.KeyboardModifier.NoModifier:
+        return
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QWidget
+    target = QWidget()
+    for key in (Qt.Key.Key_Shift, Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
+        QTest.keyRelease(target, key)
+    target.deleteLater()
