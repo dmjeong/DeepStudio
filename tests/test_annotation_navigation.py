@@ -1,6 +1,7 @@
 """Image navigation in the annotation workspace: release, thumbnail reuse, prefetch, tiles."""
 
 import gc
+from pathlib import Path
 import os
 import weakref
 from unittest.mock import patch
@@ -24,49 +25,38 @@ def _app():
     return QApplication.instance() or QApplication([])
 
 
-def test_navigating_images_releases_each_previous_workspace(tmp_path):
-    """exec() → deleteLater() → next exec() kept every window (and its buffers) alive."""
+def _segment_project(tmp_path, count=4):
     from core.project import ProjectManager
-    from widgets.dataset_widget import DatasetWidget
 
-    app = _app()
     project = ProjectManager.create_new("seg", "segment", str(tmp_path), ["background", "part"])
     paths = []
-    for index in range(4):
+    for index in range(count):
         path = os.path.join(project.data.train_dir, f"{index}.png")
         Image.new("L", (64, 48), 40 * index).save(path)
         paths.append(path)
-    alive, released = [], []
-    previous = {}
+    return project, paths
+
+
+def _run_navigation(project, paths, on_workspace):
+    """데이터셋 화면에서 작업실을 열고, 작업실이 바뀔 때마다 on_workspace(창, 작업실, 순번)를 부른다."""
+    from widgets.annotation_navigation import AnnotationWindow
+    from widgets.dataset_widget import DatasetWidget
+
+    app = _app()
+    seen = []
 
     def poll():
-        shown = [w for w in app.topLevelWidgets()
-                 if isinstance(w, SegmentationAnnotationDialog) and w.isVisible()]
-        if not shown or ("dialog" in previous and shown[0] is previous["dialog"]()):
+        windows = [w for w in app.topLevelWidgets() if isinstance(w, AnnotationWindow) and w.isVisible()]
+        if not windows:
             return
-        dialog = shown[0]
-        # Weak references only: the test itself must not keep a window alive.
-        previous_canvas = previous.get("canvas")
-        previous.update(dialog=weakref.ref(dialog), canvas=weakref.ref(dialog.view))
-
-        def measure():
-            # The next window is shown just before the previous one hides (no blank moment), so
-            # both exist for an instant. Count once that hand-off has finished.
-            if previous_canvas is not None:  # the window before this one must be gone
-                released.append(previous_canvas() is None)
-            alive.append(len(page.findChildren(SegmentationAnnotationDialog)))
-            QTimer.singleShot(0, next_image)
-
-        def next_image(d=dialog):
-            # The real "next" button: confirming "background only" saves the empty
-            # mask on a worker thread first, so release must wait for that thread.
-            d.empty_confirm.setChecked(True)
-            if d.navigation[0] + 1 < d.navigation[1]:
-                d._navigate(1)
-            else:
-                d.dirty = False
-                QDialog.reject(d)
-        QTimer.singleShot(50, measure)
+        window = windows[0]
+        workspace = window.workspace
+        # 작업실마다 한 번 (지워진 작업실의 id()는 다음 작업실이 다시 쓸 수 있어 표시를 객체에 단다)
+        if workspace is None or workspace.property("navigation_test_seen"):
+            return
+        workspace.setProperty("navigation_test_seen", True)
+        seen.append(len(seen))
+        on_workspace(window, workspace, len(seen) - 1)
 
     with patch.object(DatasetWidget, "_scan_all"):
         page = DatasetWidget()
@@ -78,94 +68,168 @@ def test_navigating_images_releases_each_previous_workspace(tmp_path):
         QTimer.singleShot(0, lambda: (page._open_image_preview(paths[0]), app.quit()))
         app.exec()
         timer.stop()
-        page.close()
-        page.deleteLater()
-    app.processEvents()
+    return page, seen
+
+
+def _next_or_close(workspace):
+    # 실제 [다음]: '배경만 있음' 확인이면 빈 마스크를 작업 스레드에서 저장한 뒤 이동한다.
+    workspace.empty_confirm.setChecked(True)
+    if workspace.navigation[0] + 1 < workspace.navigation[1]:
+        workspace._navigate(1)
+    else:
+        workspace.dirty = False
+        QDialog.reject(workspace)
+
+
+def test_navigating_images_releases_each_previous_workspace(tmp_path):
+    """이미지를 넘길 때마다 이전 작업실(원본 해상도 버퍼)이 바로 지워진다. 창 안에 작업실은 늘 하나."""
+    project, paths = _segment_project(tmp_path)
+    alive, released = [], []
+    previous = {}
+
+    def on_workspace(window, workspace, _number):
+        previous_canvas = previous.get("canvas")
+        previous["canvas"] = weakref.ref(workspace.view)  # 약한 참조만: 테스트가 작업실을 붙잡지 않게
+
+        def measure():
+            if previous_canvas is not None:  # 바로 전 작업실은 이미 지워졌다
+                released.append(previous_canvas() is None)
+            alive.append(len(window.findChildren(SegmentationAnnotationDialog)))
+            QTimer.singleShot(0, lambda: _next_or_close(workspace))
+        QTimer.singleShot(50, measure)
+
+    page, seen = _run_navigation(project, paths, on_workspace)
+    page.close()
+    page.deleteLater()
+    _app().processEvents()
+    assert len(seen) == 4
     assert alive == [1, 1, 1, 1]
     assert released == [True, True, True]
 
 
 @pytest.mark.parametrize("maximized", [False, True])
-def test_next_image_window_appears_in_place_before_the_previous_one_hides(tmp_path, maximized):
-    """[다음] used to hide the window, then open a default-size one elsewhere ("껐다 켜짐")."""
+def test_previous_next_keep_one_window_that_never_closes(tmp_path, maximized):
+    """[이전]/[다음]은 창을 닫았다 열지 않는다. 창 하나에서 작업실만 바뀌고, 크기·최대화·패널 배치가 그대로다."""
     from PySide6.QtCore import QEvent, QObject, QRect
-    from core.project import ProjectManager
-    from widgets.dataset_widget import DatasetWidget
+    from widgets.annotation_navigation import AnnotationWindow
 
+    project, paths = _segment_project(tmp_path)
     app = _app()
-    project = ProjectManager.create_new("seg", "segment", str(tmp_path), ["background", "part"])
-    paths = []
-    for index in range(4):
-        path = os.path.join(project.data.train_dir, f"{index}.png")
-        Image.new("L", (64, 48), 40 * index).save(path)
-        paths.append(path)
-    events, geometries, states = [], [], []
+    events, windows, geometries, states, layouts = [], [], [], [], []
 
     class Recorder(QObject):
         def eventFilter(self, obj, event):
-            if isinstance(obj, SegmentationAnnotationDialog) and event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
-                events.append(("show" if event.type() == QEvent.Type.Show else "hide", obj.windowTitle()))
+            if isinstance(obj, AnnotationWindow) and event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
+                events.append("show" if event.type() == QEvent.Type.Show else "hide")
             return False
+
+    def on_workspace(window, workspace, number):
+        windows.append((id(window), int(window.winId())))
+        if number == 0:  # 사용자가 첫 이미지에서 창을 옮기고·키우고, 패널을 숨기고, 대비를 올린다
+            window.setGeometry(QRect(70, 80, 640, 420))  # 800×600 오프스크린 화면 안
+            if maximized:
+                window.showMaximized()
+            workspace.inspector.hide()
+            workspace.inspector.setCurrentIndex(0)
+            workspace.contrast.setValue(40)
+        geometries.append(window.geometry().getRect())
+        states.append(window.isMaximized())
+        layouts.append((workspace.inspector.isVisibleTo(workspace), workspace.inspector.currentIndex(),
+                        workspace.contrast.value(), workspace.windowTitle() == window.windowTitle(),
+                        workspace.view.hasFocus() or not window.isActiveWindow()))
+        QTimer.singleShot(30, lambda: _next_or_close(workspace))
 
     recorder = Recorder()
     app.installEventFilter(recorder)
-    seen = set()
-
-    def poll():
-        # Mark windows on the object itself: id() of a deleted window can be reused by the next one.
-        shown = [w for w in app.topLevelWidgets()
-                 if isinstance(w, SegmentationAnnotationDialog) and w.isVisible()
-                 and not w.property("navigation_test_seen")]
-        if not shown:
-            return
-        dialog = shown[0]
-        dialog.setProperty("navigation_test_seen", True)
-        seen.add(len(seen))
-        if len(seen) == 1:  # the user resizes / moves / maximizes the first window
-            dialog.setGeometry(QRect(70, 80, 640, 420))  # fits the 800×600 offscreen screen
-            if maximized:
-                dialog.showMaximized()
-        geometries.append(dialog.geometry().getRect())
-        states.append(dialog.isMaximized())
-
-        def next_image(d=dialog):
-            d.empty_confirm.setChecked(True)
-            if d.navigation[0] + 1 < d.navigation[1]:
-                d._navigate(1)
-            else:
-                d.dirty = False
-                QDialog.reject(d)
-        QTimer.singleShot(30, next_image)
-
     try:
-        with patch.object(DatasetWidget, "_scan_all"):
-            page = DatasetWidget()
-            page.set_project(project)
-            page._dataset_index = {"images": [{"path": p, "split": "train", "classes": []} for p in paths]}
-            timer = QTimer()
-            timer.timeout.connect(poll)
-            timer.start(5)
-            QTimer.singleShot(0, lambda: (page._open_image_preview(paths[0]), app.quit()))
-            app.exec()
-            timer.stop()
+        page, seen = _run_navigation(project, paths, on_workspace)
     finally:
         app.removeEventFilter(recorder)
-    # Never a moment without a visible workspace: each new window shows before the old one hides.
-    visible = 0
-    for position, (kind, _window) in enumerate(events):
-        visible += 1 if kind == "show" else -1
-        assert visible >= 1 or position == len(events) - 1, events  # only the final close leaves none
-    hides = [i for i, e in enumerate(events) if e[0] == "hide"]
-    shows = [i for i, e in enumerate(events) if e[0] == "show"]
-    assert len(seen) == 4 and len(shows) >= 4
-    for n in range(3):  # window n hides only after window n+1 is shown
-        assert shows[n + 1] < hides[n], events
-    # Size, position and maximized state carry over to every next image.
+    assert len(seen) == 4
+    # 창은 처음 한 번 뜨고 마지막 닫기에서만 숨는다: 이미지를 넘기는 동안 사라지는 순간이 없다.
+    assert events == ["show", "hide"], events
+    assert len(set(windows)) == 1  # 같은 창 객체, 같은 네이티브 창
+    # 크기·위치·최대화 상태가 이미지를 넘겨도 그대로
     assert len(set(geometries[1:])) == 1 and set(states) == {maximized}
     if not maximized:
         assert geometries[1] == (70, 80, 640, 420)
-    # ... and to the next time the workspace is opened.
+    # 숨긴 패널·고른 탭·대비가 다음 작업실로 이어지고, 창 제목은 지금 이미지
+    assert all(layout[:4] == (False, 0, 40, True) for layout in layouts[1:]), layouts
+    # ... 그리고 다음에 작업실을 열 때도 같은 크기·위치
     assert page._annotation_geometry is not None
+    page.close()
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_thumbnail_jump_and_unreadable_next_image(tmp_path):
+    """썸네일 더블클릭 점프도 같은 창에서 바뀐다. 다음 이미지를 열 수 없으면 창을 닫고 이유를 알린다."""
+    project, paths = _segment_project(tmp_path, count=4)
+    Path(paths[3]).write_bytes(b"not an image")  # 4번째 파일이 깨졌다
+    positions, warnings = [], []
+
+    def on_workspace(window, workspace, number):
+        positions.append(workspace.navigation[0])
+        if number == 0:
+            QTimer.singleShot(30, lambda: workspace._navigate_to(2))  # 0 → 2 점프
+        else:
+            def step():
+                workspace.empty_confirm.setChecked(True)
+                workspace._navigate(1)  # 2 → 3: 열 수 없는 이미지
+            QTimer.singleShot(30, step)
+
+    with patch("widgets.dataset_widget.QMessageBox.warning", lambda *args: warnings.append(args[2])):
+        page, seen = _run_navigation(project, paths, on_workspace)
+    assert positions == [0, 2]
+    assert len(warnings) == 1 and "다음 이미지를 열 수 없어" in warnings[0] and "3.png" in warnings[0]
+    page.close()
+    page.deleteLater()
+    _app().processEvents()
+
+
+@pytest.mark.parametrize("task", ["detect", "obb"])
+def test_box_editors_also_switch_images_inside_one_window(tmp_path, task):
+    """탐지 작업실과 OBB 편집도 같은 창 안에서 이미지가 바뀐다."""
+    from PySide6.QtCore import QEvent, QObject
+    from core.project import ProjectManager
+    from widgets.annotation_navigation import AnnotationWindow
+
+    project = ProjectManager.create_new("box", task, str(tmp_path), ["part"])
+    paths = []
+    for index in range(3):
+        path = os.path.join(project.data.train_dir, f"{index}.png")
+        Image.new("RGB", (64, 48), (40 * index, 0, 0)).save(path)
+        paths.append(path)
+    app = _app()
+    events, names = [], []
+
+    class Recorder(QObject):
+        def eventFilter(self, obj, event):
+            if isinstance(obj, AnnotationWindow) and event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
+                events.append(event.type())
+            return False
+
+    def on_workspace(window, workspace, _number):
+        names.append(type(workspace).__name__)
+
+        def step():
+            if task == "detect":
+                _next_or_close(workspace)
+            elif workspace.next_button.isEnabled():
+                workspace._navigate(1)
+            else:
+                workspace.dirty = False
+                QDialog.reject(workspace)
+        QTimer.singleShot(30, step)
+
+    recorder = Recorder()
+    app.installEventFilter(recorder)
+    try:
+        page, seen = _run_navigation(project, paths, on_workspace)
+    finally:
+        app.removeEventFilter(recorder)
+    assert len(seen) == 3 and len(events) == 2  # 창은 한 번 뜨고 한 번 닫힌다
+    assert set(names) == {"DetectionAnnotationDialog" if task == "detect" else "OrientedBoxAnnotationDialog"}
     page.close()
     page.deleteLater()
     app.processEvents()

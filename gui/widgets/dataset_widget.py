@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QInputDialog,
     QTabBar, QMenu, QApplication, QCheckBox, QProgressDialog,
 )
-from PySide6.QtCore import Qt, Signal, QMimeData, QByteArray, QThread, QCoreApplication, QEvent, QTimer
+from PySide6.QtCore import Qt, Signal, QMimeData, QByteArray, QThread, QTimer
 from PySide6.QtGui import (
     QPixmap, QDragEnterEvent, QDropEvent, QDrag, QColor,
 )
@@ -153,17 +153,10 @@ class _MaskDocumentPrefetcher:
 
 
 def _release_annotation_dialog(dialog):
-    """다음 이미지의 작업실을 열기 전에 닫힌 작업실을 실제로 삭제한다.
+    """닫힌 작업실 창을 스레드가 끝난 뒤 바로 삭제한다 (widgets.annotation_navigation과 같은 함수)."""
+    from widgets.annotation_navigation import release_annotation_dialog
 
-    이미지 이동 루프는 exec() → deleteLater() → 다음 창의 exec()를 반복한다.
-    Qt는 deleteLater를 예약한 단계보다 깊은 중첩 이벤트 루프(다음 창의 exec())에서
-    그 삭제를 처리하지 않으므로, 원본 해상도 버퍼를 가진 창이 이미지마다 누적됐다.
-    창에 딸린 저장·초안 스레드가 완전히 끝난 뒤, 같은 루프 단계에서 삭제를 처리한다.
-    """
-    for thread in dialog.findChildren(QThread):
-        thread.wait()  # 닫힐 때는 작업이 이미 끝나 있어 즉시 반환된다
-    dialog.deleteLater()
-    QCoreApplication.sendPostedEvents(dialog, QEvent.Type.DeferredDelete)
+    release_annotation_dialog(dialog)
 
 
 class _ClassOperationThread(QThread):
@@ -1397,6 +1390,7 @@ class DatasetWidget(QWidget):
                 return
             from pathlib import Path
             from core.dataset_editor import edit_dataset, read_annotations, sidecars, split_root, annotation_revision
+            from widgets.annotation_navigation import AnnotationWindow
             from widgets.obb_annotation import OBBAnnotationDialog
             from widgets.segmentation_annotation import SegmentationAnnotationDialog
             from core.mask_annotations import load_mask_document
@@ -1417,10 +1411,12 @@ class DatasetWidget(QWidget):
 
                 annotation_preferences = {"_persistent": True}
                 prefetcher = _MaskDocumentPrefetcher(project, split) if project.task == "segment" else None
-                state = {"index": index, "direction": 1, "next": None}
+                state = {"index": index, "direction": 1}
 
                 def build(position):
-                    """paths[position]의 작업실 창을 만든다 (아직 보이지 않음)."""
+                    """paths[position]의 작업실을 만든다. 작업실 창 안에 들어갈 내용이며 아직 보이지 않는다."""
+                    state["direction"] = 1 if position >= state["index"] else -1  # 미리 읽을 쪽
+                    state["index"] = position
                     image_path = paths[position]
                     revision_holder["value"] = annotation_revision(project, image_path, split)
                     revision_holder["path"] = image_path
@@ -1446,73 +1442,30 @@ class DatasetWidget(QWidget):
                                 for row in read_annotations(label, project.task, len(project.data.class_names))]
                         dialog = OBBAnnotationDialog(image_path, project.data.class_names, rows,
                                                      save_annotation, self, task=project.task, **common)
-                    # exec() 전에 모달을 정해 둔다: 이미 보이는 창의 모달을 바꾸면 Qt가 창을 다시 띄운다.
-                    dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
-                    if self._annotation_geometry is not None:
-                        dialog.restoreGeometry(self._annotation_geometry)  # 크기·위치·최대화 상태
-                    dialog.navigation_handoff = hand_off
                     return dialog
 
-                def hand_off(current):
-                    """[이전]/[다음]으로 닫히는 창이 숨기 전에 다음 창을 같은 자리에 먼저 띄운다."""
-                    delta = current.navigation_delta
-                    target = state["index"] + delta if type(delta) is int else -1
-                    if not delta or not 0 <= target < len(paths):
-                        return
-                    state["direction"] = 1 if delta > 0 else -1
-                    self._annotation_geometry = current.saveGeometry()
-                    if hasattr(current, "release_buffers"):
-                        current.release_buffers()  # 다음 창이 이 메모리를 재사용하도록 먼저 놓는다
-                    try:
-                        following = build(target)
-                    except (OSError, ValueError):
-                        return  # 기존 흐름: 이 창을 닫은 뒤 다시 만들며 오류를 알린다
-                    # 최대화·전체 화면: 창 관리자가 상태를 반영하기 전에도 같은 크기이도록 이전 창의 실제
-                    # 크기를 먼저 준다 (아니면 원래 크기로 한 번 그려지고, 화면 맞춤이 그 크기로 계산된다).
-                    # 최대화를 풀면 restoreGeometry가 기억한 원래 크기로 돌아간다.
-                    if current.isFullScreen() or current.isMaximized():
-                        following.setGeometry(current.geometry())
-                    if current.isFullScreen():
-                        following.showFullScreen()
-                    elif current.isMaximized():
-                        following.showMaximized()
-                    else:
-                        following.show()
-                    following.raise_()
-                    following.activateWindow()
-                    if hasattr(following, "_fit") and following.layout() is not None:
-                        following.layout().activate()  # 첫 화면부터 맞춤 상태로 (확대 튐 방지)
-                        following._fit()
-                    state["next"] = (target, following)
-
+                error = ""
                 try:
-                    dialog = build(index)
-                    while True:
-                        if focus is not None and hasattr(dialog, "focus_region"):
-                            # 작업실의 첫 화면 맞춤(QTimer 0) 다음에 실행되도록 같은 큐에 넣는다
-                            target = weakref.ref(dialog)
-                            QTimer.singleShot(0, lambda f=focus: target() and target().focus_region(*f))
-                            focus = None
-                        dialog.exec()
-                        delta = getattr(dialog, "navigation_delta", 0)
-                        self._annotation_geometry = dialog.saveGeometry()
-                        handed, state["next"] = state["next"], None
-                        _release_annotation_dialog(dialog)
-                        del dialog
-                        gc.collect()  # 창↔캔버스 참조 순환이 잡은 원본 해상도 numpy 버퍼를 바로 회수
-                        if handed is not None:  # 다음 창이 이미 같은 자리에 떠 있다
-                            state["index"], dialog = handed
-                            continue
-                        if type(delta) is not int or not delta or not 0 <= state["index"] + delta < len(paths):
-                            break
-                        state["index"] += delta
-                        state["direction"] = 1 if delta > 0 else -1
-                        dialog = build(state["index"])
+                    # 창은 하나만 띄운다. [이전]/[다음]은 이 창 안의 작업실만 바꾼다 (창이 꺼졌다 켜지지 않음).
+                    window = AnnotationWindow(build, index, len(paths), self, geometry=self._annotation_geometry)
+                    window.setWindowModality(Qt.WindowModality.ApplicationModal)
+                    if focus is not None and hasattr(window.workspace, "focus_region"):
+                        # 작업실의 첫 화면 맞춤(QTimer 0) 다음에 실행되도록 같은 큐에 넣는다
+                        target = weakref.ref(window.workspace)
+                        QTimer.singleShot(0, lambda f=focus: target() and target().focus_region(*f))
+                    window.exec()
+                    self._annotation_geometry = window.saveGeometry()  # 크기·위치·최대화 상태를 다음에도
+                    error = window.error
+                    _release_annotation_dialog(window)
+                    del window
+                    gc.collect()  # 창↔캔버스 참조 순환이 잡은 원본 해상도 numpy 버퍼를 바로 회수
                 finally:
                     if prefetcher is not None:
                         prefetcher.close()
                 self.set_project(project)
                 self.project_changed.emit(project)
+                if error:  # 다음 이미지를 열지 못해 창이 닫혔다 (그 전까지 저장한 정답은 위에서 반영)
+                    QMessageBox.warning(self, "객체 정답 편집", error)
             except (OSError, ValueError, StopIteration) as exc:
                 QMessageBox.warning(self, "객체 정답 편집", str(exc) or "이미지 분할을 확인할 수 없습니다")
             return

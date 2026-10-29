@@ -35,7 +35,8 @@ class SpacePan(QObject):
     Space는 캔버스에 포커스가 있을 때만 화면 이동이었다. 도구 버튼·체크박스·콤보를 한 번 누르면
     포커스가 그쪽으로 가서, Space가 그 버튼을 다시 누르거나 체크를 바꾸거나 목록을 열었다.
     글자를 입력하는 칸(클래스 이름, 숫자 칸, 단축키 입력)은 Space를 그대로 쓴다. 작업실 위에 뜬
-    다른 창(격자·단축키 설정)은 건드리지 않는다.
+    다른 창(격자·단축키 설정)은 건드리지 않는다. 작업실은 혼자 창이거나 작업실 창(AnnotationWindow) 안의
+    위젯이므로, '같은 창'이 아니라 '이 작업실 안의 위젯'인지로 판단한다.
     """
 
     def __init__(self, workspace):
@@ -54,8 +55,10 @@ class SpacePan(QObject):
         if event.key() != Qt.Key.Key_Space or not isinstance(watched, QWidget):
             return False
         view = getattr(self.workspace, "view", None)
-        if view is None or watched.window() is not self.workspace or self._text_entry(watched):
+        if view is None or self._text_entry(watched):
             return False
+        if watched is not self.workspace and not self.workspace.isAncestorOf(watched):
+            return False  # 다른 창(격자·단축키 설정, 데이터셋 화면)의 위젯
         if watched is view or view.isAncestorOf(watched):
             return False  # 캔버스는 원래 처리 (누르면 이동 커서, 떼면 해제)
         if event.type() == QEvent.Type.KeyPress:
@@ -206,6 +209,53 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             self._space_pan = None
         hand_off_navigation(self, result)  # 다음 이미지 창을 먼저 같은 자리에 띄운 뒤 숨는다
         super().done(result)
+
+    def adopt_view_state(self, previous):
+        """이전 이미지 작업실의 화면 배치를 이어받는다. 같은 창에서 이미지와 라벨만 바뀐 것처럼 보이게 한다.
+
+        도구 설정(모드·클래스·브러시)은 preferences로 이미 넘어온다. 여기서는 사용자가 바꾼 배치와 보기:
+        패널 폭, 오른쪽 패널 표시·탭, 썸네일 필터와 이웃 썸네일, 정답·이름 표시, 밝기·대비, AI 모델·장치.
+        """
+        if not isinstance(previous, AnnotationWorkspace) or previous.task != self.task:
+            return
+        self._compact = getattr(previous, "_compact", False)
+        self.inspector.setVisible(previous.inspector.isVisibleTo(previous))
+        self.editor_splitter.setSizes(previous.editor_splitter.sizes())
+        self.inspector.setCurrentIndex(previous.inspector.currentIndex())
+        self.annotation_visible.setChecked(previous.annotation_visible.isChecked())
+        if getattr(self, "box_labels", None) is not None and getattr(previous, "box_labels", None) is not None:
+            self.box_labels.setChecked(previous.box_labels.isChecked())
+        self.ai_model.setCurrentIndex(previous.ai_model.currentIndex())
+        self.ai_device.setCurrentIndex(previous.ai_device.currentIndex())
+        self.thumbnail_filter.setCurrentText(previous.thumbnail_filter.currentText())
+        # 이웃 썸네일은 이전 줄의 그림·상태를 먼저 쓴다 (읽기가 끝날 때 글자·그림이 다시 튀지 않게).
+        # 방금 떠난 이미지의 상태(예: 정답 있음)도 이전 줄에 이미 반영돼 있다.
+        current = self.navigation[0] if self.navigation else 0
+        for index, item in self._thumbnail_items.items():
+            old = previous._thumbnail_items.get(index)
+            if old is None or index == current:
+                continue
+            item.setIcon(old.icon())
+            state = old.data(int(Qt.ItemDataRole.UserRole) + 1)
+            if state:
+                self._set_thumbnail_state(index, state)
+        old = previous._thumbnail_items.get(current)
+        if old is not None and self._thumbnail_items.get(current) is not None:
+            self._thumbnail_items[current].setIcon(old.icon())
+        self._set_thumbnail_state(current, self._current_thumbnail_state)
+        if previous.brightness.value() or previous.contrast.value():
+            self.brightness.setValue(previous.brightness.value())
+            self.contrast.setValue(previous.contrast.value())
+            self._levels_timer.stop()
+            self._apply_levels()  # 첫 화면부터 같은 밝기·대비 (80ms 뒤에 바뀌며 깜빡이지 않게)
+
+    def center_current_thumbnail(self):
+        """썸네일 줄에서 지금 이미지를 가운데에 둔다 (창 크기와 관계없이 보이게)."""
+        from PySide6.QtWidgets import QAbstractItemView
+
+        item = self._thumbnail_items.get(self.navigation[0] if self.navigation else 0)
+        if item is not None:
+            self.thumbnails.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
 
     def release_buffers(self):
         """곧 숨을 이 창의 원본 해상도 배열(4096²에서 약 160MB)을 다음 이미지 창을 만들기 전에 놓는다.

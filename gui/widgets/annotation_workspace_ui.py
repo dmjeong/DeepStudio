@@ -350,8 +350,9 @@ class AnnotationWorkspaceUI:
         self.annotation_visible.setChecked(True)
         self.annotation_visible.toggled.connect(self._set_annotation_visibility)
         display_layout.addWidget(self.annotation_visible)
+        self.box_labels = None
         if self.task == "detect":
-            labels = QCheckBox("박스 이름 표시 · 작은 박스는 선택 시")
+            self.box_labels = labels = QCheckBox("박스 이름 표시 · 작은 박스는 선택 시")
             labels.setChecked(True)
             labels.toggled.connect(self._set_label_visibility)
             display_layout.addWidget(labels)
