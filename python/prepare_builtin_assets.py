@@ -83,6 +83,10 @@ def prepare(output: str | Path, only=None, *, register_existing: bool = False) -
                     downloaded = download_sam2_pretrained(model_id, target.parent)
                     if downloaded.resolve() != target.resolve():
                         raise RuntimeError(f"SAM2 가중치 경로가 예상과 다릅니다: {downloaded}")
+                elif model_id == "dinov2_vits14":
+                    from dinov2_segmentation import DINOV2_URL, DINOV2_SHA256
+                    from model_download import cached_https_weights
+                    cached_https_weights(DINOV2_URL, target, expected_sha256=DINOV2_SHA256)
                 elif model_id.startswith(("libreyolo_", "re_detr_")):
                     _download_upstream(model_id, target)
                 else:
@@ -117,7 +121,7 @@ def main(argv=None) -> int:
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--only", default="",
                         help="쉼표로 구분한 가중치 ID만 받는다 (예: resnet18,resnet34). 생략하면 전부")
-    selection.add_argument("--group", choices=["segment"], help="세그멘테이션 기본 가중치 6종")
+    selection.add_argument("--group", choices=["segment"], help="세그멘테이션 기본 가중치 전체")
     parser.add_argument("--check", action="store_true", help="다운로드/파일 변경 없이 가중치 상태 검사")
     parser.add_argument("--register-existing", action="store_true",
                         help="다운로드 없이 검증된 로컬 파일만 manifest에 등록")

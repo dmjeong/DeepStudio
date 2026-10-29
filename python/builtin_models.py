@@ -1,4 +1,4 @@
-"""Built-in architectures with explicit ImageNet/local initialization.
+"""Built-in architectures with explicit packaged/local pretrained initialization.
 
 Construction stays weight-free by default, including checkpoint restoration
 and ONNX export. Only an explicit pretrained request may fetch weights.
@@ -29,6 +29,7 @@ BUILTIN_MODEL_SPECS = {
     "convnext_v1_tiny": BuiltinModelSpec("convnext_v1_tiny", "classify", (224, 224), (3,)),
     "deeplabv3plus_resnet34": BuiltinModelSpec("deeplabv3plus_resnet34", "segment", (512, 512), (3,)),
     "unet_resnet18": BuiltinModelSpec("unet_resnet18", "segment", (512, 512), (1, 3)),
+    "dinov2_vits14": BuiltinModelSpec("dinov2_vits14", "segment", (392, 392), (1, 3)),
 }
 
 # Pin a concrete revision rather than torchvision's mutable DEFAULT alias.
@@ -75,6 +76,7 @@ _GRADCAM_TARGET_LAYERS = {
     "convnext_v1_tiny": "features.7",
     "deeplabv3plus_resnet34": "layer4",
     "unet_resnet18": "enc4",
+    "dinov2_vits14": "fusion",
 }
 
 
@@ -246,6 +248,10 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
     elif model_id == "unet_resnet18":
         model = UNetResNet18(int(num_classes), in_channels,
                             pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id == "dinov2_vits14":
+        from dinov2_segmentation import DinoV2Segmentation
+        model = DinoV2Segmentation(int(num_classes), in_channels,
+                                  pretrained=pretrained, weights_path=backbone_weights)
     else:
         raise ValueError(f"Unsupported segmentation adapter: {model_id}")
 

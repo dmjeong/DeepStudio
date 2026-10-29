@@ -17,6 +17,7 @@ release-specific SBOM.
 | LibreYOLO 1.5.0 | 기본 LibreMobileNetV4 / LibreYOLO9 / Re-DETR v4 native runtime | MIT for the library; https://github.com/LibreYOLO/libreyolo/blob/release/LICENSE and the bundled third-party list at https://github.com/LibreYOLO/libreyolo/blob/release/NOTICE |
 | RT-DETRv4 upstream (제품 표기 Re-DETR v4) | 기본 Re-DETR v4 소스 후보 | Apache-2.0; https://github.com/RT-DETRs/RT-DETRv4/blob/main/LICENSE |
 | SAM2 1.0 (`2b90b9f`) | 기본 SAM2.1 Hiera runtime | Apache-2.0; https://github.com/facebookresearch/sam2/blob/main/LICENSE |
+| Meta DINOv2 ViT-S/14 | Adapted backbone and official LVD-142M pretrained weights; segmentation decoder is trained locally | Apache-2.0; https://github.com/facebookresearch/dinov2/blob/main/LICENSE; bundled text: `licenses/DINOv2-APACHE-2.0.txt` |
 | cryptography | Python AES-GCM model containers and model-pack signatures | Apache-2.0 OR BSD-3-Clause; https://github.com/pyca/cryptography/blob/main/LICENSE |
 | OpenSSL 3 | Native encrypted-model loader on non-Windows builds | Apache-2.0; https://github.com/openssl/openssl/blob/openssl-3.0/LICENSE.txt |
 
@@ -34,6 +35,20 @@ not committed to this repository. A user-added `.dvmodel` must carry its own `li
 revision, asset hashes, and required notices before release signing.
 Every bundled pretrained weight requires review against its exact model card
 before redistribution.
+
+## DINOv2 adaptation
+
+Copyright (c) Meta Platforms, Inc. and affiliates. `python/dinov2_segmentation.py`
+adapts the non-register ViT-S/14 backbone to standard PyTorch operations. Changes:
+removed xformers/training-only machinery and remote loading; added a semantic
+segmentation decoder, native-resolution detail path, padding and BW8 normalization
+adapter. The official backbone state dictionary is loaded strictly.
+Reference source verified at revision `7764ea0f912e53c92e82eb78a2a1631e92725fc8`.
+The fixed official weight is
+https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth,
+SHA256 `b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9`.
+This applies to the basic DINOv2 model, not the separately licensed XRay-DINO or
+Cell-DINO models. Include `licenses/DINOv2-APACHE-2.0.txt` with redistributed builds.
 
 ## C++ example bundled JSON header
 

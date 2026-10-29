@@ -1,0 +1,110 @@
+{
+  "platform": "macOS-26.5-arm64-arm-64bit",
+  "processor": "arm",
+  "torch": "2.14.1",
+  "onnxruntime": "1.29.0",
+  "weights_sha256": "b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9",
+  "data": "synthetic geometric masks, not inspection accuracy",
+  "runs": [
+    {
+      "channels": 1,
+      "training_epochs": 12,
+      "synthetic_validation_mIoU": 0.30747251157407407,
+      "best_epoch": 1,
+      "checkpoint_reload_inference": "passed",
+      "onnx": "passed",
+      "encrypted_batch1_2_exact": true,
+      "cpu_benchmark": {
+        "size": [
+          392,
+          392
+        ],
+        "channels": 1,
+        "threads": 4,
+        "warmup": 5,
+        "iterations": 20,
+        "median_ms": 83.28302064910531,
+        "p95_ms": 83.88470867648721,
+        "scope": "in-memory uint8 resize+normalize+ORT+argmax; excludes disk, rendering and camera",
+        "max_logit_error": 1.5437602996826172e-05
+      }
+    },
+    {
+      "channels": 3,
+      "training_epochs": 12,
+      "synthetic_validation_mIoU": 0.30747251157407407,
+      "best_epoch": 1,
+      "checkpoint_reload_inference": "passed",
+      "onnx": "passed",
+      "encrypted_batch1_2_exact": true,
+      "cpu_benchmark": {
+        "size": [
+          392,
+          392
+        ],
+        "channels": 3,
+        "threads": 4,
+        "warmup": 5,
+        "iterations": 20,
+        "median_ms": 84.08529171720147,
+        "p95_ms": 90.47033609822392,
+        "scope": "in-memory uint8 resize+normalize+ORT+argmax; excludes disk, rendering and camera",
+        "max_logit_error": 6.4373016357421875e-06
+      }
+    }
+  ],
+  "cpu": "Apple M4",
+  "reference_revision": "7764ea0f912e53c92e82eb78a2a1631e92725fc8",
+  "reference_parity": [
+    {
+      "input": [
+        224,
+        224
+      ],
+      "max_errors": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "input": [
+        70,
+        98
+      ],
+      "max_errors": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "input": [
+        518,
+        518
+      ],
+      "max_errors": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "unet_reference_same_settings": {
+    "size": [
+      392,
+      392
+    ],
+    "channels": 1,
+    "threads": 4,
+    "warmup": 5,
+    "iterations": 20,
+    "median_ms": 37.88072848692536,
+    "p95_ms": 38.1582316942513,
+    "scope": "in-memory uint8 resize+normalize+ORT+argmax; excludes disk, rendering and camera",
+    "max_logit_error": 1.341104507446289e-07
+  }
+}

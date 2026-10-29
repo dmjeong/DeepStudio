@@ -104,7 +104,8 @@ class TrainingWidget(TrainingForm, QWidget):
         model_id = self.model_id_combo.currentData() or ""
         name = self.model_id_combo.currentText()
         if model_id in BUILTIN_ADAPTER_IDS:
-            choices = [("builtin_finetune", f"{name} ImageNet 가중치로 시작"),
+            source = "LVD-142M" if model_id == "dinov2_vits14" else "ImageNet"
+            choices = [("builtin_finetune", f"{name} {source} 가중치로 시작"),
                        ("builtin_transfer", f"{name} 로컬 가중치로 시작"),
                        ("builtin_scratch", f"{name} 처음부터 학습")]
             scope = "분류 모델" if self.project.task == "classify" else "백본 (분할 헤드는 새로 학습)"

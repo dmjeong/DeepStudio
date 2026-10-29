@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-10-29T05:08:42.267289+00:00",
+  "lastUpdated": "2026-10-29",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -9,9 +9,10 @@
     "segmentation-background-contract",
     "dataset-first-class-visibility",
     "pretrained-manifest-recovery",
-    "segmentation-weight-preparation"
+    "segmentation-weight-preparation",
+    "dinov2-segmentation"
   ],
-  "primaryFeature": "segmentation-weight-preparation",
+  "primaryFeature": "dinov2-segmentation",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -389,6 +390,22 @@
         "lastUpdated": "2026-10-29T05:08:42.267289+00:00"
       },
       "completedAt": "2026-10-29T05:08:42.267289+00:00"
+    },
+    "dinov2-segmentation": {
+      "phase": "report",
+      "status": "completed",
+      "plan": "docs/01-plan/features/dinov2-segmentation.plan.md",
+      "design": "docs/02-design/features/dinov2-segmentation.design.md",
+      "matchRate": 100,
+      "report": "docs/04-report/dinov2-segmentation.report.md",
+      "analysis": "docs/03-analysis/dinov2-segmentation.analysis.md",
+      "verification": {
+        "pytest_passed": 1273,
+        "pytest_skipped": 12,
+        "native_real_weight": "passed",
+        "windows_cuda_managed_csharp": "not_run"
+      },
+      "completedAt": "2026-10-29"
     }
   },
   "pipeline": {

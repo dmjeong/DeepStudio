@@ -271,7 +271,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         source = dict(initial_checkpoint["model_state_dict"])
         head = {"resnet18": "fc.", "resnet50": "fc.",
                 "convnext_v1_tiny": "classifier.2.",
-                "deeplabv3plus_resnet34": "decoder.6.", "unet_resnet18": "head."}[model_id]
+                "deeplabv3plus_resnet34": "decoder.6.", "unet_resnet18": "head.",
+                "dinov2_vits14": "head."}[model_id]
         # Older segmentation checkpoints stored placeholder names "0".."N-1". They
         # differ from real project names, so only their backbone is transferred.
         if list(initial_checkpoint.get("class_names", [])) != class_names:
@@ -289,6 +290,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         "convnext_v1_tiny": ("classifier.",),
         "deeplabv3plus_resnet34": ("aspp.", "low_projection.", "decoder."),
         "unet_resnet18": ("dec", "head."),
+        "dinov2_vits14": ("projections.", "fusion.", "detail.", "decoder.", "head."),
     }[model_id]
     head_parameters, backbone_parameters = [], []
     for name, parameter in model.named_parameters():
@@ -487,7 +489,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
 
 def main() -> None:
     specs = tuple(get_builtin_spec(model_id) for model_id in (
-        "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18"))
+        "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18", "dinov2_vits14"))
     parser = argparse.ArgumentParser(description="Train a built-in Deep Vision Studio adapter")
     parser.add_argument("--model", choices=[spec.model_id for spec in specs], required=True)
     parser.add_argument("--data_root", required=True)
@@ -501,8 +503,8 @@ def main() -> None:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--resume")
-    parser.add_argument("--pretrained", action="store_true", help="Load the selected ImageNet backbone")
-    parser.add_argument("--initial_weights", help="Local torchvision backbone or matching Studio checkpoint")
+    parser.add_argument("--pretrained", action="store_true", help="Load the selected model's packaged pretrained backbone")
+    parser.add_argument("--initial_weights", help="Local official backbone or matching Studio checkpoint")
     parser.add_argument("--selection_metric", default="engine_default")
     parser.add_argument("--segmentation_loss", choices=("ce_dice", "ce"), default="ce_dice",
                         help="segment: CE + foreground Dice (default) or plain pixel CE")

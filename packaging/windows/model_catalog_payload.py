@@ -35,7 +35,7 @@ REQUIRED_BUILTIN_MODEL_IDS = frozenset({
     "convnext_v1_tiny", "libreyolo_classify_mobilenetv4_small",
     "patchcore_wide_resnet50_2", "patchcore_resnet18",
     "re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large",
-    "libreyolo_detect_9t", "deeplabv3plus_resnet34", "unet_resnet18",
+    "libreyolo_detect_9t", "deeplabv3plus_resnet34", "unet_resnet18", "dinov2_vits14",
     "sam2_hiera_tiny", "sam2_hiera_small", "sam2_hiera_base_plus",
     "sam2_hiera_large",
 })

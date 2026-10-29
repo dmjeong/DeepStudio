@@ -227,7 +227,7 @@ def test_qt_batch_and_selected_metrics_survive_saved_result(dataset):
         app.processEvents()
 
 
-@pytest.mark.parametrize('model_id', ['unet_resnet18', 'deeplabv3plus_resnet34'])
+@pytest.mark.parametrize('model_id', ['unet_resnet18', 'deeplabv3plus_resnet34', 'dinov2_vits14'])
 def test_real_builtin_forward_metrics_and_worker_persistence(dataset, tmp_path, monkeypatch, model_id):
     import torch
     from builtin_models import build_builtin_model

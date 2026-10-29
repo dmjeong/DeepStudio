@@ -24,6 +24,7 @@ ASSET_FILES = {
     "resnet50": "torchvision/resnet50-11ad3fa6.pth",
     "wide_resnet50_2": "torchvision/wide_resnet50_2-95faca4d.pth",
     "convnext_v1_tiny": "torchvision/convnext_tiny-983f1562.pth",
+    "dinov2_vits14": "dinov2/dinov2_vits14_pretrain.pth",
     "libreyolo_classify_mobilenetv4_small": "libreyolo/LibreMobileNetV4s-cls.pt",
     "libreyolo_detect_9t": "libreyolo/LibreYOLO9t.pt",
     "re_detr_v4_small": "libreyolo/LibreRTDETRv4s.pt",
@@ -36,7 +37,7 @@ ASSET_FILES = {
 }
 
 SEGMENTATION_ASSET_IDS = (
-    "resnet18", "resnet34", "sam2_hiera_tiny", "sam2_hiera_small",
+    "resnet18", "resnet34", "dinov2_vits14", "sam2_hiera_tiny", "sam2_hiera_small",
     "sam2_hiera_base_plus", "sam2_hiera_large",
 )
 
@@ -112,6 +113,9 @@ def verify_local_asset(model_id: str, root: Path, files: dict | None = None) -> 
         if model_id.startswith("sam2_"):
             from sam2_assets import get_sam2_asset
             expected_hash = get_sam2_asset(model_id).sha256
+        elif model_id == "dinov2_vits14":
+            from dinov2_segmentation import DINOV2_SHA256
+            expected_hash = DINOV2_SHA256
         elif official_torchvision_url(model_id) and match:
             expected_hash = match[1]
         else:
@@ -141,12 +145,13 @@ def builtin_asset_path(model_id: str, *, verify: bool = True) -> Path:
     return path.resolve()
 
 
-# 기본 모델 → ImageNet 백본 가중치 (builtin_models._torchvision_base 와 같은 대응)
+# 기본 모델 → 설치본 사전학습 백본 가중치 (모델 생성기와 같은 대응)
 BUILTIN_BACKBONE_ASSETS = {
     "resnet18": "resnet18",
     "resnet50": "resnet50",
     "convnext_v1_tiny": "convnext_v1_tiny",
     "unet_resnet18": "resnet18",
+    "dinov2_vits14": "dinov2_vits14",
     "deeplabv3plus_resnet34": "resnet34",
 }
 

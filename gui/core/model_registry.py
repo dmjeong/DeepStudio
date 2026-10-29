@@ -217,6 +217,7 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         ModelSpec("libreyolo_detect_9t", "LibreYOLO", "9 Tiny", "detect", ("windows_native", "onnx"), common, (640, 640), (3,)),
         ModelSpec("deeplabv3plus_resnet34", "DeepLab V3+", "ResNet34", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", pretrained_asset="ResNet34_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
         ModelSpec("unet_resnet18", "U-Net", "ResNet18", "segment", ("windows_native", "onnx"), common, (512, 512), (1, 3), "export_verified", pretrained_asset="ResNet18_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
+        ModelSpec("dinov2_vits14", "DINOv2", "ViT-S/14 + Detail", "segment", ("windows_native", "onnx"), common, (392, 392), (1, 3), "export_verified", pretrained_asset="Meta DINOv2 ViT-S/14 LVD-142M", notes="Apache-2.0 사전학습 백본 + 원본 해상도 세부 경로; 분할 헤드는 새로 학습. CPU 속도는 장비별 측정 필요"),
     ])
     sam2_contract = {"contracts": {"graphs": {
         "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},

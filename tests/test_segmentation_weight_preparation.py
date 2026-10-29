@@ -79,7 +79,7 @@ def test_check_default_root_matches_loader_independent_of_cwd(tmp_path, monkeypa
     monkeypatch.chdir(tmp_path)
     assert prepare.main(['--group', 'segment', '--check']) == 1
     output = capsys.readouterr().out
-    assert str(root) in output and '[check] 0/6 ready' in output
+    assert str(root) in output and f'[check] 0/{len(assets.SEGMENTATION_ASSET_IDS)} ready' in output
     for model_id in assets.SEGMENTATION_ASSET_IDS:
         assert f'[failed] {model_id}:' in output
     assert not root.exists(), 'Read-only check must not create files.'

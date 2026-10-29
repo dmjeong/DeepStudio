@@ -440,6 +440,35 @@
       "metadata": {}
     },
     {
+      "model_id": "dinov2_vits14",
+      "family": "DINOv2",
+      "variant": "ViT-S/14 + Detail",
+      "task": "segment",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        392,
+        392
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "Meta DINOv2 ViT-S/14 LVD-142M",
+      "notes": "Apache-2.0 사전학습 백본 + 원본 해상도 세부 경로; 분할 헤드는 새로 학습. CPU 속도는 장비별 측정 필요",
+      "metadata": {}
+    },
+    {
       "model_id": "sam2_hiera_tiny",
       "family": "SAM2",
       "variant": "Hiera Tiny",

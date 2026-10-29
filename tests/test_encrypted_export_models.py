@@ -25,6 +25,7 @@ ort.disable_telemetry_events()
     ("efficientnet_b1", 1), ("efficientnet_b1", 3),
     ("resnet18", 1), ("resnet50", 3), ("convnext_v1_tiny", 3),
     ("deeplabv3plus_resnet34", 3), ("unet_resnet18", 1),
+    ("dinov2_vits14", 1), ("dinov2_vits14", 3),
 ])
 def test_real_architecture_encrypted_export(tmp_path, monkeypatch, model_id, channels):
     threads = torch.get_num_threads()

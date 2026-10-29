@@ -8,7 +8,7 @@
 | 태스크 | 학습·추론 엔진 | 데이터 |
 |---|---|---|
 | 분류 | EfficientNet B0/B1, ResNet 18/50, ConvNeXt V1 Tiny, Custom CSP | 클래스별 이미지 폴더 |
-| 시맨틱 분할 | SAM2 Hiera Tiny/Small/Base+/Large, DeepLab V3+ ResNet34, U-Net ResNet18, Custom CSP | 이미지와 클래스 인덱스 마스크 |
+| 시맨틱 분할 | SAM2 Hiera Tiny/Small/Base+/Large, DeepLab V3+ ResNet34, U-Net ResNet18, DINOv2 ViT-S/14 + Detail, Custom CSP | 이미지와 클래스 인덱스 마스크 |
 | 박스 탐지 | Re-DETR v4 Small/Medium/Large, LibreYOLO9 Tiny, Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
 | 이상 탐지 | PatchCore 또는 Custom CSP 재구성 | 정상 이미지, 선택적 평가용 불량 이미지 |
 | 회전 박스 | 데이터 편집·크롭만 지원 | 클래스와 네 꼭짓점의 정규화 좌표 |
@@ -17,6 +17,34 @@
 실행을 거부하며, 현재 엔진을 명시적으로 선택해야 합니다.
 
 ## 실행
+
+### DINOv2 세그멘테이션 (10.57)
+
+- **Segmentation → DINOv2 ViT-S/14 + Detail**을 선택합니다. 기본 입력은 392×392,
+  흑백 1채널과 RGB 3채널을 지원합니다. 이미지 안의 영역에 클래스를 라벨링합니다.
+- `LVD-142M 가중치로 시작`은 Meta의 공식 사전학습 **백본**을 사용합니다.
+  픽셀별 분할 헤드는 사용자 마스크로 학습해야 하며, 즉시 불량을 찾는 완성 모델이 아닙니다.
+  처음에는 백본 고정으로 헤드/세부 경로를 학습하고, 필요하면 전체 미세조정합니다.
+  결함 픽셀이 적으면 `클래스 가중치 balanced`와 `CE + Dice`를 함께 비교하세요.
+  짧은 학습에서 배경만 나오는지 반드시 클래스별 결과로 확인합니다.
+- `build.bat`/`build.bat setup gpu`와 `prepare_model_weights.bat segment`에 가중치가 포함됩니다.
+  Python 사용자 개별 준비: `python python/prepare_builtin_assets.py --only dinov2_vits14`.
+  수동 파일 위치: `gui/builtin_assets/dinov2/dinov2_vits14_pretrain.pth`.
+  공식 SHA256을 검사하므로 이름만 바꾼 다른 가중치는 사용할 수 없습니다.
+- 기존 `.pt` 학습/추론, `.onnx + .json` 및 암호화 내보내기를 사용합니다. 내보낸 공간 크기는
+  고정이며 동적 배치만 선택 가능합니다. C++/C#에서는 기존 segmentation 로더를 사용합니다.
+- 패치 특징과 함께 원본 해상도의 CNN 세부 경로를 사용합니다. 앱에서 입력 이미지를
+  축소하면 작은 결함이 없어질 수 있으므로, 미세 결함에는 충분한 입력 크기 또는 ROI를 사용하세요.
+  입력 크기를 늘리면 Transformer 연산량/메모리 사용량도 커집니다. CPU 전체 20ms는 보장하지 않습니다.
+- 코드/기본 가중치 Apache-2.0. [출처·라이선스](THIRD_PARTY_NOTICES.md),
+  [구현·검증 보고서](docs/04-report/dinov2-segmentation.report.md).
+
+실제 공개 가중치 기능/속도 재검사:
+```bat
+python tools/dinov2_segmentation_smoke.py --weights gui/builtin_assets/dinov2/dinov2_vits14_pretrain.pth --report dinov2-smoke.json
+```
+이 도구는 합성 데이터로 학습/복원/ONNX/암호화를 검증하고 메모리 입력 기준 CPU 시간을
+기록합니다. 실제 공정의 정확도 평가를 대신하지 않습니다.
 
 [C++17 / C# ONNX 실행·자동 테스트 예제](example/README.md)는 `example/`에서 제공한다.
 
@@ -31,7 +59,7 @@ GPU 이름을 선택하면 EfficientNet을 포함한 기본 모델 학습이 CUD
 CUDA 학습에서는 pinned memory, 지속 worker, batch prefetch와 제한된 이미지 디코딩
 캐시를 자동 적용한다. 학습 로그의 `workers`, `pin_memory`, `persistent/prefetch` 값으로
 실제 데이터 공급 설정을 확인할 수 있다.
-EfficientNet B0/B1, ResNet, ConvNeXt, DeepLab V3+, U-Net, PatchCore 백본, LibreYOLO,
+EfficientNet B0/B1, ResNet, ConvNeXt, DeepLab V3+, U-Net, DINOv2, PatchCore 백본, LibreYOLO,
 Re-DETR v4, SAM2 Hiera Tiny/Small/Base+/Large는 앱 실행 중 별도 다운로드를 하지 않는다.
 SAM2는 Settings에서 받거나 프로젝트에 적용하지 않는다. 분할 프로젝트에서 Hiera 변형을
 선택하면 기본 제공 가중치로 prompt mask 미세조정을 실행할 수 있다. 학습 결과는 같은
