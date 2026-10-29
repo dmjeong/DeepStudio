@@ -235,6 +235,7 @@ class AnnotationWorkspaceUI:
         self.view.command.connect(self._command)
         self.view.zoom_requested.connect(self._zoom)
         self.class_combo.currentIndexChanged.connect(self._active_class)
+        self.class_combo.activated.connect(self._class_picked)  # 사용자가 콤보에서 고를 때만
         self.editor_splitter.addWidget(self.view)
         self.inspector = QTabWidget()
         self.inspector.setMinimumWidth(355)

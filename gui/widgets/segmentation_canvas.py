@@ -9,6 +9,11 @@ from PySide6.QtWidgets import QGraphicsItemGroup, QMenu
 from widgets.detection_canvas import DetectionCanvas
 
 
+# Shift+클릭이 다중 선택인 도구. 브러시·지우개는 Shift+드래그가 지우개다.
+SHIFT_SELECT_MODES = {"brush", "erase", "rectangle", "polygon", "fill"}
+SHIFT_DRAG_PIXELS = 4  # 이만큼(화면 px) 끌어야 Shift 지우개로 본다
+
+
 class SegmentationCanvas(DetectionCanvas):
     shape_created = Signal(dict)
     shape_edited = Signal(int, dict)
@@ -386,6 +391,24 @@ class SegmentationCanvas(DetectionCanvas):
         self.vertex = -1
         self.shape_edited.emit(self.selected, shape)
 
+    def _begin_stroke(self, point, erase):
+        self.gesture = "stroke"
+        self.stroke = self._normalized(point)
+        self._stroke_dirty = None
+        self.stroke_erase = erase
+        self._preview_segment()
+        self.pending_changed.emit(True)
+
+    def _toggle_selection(self, point):
+        """Shift+클릭: 커서 아래 객체를 선택에 더하거나 뺀다 (선택 도구와 같은 규칙)."""
+        hit = self._hit(point)
+        chosen = set(self.selected_set)
+        if hit in chosen:
+            chosen.remove(hit)
+        elif hit != -1:
+            chosen.add(hit)
+        self.choose(chosen, hit)
+
     def mousePressEvent(self, event):
         if self.mode == "grid_anchor":
             super().mousePressEvent(event)
@@ -418,6 +441,21 @@ class SegmentationCanvas(DetectionCanvas):
             and self.names
         ):
             point = self._clamp(raw)
+            shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            if shift and self.mode in SHIFT_SELECT_MODES and not (self.mode == "polygon" and self.points):
+                # Shift+클릭은 어느 도구에서든 다중 선택 (화면 안내와 같게). 브러시·지우개에서는
+                # Shift+드래그가 지우개라서, 실제로 끌기 전까지는 선택인지 지우기인지 정하지 않는다.
+                # 예전에는 브러시의 Shift+클릭이 지우개 한 점이 되어 작은 박스·blob이 통째로 사라졌다.
+                self.start = point
+                self._shift_press = event.position().toPoint()
+                if self.mode in {"brush", "erase"}:
+                    self.gesture = "shift_pending"
+                else:
+                    self._toggle_selection(point)
+                self._cursor(raw)
+                self.viewport().update()
+                event.accept()
+                return
             if self.mode in {"polygon", "rectangle"}:
                 point = self._snap(point)
             self.start = point
@@ -442,14 +480,7 @@ class SegmentationCanvas(DetectionCanvas):
                         "선택 영역이 잠겨 있습니다. 잠금을 풀거나 새 영역을 선택하세요."
                     )
                     return
-                self.gesture = "stroke"
-                self.stroke = self._normalized(point)
-                self._stroke_dirty = None
-                self.stroke_erase = self.mode == "erase" or bool(
-                    event.modifiers() & Qt.KeyboardModifier.ShiftModifier
-                )
-                self._preview_segment()
-                self.pending_changed.emit(True)
+                self._begin_stroke(point, self.mode == "erase")
             elif self.mode in {"rectangle", "ai_box"}:
                 self.gesture = self.mode
                 self.pending_changed.emit(True)
@@ -512,6 +543,18 @@ class SegmentationCanvas(DetectionCanvas):
                 self.verticalScrollBar().value() - delta.y()
             )
             self.last = event.position().toPoint()
+        elif self.gesture == "shift_pending":
+            moved = (event.position().toPoint() - self._shift_press).manhattanLength()
+            if moved >= SHIFT_DRAG_PIXELS:  # 끌기 시작: Shift+드래그 지우개
+                if self.selected in self.locked:
+                    self.gesture = None
+                    self.status_changed.emit("선택 영역이 잠겨 있습니다. 잠금을 풀거나 새 영역을 선택하세요.")
+                    return
+                self._begin_stroke(self.start, True)
+                normalized = self._normalized(point)
+                if normalized != self.stroke[-2:]:
+                    self.stroke.extend(normalized)
+                    self._preview_segment()
         elif self.gesture == "stroke":
             normalized = self._normalized(point)
             if normalized != self.stroke[-2:]:
@@ -593,6 +636,11 @@ class SegmentationCanvas(DetectionCanvas):
         self.mouseMoveEvent(event)
         gesture = self.gesture
         self.gesture = None
+        if gesture == "shift_pending":  # 끌지 않은 Shift+클릭: 선택
+            self._toggle_selection(self.start)
+            self.viewport().update()
+            event.accept()
+            return
         shape = self.preview_shape
         serial = self._refresh_serial
         if gesture == "stroke":

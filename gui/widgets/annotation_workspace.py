@@ -351,6 +351,8 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             self.selected = self.document.representative(shape["object_id"])
             self.selected_indices = {self.selected}
         self._changed(region)
+        # 방금 그린 객체의 자동 선택: 다음에 그릴 클래스를 골라도 이 객체의 클래스는 바꾸지 않는다.
+        self._auto_selected = True
 
     def _edit(self, index, shape):
         self._edit_many({index: shape})
@@ -380,6 +382,7 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self._changed()
 
     def _select(self, index):
+        self._auto_selected = False  # 사용자가 고른 선택
         self.selected = index
         if index == -1:
             self.selected_indices = set()
@@ -400,6 +403,7 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self._select(index)
 
     def _select_many(self, indices):
+        self._auto_selected = False  # 사용자가 고른 선택
         self.selected_indices = set(indices)
         self.view.selected_set = set(indices)
         if self.selected not in indices:
@@ -482,6 +486,26 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
 
     def _class_id(self, index):
         return -index - 2 if index < -1 else self._items()[index]["class_id"]
+
+    def _class_picked(self, *_):
+        """클래스 목록·콤보·숫자키로 클래스를 고르면, 사용자가 직접 고른 객체가 있을 때 그 객체들에 적용한다.
+
+        예전에는 활성(그리기) 클래스만 바뀌고 선택 객체는 그대로라 '선택에 적용'을 따로 눌러야 했다.
+        Shift로 여러 객체를 고른 뒤 클래스를 골라도 저장해 보면 바뀌지 않았다. 방금 그려 자동 선택된
+        객체는 바꾸지 않는다(다음에 그릴 클래스를 고르는 경우). 분할의 배경(0)은 적용하지 않는다(삭제로).
+        """
+        if getattr(self, "_auto_selected", True) or not self.selected_indices:
+            return
+        class_id = self._active_class_id()
+        indices = {i for i in self.selected_indices if i in self._indices()}
+        if not indices or all(self._class_id(i) == class_id for i in indices):
+            return
+        if self.task == "segment" and class_id == 0:
+            self.status.setText("선택 영역을 배경으로 바꾸려면 '선택 삭제'를 쓰세요.")
+            return
+        self._reclass(indices, class_id)
+        name = self.names[class_id] if 0 <= class_id < len(self.names) else str(class_id)
+        self.status.setText(f"선택한 영역 {len(indices)}개를 '{name}'(으)로 바꿨습니다. Ctrl+Z로 되돌립니다.")
 
     def _active_class(self, index):
         if not hasattr(self, "view"):
@@ -928,6 +952,7 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
     def _class_list_selected(self, row):
         if 0 <= row < len(self.names):
             self.class_combo.setCurrentIndex(row)
+            self._class_picked()
 
     def _add_class(self):
         if self._add_class_callback is None or self.worker:
@@ -1068,6 +1093,7 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             cid += 1 if self.task == "segment" else 0
             if cid < len(self.names):
                 self.class_combo.setCurrentIndex(cid)
+                self._class_picked()
         elif command in {"previous", "next"}:
             self._navigate(-1 if command == "previous" else 1)
         elif command.startswith("fill:"):

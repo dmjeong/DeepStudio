@@ -240,7 +240,10 @@ class DetectionCanvas(QGraphicsView):
             )
             handle = self._handle_at(point)
             hit = self._hit(point)
-            if self.mode == "erase":
+            # Shift+클릭은 어느 도구에서든 다중 선택 (화면 안내와 같게). 지우개 도구에서 Shift+클릭이
+            # 박스를 지우고, 그리기 도구에서는 선택이 되지 않던 것을 맞춘다.
+            shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            if self.mode == "erase" and not shift:
                 self.choose({hit} if hit >= 0 else set(), hit)
                 if hit >= 0 and hit not in self.locked:
                     self.box_deleted.emit(hit)
@@ -251,6 +254,7 @@ class DetectionCanvas(QGraphicsView):
                 self.original = self._rect(self.rows[self.selected])
             elif (
                 self.mode == "select"
+                or shift
                 or event.modifiers() & Qt.KeyboardModifier.ControlModifier
             ):
                 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:

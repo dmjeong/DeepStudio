@@ -137,3 +137,105 @@ def test_training_skips_images_without_masks_and_says_so(tmp_path):
     with pytest.raises(ValueError, match="라벨링한 이미지가 없습니다"):
         SegmentationDataset(str(images), str(masks), input_size=(16, 16), in_channels=1,
                             is_train=False, num_classes=2)
+
+
+# ── Shift: click selects, drag erases; a picked class applies to the selection ──
+
+def _shift_click(app, dialog, x, y):
+    QTest.mouseClick(dialog.view.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier,
+                     dialog.view.mapFromScene(x, y))
+    app.processEvents()
+
+
+@pytest.fixture
+def two_objects(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    image = tmp_path / "a.png"
+    Image.new("RGB", (200, 160), 90).save(image)
+    saved = {}
+    dialog = SegmentationAnnotationDialog(str(image), ["background", "scratch", "dent"], MaskDocument(200, 160, 3, shapes=[
+        {"kind": "polygon", "class_id": 1, "points": [.1, .1, .18, .1, .18, .2, .1, .2], "object_id": "box"},
+        {"kind": "stroke", "class_id": 1, "points": [.6, .6, .62, .6], "width": 8, "object_id": "blob"}]),
+        lambda values: saved.setdefault("payload", values) or {})
+    dialog.show()
+    app.processEvents()
+    dialog._fit()
+    app.processEvents()
+    yield app, dialog, saved
+    dialog.dirty = False
+    dialog.reject()
+    dialog.deleteLater()
+    app.processEvents()
+
+
+@pytest.mark.parametrize("mode", ["brush", "rectangle", "polygon", "fill", "select"])
+def test_shift_click_selects_in_every_tool_and_never_erases(two_objects, mode):
+    """Shift+click in the brush tool used to erase a brush dot, so small boxes/blobs vanished."""
+    import time
+
+    app, dialog, saved = two_objects
+    dialog._set_mode(mode)
+    before = dialog.document.render().copy()
+    _shift_click(app, dialog, 28, 24)
+    _shift_click(app, dialog, 122, 96)
+    assert np.array_equal(before, dialog.document.render())
+    assert len(dialog.selected_indices) == 2 and not getattr(dialog.view, "points", [])
+    dialog.class_list.setCurrentRow(2)  # pick "dent": applies to the user's selection
+    app.processEvents()
+    dialog._save()
+    deadline = time.time() + 10
+    while dialog.worker is not None and time.time() < deadline:
+        app.processEvents()
+    app.processEvents()
+    pixels = MaskDocument.from_payload(saved["payload"], 200, 160, 3).render()
+    assert pixels[24, 28] == 2 and pixels[96, 122] == 2
+
+
+def test_shift_drag_still_erases_with_the_brush(two_objects):
+    app, dialog, _saved = two_objects
+    dialog._set_mode("brush")
+    viewport = dialog.view.viewport()
+    start, end = dialog.view.mapFromScene(20, 24), dialog.view.mapFromScene(36, 24)
+    QTest.mousePress(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier, start)
+    for step in range(1, 9):
+        QTest.mouseMove(viewport, start + (end - start) * step / 8)
+        app.processEvents()
+    QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier, end)
+    app.processEvents()
+    assert dialog.document.shapes[-1].get("operation") == "erase"
+
+
+def test_picking_the_next_class_does_not_relabel_the_object_just_drawn(workspace):
+    app, dialog = workspace
+    dialog.class_combo.setCurrentIndex(dialog.class_combo.findData(1))
+    dialog._set_mode("rectangle")
+    _drag(app, dialog, [(150, 20), (180, 50)])
+    drawn = dialog.selected
+    dialog.class_list.setCurrentRow(2)
+    app.processEvents()
+    assert dialog._class_id(drawn) == 1 and dialog._active_class_id() == 2
+
+
+def test_detection_shift_click_selects_and_never_deletes_boxes(tmp_path):
+    from widgets.annotation_workspace import DetectionAnnotationDialog
+
+    app = QApplication.instance() or QApplication([])
+    image = tmp_path / "a.png"
+    Image.new("RGB", (200, 160), 90).save(image)
+    rows = [{"class_id": 0, "coordinates": [.2, .2, .1, .1]}, {"class_id": 0, "coordinates": [.7, .7, .1, .1]}]
+    for mode in ("draw", "erase"):
+        dialog = DetectionAnnotationDialog(str(image), ["part", "defect"], [dict(r) for r in rows], lambda v: {})
+        dialog.show()
+        app.processEvents()
+        dialog._fit()
+        dialog._set_mode(mode)
+        _shift_click(app, dialog, 40, 32)
+        _shift_click(app, dialog, 140, 112)
+        assert len(dialog.rows) == 2 and sorted(dialog.selected_indices) == [0, 1], mode
+        dialog.class_list.setCurrentRow(1)
+        app.processEvents()
+        assert [row["class_id"] for row in dialog.rows] == [1, 1]
+        dialog.dirty = False
+        dialog.reject()
+        dialog.deleteLater()
+        app.processEvents()

@@ -96,11 +96,15 @@ def test_brush_shortcuts_adjust_size_and_shift_temporarily_erases(editor):
     drag(dialog, (200, 200), (260, 200))
     assert dialog.document.render()[200, 230] == 1
     view = dialog.view
-    point = view.mapFromScene(QPointF(230, 200))
+    # Shift+drag is the temporary eraser. A Shift+click without moving selects instead
+    # (it used to erase a brush dot, which deleted small objects while multi-selecting).
+    start, end = view.mapFromScene(QPointF(222, 200)), view.mapFromScene(QPointF(238, 200))
     QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton,
-                    Qt.KeyboardModifier.ShiftModifier, point)
+                    Qt.KeyboardModifier.ShiftModifier, start)
+    for step in range(1, 9):
+        QTest.mouseMove(view.viewport(), start + (end - start) * step / 8)
     QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton,
-                      Qt.KeyboardModifier.ShiftModifier, point)
+                      Qt.KeyboardModifier.ShiftModifier, end)
     app.processEvents()
     assert dialog.document.render()[200, 230] == 0
 
