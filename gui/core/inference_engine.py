@@ -251,14 +251,16 @@ class InferenceOperations:
             self._set_info((getattr(self, "info", "") or "") + f" | 판정 범위: 중앙 {crop['width']}×{crop['height']} px")
         return prediction
 
-    def _review_segmentation(self, prediction, image_path, mask, labels, probabilities, size, box, review):
+    def _review_segmentation(self, prediction, image_path, mask, labels, probabilities, size, box, review,
+                             num_classes=None):
         """예측 마스크를 결함 목록(클래스·박스·면적·점수)으로 바꾸고 OK/NG를 판정한다.
 
         review = {"min_area", "min_score", "split_dirs": [(이미지 폴더, 마스크 폴더), ...]}.
         이미지가 데이터셋에 있고 정답 마스크가 있으면 정답과 비교한다(IoU·놓침·오검출).
         """
         from core.segment_defects import analyze_segmentation, judge, load_truth, summary_text, truth_mask_path
-        names = list(self.class_names) or [f"Class {i}" for i in range(self.model.num_classes)]
+        num_classes = num_classes or self.model.num_classes
+        names = list(self.class_names) or [f"Class {i}" for i in range(num_classes)]
         truth, truth_path, note = None, truth_mask_path(image_path, review.get("split_dirs") or ()), ""
         if truth_path:
             try:
@@ -271,11 +273,11 @@ class InferenceOperations:
         try:
             analysis = analyze_segmentation(mask, probabilities, size=labels.shape[::-1], labels=labels,
                                             class_names=names, offset=offset, truth=truth,
-                                            num_classes=self.model.num_classes)
+                                            num_classes=num_classes)
         except ValueError as exc:  # 정답 값 범위 오류는 비교만 빼고 결함은 보고한다
             note = f"정답 비교 생략: {exc}"
             analysis = analyze_segmentation(mask, probabilities, size=labels.shape[::-1], labels=labels,
-                                            class_names=names, offset=offset, num_classes=self.model.num_classes)
+                                            class_names=names, offset=offset, num_classes=num_classes)
         details = dict(prediction.details)
         details.update(analysis, defect_rules={"min_area": int(review.get("min_area", 1)),
                                                "min_score": float(review.get("min_score", 0.0))})
@@ -286,6 +288,43 @@ class InferenceOperations:
         verdict = judge(details)
         return replace(prediction, details=details, summary=summary_text(verdict),
                        color="#E05555" if verdict["decision"] == "NG" else "#34C759")
+
+    def _run_sam2_inference(self, image_path: str):
+        """SAM2 미세조정 모델: 격자 점 자동 분할 → 결함 마스크 (C++ SDK Automatic과 같은 점·합집합 규칙).
+
+        SAM2는 클래스를 구분하지 않는다(학습 계약: 모든 전경 클래스 → 이진 객체 마스크).
+        결과는 '배경 / 결함' 두 클래스이며, 결함 이름은 프로젝트에 결함 클래스가 하나면 그 이름이다.
+        """
+        from core.image_display import display_rgb
+        from core.sam2_automatic import automatic_mask
+        from core.spatial_preview import segmentation_labels, segmentation_preview
+        from PIL import Image
+        with self._measure_inference_stage("inference"):
+            with Image.open(image_path) as source:
+                original = display_rgb(np.array(source.convert("RGB")))
+            mask, probabilities, info = automatic_mask(self._sam2_predictor, original,
+                                                       getattr(self, "_sam2_settings", None))
+        names = list(self.class_names or [])
+        defect = names[1] if len(names) == 2 else "결함"
+        self.class_names = ["background", defect]
+        height, width = original.shape[:2]
+        review = getattr(self, "segment_review", None)
+        labels = segmentation_labels(mask, width, height)
+        preview, counts = segmentation_preview(mask, original, 2, labels=labels, tint_background=review is None)
+        prediction = InferenceResult(image_path, "ok", "segment", "세그멘테이션", "#A78BFA",
+                                     details={"num_classes": 2, "pixel_counts": counts,
+                                              "class_names": list(self.class_names),
+                                              "sam2": {**info, "model_id": self._sam2_model_id},
+                                              "runtime": "pytorch", "device": str(self._infer_device)})
+        if review is not None:
+            prediction = self._review_segmentation(prediction, image_path, mask, labels, probabilities,
+                                                   (width, height), None, review, num_classes=2)
+        self._heatmap_cache = None
+        self._display_numpy_image(preview)
+        self.info = (f"SAM2 자동 분할 | 격자 {info['grid']}×{info['grid']} · 점 {info['candidates']}개 중 "
+                     f"{info['decoded']}개 디코딩 · 마스크 {info['accepted']}개 사용 "
+                     f"(점수 ≥ {info['min_score']:.2f}, 면적 ≤ {info['max_area_percent']:g}%)")
+        return prediction
 
     def _run_patchcore_inference(self, image_path: str):
         """
@@ -343,14 +382,18 @@ class InferenceEngine(InferenceOperations):
     """한 워커가 모델과 훅을 단독 사용하고 결과만 화면에 전달한다."""
     STATE_FIELDS = ("model", "_patchcore_model", "_upstream_model", "_upstream_task", "_gradcam",
                     "_infer_device", "_input_size", "_normalization", "class_names",
-                    "_anomaly_threshold", "_active_checkpoint", "_center_crop", "_onnx_runtime")
+                    "_anomaly_threshold", "_active_checkpoint", "_center_crop", "_onnx_runtime",
+                    "_sam2_predictor", "_sam2_model_id")
 
-    def __init__(self, state, *, gradcam=True, input_region=None, runtime="auto", threads=4, segment_review=None):
+    def __init__(self, state, *, gradcam=True, input_region=None, runtime="auto", threads=4, segment_review=None,
+                 sam2=None):
         for name in self.STATE_FIELDS:
             setattr(self, name, state.get(name))
         self.gradcam_enabled = gradcam
         # 분할 결함 분석(데스크톱에서 켬): None이면 기존처럼 픽셀 분포만 낸다.
         self.segment_review = segment_review
+        # SAM2 자동 분할 설정 (격자·최소 점수·최대 면적). None이면 기본값.
+        self._sam2_settings = sam2
         if runtime not in ("auto", "pytorch", "onnx"):
             raise ValueError("런타임은 auto, pytorch, onnx 중에서 선택하세요")
         self.runtime_requested, self.runtime_threads = runtime, threads
@@ -445,6 +488,8 @@ class InferenceEngine(InferenceOperations):
                 result = self._run_patchcore_inference(image_path)
             elif self._upstream_model is not None:
                 result = self._run_upstream_inference(image_path)
+            elif self._sam2_predictor is not None:
+                result = self._run_sam2_inference(image_path)
             elif self.model is not None:
                 result = self._run_custom_inference(image_path)
             else:

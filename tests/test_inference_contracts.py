@@ -105,7 +105,7 @@ class InferenceContractTests(unittest.TestCase):
         class Engine:
             STATE_FIELDS = ()
 
-            def __init__(self, state, *, gradcam=True, input_region=None, segment_review=None):
+            def __init__(self, state, *, gradcam=True, input_region=None, segment_review=None, sam2=None):
                 self.gradcam_enabled = gradcam
                 created.append(self)
 
@@ -121,6 +121,7 @@ class InferenceContractTests(unittest.TestCase):
                 widget._inference_worker, widget._process_model = None, False
                 widget.model, widget._patchcore_model = object(), None
                 widget._model_task = "classify"
+                widget._sam2_settings = lambda: None  # SAM2 모델이 아니면 엔진이 쓰지 않는다
                 widget._batch_images = ["gray.png"]
                 widget._input_region_request = lambda: {"mode": "model"}
                 widget._clear_results = lambda: None

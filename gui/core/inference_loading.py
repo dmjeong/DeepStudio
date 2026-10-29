@@ -8,8 +8,23 @@ from core.gradcam import GradCAM
 from core.inference_settings import require_saved_input_shape
 
 
+def _sam2_model_id(path, checkpoint):
+    """Studio SAM2 미세조정 체크포인트는 model_id를 담는다. 공식 파일(sam2.1_hiera_*.pt)은 파일 이름으로 찾는다."""
+    from sam2_assets import SAM2_ASSETS
+    if checkpoint.get("backend") == "sam2" or checkpoint.get("type") in {"sam2", "sam2_finetune"}:
+        model_id = checkpoint.get("model_id")
+        if model_id not in SAM2_ASSETS:
+            raise ValueError(f"SAM2 체크포인트의 모델 ID를 알 수 없습니다: {model_id}")
+        return model_id
+    if isinstance(checkpoint.get("model"), dict):
+        for model_id, asset in SAM2_ASSETS.items():
+            if Path(path).name == asset.filename:
+                return model_id
+    return None
+
+
 def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pytorch", official=False, device="cpu",
-                          input_region=None, threads=4, segment_review=None):
+                          input_region=None, threads=4, segment_review=None, sam2=None):
     if official:
         raise ValueError("지원하지 않는 모델 형식입니다. EfficientNet 체크포인트를 선택하세요.")
     device = torch.device(device)
@@ -21,6 +36,24 @@ def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pyto
     state["_center_crop"] = checkpoint_center_crop(checkpoint)
     if not isinstance(checkpoint, dict):
         raise ValueError("모델 설정이 포함된 체크포인트 필요")
+    sam2_model_id = _sam2_model_id(path, checkpoint)
+    if sam2_model_id is not None:
+        # SAM2: 공식 Hiera 가중치(설치본·가중치 폴더) 위에 미세조정한 프롬프트·마스크 디코더를 얹는다.
+        if runtime not in ("auto", "pytorch"):
+            raise ValueError("SAM2 추론은 PyTorch 런타임을 사용합니다")
+        from sam2.sam2_image_predictor import SAM2ImagePredictor
+        from sam2_assets import load_sam2_checkpoint, load_sam2_pretrained
+        if checkpoint.get("backend") == "sam2" or checkpoint.get("type") == "sam2_finetune":
+            model = load_sam2_checkpoint(sam2_model_id, device=str(device), checkpoint_path=path)
+        else:
+            model = load_sam2_pretrained(sam2_model_id, device=str(device), checkpoint_path=path)
+        names = checkpoint.get("class_names") or []
+        state.update(_sam2_predictor=SAM2ImagePredictor(model), _sam2_model_id=sam2_model_id,
+                     class_names=list(names), _input_size=(1024, 1024), _center_crop=None)
+        engine = InferenceEngine(state, gradcam=False, input_region=input_region, runtime="pytorch",
+                                 threads=threads, segment_review=segment_review, sam2=sam2)
+        engine.checkpoint_name = Path(path).name
+        return engine
     if checkpoint.get("type") == "patchcore":
         if runtime not in ("auto", "pytorch"):
             raise ValueError("PatchCore CPU 측정은 pytorch 런타임 사용")
@@ -75,7 +108,7 @@ def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pyto
             if gradcam:
                 state["_gradcam"] = GradCAM(model)
     engine = InferenceEngine(state, gradcam=gradcam, input_region=input_region, runtime=runtime, threads=threads,
-                             segment_review=segment_review)
+                             segment_review=segment_review, sam2=sam2)
     engine.checkpoint_name = Path(path).name
     return engine
 

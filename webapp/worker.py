@@ -503,8 +503,8 @@ def infer(context, payload):
     engine = load_inference_engine(payload["weights"], device=device, gradcam=payload.get("gradcam", True),
                                    input_region=payload.get("input_region"), runtime=payload.get("runtime", "auto"),
                                    threads=payload.get("threads", max(1, min(4, os.cpu_count() or 1))),
-                                   # 데스크톱 추론만 보내는 분할 결함 분석 설정. 웹 요청에는 없어 동작이 그대로다.
-                                   segment_review=payload.get("segment_review"))
+                                   # 데스크톱 추론만 보내는 분할 결함 분석·SAM2 자동 분할 설정. 웹 요청에는 없다.
+                                   segment_review=payload.get("segment_review"), sam2=payload.get("sam2"))
     if callable(getattr(engine, "prepare", None)):
         engine.prepare()
     if getattr(engine, "runtime_warning", ""):
@@ -719,6 +719,7 @@ def inspect_model(context, payload):
     engine = load_inference_engine(payload["weights"], device=device, gradcam=False)
     task = ("anomaly" if engine._patchcore_model is not None else
             engine._upstream_task if getattr(engine, "_upstream_model", None) is not None else
+            "segment" if getattr(engine, "_sam2_predictor", None) is not None else
             getattr(engine.model, "task", "classify"))
     return {"status": "completed", "output": {"class_names": list(engine.class_names or []),
         "input_size": engine._input_size, "task": task, "weights": payload["weights"],
@@ -726,6 +727,7 @@ def inspect_model(context, payload):
         "device": str(engine._infer_device), "anomaly_threshold": engine._anomaly_threshold,
         "patchcore": engine._patchcore_model.get_info() if engine._patchcore_model is not None else None,
         "upstream": getattr(engine, "_upstream_model", None) is not None,
+        "sam2": getattr(engine, "_sam2_model_id", None),
         "weights_sha256": digest(payload["weights"])}}
 
 

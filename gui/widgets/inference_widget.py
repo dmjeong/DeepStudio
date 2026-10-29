@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QGroupBox,
     QSplitter, QProgressBar, QComboBox, QCheckBox,
     QScrollArea, QGridLayout, QStackedWidget, QSizePolicy,
-    QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
+    QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView, QDoubleSpinBox,
 )
 from PySide6.QtCore import Qt, Signal, QSize, QTimer, QSignalBlocker
 from PySide6.QtGui import QPixmap, QFont, QImage
@@ -480,6 +480,48 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.crop_region_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         region_row.addWidget(self.crop_region_info, 1)
         model_layout.addLayout(region_row, 2, 0, 1, 6)
+
+        # SAM2 자동 분할 설정: SAM2는 점을 찍은 곳을 자르는 모델이라 이미지 전체에 격자 점을 찍는다.
+        self.sam2_row = QWidget()
+        sam2_row = QHBoxLayout(self.sam2_row)
+        sam2_row.setContentsMargins(0, 0, 0, 0)
+        sam2_row.setSpacing(6)
+        sam2_row.addWidget(QLabel("SAM2 자동 분할  격자 N×N, N ="))
+        self.sam2_grid_spin = NoWheelSpinBox()
+        self.sam2_grid_spin.setRange(1, 32)
+        self.sam2_grid_spin.setToolTip("이미지 전체에 N×N개의 점을 찍어 점마다 SAM2 마스크를 만듭니다.\n"
+                                       "작은 결함을 놓치면 늘리세요(시간은 인코더 1회 + 점 수에 비례하는 디코더).")
+        sam2_row.addWidget(self.sam2_grid_spin)
+        sam2_row.addWidget(QLabel("점수 ≥"))
+        self.sam2_score_spin = QDoubleSpinBox()
+        self.sam2_score_spin.setRange(0, 1)
+        self.sam2_score_spin.setDecimals(2)
+        self.sam2_score_spin.setSingleStep(.05)
+        self.sam2_score_spin.setToolTip("SAM2가 예측한 마스크 품질 점수(IoU 예측)가 이보다 낮은 후보는 버립니다.")
+        sam2_row.addWidget(self.sam2_score_spin)
+        sam2_row.addWidget(QLabel("후보 면적 ≤"))
+        self.sam2_area_spin = QDoubleSpinBox()
+        self.sam2_area_spin.setRange(.1, 100)
+        self.sam2_area_spin.setDecimals(1)
+        self.sam2_area_spin.setSuffix(" %")
+        self.sam2_area_spin.setToolTip("배경에 찍힌 점은 배경 전체를 높은 점수로 돌려줍니다. 이미지의 이 비율보다 큰 후보는\n"
+                                       "배경으로 보고 버립니다. 100%면 C++ SDK Automatic과 같은 규칙입니다.")
+        sam2_row.addWidget(self.sam2_area_spin)
+        sam2_row.addStretch(1)
+        model_layout.addWidget(self.sam2_row, 3, 0, 1, 6)
+        from PySide6.QtCore import QSettings
+        from core.sam2_automatic import DEFAULT_SETTINGS
+        stored = QSettings("DeepVisionStudio", "Inference")
+        try:
+            self.sam2_grid_spin.setValue(int(stored.value("sam2/grid", DEFAULT_SETTINGS["grid"])))
+            self.sam2_score_spin.setValue(float(stored.value("sam2/min_score", DEFAULT_SETTINGS["min_score"])))
+            self.sam2_area_spin.setValue(float(stored.value("sam2/max_area_percent",
+                                                            DEFAULT_SETTINGS["max_area_percent"])))
+        except (TypeError, ValueError):
+            pass
+        for control in (self.sam2_grid_spin, self.sam2_score_spin, self.sam2_area_spin):
+            control.valueChanged.connect(self._sam2_settings_changed)
+        self.sam2_row.hide()
         self.crop_mode_combo.currentIndexChanged.connect(self._region_changed)
         self.crop_json_edit.textChanged.connect(self._region_changed)
         self._region_changed()
@@ -917,6 +959,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.model_info.setText(info + crop_info)
         self.model_info.setStyleSheet("color: #34C759;")
         self.infer_btn.setEnabled(True)
+        self.sam2_row.hide()  # SAM2 모델이면 검사 결과를 받은 쪽(_model_inspected)에서 다시 보인다
         self._set_model_task("anomaly" if patchcore is not None else getattr(model, "task", "") if model is not None
                              else self._model_task)
         self.gradcam_checkbox.setEnabled(gradcam is not None)
@@ -948,6 +991,16 @@ class InferenceWidget(QWidget, InferenceOperations):
 
     def _has_defects(self):
         return any(r.task == "segment" and "defects" in (r.details or {}) for r in self._inference_results.values())
+
+    def _sam2_settings(self):
+        return {"grid": self.sam2_grid_spin.value(), "min_score": round(self.sam2_score_spin.value(), 4),
+                "max_area_percent": round(self.sam2_area_spin.value(), 3)}
+
+    def _sam2_settings_changed(self, *_):
+        from PySide6.QtCore import QSettings
+        stored = QSettings("DeepVisionStudio", "Inference")
+        for key, value in self._sam2_settings().items():
+            stored.setValue(f"sam2/{key}", value)
 
     def _segment_review(self):
         """분할 모델이면 엔진이 결함 목록을 만들고 데이터셋 이미지는 정답 마스크와 비교한다."""
@@ -1010,11 +1063,14 @@ class InferenceWidget(QWidget, InferenceOperations):
             self._model_inspection_failed(str(exc))
             return
         self._model_task = str(task)
+        if result.get("sam2"):
+            info += f" | SAM2 {result['sam2']} · 격자 점 자동 분할"
         self._activate_model(path=path, device=device, class_names=names,
                              input_size=shape, threshold=result.get("anomaly_threshold"), info=info, process=True,
                              center_crop=(result.get("center_crop") if patchcore_info is None else
                                           patchcore_info.get("center_crop")),
                              score_normalized=patchcore_info is not None)
+        self.sam2_row.setVisible(bool(result.get("sam2")))
         self.gradcam_checkbox.setEnabled(patchcore_info is None and not upstream)
         if patchcore_info is None and not upstream:
             self.gradcam_checkbox.setToolTip("추론 프로세스에서 지원하는 모델의 Grad-CAM을 계산합니다.")
@@ -1070,6 +1126,11 @@ class InferenceWidget(QWidget, InferenceOperations):
             checkpoint = torch.load(path, map_location="cpu", weights_only=False)
             if not isinstance(checkpoint, dict):
                 raise ValueError("체크포인트는 설정과 가중치를 포함한 딕셔너리여야 합니다")
+            from core.inference_loading import _sam2_model_id
+            if _sam2_model_id(path, checkpoint):
+                # SAM2는 추론 프로세스에서 불러온다 (공식 Hiera 가중치 + 미세조정 디코더, 장치 선택 그대로)
+                self._start_model_inspection(path)
+                return True
             if checkpoint.get("type") == "patchcore":
                 self._load_patchcore_model(checkpoint, path)
             elif isinstance(checkpoint.get("model"), torch.nn.Module) or "train_args" in checkpoint:
@@ -1223,13 +1284,14 @@ class InferenceWidget(QWidget, InferenceOperations):
             worker = DesktopInferenceJob({"weights": self._active_checkpoint, "images": paths,
                 "input_region": region,
                 "device": str(self.infer_device_combo.currentData()), "gradcam": self._gradcam_requested(),
-                "segment_review": self._segment_review(),
+                "segment_review": self._segment_review(), "sam2": self._sam2_settings(),
                 "project": project_view(self.project) if self.project else {}}, self._preview_cache, self)
         else:
             state = {name: getattr(self, name, None) for name in InferenceEngine.STATE_FIELDS}
             from core.inference_worker import InferenceWorker
             worker = InferenceWorker(InferenceEngine(state, gradcam=self._gradcam_requested(), input_region=region,
-                                                     segment_review=self._segment_review()),
+                                                     segment_review=self._segment_review(),
+                                                     sam2=self._sam2_settings()),
                                      paths, self._preview_cache, self)
         self._inference_worker = worker
         # 모델 교체나 데이터 선택은 계산 종료까지 잠근다. 결과 탐색은 유지한다.
