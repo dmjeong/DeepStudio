@@ -208,6 +208,11 @@ class InferenceOperations:
             if crop:
                 base_preview = paste_crop_preview(original_np, base_preview, crop)
             prediction.details.update(pixel_counts=counts, class_names=list(self.class_names))
+            from core.segmentation_evaluation import evaluate_segmentation
+            prediction.details["segmentation_evaluation"] = evaluate_segmentation(
+                pred_mask, image_path, original_np.shape, self.class_names,
+                getattr(self, "_evaluation_project", None) or getattr(self, "project", None),
+                crop_box=box if crop else None)
 
         # ── Grad-CAM 히트맵 생성 & 오버레이 ──
         if use_gradcam:
@@ -294,7 +299,8 @@ class InferenceEngine(InferenceOperations):
     """한 워커가 모델과 훅을 단독 사용하고 결과만 화면에 전달한다."""
     STATE_FIELDS = ("model", "_patchcore_model", "_upstream_model", "_upstream_task", "_gradcam",
                     "_infer_device", "_input_size", "_normalization", "class_names",
-                    "_anomaly_threshold", "_active_checkpoint", "_center_crop", "_onnx_runtime")
+                    "_anomaly_threshold", "_active_checkpoint", "_center_crop", "_onnx_runtime",
+                    "_evaluation_project")
 
     def __init__(self, state, *, gradcam=True, input_region=None, runtime="auto", threads=4):
         for name in self.STATE_FIELDS:

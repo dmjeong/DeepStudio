@@ -676,6 +676,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.task_details_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.task_details_scroll.setMaximumHeight(150)
         self.task_details_label = QLabel()
+        self.task_details_label.setTextFormat(Qt.TextFormat.PlainText)
         self.task_details_label.setWordWrap(True)
         self.task_details_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.task_details_scroll.setWidget(self.task_details_label)
@@ -1169,6 +1170,8 @@ class InferenceWidget(QWidget, InferenceOperations):
                 "project": project_view(self.project) if self.project else {}}, self._preview_cache, self)
         else:
             state = {name: getattr(self, name, None) for name in InferenceEngine.STATE_FIELDS}
+            from core.segmentation_evaluation import project_snapshot
+            state["_evaluation_project"] = project_snapshot(getattr(self, "project", None))
             from core.inference_worker import InferenceWorker
             worker = InferenceWorker(InferenceEngine(state, gradcam=self.gradcam_checkbox.isChecked(),
                                                      input_region=region), paths, self._preview_cache, self)
@@ -1374,8 +1377,15 @@ class InferenceWidget(QWidget, InferenceOperations):
         elif result.task == "segment" and "pixel_counts" in details:
             title = "세그멘테이션 픽셀 분포"
             total = sum(int(value) for value in details["pixel_counts"].values())
-            lines = [f"클래스 {key}: {int(value):,} px ({int(value) / total:.1%})" if total else f"클래스 {key}: 0 px"
-                     for key, value in sorted(details["pixel_counts"].items(), key=lambda item: int(item[0]))]
+            names = details.get("class_names") or []
+            for key, value in sorted(details["pixel_counts"].items(), key=lambda item: int(item[0])):
+                name = names[int(key)] if 0 <= int(key) < len(names) else f"클래스 {key}"
+                lines.append(f"{name}: {int(value):,} px" + (f" ({int(value) / total:.1%})" if total else ""))
+            from core.segmentation_evaluation import evaluation_lines
+            evaluation = details.get("segmentation_evaluation") or {}
+            if evaluation:
+                title = "세그멘테이션 클래스별 평가 · 픽셀 분포"
+            lines = evaluation_lines(evaluation) + ["", "예측 픽셀 분포"] + lines
         elif result.task == "segment" and details.get("num_detections") is not None:
             title = "세그멘테이션 결과"
             lines = [f"분할 객체: {int(details['num_detections'])}개"]

@@ -10,7 +10,7 @@
     "dataset-first-class-visibility",
     "pretrained-manifest-recovery"
   ],
-  "primaryFeature": "pretrained-manifest-recovery",
+  "primaryFeature": "segmentation-inference-metrics",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -317,6 +317,23 @@
         "lastUpdated": "2026-10-29T03:42:28.239669+00:00"
       },
       "completedAt": "2026-10-29T03:42:28.239669+00:00"
+    },
+    "segmentation-inference-metrics": {
+      "phase": "completed",
+      "status": "completed",
+      "documents": {
+        "plan": "docs/01-plan/features/segmentation-inference-metrics.plan.md",
+        "design": "docs/02-design/features/segmentation-inference-metrics.design.md",
+        "analysis": "docs/03-analysis/segmentation-inference-metrics.analysis.md",
+        "report": "docs/04-report/segmentation-inference-metrics.report.md"
+      },
+      "version": "9.55",
+      "validation": {
+        "targeted": "71 passed",
+        "repair": "31 passed",
+        "full": "1233 passed, 12 skipped, exit 0",
+        "windows": "not run"
+      }
     }
   },
   "pipeline": {

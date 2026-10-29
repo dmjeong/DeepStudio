@@ -503,6 +503,8 @@ def infer(context, payload):
     engine = load_inference_engine(payload["weights"], device=device, gradcam=payload.get("gradcam", True),
                                    input_region=payload.get("input_region"), runtime=payload.get("runtime", "auto"),
                                    threads=payload.get("threads", max(1, min(4, os.cpu_count() or 1))))
+    from core.segmentation_evaluation import project_snapshot
+    engine._evaluation_project = project_snapshot(payload.get("project"))
     if callable(getattr(engine, "prepare", None)):
         engine.prepare()
     if getattr(engine, "runtime_warning", ""):

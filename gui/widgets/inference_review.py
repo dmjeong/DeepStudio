@@ -4,7 +4,8 @@ from dataclasses import asdict
 from PySide6.QtCore import Qt, Signal, QSortFilterProxyModel, QSignalBlocker
 from PySide6.QtGui import QStandardItem, QStandardItemModel, QColor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QComboBox, QCheckBox, QPushButton, QDoubleSpinBox, QSlider, QTableView, QAbstractItemView, QHeaderView, QSizePolicy)
+    QComboBox, QCheckBox, QPushButton, QDoubleSpinBox, QSlider, QTableView, QAbstractItemView, QHeaderView, QSizePolicy,
+    QGroupBox, QTableWidget, QTableWidgetItem)
 from core.inference_review import (review_record, review_filter_options, source_class, finite,
                                    normalized_patchcore, review_score)
 from core.inference_timing import format_result_timing, format_runtime_stages
@@ -20,7 +21,10 @@ class ReviewFilter(QSortFilterProxyModel):
         model = self.sourceModel()
         def value(col):
             return model.index(row, col, parent).data() or ""
-        return ((not self.class_name or value(2) == self.class_name) and
+        region_classes = model.index(row, 2, parent).data(Qt.ItemDataRole.UserRole)
+        matches_class = (self.class_name in region_classes if region_classes is not None
+                         else value(2) == self.class_name)
+        return ((not self.class_name or matches_class) and
                 (not self.decision or value(4) == self.decision) and
                 (not self.search or self.search in str(value(3)).casefold()) and
                 (not self.selected_only or model.item(row, 0).checkState() == Qt.CheckState.Checked))
@@ -29,7 +33,8 @@ class ReviewFilter(QSortFilterProxyModel):
 class InferenceReview(QWidget):
     image_selected = Signal(str)
     threshold_changed = Signal()
-    HEADERS = ["선택", "인덱스", "클래스", "파일명", "판정", "스코어", "추론 시간 (ms)"]
+    HEADERS = ["선택", "인덱스", "클래스", "파일명", "판정", "스코어", "추론 시간 (ms)",
+               "mIoU (%)", "Dice (%)", "정답 비교"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -115,7 +120,7 @@ class InferenceReview(QWidget):
         self.table.verticalHeader().hide()
         self.table.verticalHeader().setDefaultSectionSize(28)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        for col, width in enumerate((38, 52, 72, 130, 55, 88, 105)):
+        for col, width in enumerate((38, 52, 90, 130, 55, 88, 105, 80, 80, 160)):
             self.table.setColumnWidth(col, width)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.setAlternatingRowColors(True)
@@ -123,6 +128,21 @@ class InferenceReview(QWidget):
         layout.addWidget(self.table, 1)
         self.count_label = QLabel()
         layout.addWidget(self.count_label)
+        self.segmentation_group = QGroupBox("전체 배치 클래스별 평가 (필터와 무관)")
+        segmentation_layout = QVBoxLayout(self.segmentation_group)
+        self.segmentation_summary = QLabel()
+        self.segmentation_summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.segmentation_summary.setWordWrap(True)
+        segmentation_layout.addWidget(self.segmentation_summary)
+        self.segmentation_table = QTableWidget(0, 4)
+        self.segmentation_table.setHorizontalHeaderLabels(["클래스", "IoU", "Dice", "정답 픽셀 수"])
+        self.segmentation_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.segmentation_table.verticalHeader().hide()
+        self.segmentation_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.segmentation_table.setMaximumHeight(165)
+        segmentation_layout.addWidget(self.segmentation_table)
+        layout.addWidget(self.segmentation_group)
+        self._update_segmentation()
         for control in (self.class_filter, self.decision_filter):
             control.currentIndexChanged.connect(self._filter)
         self.search.textChanged.connect(self._filter)
@@ -161,11 +181,13 @@ class InferenceReview(QWidget):
         self._update_filters()
         self._sync_threshold()
         self._filter()
+        self._update_segmentation()
 
     def set_project(self, project):
         self.project = project
         self._update_filters()
         self._sync_threshold()
+        self._update_segmentation()
 
     def _add_path(self, path):
         if path in self.rows:
@@ -192,11 +214,25 @@ class InferenceReview(QWidget):
             values = {2: record["source_class"] or source_class(result.image_path, self.project) or "—",
                       4: record["decision"], 5: review_score(asdict(result)),
                       6: round(result.inference_sec * 1000, 3) if finite(result.inference_sec) else None}
+            evaluation = (result.details or {}).get("segmentation_evaluation") or {}
+            evaluated = evaluation.get("status") == "ok"
+            region_classes = None
+            if result.task == "segment":
+                region_classes = [name for name, count in zip(evaluation.get("class_names", []),
+                                                               evaluation.get("gt_area", [])) if count > 0]
+                values[2] = ", ".join(region_classes) or "—"
+            self.model.item(row, 2).setData(region_classes, Qt.ItemDataRole.UserRole)
+            values.update({7: round(evaluation["mIoU"] * 100, 2) if evaluated else None,
+                           8: round(evaluation["dice_score"] * 100, 2) if evaluated else None,
+                           9: "완료" if evaluated else evaluation.get("reason", "정답 비교 미실행") if result.task == "segment" else ""})
             for col, value in values.items():
                 self.model.item(row, col).setData(value, Qt.ItemDataRole.DisplayRole)
             self.model.item(row, 4).setForeground(QColor(record.get("color", "#5590F0")))
             self.model.item(row, 4).setToolTip(record.get("error") or record.get("summary", ""))
             self.model.item(row, 5).setToolTip(record["score_description"])
+            from core.segmentation_evaluation import evaluation_lines
+            for col in (7, 8, 9):
+                self.model.item(row, col).setToolTip("\n".join(evaluation_lines(evaluation)))
             self.model.item(row, 6).setToolTip(
                 f"{format_result_timing(result)}\n{format_runtime_stages(result).rstrip()}"
                 + ("\n" + (result.details or {})["runtime_warning"] if (result.details or {}).get("runtime_warning") else ""))
@@ -206,6 +242,46 @@ class InferenceReview(QWidget):
             self._update_filters()
             self._sync_threshold()
             self._count()
+            self._update_segmentation()
+
+    def _update_segmentation(self):
+        from core.segmentation_evaluation import aggregate_evaluations, percent
+        segmentation = (getattr(self.project, "task", "") == "segment"
+                        or any(result.task == "segment" for result in self.raw.values()))
+        for col in (7, 8, 9):
+            self.table.setColumnHidden(col, not segmentation)
+        if getattr(self, "_segmentation_mode", None) != segmentation:
+            header = self.table.horizontalHeader()
+            order = (0, 1, 2, 3, 7, 8, 9, 4, 5, 6) if segmentation else range(len(self.HEADERS))
+            for visual, logical in enumerate(order):
+                header.moveSection(header.visualIndex(logical), visual)
+            self._segmentation_mode = segmentation
+        self.table.setColumnHidden(5, segmentation)
+        self.model.setHeaderData(2, Qt.Orientation.Horizontal, "정답 영역 클래스" if segmentation else "클래스")
+        self.class_filter.setToolTip("정답 마스크에 해당 클래스 픽셀이 있는 이미지로 필터링합니다." if segmentation
+                                    else "데이터셋 클래스(정답)로 필터링합니다. 모델 예측은 판정 필터를 사용하세요.")
+        self.segmentation_group.setVisible(segmentation)
+        self.segmentation_table.setRowCount(0)
+        if not segmentation:
+            return
+        summary = aggregate_evaluations([(result.details or {}).get("segmentation_evaluation") or {}
+                                         for result in self.raw.values()])
+        text = f"정답 비교 {summary['evaluated']} / 처리 {len(self.raw)} / 전체 {len(self.paths)}장"
+        if summary["status"] == "ok":
+            text += (f" · mIoU {percent(summary['mIoU'])} · Dice {percent(summary['dice_score'])}"
+                     f" · 픽셀 정확도 {percent(summary['pixel_accuracy'])}\n"
+                     "픽셀 수 합산 · 배경 포함 · 정답 픽셀 없는 클래스/255 제외")
+        else:
+            text += "\n" + summary.get("reason", "프로젝트에 저장한 정답 마스크/폴리곤이 있어야 IoU·Dice를 계산합니다.")
+        self.segmentation_summary.setText(text)
+        self.segmentation_table.setRowCount(len(summary["per_class"]))
+        for index, row in enumerate(summary["per_class"]):
+            for col, value in enumerate((row["name"], percent(row["iou"]), percent(row["dice"]),
+                                         f"{summary['gt_area'][index]:,}")):
+                item = QTableWidgetItem(value)
+                if row["iou"] is None:
+                    item.setToolTip("정답 픽셀 없음 — 평균에서 제외")
+                self.segmentation_table.setItem(index, col, item)
 
     def _update_filters(self):
         rows = []
