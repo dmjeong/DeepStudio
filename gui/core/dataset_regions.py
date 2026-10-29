@@ -216,7 +216,10 @@ def training_scale(project, size):
     """원본 1px이 학습 입력에서 몇 px인지 (sx, sy).
 
     분할은 (중앙 크롭 후) 입력 크기 정사각형으로 늘려 맞추고, 탐지는 긴 변 기준으로 맞춘다.
+    분할 패치 학습은 원본 해상도에서 자르므로 1:1이다.
     """
+    if project.task == "segment" and getattr(project.training, "patch_training", False):
+        return 1.0, 1.0
     from core.paths import ensure_python_path
 
     ensure_python_path()

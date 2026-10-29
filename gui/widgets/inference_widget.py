@@ -937,7 +937,7 @@ class InferenceWidget(QWidget, InferenceOperations):
     def _activate_model(self, *, path, device, model=None, patchcore=None,
                         gradcam=None, class_names=(),
                         input_size=(224, 224), normalization=None, threshold=None, info="", process=False,
-                        score_normalized=False, center_crop=None):
+                        score_normalized=False, center_crop=None, tiling=None):
         from center_crop import validate_center_crop
         center_crop = validate_center_crop(patchcore.center_crop if patchcore is not None else center_crop)
         if self._gradcam is not None:
@@ -952,6 +952,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._input_size = tuple(input_size)
         self._normalization = normalization
         self._center_crop = center_crop
+        self._tiling = tiling  # 패치 학습 모델: 원본 해상도 타일 추론 규칙 (in-process 엔진이 읽는다)
         self._anomaly_threshold = threshold
         self.result_review.set_saved_threshold(threshold, normalized=score_normalized)
         self._clear_results()
@@ -1063,6 +1064,8 @@ class InferenceWidget(QWidget, InferenceOperations):
             self._model_inspection_failed(str(exc))
             return
         self._model_task = str(task)
+        if result.get("tiling"):
+            info += f" | 패치 학습 모델 · 원본 해상도 타일 {result['tiling']['tile']}px 추론"
         if result.get("sam2"):
             info += f" | SAM2 {result['sam2']} · 격자 점 자동 분할"
         self._activate_model(path=path, device=device, class_names=names,
@@ -1170,6 +1173,7 @@ class InferenceWidget(QWidget, InferenceOperations):
                     input_size=(spec["input_height"], spec["input_width"]),
                     normalization=normalization, threshold=threshold,
                     center_crop=spec["preprocessing"].get("center_crop"),
+                    tiling=spec["preprocessing"].get("tiling") if spec["task"] == "segment" else None,
                     info=f"{checkpoint.get('architecture_name', 'Custom CSP')} 준비 완료 | 태스크: {spec['task']} | 입력: {spec['input_width']}x{spec['input_height']} | "
                          f"{channel_info} | 디바이스: {self._device_manager.get_device_label(device)}")
             return True

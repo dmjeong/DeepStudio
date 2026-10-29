@@ -260,8 +260,12 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
 
 def make_builtin_checkpoint(model_id: str, model: nn.Module, *, num_classes: int,
                             input_size: int | Iterable[int] | None = None,
-                            in_channels: int = 3, class_names: Iterable[str] = ()) -> dict:
-    """Create a self-describing checkpoint for the generic ONNX exporter."""
+                            in_channels: int = 3, class_names: Iterable[str] = (),
+                            tiling: dict | None = None) -> dict:
+    """Create a self-describing checkpoint for the generic ONNX exporter.
+
+    tiling: 패치 학습 모델의 타일 추론 규칙 (checkpoint.tiling_contract). None이면 전체 이미지 리사이즈.
+    """
     spec = get_builtin_spec(model_id)
     if model.training:
         raise ValueError("model must be in eval mode before deployment checkpoint creation")
@@ -272,7 +276,7 @@ def make_builtin_checkpoint(model_id: str, model: nn.Module, *, num_classes: int
     class_names = list(class_names)
     if len(class_names) not in (0, num_classes):
         raise ValueError("class_names must be empty or match num_classes")
-    return {
+    payload = {
         "type": "builtin_model", "backend": "builtin", "model_id": model_id,
         "task": spec.task, "num_classes": int(num_classes), "in_channels": int(in_channels),
         "input_size": [int(size[0]), int(size[1])], "class_names": class_names,
@@ -287,6 +291,12 @@ def make_builtin_checkpoint(model_id: str, model: nn.Module, *, num_classes: int
                            "layout": "NCHW", "value_scale": 255.0,
                            "color_order": "GRAY" if in_channels == 1 else "RGB"},
     }
+    if tiling:
+        if spec.task != "segment":
+            raise ValueError("타일 추론은 분할 모델만 지원합니다")
+        payload["tiling"] = dict(tiling)
+        payload["preprocessing"]["tiling"] = dict(tiling)
+    return payload
 
 
 def load_builtin_checkpoint(checkpoint: dict) -> nn.Module:

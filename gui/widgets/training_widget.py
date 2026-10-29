@@ -462,6 +462,23 @@ class TrainingWidget(TrainingForm, QWidget):
         self.segmentation_loss_combo.setEnabled(not resume and not sam2)
         if self.project and self.project.task == "segment" and sam2:
             self.class_weight_combo.setEnabled(False)
+        # 패치 학습: 분할(SAM2 제외)만. SAM2는 1024 고정 입력의 자체 학습을 쓴다.
+        segment = self.project is not None and self.project.task == "segment"
+        self.patch_check.setVisible(segment)
+        self.patch_check.setEnabled(segment and not sam2 and not resume)
+        patch = segment and not sam2 and self.patch_check.isChecked()
+        for control in (self.patch_count_label, self.patch_count_spin, self.patch_info):
+            control.setVisible(segment and self.patch_check.isChecked())
+        self.patch_count_spin.setEnabled(patch and not resume)
+        if patch:
+            size = self.input_size_spin.value()
+            crop = (f"중앙 {self.pc_crop_width_spin.value()}×{self.pc_crop_height_spin.value()} px"
+                    if self.pc_crop_check.isChecked() else "원본")
+            self.patch_info.setText(
+                f"{crop}에서 {size}×{size} 패치를 원본 해상도로 잘라 학습합니다(줄이지 않음). "
+                f"추론은 {size}px 타일을 {size // 4}px씩 겹쳐 합칩니다. 배치 크기는 패치 수 기준입니다.")
+        elif segment and sam2:
+            self.patch_info.setText("SAM2는 패치 학습을 쓰지 않습니다.")
         self.selection_combo.setEnabled(not is_pc and not resume)
         self._selection_changed()
         capabilities = self._training_capabilities()
@@ -574,6 +591,8 @@ class TrainingWidget(TrainingForm, QWidget):
                 break
         loss_index = self.segmentation_loss_combo.findData(getattr(cfg, "segmentation_loss", "ce_dice"))
         self.segmentation_loss_combo.setCurrentIndex(max(loss_index, 0))
+        self.patch_check.setChecked(bool(getattr(cfg, "patch_training", False)))
+        self.patch_count_spin.setValue(int(getattr(cfg, "patches_per_image", 0)))
 
         # 데이터 증강 설정 복원
         aug = cfg.augmentation
@@ -769,6 +788,9 @@ class TrainingWidget(TrainingForm, QWidget):
         cfg.class_weights = (self.class_weight_combo.currentData()
                              if self.project.task in ("classify", "segment") else "none")
         cfg.segmentation_loss = self.segmentation_loss_combo.currentData() or "ce_dice"
+        sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
+        cfg.patch_training = (self.project.task == "segment" and not sam2 and self.patch_check.isChecked())
+        cfg.patches_per_image = self.patch_count_spin.value()
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
         cfg.augmentation.rotation = self.rotation_spin.value()
         cfg.augmentation.color_jitter = self.color_jitter_spin.value()

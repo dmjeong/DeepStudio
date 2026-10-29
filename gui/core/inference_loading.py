@@ -102,6 +102,8 @@ def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pyto
             mean = preprocessing.get("normalize_mean", preprocessing.get("mean"))
             std = preprocessing.get("normalize_std", preprocessing.get("std"))
             state.update(model=model, class_names=spec["class_names"],
+                         _tiling=(preprocessing.get("tiling") or checkpoint.get("tiling")
+                                  if spec["task"] == "segment" else None),
                          _input_size=(spec["input_height"], spec["input_width"]),
                          _normalization=(mean, std) if mean is not None and std is not None else None,
                          _anomaly_threshold=checkpoint.get("anomaly_threshold"))

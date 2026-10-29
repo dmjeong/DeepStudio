@@ -107,13 +107,20 @@ class InferenceOperations:
             box = center_crop_box((original.shape[1], original.shape[0]), crop)
             img = original[box[1]:box[3], box[0]:box[2]]
 
-            # 입력 텐서를 선택된 디바이스로 전송
-            input_tensor = transform(img).unsqueeze(0).to(device)
-            prepared = time.perf_counter()
             onnx = getattr(self, "_onnx_runtime", None)
-            with torch.inference_mode():
-                output = (torch.from_numpy(onnx.logits(input_tensor.numpy())) if onnx is not None
-                          else self.model(input_tensor))
+            # 패치 학습 모델: 줄이지 않고 원본 해상도 타일로 나눠 추론한다 (checkpoint의 tiling 규칙).
+            tiling = getattr(self, "_tiling", None) if getattr(self.model, "task", "") == "segment" else None
+            if tiling:
+                input_tensor = None
+                prepared = time.perf_counter()
+                output = self._tiled_probabilities(img, tiling, mean, std, device).unsqueeze(0)
+            else:
+                # 입력 텐서를 선택된 디바이스로 전송
+                input_tensor = transform(img).unsqueeze(0).to(device)
+                prepared = time.perf_counter()
+                with torch.inference_mode():
+                    output = (torch.from_numpy(onnx.logits(input_tensor.numpy())) if onnx is not None
+                              else self.model(input_tensor))
             inferred = time.perf_counter()
             if not torch.isfinite(output).all():
                 raise ValueError("모델 출력이 유한하지 않습니다")
@@ -136,16 +143,24 @@ class InferenceOperations:
                     prediction.details["model_config"] = self.model.checkpoint_config()
 
             elif task == "segment":
+                from core.segment_defects import _histogram
                 pred_mask = output.detach().argmax(dim=1)[0].cpu().numpy()
+                if self.model.num_classes <= 256:
+                    pred_mask = pred_mask.astype(np.uint8)  # 원본 해상도 타일 결과도 가볍게 다룬다
                 review = getattr(self, "segment_review", None)
-                # 결함 점수용 클래스 확률 (모델 해상도). 결함 분석을 켠 경우에만 만든다.
-                probabilities = (F.softmax(output.detach().float(), dim=1)[0].cpu().numpy()
-                                 if review is not None else None)
-                unique, counts = np.unique(pred_mask, return_counts=True)
-                pixel_counts = dict(zip(unique.tolist(), counts.tolist()))
+                # 결함 점수용 클래스 확률 (모델 해상도, 타일이면 원본 해상도). 결함 분석을 켠 경우에만 만든다.
+                # 타일 추론 출력은 이미 확률(겹친 타일 softmax 평균)이다.
+                probabilities = None
+                if review is not None:
+                    probabilities = (output[0].float().cpu().numpy() if tiling
+                                     else F.softmax(output.detach().float(), dim=1)[0].cpu().numpy())
+                histogram = _histogram(pred_mask)
+                pixel_counts = {int(i): int(histogram[i]) for i in np.flatnonzero(histogram)}
                 prediction = InferenceResult(image_path, "ok", task, "세그멘테이션", "#A78BFA",
                                              details={"num_classes": self.model.num_classes,
                                                       "pixel_counts": pixel_counts})
+                if tiling:
+                    prediction.details["tiling"] = {**tiling, "tiles": self._tile_count}
 
             elif task == "detect":
                 from detection import postprocess_detections
@@ -249,7 +264,66 @@ class InferenceOperations:
 
         if crop:
             self._set_info((getattr(self, "info", "") or "") + f" | 판정 범위: 중앙 {crop['width']}×{crop['height']} px")
+        if task == "segment" and tiling:
+            self._set_info((getattr(self, "info", "") or "") + f" | 타일 추론 {tiling['tile']}px × {self._tile_count}개 "
+                           f"(겹침 {tiling.get('overlap', 0)}px, 원본 해상도)")
         return prediction
+
+    def _tiled_probabilities(self, image, tiling, mean, std, device, batch=4):
+        """원본 해상도에서 tile×tile 창을 overlap만큼 겹쳐 밀며 softmax 확률을 합친다 → (C, H, W) CPU 텐서.
+
+            3500×1504, 타일 512, 겹침 128(보폭 384) → 가로 9 × 세로 4 = 36 타일
+
+        합치기: 합성곱은 타일 가장자리에서 이웃 픽셀을 못 봐 예측이 약하다. 그래서 각 타일은 가장자리
+        overlap/2 띠를 거의 믿지 않는다(가중치 1e-4). 이웃 타일의 안쪽이 정확히 그 띠에서 시작하므로
+        모든 픽셀이 어떤 타일의 안쪽에서 나온다. 이미지 바깥 경계에 닿은 가장자리는 깎지 않는다.
+
+            타일 A [=========|--]
+            타일 B        [--|=========]     ('='가 믿는 안쪽, 두 안쪽이 이음매 없이 맞닿는다)
+
+        이미지가 타일보다 작으면 0으로 채워 한 타일로 추론하고 원래 크기만 돌려준다.
+        """
+        from dataset import patch_origins
+        tile, overlap = int(tiling["tile"]), int(tiling.get("overlap", int(tiling["tile"]) // 4))
+        margin = overlap // 2
+        height, width = image.shape[:2]
+        pixels = torch.from_numpy(np.ascontiguousarray(image)).float().div_(255)
+        pixels = pixels.unsqueeze(0) if pixels.ndim == 2 else pixels.permute(2, 0, 1)
+        pixels = (pixels - torch.tensor(mean).view(-1, 1, 1)) / torch.tensor(std).view(-1, 1, 1)
+        if height < tile or width < tile:
+            padded = torch.zeros(pixels.shape[0], max(height, tile), max(width, tile))
+            padded[:, :height, :width] = pixels
+            pixels = padded
+        full_h, full_w = pixels.shape[1:]
+        origins = [(y, x) for y in patch_origins(full_h, tile, tile - overlap)
+                   for x in patch_origins(full_w, tile, tile - overlap)]
+
+        def edge_weights(start, length):
+            """한 축의 타일 가중치: 안쪽 1, 이미지 안쪽으로 난 가장자리 띠 1e-4."""
+            weights = torch.ones(tile)
+            if margin and start > 0:
+                weights[:margin] = 1e-4
+            if margin and start + tile < length:
+                weights[tile - margin:] = 1e-4
+            return weights
+
+        sums = weight_sum = None
+        with torch.inference_mode():
+            for start in range(0, len(origins), batch):
+                group = origins[start:start + batch]
+                inputs = torch.stack([pixels[:, y:y + tile, x:x + tile] for y, x in group]).to(device)
+                probabilities = F.softmax(self.model(inputs).float(), dim=1).cpu()
+                if not torch.isfinite(probabilities).all():
+                    raise ValueError("모델 출력이 유한하지 않습니다")
+                if sums is None:
+                    sums = torch.zeros(probabilities.shape[1], full_h, full_w)
+                    weight_sum = torch.zeros(1, full_h, full_w)
+                for (y, x), probability in zip(group, probabilities):
+                    weight = edge_weights(y, full_h)[:, None] * edge_weights(x, full_w)[None, :]
+                    sums[:, y:y + tile, x:x + tile] += probability * weight
+                    weight_sum[:, y:y + tile, x:x + tile] += weight
+        self._tile_count = len(origins)
+        return (sums / weight_sum)[:, :height, :width]
 
     def _review_segmentation(self, prediction, image_path, mask, labels, probabilities, size, box, review,
                              num_classes=None):
@@ -383,7 +457,7 @@ class InferenceEngine(InferenceOperations):
     STATE_FIELDS = ("model", "_patchcore_model", "_upstream_model", "_upstream_task", "_gradcam",
                     "_infer_device", "_input_size", "_normalization", "class_names",
                     "_anomaly_threshold", "_active_checkpoint", "_center_crop", "_onnx_runtime",
-                    "_sam2_predictor", "_sam2_model_id")
+                    "_sam2_predictor", "_sam2_model_id", "_tiling")
 
     def __init__(self, state, *, gradcam=True, input_region=None, runtime="auto", threads=4, segment_review=None,
                  sam2=None):

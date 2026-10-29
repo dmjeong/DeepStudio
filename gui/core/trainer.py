@@ -483,11 +483,14 @@ class TrainWorker(TrainingEngine):
     def _checkpoint_metadata(self):
         from center_crop import configured_center_crop
         cfg, data, model = self.project.training, self.project.data, self.project.model
+        from checkpoint import tiling_contract
+        patch = self.project.task == "segment" and getattr(cfg, "patch_training", False)
         return make_checkpoint_metadata(self.project.task, data.num_classes, data.class_names,
             cfg.input_size, cfg.in_channels,
             {"backbone_channels": list(model.backbone_channels),
              "csp_depth": list(model.csp_depth), "dropout": model.dropout},
-            center_crop=configured_center_crop(cfg))
+            center_crop=configured_center_crop(cfg),
+            tiling=tiling_contract(cfg.input_size if patch else 0))
 
     def _restore_training_state(self, model, optimizer, scheduler, scaler, run_dir):
         return {}
@@ -845,6 +848,9 @@ class TrainWorker(TrainingEngine):
                 return result
 
             elif task == "segment":
+                patch = bool(getattr(cfg, "patch_training", False))
+                if patch and input_size[0] != input_size[1]:
+                    raise ValueError("패치 학습은 정사각형 입력 크기(= 패치 크기)가 필요합니다")
                 loaders = create_segmentation_loaders(
                     data_root=data_root,
                     input_size=input_size,
@@ -854,6 +860,9 @@ class TrainWorker(TrainingEngine):
                     in_channels=cfg.in_channels,
                     flip_prob=flip_prob,
                     num_classes=data_cfg.num_classes,
+                    # 원본 해상도 패치 학습: 입력 크기 = 패치 크기, 추론은 타일 (checkpoint의 tiling)
+                    patch_size=input_size[0] if patch else 0,
+                    patches_per_image=int(getattr(cfg, "patches_per_image", 0)),
                 )
                 from dataset import unlabeled_message
                 if unlabeled_message(*loaders):

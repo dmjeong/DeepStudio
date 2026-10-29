@@ -148,11 +148,12 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
                             optimizer: torch.optim.Optimizer | None = None,
                             scheduler=None, metric: float | None = None,
                             training_config: dict | None = None,
-                            metrics_history: list[dict] | None = None) -> None:
+                            metrics_history: list[dict] | None = None,
+                            tiling: dict | None = None) -> None:
     model.eval()
     state = make_builtin_checkpoint(model_id, model, num_classes=num_classes,
                                     input_size=input_size, in_channels=in_channels,
-                                    class_names=class_names)
+                                    class_names=class_names, tiling=tiling)
     state["epoch"] = int(epoch)
     state["metric"] = None if metric is None else float(metric)
     if optimizer is not None:
@@ -182,6 +183,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   selection_metric: str = "engine_default",
                   class_names: Iterable[str] | None = None,
                   segmentation_loss: str = "ce_dice", class_weights: str = "none",
+                  patch_training: bool = False, patches_per_image: int = 0,
                   should_stop=lambda: False) -> Path:
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
@@ -217,6 +219,12 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     input_size = tuple(int(value) for value in input_size)
     if len(input_size) != 2 or min(input_size) < 32:
         raise ValueError("input_size must contain two values >= 32")
+    if patch_training and spec.task != "segment":
+        raise ValueError("패치 학습은 분할 모델만 지원합니다")
+    if patch_training and input_size[0] != input_size[1]:
+        raise ValueError("패치 학습은 정사각형 입력 크기(= 패치 크기)가 필요합니다")
+    from checkpoint import tiling_contract
+    tiling = tiling_contract(input_size[0] if patch_training else 0)
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise ValueError("CUDA device requested but CUDA is unavailable")
     target = torch.device(device)
@@ -244,7 +252,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             str(data_root), input_size=input_size, batch_size=batch_size,
             num_workers=num_workers, pin_memory=pin_memory,
             in_channels=in_channels, num_classes=num_classes,
-            flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
+            flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter,
+            patch_size=input_size[0] if patch_training else 0, patches_per_image=patches_per_image)
         from dataset import unlabeled_message
         if unlabeled_message(train_loader, val_loader):
             log(unlabeled_message(train_loader, val_loader))
@@ -356,6 +365,9 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         "selection_metric": policy.metric, "selection_direction": policy.direction,
         "augmentation": {"horizontal_flip": horizontal_flip, "rotation": rotation,
                          "color_jitter": color_jitter},
+        "patch_training": ({"patch_size": input_size[0],
+                            "patches_per_image": train_loader.dataset.patches_per_image, "tiling": tiling}
+                           if tiling else None),
         **loss_details,
     }
     start_epoch = 0
@@ -447,7 +459,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                 in_channels=in_channels, class_names=class_names,
                                 epoch=epoch, optimizer=optimizer, scheduler=scheduler,
                                 metric=selected_value, training_config=training_config,
-                                metrics_history=history)
+                                metrics_history=history, tiling=tiling)
         improved = selected_value < best_metric if policy.direction == "min" else selected_value > best_metric
         if improved:
             best_metric = selected_value
@@ -458,7 +470,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                     in_channels=in_channels, class_names=class_names,
                                     epoch=epoch, optimizer=optimizer, scheduler=scheduler,
                                     metric=selected_value, training_config=training_config,
-                                    metrics_history=history)
+                                    metrics_history=history, tiling=tiling)
             log({"event": "best_epoch_updated", "epoch": completed_epochs,
                  "train_loss": train_loss, "val_loss": val_loss, "metrics": validation_metrics})
         else:

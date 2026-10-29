@@ -387,6 +387,26 @@ class TrainingForm:
         )
         hp_layout.addRow("입력 크기:", self.input_size_spin)
         self.input_size_spin.valueChanged.connect(self._on_patchcore_settings_changed)
+
+        # ── 분할 패치 학습: 큰 이미지의 작은 결함을 줄이지 않고 원본 해상도로 학습 ──
+        self.patch_check = QCheckBox("원본 해상도 패치 학습 (입력 크기 = 패치 크기)")
+        self.patch_check.setToolTip(
+            "이미지를 입력 크기로 줄이지 않고, 원본(크롭 후) 해상도에서 입력 크기만큼 잘라 학습합니다.\n"
+            "패치의 절반은 결함 위치에서, 나머지는 임의 위치에서 자릅니다(epoch마다 새 위치).\n"
+            "추론은 겹치는 타일로 나눠 원본 해상도 마스크를 만듭니다. 3500×1504를 512로 줄이면\n"
+            "결함이 약 7배 작아져 1~2px 결함이 사라지는 문제를 피합니다.")
+        self.patch_count_spin = NoWheelSpinBox()
+        self.patch_count_spin.setRange(0, 256)
+        self.patch_count_spin.setSpecialValueText("자동 (이미지 면적 ÷ 패치 면적)")
+        self.patch_count_spin.setToolTip("한 epoch에 이미지마다 자르는 패치 수. 0 = 자동(최대 64).")
+        self.patch_info = QLabel()
+        self.patch_info.setWordWrap(True)
+        self.patch_check.toggled.connect(self._on_patchcore_settings_changed)
+        self.patch_count_spin.valueChanged.connect(self._on_patchcore_settings_changed)
+        self.patch_count_label = QLabel("이미지당 패치:")
+        hp_layout.addRow("", self.patch_check)
+        hp_layout.addRow(self.patch_count_label, self.patch_count_spin)
+        hp_layout.addRow(self.patch_info)
         hp_layout.addRow("", self.pc_crop_check)
         hp_layout.addRow("크롭 가로 (px):", self.pc_crop_width_spin)
         hp_layout.addRow("크롭 세로 (px):", self.pc_crop_height_spin)

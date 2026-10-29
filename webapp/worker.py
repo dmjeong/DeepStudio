@@ -160,6 +160,9 @@ def _train_builtin_project(context, project, device):
                          class_names=(list(data.class_names) if project.task == "segment" else None),
                          segmentation_loss=cfg.segmentation_loss,
                          class_weights=(cfg.class_weights if project.task == "segment" else "none"),
+                         # 데스크톱에서 켜는 분할 패치 학습 (프로젝트 설정 그대로 전달)
+                         patch_training=bool(getattr(cfg, "patch_training", False)) and project.task == "segment",
+                         patches_per_image=int(getattr(cfg, "patches_per_image", 0)),
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
@@ -728,6 +731,7 @@ def inspect_model(context, payload):
         "patchcore": engine._patchcore_model.get_info() if engine._patchcore_model is not None else None,
         "upstream": getattr(engine, "_upstream_model", None) is not None,
         "sam2": getattr(engine, "_sam2_model_id", None),
+        "tiling": getattr(engine, "_tiling", None),
         "weights_sha256": digest(payload["weights"])}}
 
 

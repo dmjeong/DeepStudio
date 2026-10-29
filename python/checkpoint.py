@@ -1,8 +1,22 @@
 """모델을 독립적으로 복원하기 위한 체크포인트 메타데이터."""
 
 
+def tiling_contract(patch_size):
+    """패치 학습 모델의 추론 규칙: 원본 해상도에서 tile×tile 창을 overlap만큼 겹쳐 민다.
+
+    겹침은 타일의 1/4. 각 타일은 이미지 안쪽으로 난 가장자리 overlap/2 띠를 거의 믿지 않고(가중치 1e-4),
+    이웃 타일의 안쪽이 그 자리를 채운다 (blend = center_weighted_softmax). None이면 전체 이미지 리사이즈 모델.
+    """
+    if not patch_size:
+        return None
+    tile = int(patch_size)
+    if tile < 32:
+        raise ValueError("타일 크기는 32px 이상이어야 합니다")
+    return {"tile": tile, "overlap": tile // 4, "blend": "center_weighted_softmax"}
+
+
 def make_checkpoint_metadata(task, num_classes, class_names, input_size,
-                             in_channels, model_config=None, center_crop=None):
+                             in_channels, model_config=None, center_crop=None, tiling=None):
     """기존 키를 유지하면서 모델 구조와 전처리 규칙을 함께 저장한다."""
     from center_crop import validate_center_crop
     center_crop = validate_center_crop(center_crop)
@@ -39,6 +53,11 @@ def make_checkpoint_metadata(task, num_classes, class_names, input_size,
             "value_scale": 255.0,
         },
     }
+    if tiling:
+        if task != "segment":
+            raise ValueError("타일 추론은 분할 모델만 지원합니다")
+        result["tiling"] = dict(tiling)
+        result["preprocessing"]["tiling"] = dict(tiling)
     if task == "anomaly":
         result.update(anomaly_threshold=None,
                       score_definition="reconstruction_mse_mean",
