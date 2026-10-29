@@ -19,8 +19,11 @@
 - 수정 후 새 회귀 테스트: **7 통과**. 구형 프로젝트 저장·재개, 실제 복구 버튼의 작업 스레드, 원본 파일 보존,
   복구 후 영역 통계와 필터 유지, 오류/255/전경-only 마스크, 탐지 ID 0을 포함한다.
 - 실제 Qt 화면의 비동기 스캔 및 복구 버튼 실행 후 아래 화면을 캡처·확인했다.
-- 전체 Python 테스트: **1,196 통과, 12 건너뜀**, 149.32초. 로그 `/tmp/dvs-first-class-all.log`,
-  JUnit `/tmp/dvs-first-class-all.xml`. 이 실행에 새 회귀 테스트 7개와 기존 데이터셋·라벨링 테스트가 포함된다.
+- 첫 전체 실행은 테스트 1,196개가 통과했지만 프로세스 종료 중 PySide6의 QPushButton/QObject 정리에서
+  SIGSEGV(종료 코드 139)가 발생했다. 새 Qt fixture에서 `deleteLater()` 뒤에 삭제 대기 이벤트를 명시적으로 처리하도록 보완했다.
+- 보완 후 전체 Python 테스트: **1,196 통과, 12 건너뜀**, 155.11초, **프로세스 종료 코드 0**.
+  로그 `/tmp/dvs-first-class-cleanup.log`, JUnit `/tmp/dvs-first-class-cleanup.xml`.
+  새 회귀 테스트 7개와 기존 데이터셋·라벨링 테스트가 포함된다.
 - 수정 파일 Ruff E/F/W 검사와 `git diff --check` 통과.
 
 ![기존 첫 클래스 표시와 복구 안내](../02-design/assets/dataset-first-class-legacy.png)

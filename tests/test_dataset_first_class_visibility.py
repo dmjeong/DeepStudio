@@ -13,6 +13,8 @@ from core.project import ProjectManager
 
 @pytest.fixture
 def page():
+    pytest.importorskip('PySide6')
+    from PySide6.QtCore import QCoreApplication, QEvent
     from PySide6.QtWidgets import QApplication
     from widgets.dataset_widget import DatasetWidget
 
@@ -31,6 +33,9 @@ def page():
         yield app, widget, load
         widget.close()
         widget.deleteLater()
+        # processEvents() alone does not drain deferred QObject destruction.
+        # Release parented buttons while QApplication is alive, not at atexit.
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         app.processEvents()
 
 

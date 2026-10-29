@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-10-29T03:20:20.833877+00:00",
+  "lastUpdated": "2026-10-29T03:24:33.964554+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -285,14 +285,15 @@
       "validation": {
         "regressions": "7 passed (6 reproduced failures before fix)",
         "actual_qt": "async scan, legacy repair, screenshots passed",
-        "full_suite": "1196 passed, 12 skipped; 149.32 seconds",
+        "full_suite": "1196 passed, 12 skipped; 155.11 seconds; process exit 0",
         "windows": "not run",
-        "lint": "Ruff E/F/W and git diff --check passed"
+        "lint": "Ruff E/F/W and git diff --check passed",
+        "cleanup": "Initial Qt teardown exit 139 corrected by draining deferred deletion in new fixture; full rerun passed"
       },
       "timestamps": {
-        "lastUpdated": "2026-10-29T03:20:20.833877+00:00"
+        "lastUpdated": "2026-10-29T03:24:33.964554+00:00"
       },
-      "completedAt": "2026-10-29T03:20:20.833877+00:00"
+      "completedAt": "2026-10-29T03:24:33.964554+00:00"
     }
   },
   "pipeline": {
