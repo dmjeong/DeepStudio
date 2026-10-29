@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 from widgets.annotation_grid_dialog import GridDialog
 from widgets.annotation_io import AnnotationWrite, ImagePrefetcher
+from widgets.annotation_navigation import hand_off_navigation
 from widgets.annotation_workspace_state import AnnotationWorkspaceState
 from widgets.annotation_workspace_ui import AnnotationWorkspaceUI
 from widgets.common import NoWheelComboBox
@@ -129,7 +130,8 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             button.setAutoDefault(False)
         self._restore_preferences()
         self._load_draft()
-        self._render()
+        # 초안 복원은 문서를 렌더링된 새 객체로 바꾸므로, 어느 경우든 캐시가 지금 문서와 일치한다.
+        self._render(reuse_cache=True)
         QTimer.singleShot(0, self._fit)
         if self.navigation and self.image_paths:
             current = self.navigation[0]
@@ -150,7 +152,22 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
                 worker.requestInterruption()
             except RuntimeError:  # finished loader already deleted itself
                 pass
+        hand_off_navigation(self, result)  # 다음 이미지 창을 먼저 같은 자리에 띄운 뒤 숨는다
         super().done(result)
+
+    def release_buffers(self):
+        """곧 숨을 이 창의 원본 해상도 배열(4096²에서 약 160MB)을 다음 이미지 창을 만들기 전에 놓는다.
+
+        이전 창을 닫기 전에 다음 창을 띄우면 두 창이 잠시 함께 산다. 이 배열을 먼저 놓지 않으면 다음 창이
+        새 메모리를 받아야 해서(첫 사용 page fault) 창 생성이 0.1초 → 0.3초로 느려졌다. 화면은 이미 그려져
+        있고 이 창은 바로 숨으므로 필요 없다. 다시 쓰이면 문서 캐시는 필요할 때 다시 계산된다.
+        """
+        if self.document is not None:
+            self.document.invalidate()
+            self.document._pixels = self.document._owners = None
+        view = getattr(self, "view", None)
+        if view is not None and hasattr(view, "_view_pixels"):
+            view._view_pixels = view._view_owners = None
 
     def _items(self):
         return self.document.shapes if self.task == "segment" else self.rows
@@ -667,13 +684,15 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self.object_meta.setdefault(key, {})[flag] = bool(value)
         self._changed()
 
-    def _render(self, region=None):
+    def _render(self, region=None, *, reuse_cache=False):
+        """reuse_cache: 창을 여는 첫 렌더링. 미리 읽기·검증에서 이미 렌더링한 문서의 캐시를 그대로 쓴다
+        (4096²에서 약 0.2초). 편집 뒤의 전체 렌더링은 지금처럼 캐시를 버리고 다시 계산한다."""
         self._table_updating = True
         if self.task == "segment":
             self.rows = self.document.shapes
             self.object_meta = self.document.objects
             self.document.managed_cache = True
-            if region is None:
+            if region is None and not reuse_cache:
                 self.document.invalidate()
             self.view.set_document(self.document, self.names, self.selected, region)
         else:

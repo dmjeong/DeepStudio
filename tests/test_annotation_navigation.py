@@ -79,6 +79,92 @@ def test_navigating_images_releases_each_previous_workspace(tmp_path):
     assert released == [True, True, True]
 
 
+@pytest.mark.parametrize("maximized", [False, True])
+def test_next_image_window_appears_in_place_before_the_previous_one_hides(tmp_path, maximized):
+    """[다음] used to hide the window, then open a default-size one elsewhere ("껐다 켜짐")."""
+    from PySide6.QtCore import QEvent, QObject, QRect
+    from core.project import ProjectManager
+    from widgets.dataset_widget import DatasetWidget
+
+    app = _app()
+    project = ProjectManager.create_new("seg", "segment", str(tmp_path), ["background", "part"])
+    paths = []
+    for index in range(4):
+        path = os.path.join(project.data.train_dir, f"{index}.png")
+        Image.new("L", (64, 48), 40 * index).save(path)
+        paths.append(path)
+    events, geometries, states = [], [], []
+
+    class Recorder(QObject):
+        def eventFilter(self, obj, event):
+            if isinstance(obj, SegmentationAnnotationDialog) and event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
+                events.append(("show" if event.type() == QEvent.Type.Show else "hide", obj.windowTitle()))
+            return False
+
+    recorder = Recorder()
+    app.installEventFilter(recorder)
+    seen = set()
+
+    def poll():
+        # Mark windows on the object itself: id() of a deleted window can be reused by the next one.
+        shown = [w for w in app.topLevelWidgets()
+                 if isinstance(w, SegmentationAnnotationDialog) and w.isVisible()
+                 and not w.property("navigation_test_seen")]
+        if not shown:
+            return
+        dialog = shown[0]
+        dialog.setProperty("navigation_test_seen", True)
+        seen.add(len(seen))
+        if len(seen) == 1:  # the user resizes / moves / maximizes the first window
+            dialog.setGeometry(QRect(70, 80, 640, 420))  # fits the 800×600 offscreen screen
+            if maximized:
+                dialog.showMaximized()
+        geometries.append(dialog.geometry().getRect())
+        states.append(dialog.isMaximized())
+
+        def next_image(d=dialog):
+            d.empty_confirm.setChecked(True)
+            if d.navigation[0] + 1 < d.navigation[1]:
+                d._navigate(1)
+            else:
+                d.dirty = False
+                QDialog.reject(d)
+        QTimer.singleShot(30, next_image)
+
+    try:
+        with patch.object(DatasetWidget, "_scan_all"):
+            page = DatasetWidget()
+            page.set_project(project)
+            page._dataset_index = {"images": [{"path": p, "split": "train", "classes": []} for p in paths]}
+            timer = QTimer()
+            timer.timeout.connect(poll)
+            timer.start(5)
+            QTimer.singleShot(0, lambda: (page._open_image_preview(paths[0]), app.quit()))
+            app.exec()
+            timer.stop()
+    finally:
+        app.removeEventFilter(recorder)
+    # Never a moment without a visible workspace: each new window shows before the old one hides.
+    visible = 0
+    for position, (kind, _window) in enumerate(events):
+        visible += 1 if kind == "show" else -1
+        assert visible >= 1 or position == len(events) - 1, events  # only the final close leaves none
+    hides = [i for i, e in enumerate(events) if e[0] == "hide"]
+    shows = [i for i, e in enumerate(events) if e[0] == "show"]
+    assert len(seen) == 4 and len(shows) >= 4
+    for n in range(3):  # window n hides only after window n+1 is shown
+        assert shows[n + 1] < hides[n], events
+    # Size, position and maximized state carry over to every next image.
+    assert len(set(geometries[1:])) == 1 and set(states) == {maximized}
+    if not maximized:
+        assert geometries[1] == (70, 80, 640, 420)
+    # ... and to the next time the workspace is opened.
+    assert page._annotation_geometry is not None
+    page.close()
+    page.deleteLater()
+    app.processEvents()
+
+
 def test_thumbnails_are_reused_across_windows_until_the_file_changes(tmp_path):
     _app()
     path = tmp_path / "a.png"

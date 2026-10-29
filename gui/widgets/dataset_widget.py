@@ -458,6 +458,8 @@ class DatasetWidget(QWidget):
         self._syncing = False
         self._class_filter = "전체"
         self._filter_project_key = None
+        # 라벨링 작업실 창의 마지막 크기·위치·최대화 상태 (이미지를 넘기거나 다시 열어도 유지)
+        self._annotation_geometry = None
         # 선택된 이미지 경로 집합 (분할 이동/삭제 대상)
         self._selected_paths = set()
         # 분할별 썸네일 위젯 목록 {split: [ImageThumbnail, ...]}
@@ -1368,35 +1370,72 @@ class DatasetWidget(QWidget):
                 def add_class(name):
                     self.about_to_change.emit()
                     ClassManager.add(project, name)
-                    revision_holder["value"] = annotation_revision(project, image_path, split)
+                    revision_holder["value"] = annotation_revision(project, revision_holder["path"], split)
                     return project.data.class_names
 
                 annotation_preferences = {"_persistent": True}
                 prefetcher = _MaskDocumentPrefetcher(project, split) if project.task == "segment" else None
-                direction = 1
+                state = {"index": index, "direction": 1, "next": None}
+
+                def build(position):
+                    """paths[position]의 작업실 창을 만든다 (아직 보이지 않음)."""
+                    image_path = paths[position]
+                    revision_holder["value"] = annotation_revision(project, image_path, split)
+                    revision_holder["path"] = image_path
+                    def save_annotation(values, path=image_path):
+                        action = "mask_annotations" if project.task == "segment" else "annotations"
+                        result = edit_dataset(project, action, [path], split=split, annotations=values, expected_revision=revision_holder["value"])
+                        revision_holder["value"] = result["annotation_revision"]
+                        return result
+                    common = dict(add_class=add_class, navigation=(position, len(paths)), image_paths=paths,
+                                  preferences=annotation_preferences, label_revision=revision_holder["value"],
+                                  image_records=records,
+                                  revision_provider=lambda path: annotation_revision(project, path, split))
+                    if project.task == "segment":
+                        document = prefetcher.take(image_path) or load_mask_document(project, image_path, split)
+                        dialog = SegmentationAnnotationDialog(image_path, project.data.class_names, document,
+                                                              save_annotation, self, **common)
+                        following = position + state["direction"]
+                        if 0 <= following < len(paths):  # 진행 방향의 다음 이미지
+                            prefetcher.request(paths[following])
+                    else:
+                        labels = sidecars(project, image_path, split)
+                        rows = [row for kind, label in labels if kind == "labels"
+                                for row in read_annotations(label, project.task, len(project.data.class_names))]
+                        dialog = OBBAnnotationDialog(image_path, project.data.class_names, rows,
+                                                     save_annotation, self, task=project.task, **common)
+                    # exec() 전에 모달을 정해 둔다: 이미 보이는 창의 모달을 바꾸면 Qt가 창을 다시 띄운다.
+                    dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+                    if self._annotation_geometry is not None:
+                        dialog.restoreGeometry(self._annotation_geometry)  # 크기·위치·최대화 상태
+                    dialog.navigation_handoff = hand_off
+                    return dialog
+
+                def hand_off(current):
+                    """[이전]/[다음]으로 닫히는 창이 숨기 전에 다음 창을 같은 자리에 먼저 띄운다."""
+                    delta = current.navigation_delta
+                    target = state["index"] + delta if type(delta) is int else -1
+                    if not delta or not 0 <= target < len(paths):
+                        return
+                    state["direction"] = 1 if delta > 0 else -1
+                    self._annotation_geometry = current.saveGeometry()
+                    if hasattr(current, "release_buffers"):
+                        current.release_buffers()  # 다음 창이 이 메모리를 재사용하도록 먼저 놓는다
+                    try:
+                        following = build(target)
+                    except (OSError, ValueError):
+                        return  # 기존 흐름: 이 창을 닫은 뒤 다시 만들며 오류를 알린다
+                    following.show()
+                    following.raise_()
+                    following.activateWindow()
+                    if hasattr(following, "_fit") and following.layout() is not None:
+                        following.layout().activate()  # 첫 화면부터 맞춤 상태로 (확대 튐 방지)
+                        following._fit()
+                    state["next"] = (target, following)
+
                 try:
+                    dialog = build(index)
                     while True:
-                        image_path = paths[index]
-                        revision_holder["value"] = annotation_revision(project, image_path, split)
-                        def save_annotation(values, path=image_path):
-                            action = "mask_annotations" if project.task == "segment" else "annotations"
-                            result = edit_dataset(project, action, [path], split=split, annotations=values, expected_revision=revision_holder["value"])
-                            revision_holder["value"] = result["annotation_revision"]
-                            return result
-                        if project.task == "segment":
-                            document = prefetcher.take(image_path) or load_mask_document(project, image_path, split)
-                            dialog = SegmentationAnnotationDialog(image_path, project.data.class_names, document,
-                                save_annotation, self,
-                                add_class=add_class, navigation=(index, len(paths)), image_paths=paths, preferences=annotation_preferences, label_revision=revision_holder["value"], image_records=records, revision_provider=lambda path: annotation_revision(project,path,split))
-                            if 0 <= index + direction < len(paths):  # 진행 방향의 다음 이미지
-                                prefetcher.request(paths[index + direction])
-                        else:
-                            labels = sidecars(project, image_path, split)
-                            rows = [row for kind, label in labels if kind == "labels"
-                                    for row in read_annotations(label, project.task, len(project.data.class_names))]
-                            dialog = OBBAnnotationDialog(image_path, project.data.class_names, rows,
-                                save_annotation, self,
-                                task=project.task, add_class=add_class, navigation=(index, len(paths)), image_paths=paths, preferences=annotation_preferences, label_revision=revision_holder["value"], image_records=records, revision_provider=lambda path: annotation_revision(project,path,split))
                         if focus is not None and hasattr(dialog, "focus_region"):
                             # 작업실의 첫 화면 맞춤(QTimer 0) 다음에 실행되도록 같은 큐에 넣는다
                             target = weakref.ref(dialog)
@@ -1404,14 +1443,19 @@ class DatasetWidget(QWidget):
                             focus = None
                         dialog.exec()
                         delta = getattr(dialog, "navigation_delta", 0)
+                        self._annotation_geometry = dialog.saveGeometry()
+                        handed, state["next"] = state["next"], None
                         _release_annotation_dialog(dialog)
                         del dialog
-                        document = None
                         gc.collect()  # 창↔캔버스 참조 순환이 잡은 원본 해상도 numpy 버퍼를 바로 회수
-                        if type(delta) is not int or not delta or not 0 <= index + delta < len(paths):
+                        if handed is not None:  # 다음 창이 이미 같은 자리에 떠 있다
+                            state["index"], dialog = handed
+                            continue
+                        if type(delta) is not int or not delta or not 0 <= state["index"] + delta < len(paths):
                             break
-                        index += delta
-                        direction = 1 if delta > 0 else -1
+                        state["index"] += delta
+                        state["direction"] = 1 if delta > 0 else -1
+                        dialog = build(state["index"])
                 finally:
                     if prefetcher is not None:
                         prefetcher.close()
