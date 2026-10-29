@@ -70,6 +70,8 @@ echo Downloading/verifying packaged basic-model weights...
 python ..\python\prepare_builtin_assets.py --output builtin_assets
 if errorlevel 1 (
     echo BASIC MODEL WEIGHT PREPARATION FAILED!
+    echo See the model-specific [failed] messages above. Completed files are preserved.
+    echo For ResNet only, run prepare_resnet_weights.bat without rebuilding the EXE.
     exit /b 1
 )
 

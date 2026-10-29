@@ -1,15 +1,16 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-10-29T03:24:33.964554+00:00",
+  "lastUpdated": "2026-10-29T03:42:28.239669+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
     "model-packs-windows-distribution",
     "annotation-workspace",
     "segmentation-background-contract",
-    "dataset-first-class-visibility"
+    "dataset-first-class-visibility",
+    "pretrained-manifest-recovery"
   ],
-  "primaryFeature": "dataset-first-class-visibility",
+  "primaryFeature": "pretrained-manifest-recovery",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -294,6 +295,28 @@
         "lastUpdated": "2026-10-29T03:24:33.964554+00:00"
       },
       "completedAt": "2026-10-29T03:24:33.964554+00:00"
+    },
+    "pretrained-manifest-recovery": {
+      "phase": "completed",
+      "version": "9.45",
+      "documents": {
+        "plan": "docs/01-plan/features/pretrained-manifest-recovery.plan.md",
+        "design": "docs/02-design/features/pretrained-manifest-recovery.design.md",
+        "analysis": "docs/03-analysis/pretrained-manifest-recovery.analysis.md",
+        "report": "docs/04-report/features/pretrained-manifest-recovery.report.md"
+      },
+      "validation": {
+        "targeted": "78 passed",
+        "runtime": "Official ResNet18/34/50 download, no-manifest offline load, ResNet/U-Net/DeepLab forward passed",
+        "windows_cmd_exe": "not run",
+        "full_suite": "1214 passed, 12 skipped; 154.82 seconds; process exit 0",
+        "lint": "Ruff E/F/W and git diff --check passed",
+        "qt_cleanup": "Global post-fixture DeferredDelete handling added after atexit QObject/QPushButton crash; full rerun exit 0"
+      },
+      "timestamps": {
+        "lastUpdated": "2026-10-29T03:42:28.239669+00:00"
+      },
+      "completedAt": "2026-10-29T03:42:28.239669+00:00"
     }
   },
   "pipeline": {

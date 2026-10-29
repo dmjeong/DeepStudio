@@ -25,6 +25,21 @@ PYTHON_DIR = os.path.join(os.path.dirname(__file__), "..", "python")
 sys.path.insert(0, os.path.abspath(PYTHON_DIR))
 
 
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Finish deferred Qt destruction after *all* test fixture finalizers.
+
+    These tests do not run QApplication.exec(). processEvents() does not drain
+    DeferredDelete, so closed widgets can otherwise survive until PySide's
+    atexit sweep (QObject/QPushButton destructor crash on macOS). Do not create
+    an application or process unrelated events for non-GUI tests.
+    """
+    yield
+    qt = sys.modules.get("PySide6.QtCore")
+    if qt is not None and qt.QCoreApplication.instance() is not None:
+        qt.QCoreApplication.sendPostedEvents(None, qt.QEvent.Type.DeferredDelete)
+
+
 @pytest.fixture
 def sample_image():
     """테스트용 RGB 이미지 (100×80×3, uint8)"""

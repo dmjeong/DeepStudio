@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 
@@ -20,7 +21,7 @@ ASSET_FILES = {
     "efficientnet_b1": "torchvision/efficientnet_b1-c27df63c.pth",
     "resnet18": "torchvision/resnet18-f37072fd.pth",
     "resnet34": "torchvision/resnet34-b627a593.pth",
-    "resnet50": "torchvision/resnet50-0676ba61.pth",
+    "resnet50": "torchvision/resnet50-11ad3fa6.pth",
     "wide_resnet50_2": "torchvision/wide_resnet50_2-95faca4d.pth",
     "convnext_v1_tiny": "torchvision/convnext_tiny-983f1562.pth",
     "libreyolo_classify_mobilenetv4_small": "libreyolo/LibreMobileNetV4s-cls.pt",
@@ -50,10 +51,58 @@ def _manifest(root: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("기본 모델 가중치 묶음 manifest가 없습니다. build.bat을 다시 실행하세요.") from exc
+        raise RuntimeError(f"기본 모델 가중치 manifest를 읽을 수 없습니다: {path}. "
+                           "가중치 준비 도구로 확인하세요.") from exc
     if not isinstance(value, dict) or value.get("schema_version") != 1 or not isinstance(value.get("files"), dict):
         raise RuntimeError("기본 모델 가중치 묶음 manifest 형식이 올바르지 않습니다. build.bat을 다시 실행하세요.")
     return value
+
+
+def official_torchvision_url(model_id: str) -> str | None:
+    """Pinned official file, shared by the builder and offline file verification."""
+    relative = ASSET_FILES[model_id]
+    if relative.startswith("torchvision/"):
+        return "https://download.pytorch.org/models/" + Path(relative).name
+    return None
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def verify_local_asset(model_id: str, root: Path, files: dict | None = None) -> dict:
+    """Verify without network or writes; never bypass an existing manifest entry.
+
+    Missing entries for pinned torchvision files can use the publisher's SHA256
+    prefix (the same check as the official downloader). No equivalent fallback
+    exists for arbitrary PT files or for malformed manifests.
+    """
+    relative = ASSET_FILES[model_id]
+    path = root / relative
+    if not path.is_file() or path.stat().st_size <= 0:
+        raise FileNotFoundError(f"기본 제공 {model_id} 가중치가 없습니다: {path}")
+    if files is None:
+        files = _manifest(root)["files"] if (root / "manifest.json").exists() else {}
+    digest = file_sha256(path)
+    size = path.stat().st_size
+    if relative in files:
+        entry = files[relative]
+        if not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str):
+            raise RuntimeError(f"기본 모델 가중치 manifest 항목 형식 오류: {relative}")
+        if digest != entry["sha256"] or ("bytes" in entry and size != entry["bytes"]):
+            raise RuntimeError(f"기본 모델 가중치 무결성 검증 실패: {relative}. 파일을 확인하세요.")
+    else:
+        match = re.search(r"-([a-f0-9]{8,64})\.pth$", relative)
+        if not official_torchvision_url(model_id) or not match:
+            raise RuntimeError(f"기본 모델 가중치 manifest 항목이 없습니다: {relative}. "
+                               "이 모델은 공식 다운로드 도구로 준비하세요.")
+        if not digest.startswith(match[1]):
+            raise RuntimeError(f"공식 가중치 SHA256 불일치: {path}. 파일 손상·버전을 확인하세요.")
+    return {"sha256": digest, "bytes": size}
 
 
 def builtin_asset_path(model_id: str, *, verify: bool = True) -> Path:
@@ -70,16 +119,7 @@ def builtin_asset_path(model_id: str, *, verify: bool = True) -> Path:
             "앱에서 다운로드하지 않습니다. build.bat을 끝까지 다시 실행해 설치본을 만드세요."
         )
     if verify:
-        entry = _manifest(root)["files"].get(relative)
-        if not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str):
-            raise RuntimeError(f"기본 모델 가중치 manifest 항목이 없습니다: {relative}")
-        digestor = hashlib.sha256()
-        with path.open("rb") as source:
-            for block in iter(lambda: source.read(1024 * 1024), b""):
-                digestor.update(block)
-        digest = digestor.hexdigest()
-        if digest != entry["sha256"]:
-            raise RuntimeError(f"기본 모델 가중치 무결성 검증 실패: {relative}. build.bat을 다시 실행하세요.")
+        verify_local_asset(model_id, root)
     return path.resolve()
 
 
@@ -119,12 +159,17 @@ def missing_asset_help(asset_id: str) -> str:
         "설치본(EXE)이면 build.bat을 끝까지 다시 실행해 설치본을 만드세요.\n"
         "소스에서 실행 중이면 저장소 폴더에서 이 모델의 가중치만 받으세요 (인터넷 필요, 한 번만):\n"
         f"  python python/prepare_builtin_assets.py --output gui/builtin_assets --only {asset_id}\n\n"
+        + ("ResNet 가중치만 준비: gui 폴더의 prepare_resnet_weights.bat을 실행하세요.\n"
+           "공식 파일을 직접 넣었다면 SHA256 검증 후 manifest 없이도 인식합니다.\n\n"
+           if asset_id in {"resnet18", "resnet34", "resnet50"} else "") +
         "또는 학습 모드를 '무작위 초기화로 시작'으로 바꾸면 가중치 없이 학습합니다(보통 정확도가 낮고 더 오래 걸립니다)."
     )
 
 
 def builtin_assets_ready() -> bool:
     try:
-        return all(builtin_asset_path(model_id).is_file() for model_id in ASSET_FILES)
+        files = _manifest(builtin_asset_root())["files"]
+        return all(relative in files and builtin_asset_path(model_id).is_file()
+                   for model_id, relative in ASSET_FILES.items())
     except (OSError, RuntimeError, ValueError):
         return False
