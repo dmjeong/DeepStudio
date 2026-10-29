@@ -9,7 +9,7 @@ from core.inference_settings import require_saved_input_shape
 
 
 def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pytorch", official=False, device="cpu",
-                          input_region=None, threads=4):
+                          input_region=None, threads=4, segment_review=None):
     if official:
         raise ValueError("지원하지 않는 모델 형식입니다. EfficientNet 체크포인트를 선택하세요.")
     device = torch.device(device)
@@ -74,7 +74,8 @@ def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pyto
                          _anomaly_threshold=checkpoint.get("anomaly_threshold"))
             if gradcam:
                 state["_gradcam"] = GradCAM(model)
-    engine = InferenceEngine(state, gradcam=gradcam, input_region=input_region, runtime=runtime, threads=threads)
+    engine = InferenceEngine(state, gradcam=gradcam, input_region=input_region, runtime=runtime, threads=threads,
+                             segment_review=segment_review)
     engine.checkpoint_name = Path(path).name
     return engine
 

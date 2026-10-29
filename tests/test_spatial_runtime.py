@@ -162,6 +162,84 @@ class SpatialRuntime(unittest.TestCase):
                     self.assertEqual(manifest['postprocessing']['box_encoding'], 'grid_sigmoid_xywh')
                     self.assertTrue(manifest['postprocessing']['class_aware_nms'])
 
+    def test_segmentation_inference_lists_defects_judges_and_compares_with_ground_truth(self):
+        """분할 추론 = 결함 목록(클래스·박스·면적·점수) + OK/NG + 정답 비교. Grad-CAM은 보이지 않는다."""
+        import torch
+        from PySide6.QtCore import QSettings
+        from core.project import ProjectManager
+        self.addCleanup(lambda: QSettings('DeepVisionStudio', 'Inference').clear())
+        QSettings('DeepVisionStudio', 'Inference').clear()
+        project = ProjectManager.create_new('p', 'segment', str(self.root / 'project'), ['background', 'scratch'])
+        image = Path(project.data.root) / 'images' / 'train' / 'a.png'
+        image.parent.mkdir(parents=True, exist_ok=True)
+        Image.new('RGB', (101, 73), (40, 40, 40)).save(image)
+        truth = np.zeros((73, 101), np.uint8)
+        truth[12:22, 22:44] = 1   # 예측과 겹치는 정답 scratch → 검출
+        truth[60:66, 80:90] = 1   # 예측이 없는 정답 scratch → 놓침
+        mask = Path(project.data.root) / 'masks' / 'train' / 'a.png'
+        mask.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(truth, 'L').save(mask)
+        model = self.model('segment').eval()
+        checkpoint, _ = self.checkpoint(model)
+        widget = self.widget(checkpoint)
+        widget.project = project
+        widget.result_review.set_project(project)
+        self.assertFalse(widget.gradcam_checkbox.isVisibleTo(widget))
+        self.assertFalse(widget.heatmap_range_widget.isVisibleTo(widget))
+
+        def logits(inputs):  # 모델 해상도(65×97)의 10×20 블록만 scratch
+            output = torch.zeros(inputs.shape[0], 2, 65, 97)
+            output[:, 1, 10:20, 20:40] = 6
+            return output
+        with patch.object(widget.model, 'forward', side_effect=logits):
+            widget._batch_images = [str(image)]
+            widget._run_inference()
+            from tests.test_async_inference import wait_for_inference
+            wait_for_inference(widget)
+        result = widget._inference_results[str(image)]
+        self.assertEqual(result.status, 'ok', result.error)
+        self.assertEqual(result.summary, 'NG 1')
+        defect, = result.details['defects']
+        self.assertEqual(defect['class_name'], 'NG')  # 모델(체크포인트)의 클래스 이름
+        self.assertAlmostEqual(defect['w'], 20 * 101 / 97, delta=1.5)
+        self.assertAlmostEqual(defect['h'], 10 * 73 / 65, delta=1.5)
+        self.assertGreater(defect['score'], .99)
+        self.assertEqual(result.details['ground_truth']['mask'], str(mask))
+        # 결함 표: 검출 1 + 놓친 정답 1, 이미지에는 결함 사각형
+        self.assertTrue(widget.defect_table.isVisibleTo(widget))
+        self.assertEqual([widget.defect_table.item(r, 8).text() for r in range(2)], ['검출', '놓침'])
+        self.assertIn('결함 검출 1/2', widget.task_details_label.text())
+        self.assertIn('NG 1장', widget.result_review.segment_summary.text())
+        self.assertIn('놓침 1', widget.result_review.segment_summary.text())
+        clean = widget._defect_base[1]
+        self.assertFalse(np.array_equal(clean, widget._current_preview_rgb))
+        # 행을 고르면 그 결함으로 확대한다
+        widget.defect_table.setCurrentCell(0, 1)
+        self.assertGreater(widget.image_label._zoom, 1)
+        # 기준을 올리면 다시 추론하지 않고 OK로 바뀐다
+        with patch.object(widget.model, 'forward', side_effect=AssertionError('rules must not rerun the model')):
+            widget.result_review.min_area.setValue(10_000)
+        self.application.processEvents()
+        self.assertEqual(widget.image_label._result_text, 'OK')
+        self.assertEqual(widget.result_review.model.item(0, 4).text(), 'OK')
+        self.assertEqual(widget.defect_table.item(0, 8).text(), '놓침')
+        self.assertEqual(QSettings('DeepVisionStudio', 'Inference').value('segment/min_area'), 10_000)
+
+    def test_process_engine_reports_defects_only_when_desktop_asks(self):
+        """데스크톱 추론 프로세스는 segment_review로 결함을 받고, 설정이 없는 요청(웹)은 이전 결과 그대로."""
+        from core.inference_loading import load_inference_engine
+        checkpoint, _ = self.checkpoint(self.model('segment').eval())
+        image = self.root / 'a.png'
+        Image.new('RGB', (40, 30), (90, 90, 90)).save(image)
+        desktop = load_inference_engine(checkpoint, segment_review={'min_area': 1, 'min_score': 0, 'split_dirs': []})
+        result = desktop.infer(str(image))
+        self.assertEqual(result.status, 'ok', result.error)
+        self.assertIn('defects', result.details)
+        self.assertIn(result.summary.split()[0], ('OK', 'NG'))
+        web = load_inference_engine(checkpoint).infer(str(image))
+        self.assertNotIn('defects', web.details)
+        self.assertEqual(web.summary, '세그멘테이션')
+
     def widget(self, checkpoint):
         from widgets.inference_widget import InferenceWidget
         widget = InferenceWidget()

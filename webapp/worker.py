@@ -502,7 +502,9 @@ def infer(context, payload):
     device = get_device_manager().get_device(payload.get("device", "cpu"))
     engine = load_inference_engine(payload["weights"], device=device, gradcam=payload.get("gradcam", True),
                                    input_region=payload.get("input_region"), runtime=payload.get("runtime", "auto"),
-                                   threads=payload.get("threads", max(1, min(4, os.cpu_count() or 1))))
+                                   threads=payload.get("threads", max(1, min(4, os.cpu_count() or 1))),
+                                   # 데스크톱 추론만 보내는 분할 결함 분석 설정. 웹 요청에는 없어 동작이 그대로다.
+                                   segment_review=payload.get("segment_review"))
     if callable(getattr(engine, "prepare", None)):
         engine.prepare()
     if getattr(engine, "runtime_warning", ""):

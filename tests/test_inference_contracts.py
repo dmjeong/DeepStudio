@@ -105,7 +105,7 @@ class InferenceContractTests(unittest.TestCase):
         class Engine:
             STATE_FIELDS = ()
 
-            def __init__(self, state, *, gradcam=True, input_region=None):
+            def __init__(self, state, *, gradcam=True, input_region=None, segment_review=None):
                 self.gradcam_enabled = gradcam
                 created.append(self)
 
@@ -114,12 +114,13 @@ class InferenceContractTests(unittest.TestCase):
         worker_module = ModuleType("core.inference_worker")
         worker_module.InferenceWorker = Mock(return_value=Mock())
         self.ns.update(InferenceEngine=Engine, QPushButton=object)
-        widget_type = self.methods("_run_inference")
+        widget_type = self.methods("_run_inference", "_gradcam_requested", "_shows_heatmap", "_segment_review")
         for checked in (False, True):
             with self.subTest(checked=checked):
                 widget = widget_type()
                 widget._inference_worker, widget._process_model = None, False
                 widget.model, widget._patchcore_model = object(), None
+                widget._model_task = "classify"
                 widget._batch_images = ["gray.png"]
                 widget._input_region_request = lambda: {"mode": "model"}
                 widget._clear_results = lambda: None
@@ -157,7 +158,7 @@ class InferenceContractTests(unittest.TestCase):
             self.assertIs(observed[-1], checked)
 
     def test_async_result_preserves_selected_pending_image(self):
-        widget = self.methods("_on_async_result")()
+        widget = self.methods("_on_async_result", "_segment_rules", "_has_defects")()
         widget._inference_results = {}
         widget._batch_images = ["first", "pending"]
         widget._batch_results, widget._batch_times = {}, {}
@@ -181,7 +182,8 @@ class InferenceContractTests(unittest.TestCase):
                 self.ns["make_anomaly_result"]("sample", invalid, 0.1)
 
     def test_failed_batch_image_is_error_and_preserves_timing(self):
-        cls = self.methods("_run_single_inference", "_run_batch_inference", "_present_result")
+        cls = self.methods("_run_single_inference", "_run_batch_inference", "_present_result",
+                           "_segment_rules", "_has_defects")
         widget = cls()
         widget.image_label = Label()
         widget.image_path_label = Label()

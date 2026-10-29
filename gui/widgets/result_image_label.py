@@ -118,7 +118,8 @@ class ResultImageLabel(QLabel):
             return QRect()
         metrics = QFontMetrics(self._badge_font())
         text = " ".join(self._result_text.splitlines())
-        width = min(max_width, metrics.horizontalAdvance(text) + 12)
+        # 글자 폭이 소수점으로 반올림되면 'NG 3'도 'N...'으로 줄어들어 여유 4px를 둔다.
+        width = min(max_width, metrics.horizontalAdvance(text) + 16)
         height = min(max_height, metrics.height() + 8)
         return QRect(image_rect.left() + 4, image_rect.top() + 4, width, height)
 
@@ -153,6 +154,25 @@ class ResultImageLabel(QLabel):
 
     def set_view(self, zoom, pan):
         self._zoom, self._pan = float(zoom), QPointF(pan)
+        self.update()
+
+    def focus_rect(self, x, y, width, height):
+        """원본 좌표의 사각형(결함)이 화면 가운데에 오도록 확대·이동한다. 화면의 약 1/3 크기로 보여준다."""
+        pixmap = self.pixmap()
+        if self._source_pixmap.isNull() or pixmap is None or pixmap.isNull():
+            return
+        ratio = pixmap.devicePixelRatioF()
+        fit_w, fit_h = pixmap.width() / ratio, pixmap.height() / ratio  # 확대 1배일 때 화면 크기
+        source_w, source_h = self._source_pixmap.width(), self._source_pixmap.height()
+        view = self._content_rect()
+        # 결함이 화면의 1/3을 차지하는 배율 (최소 1배, 최대 16배)
+        zoom = min(view.width() / 3 / max(1e-6, width / source_w * fit_w),
+                   view.height() / 3 / max(1e-6, height / source_h * fit_h))
+        self._zoom = min(16.0, max(1.0, zoom))
+        # 가운데 정렬된 이미지에서 결함 중심이 화면 중심으로 오도록 이동량을 정한다.
+        center_x, center_y = (x + width / 2) / source_w, (y + height / 2) / source_h
+        self._pan = QPointF(fit_w * self._zoom * (0.5 - center_x), fit_h * self._zoom * (0.5 - center_y))
+        self.view_changed.emit(self._zoom, self._pan)
         self.update()
 
     def set_pixel_source(self, pixels):

@@ -95,7 +95,9 @@ class InferenceOperations:
 
             device = self._infer_device
             # 실행 시작 시 선택한 경우에만 계산한다. 결과 탐색은 저장된 맵만 사용한다.
-            use_gradcam = self._gradcam is not None and getattr(self, "gradcam_enabled", True)
+            # 분할·탐지는 결과 자체(마스크·박스)가 위치를 보여주므로 Grad-CAM을 계산하지 않는다.
+            use_gradcam = (self._gradcam is not None and getattr(self, "gradcam_enabled", True)
+                           and getattr(self.model, "task", "") not in ("segment", "detect"))
 
             # 채널 수에 따라 RGB 또는 Grayscale 로드
             crop = getattr(self, "_center_crop", None)
@@ -135,6 +137,10 @@ class InferenceOperations:
 
             elif task == "segment":
                 pred_mask = output.detach().argmax(dim=1)[0].cpu().numpy()
+                review = getattr(self, "segment_review", None)
+                # 결함 점수용 클래스 확률 (모델 해상도). 결함 분석을 켠 경우에만 만든다.
+                probabilities = (F.softmax(output.detach().float(), dim=1)[0].cpu().numpy()
+                                 if review is not None else None)
                 unique, counts = np.unique(pred_mask, return_counts=True)
                 pixel_counts = dict(zip(unique.tolist(), counts.tolist()))
                 prediction = InferenceResult(image_path, "ok", task, "세그멘테이션", "#A78BFA",
@@ -203,11 +209,18 @@ class InferenceOperations:
                 prediction.details["detections"] = detections
             base_preview = draw_detection_boxes(original_np, detections)
         elif task == "segment":
+            from core.spatial_preview import segmentation_labels
             region = original_np[box[1]:box[3], box[0]:box[2]] if crop else original_np
-            base_preview, counts = segmentation_preview(pred_mask, region, self.model.num_classes)
+            labels = segmentation_labels(pred_mask, region.shape[1], region.shape[0])
+            # 결함 판정 화면은 배경을 칠하지 않아 결함만 눈에 띄게 한다 (결함 분석이 없는 요청은 기존 표시).
+            base_preview, counts = segmentation_preview(pred_mask, region, self.model.num_classes, labels=labels,
+                                                        tint_background=review is None)
             if crop:
                 base_preview = paste_crop_preview(original_np, base_preview, crop)
             prediction.details.update(pixel_counts=counts, class_names=list(self.class_names))
+            if review is not None:
+                prediction = self._review_segmentation(prediction, image_path, labels, probabilities,
+                                                       original_np.shape[1::-1], box if crop else None, review)
 
         # ── Grad-CAM 히트맵 생성 & 오버레이 ──
         if use_gradcam:
@@ -237,6 +250,41 @@ class InferenceOperations:
         if crop:
             self._set_info((getattr(self, "info", "") or "") + f" | 판정 범위: 중앙 {crop['width']}×{crop['height']} px")
         return prediction
+
+    def _review_segmentation(self, prediction, image_path, labels, probabilities, size, box, review):
+        """예측 마스크를 결함 목록(클래스·박스·면적·점수)으로 바꾸고 OK/NG를 판정한다.
+
+        review = {"min_area", "min_score", "split_dirs": [(이미지 폴더, 마스크 폴더), ...]}.
+        이미지가 데이터셋에 있고 정답 마스크가 있으면 정답과 비교한다(IoU·놓침·오검출).
+        """
+        from core.segment_defects import analyze_segmentation, judge, load_truth, summary_text, truth_mask_path
+        names = list(self.class_names) or [f"Class {i}" for i in range(self.model.num_classes)]
+        truth, truth_path, note = None, truth_mask_path(image_path, review.get("split_dirs") or ()), ""
+        if truth_path:
+            try:
+                truth = load_truth(truth_path, size, box)
+                if truth is None:
+                    note = "정답 마스크 크기·형식이 이미지와 달라 비교하지 않았습니다"
+            except OSError as exc:
+                note = f"정답 마스크를 읽지 못했습니다: {exc}"
+        offset = (box[0], box[1]) if box else (0, 0)
+        try:
+            analysis = analyze_segmentation(labels, probabilities, class_names=names, offset=offset,
+                                            truth=truth, num_classes=self.model.num_classes)
+        except ValueError as exc:  # 정답 값 범위 오류는 비교만 빼고 결함은 보고한다
+            note = f"정답 비교 생략: {exc}"
+            analysis = analyze_segmentation(labels, probabilities, class_names=names, offset=offset,
+                                            num_classes=self.model.num_classes)
+        details = dict(prediction.details)
+        details.update(analysis, defect_rules={"min_area": int(review.get("min_area", 1)),
+                                               "min_score": float(review.get("min_score", 0.0))})
+        if truth is not None and "ground_truth" in analysis:
+            details["ground_truth"]["mask"] = truth_path
+        if note:
+            details["ground_truth_note"] = note
+        verdict = judge(details)
+        return replace(prediction, details=details, summary=summary_text(verdict),
+                       color="#E05555" if verdict["decision"] == "NG" else "#34C759")
 
     def _run_patchcore_inference(self, image_path: str):
         """
@@ -296,10 +344,12 @@ class InferenceEngine(InferenceOperations):
                     "_infer_device", "_input_size", "_normalization", "class_names",
                     "_anomaly_threshold", "_active_checkpoint", "_center_crop", "_onnx_runtime")
 
-    def __init__(self, state, *, gradcam=True, input_region=None, runtime="auto", threads=4):
+    def __init__(self, state, *, gradcam=True, input_region=None, runtime="auto", threads=4, segment_review=None):
         for name in self.STATE_FIELDS:
             setattr(self, name, state.get(name))
         self.gradcam_enabled = gradcam
+        # 분할 결함 분석(데스크톱에서 켬): None이면 기존처럼 픽셀 분포만 낸다.
+        self.segment_review = segment_review
         if runtime not in ("auto", "pytorch", "onnx"):
             raise ValueError("런타임은 auto, pytorch, onnx 중에서 선택하세요")
         self.runtime_requested, self.runtime_threads = runtime, threads
