@@ -127,7 +127,8 @@ def test_checkpoints_record_the_tiling_contract():
     from builtin_models import build_builtin_model, make_builtin_checkpoint
     from checkpoint import make_checkpoint_metadata, tiling_contract
     contract = tiling_contract(512)
-    assert contract == {"tile": 512, "overlap": 128, "blend": "center_weighted_softmax", "scale": 1.0}
+    assert contract == {"tile": 512, "overlap": 128, "blend": "center_weighted_softmax", "scale": 1.0,
+                        "interpolation": "INTER_AREA"}
     assert tiling_contract(0) is None and tiling_contract(512, .5)["scale"] == .5
     with pytest.raises(ValueError):
         tiling_contract(512, 1.5)
@@ -147,6 +148,12 @@ def test_dataset_size_warning_uses_native_scale_for_patch_training():
     project = SimpleNamespace(task="segment", training=SimpleNamespace(
         patch_training=True, input_size=512, patchcore_crop_enabled=False))
     assert training_scale(project, (3500, 1504)) == (1.0, 1.0)
+    # 배율을 쓰면 그 배율 (25%에서 1px 미세 크랙은 0.25px → 경고 대상)
+    project.training.patch_scale = .25
+    assert training_scale(project, (3500, 1504)) == (.25, .25)
+    from core.dataset_regions import training_footprint, training_resolution_label
+    assert training_footprint({"area": 300, "width": 1}, training_scale(project, (3500, 1504)))[1] < 1
+    assert training_resolution_label(project) == "패치 배율 25%"
     project.training.patch_training = False
     sx, sy = training_scale(project, (3500, 1504))
     assert sx == pytest.approx(512 / 3500) and sy == pytest.approx(512 / 1504)
@@ -253,6 +260,76 @@ def test_scale_shrinks_training_images_but_keeps_thin_defects(tmp_path):
                                  in_channels=1, is_train=False, num_classes=2, scale=0)
 
 
+def _crack_columns(root, xs=(40, 49, 58, 67)):
+    """400×200, 밝기 120 배경에 밝기 20(대비 100)의 1px 세로 크랙. x % 4 = 0·1·2·3 (4픽셀 묶음 안의 자리)."""
+    for kind in ("images", "masks"):
+        (root / kind / "val").mkdir(parents=True, exist_ok=True)
+    pixels, mask = np.full((200, 400), 120, np.uint8), np.zeros((200, 400), np.uint8)
+    for x in xs:
+        pixels[:, x], mask[:, x] = 20, 1
+    Image.fromarray(pixels, "L").save(root / "images" / "val" / "0.png")
+    Image.fromarray(mask, "L").save(root / "masks" / "val" / "0.png")
+    return root
+
+
+def test_scaled_training_images_keep_1px_cracks_at_every_position(tmp_path):
+    """배율 25%: 픽셀 평균 축소라 1px 크랙이 어느 자리에 있어도 영상에 남는다.
+
+    선형 보간(9.33 첫 빌드)은 4픽셀 중 가운데 2개만 읽어, 자리 0·3의 크랙이 영상에서 사라졌다.
+    마스크(작은 결함 보존 축소)에는 남으므로 '보이지 않는 곳을 결함이라 배우는' 학습이 됐다.
+    """
+    root = _crack_columns(tmp_path)
+    xs = (40, 49, 58, 67)
+
+    def contrast(interpolation):
+        dataset = PatchSegmentationDataset(str(root / "images" / "val"), str(root / "masks" / "val"),
+                                           patch_size=32, in_channels=1, is_train=False, num_classes=2,
+                                           scale=.25, interpolation=interpolation)
+        image, mask, _foreground = dataset._load_native(0)
+        assert image.shape == mask.shape == (50, 100)
+        assert all((mask[:, x // 4] == 1).all() for x in xs)  # 정답은 두 방식 모두 같은 열에 남는다
+        return [120 - int(image[:, x // 4].min()) for x in xs]
+
+    assert contrast("INTER_AREA") == [25, 25, 25, 25]
+    assert contrast("INTER_LINEAR_EXACT") == [0, 50, 50, 0]
+    with pytest.raises(ValueError, match="보간"):
+        PatchSegmentationDataset(str(root / "images" / "val"), str(root / "masks" / "val"), patch_size=32,
+                                 in_channels=1, is_train=False, num_classes=2, scale=.25, interpolation="NEAREST")
+
+
+def test_scaled_model_input_uses_the_interpolation_it_was_trained_with(tmp_path):
+    """새 모델은 픽셀 평균 축소로 추론한다. 보간이 기록되지 않은 9.33 첫 빌드 모델은 그때 학습한 선형 보간 그대로."""
+    from builtin_models import build_builtin_model, make_builtin_checkpoint
+    from checkpoint import tiling_contract
+    from core.inference_loading import load_inference_engine
+    image = tmp_path / "part.png"
+    pixels = np.full((300, 700), 120, np.uint8)
+    pixels[:, 400] = 20  # 4픽셀 묶음의 첫 자리: 선형 보간 25% 축소가 버리는 자리
+    Image.fromarray(pixels, "L").save(image)
+    model = build_builtin_model("unet_resnet18", 2, 1).eval()
+    new = tiling_contract(128, .25)
+    assert new["interpolation"] == "INTER_AREA"
+    old = {key: value for key, value in new.items() if key != "interpolation"}
+    gaps = {}
+    for name, tiling in (("new", new), ("old", old)):
+        checkpoint = make_builtin_checkpoint("unet_resnet18", model, num_classes=2, input_size=128, in_channels=1,
+                                             class_names=["background", "crack"], tiling=tiling)
+        torch.save(checkpoint, tmp_path / f"{name}.pt")
+        engine = load_inference_engine(tmp_path / f"{name}.pt", segment_review={"min_area": 1, "min_score": 0,
+                                                                              "split_dirs": []})
+
+        def capture(inputs, name=name):
+            # 줄인 판정 영역 175×75: 크랙 열(400 // 4 = 100)과 옆 열(98)의 입력 차이
+            gaps[name] = float(inputs[0, 0, :75, 98].mean() - inputs[0, 0, :75, 100].mean())
+            return torch.zeros(inputs.shape[0], 2, *inputs.shape[-2:])
+
+        engine.model.forward = capture
+        assert engine.infer(str(image)).status == "ok"
+        # 이전 방식 모델은 다시 학습하라고 정보 줄에서 알린다
+        assert ("이전 축소 방식" in engine.info) is (name == "old")
+    assert gaps["new"] > 1e-3 and abs(gaps["old"]) < 1e-6
+
+
 def test_scaled_patch_model_reports_defects_in_original_image_coordinates(tmp_path):
     """배율 50% 모델: 추론은 줄인 해상도, 결함 좌표·면적은 원본 이미지 기준."""
     from builtin_models import build_builtin_model, make_builtin_checkpoint
@@ -312,4 +389,5 @@ def test_custom_csp_segmentation_gets_rotation_colour_and_patch_settings(tmp_pat
     assert seen["rotation"] == 12.0 and seen["color_jitter"] == .15
     assert (seen["patch_size"], seen["patches_per_image"], seen["patch_scale"]) == (128, 5, .5)
     metadata = worker._checkpoint_metadata()
-    assert metadata["tiling"] == {"tile": 128, "overlap": 32, "blend": "center_weighted_softmax", "scale": .5}
+    assert metadata["tiling"] == {"tile": 128, "overlap": 32, "blend": "center_weighted_softmax", "scale": .5,
+                                  "interpolation": "INTER_AREA"}

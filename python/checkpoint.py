@@ -1,5 +1,11 @@
 """모델을 독립적으로 복원하기 위한 체크포인트 메타데이터."""
 
+# 패치 배율 s < 1로 판정 영역을 줄일 때의 이미지 보간 (학습·추론 공통, tiling 규칙에 기록).
+# 9.33 첫 구현은 전체 이미지 학습과 같은 INTER_LINEAR_EXACT였다. 이 보간은 줄일 때 주변 2×2 픽셀만 본다:
+# 25%면 픽셀 4개 중 2개만 쓰고 2개를 버려, 버려지는 자리에 놓인 1px 크랙이 영상에서 사라졌다(마스크에는 남음).
+# INTER_AREA는 모든 픽셀을 평균하므로 1px 크랙이 어느 위치에 있어도 1/4 대비의 선으로 남는다.
+PATCH_SCALE_INTERPOLATION = "INTER_AREA"
+
 
 def tiling_contract(patch_size, scale=1.0):
     """패치 학습 모델의 추론 규칙: 원본 해상도에서 tile×tile 창을 overlap만큼 겹쳐 민다.
@@ -16,7 +22,9 @@ def tiling_contract(patch_size, scale=1.0):
     if not 0 < scale <= 1:
         raise ValueError("패치 학습 배율은 0보다 크고 1 이하여야 합니다")
     # scale: 추론 전에 판정 영역을 줄이는 배율 (학습 패치를 자르기 전에 줄인 것과 같다). 1 = 원본 해상도.
-    return {"tile": tile, "overlap": tile // 4, "blend": "center_weighted_softmax", "scale": scale}
+    # interpolation: 그때 쓰는 보간. 이 키가 없는 규칙(9.33 첫 빌드)은 INTER_LINEAR_EXACT로 학습됐다.
+    return {"tile": tile, "overlap": tile // 4, "blend": "center_weighted_softmax", "scale": scale,
+            "interpolation": PATCH_SCALE_INTERPOLATION}
 
 
 def make_checkpoint_metadata(task, num_classes, class_names, input_size,

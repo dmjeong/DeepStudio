@@ -414,6 +414,13 @@ class TrainingForm:
             "줄인 뒤 가장 가는 결함이 1.5~2px 이상 남는 배율을 고르세요(마스크는 작은 결함을 보존해 줄입니다).")
         self.patch_scale_combo.currentIndexChanged.connect(self._on_patchcore_settings_changed)
         self.patch_scale_label = QLabel("패치 배율:")
+        # 데이터에 맞게 자동 설정: 라벨된 결함 굵기로 패치·배율·모델을 고른다 (분할 전용)
+        self.advise_btn = QPushButton("데이터에 맞게 자동 설정…")
+        self.advise_btn.setToolTip(
+            "라벨된 결함의 굵기와 이미지 크기를 분석해, 가는 결함(미세 크랙 등)이 학습 해상도에서\n"
+            "사라지지 않는 패치·배율·모델·가중치를 추천합니다. 항목을 골라 적용합니다.")
+        self.advise_btn.clicked.connect(self._open_advisor)
+        hp_layout.addRow("", self.advise_btn)
         hp_layout.addRow("", self.patch_check)
         hp_layout.addRow(self.patch_scale_label, self.patch_scale_combo)
         hp_layout.addRow(self.patch_count_label, self.patch_count_spin)

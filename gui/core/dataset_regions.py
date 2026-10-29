@@ -216,10 +216,13 @@ def training_scale(project, size):
     """원본 1px이 학습 입력에서 몇 px인지 (sx, sy).
 
     분할은 (중앙 크롭 후) 입력 크기 정사각형으로 늘려 맞추고, 탐지는 긴 변 기준으로 맞춘다.
-    분할 패치 학습은 원본 해상도에서 자르므로 1:1이다.
+    분할 패치 학습은 줄이지 않고 자르므로 패치 배율 그대로다(100% = 1:1, 25% = 0.25).
     """
     if project.task == "segment" and getattr(project.training, "patch_training", False):
-        return 1.0, 1.0
+        # 9.33 처음 구현은 배율과 관계없이 1:1을 돌려줘, 배율 25%에서 1px 미세 크랙이 0.25px가 되어도
+        # '1px보다 작은 영역' 경고가 나오지 않았다.
+        scale = float(getattr(project.training, "patch_scale", 1.0) or 1.0)
+        return scale, scale
     from core.paths import ensure_python_path
 
     ensure_python_path()
@@ -313,3 +316,12 @@ def edit_regions(project, split, image_path, regions, class_id=None):
             rows[index]["class_id"] = class_id
     return edit_dataset(project, "annotations", [image_path], split=split,
                         annotations=rows, expected_revision=revision)
+
+
+def training_resolution_label(project):
+    """크기 경고 문구에 쓰는 학습 해상도 설명: '입력 512px' 또는 '패치 배율 25%'."""
+    training = project.training
+    if project.task == "segment" and getattr(training, "patch_training", False):
+        scale = float(getattr(training, "patch_scale", 1.0) or 1.0)
+        return "패치 학습 원본 해상도" if scale == 1 else f"패치 배율 {scale:.0%}"
+    return f"학습 입력 {training.input_size}px"

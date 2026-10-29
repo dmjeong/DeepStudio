@@ -551,6 +551,13 @@ class InferenceWidget(QWidget, InferenceOperations):
         select_dir_btn.clicked.connect(self._select_directory)
         img_btn_row.addWidget(select_dir_btn)
 
+        # 프로젝트 검증(val) 이미지를 골라 바로 추론: 정답이 있어 놓침·오검출·IoU가 함께 나온다
+        self.evaluate_val_btn = QPushButton("검증 데이터 평가")
+        self.evaluate_val_btn.setToolTip("프로젝트의 검증(val) 이미지 전체를 배치로 추론합니다.\n"
+                                         "분할은 정답 마스크와 비교해 결함 검출·놓침·오검출과 IoU를 보여 줍니다.")
+        self.evaluate_val_btn.clicked.connect(self._evaluate_validation)
+        img_btn_row.addWidget(self.evaluate_val_btn)
+
         self.infer_btn = QPushButton("추론 시작")
         self.infer_btn.setProperty("cssClass", "primary")
         self.infer_btn.setEnabled(False)
@@ -1238,6 +1245,46 @@ class InferenceWidget(QWidget, InferenceOperations):
             # 격자 뷰 갱신 (새 폴더 → 결과 없는 썸네일 표시)
             if self._view_mode == "grid":
                 self._refresh_grid()
+
+    def _validation_images(self):
+        """프로젝트 검증(val) 이미지 경로 (하위 폴더 포함, 이름순)."""
+        data = getattr(self.project, "data", None)
+        if data is None or not getattr(data, "root", ""):
+            return []
+        folder = getattr(data, "val_dir", "") or (
+            os.path.join(data.root, "images", "val") if self.project.task in ("segment", "detect", "obb")
+            else os.path.join(data.root, "val"))
+        # 기존 이상 탐지 프로젝트의 val은 정상 학습 폴더의 별칭일 수 있다 → 그때는 평가(test) 폴더
+        train = getattr(data, "train_dir", "")
+        if (self.project.task == "anomaly" and train and os.path.isdir(folder)
+                and os.path.realpath(folder) == os.path.realpath(train)):
+            folder = getattr(data, "test_dir", "") or os.path.join(data.root, "test")
+        exts = ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff')
+        found = []
+        for root, _dirs, files in os.walk(folder):
+            found.extend(os.path.join(root, name) for name in files if name.lower().endswith(exts))
+        return sorted(found)
+
+    def _evaluate_validation(self):
+        """검증 이미지를 배치로 고르고, 모델이 로드돼 있으면 바로 추론한다."""
+        if getattr(self, "_inference_worker", None) is not None:
+            return
+        if self.project is None:
+            QMessageBox.information(self, "검증 데이터 평가", "프로젝트를 먼저 열어 주세요.")
+            return
+        images = self._validation_images()
+        if not images:
+            QMessageBox.information(self, "검증 데이터 평가",
+                                    "검증(val) 이미지가 없습니다. 데이터셋 화면에서 이미지를 val로 나눠 주세요.")
+            return
+        self._batch_images = images
+        self._current_image = images[0]
+        self._clear_results()  # 결과 표·격자를 새 목록으로 다시 구성하고 첫 이미지를 보여 준다
+        if self.infer_btn.isEnabled():
+            self._run_inference()
+        else:
+            self.batch_time_label.setText(f"검증 이미지 {len(images)}장을 골랐습니다. 모델을 로드한 뒤 '추론 시작'을 누르세요.")
+            self.batch_time_label.show()
 
     def _show_image(self, filepath: str):
         """이미지 표시"""

@@ -46,6 +46,7 @@ from PySide6.QtGui import (
 
 from core.project import ProjectData, SUPPORTED_TASKS
 from core.class_management import ClassManager, move_image_with_sidecars
+from core.dataset_regions import training_resolution_label
 # 휠 오조작 방지 콤보박스 (분할/클래스 선택이 스크롤 중 바뀌지 않도록)
 from widgets.common import NoWheelComboBox
 
@@ -1174,15 +1175,15 @@ class DatasetWidget(QWidget):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if column == 4 and small:
                     item.setForeground(QColor("#E0A030"))
-                    item.setToolTip(f"학습 입력 {self.project.training.input_size}px에서 면적 또는 폭이 "
+                    item.setToolTip(f"{training_resolution_label(self.project)}에서 면적 또는 폭이 "
                                     "1px보다 작은 영역입니다.")
                 self.size_table.setItem(line, column, item)
         self.size_table.setVisible(bool(names))
         small_total = sum(row["small"] for row in rows)
         self.size_warning.setText(
-            f"⚠ 학습 입력 {self.project.training.input_size}px에서 1px보다 작은 영역 {small_total:,}개. "
+            f"⚠ {training_resolution_label(self.project)}에서 1px보다 작은 영역 {small_total:,}개. "
             "라벨에는 남지만 모델이 배우기 어렵습니다(9.33 실험: 가중치 없이 점 결함 검출률 0). "
-            "입력 크기를 키우거나 클래스 가중치 Sqrt를 쓰세요. '영역 목록'에서 확인할 수 있습니다."
+            "학습 화면의 '데이터에 맞게 자동 설정'이 이 결함이 남는 설정을 고릅니다. '영역 목록'에서 확인할 수 있습니다."
             if small_total else "")
         self.size_warning.setVisible(bool(small_total))
 

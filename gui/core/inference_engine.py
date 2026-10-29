@@ -279,8 +279,12 @@ class InferenceOperations:
             how = ("이미지 한 번에" if self._patch_run == "whole" else
                    f"타일 {tiling['tile']}px × {self._tile_count}개"
                    + (" (메모리 부족으로 전환)" if self._patch_run == "tiles_after_oom" else ""))
+            # 보간이 기록되지 않은 배율 모델 = 9.33 첫 빌드의 선형 축소로 학습 (1px 크랙이 위치에 따라 사라졌다)
+            legacy = scale != 1 and "interpolation" not in tiling
             self._set_info((getattr(self, "info", "") or "") + " | 패치 모델: "
-                           + ("원본 해상도" if scale == 1 else f"배율 {scale:.0%}") + f" {size} · {how}")
+                           + ("원본 해상도" if scale == 1 else f"배율 {scale:.0%}") + f" {size} · {how}"
+                           + (" · 이전 축소 방식(선형: 1px 결함이 자리에 따라 지워짐)으로 학습됨, 다시 학습 권장"
+                              if legacy else ""))
         return prediction
 
     def _forward_probabilities(self, inputs, device):
@@ -312,13 +316,13 @@ class InferenceOperations:
 
             배율 s: 판정 영역을 s배로 줄인 뒤 추론 (학습도 같은 배율로 줄인 뒤 잘랐다) → 계산량 ∝ s²
         """
-        from dataset import scaled_size
-        from opencv_preprocess import resize
+        from dataset import scale_image, scaled_size
         scale = float(tiling.get("scale", 1.0))
         height, width = image.shape[:2]
         if scale != 1:
             target_w, target_h = scaled_size(width, height, scale)
-            image = resize(image, (target_h, target_w))  # 학습과 같은 INTER_LINEAR_EXACT
+            # 학습 때와 같은 보간. 규칙에 보간이 없는 모델(9.33 첫 빌드)은 그때 학습한 INTER_LINEAR_EXACT.
+            image = scale_image(image, (target_h, target_w), tiling.get("interpolation", "INTER_LINEAR_EXACT"))
         if getattr(self, "_patch_mode", "auto") != "tiles":
             try:
                 probabilities = self._whole_probabilities(image, mean, std, device)

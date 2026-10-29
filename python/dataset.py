@@ -35,6 +35,7 @@ import torchvision.transforms as T
 import numpy as np
 from PIL import Image
 from opencv_preprocess import OpenCVResize, read_image, resize
+from checkpoint import PATCH_SCALE_INTERPOLATION
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -297,7 +298,7 @@ class ClassificationDataset(Dataset):
 def resize_label_mask(mask: np.ndarray, size: Tuple[int, int], *, keep_ratio: float = 0.5) -> np.ndarray:
     """클래스 번호 마스크를 (H, W)로 바꾼다. 축소해도 작은 결함이 정답에서 사라지지 않게 한다.
 
-    1. 픽셀 중심 nearest(INTER_NEAREST_EXACT): 이미지의 INTER_LINEAR_EXACT와 같은 격자.
+    1. 픽셀 중심 nearest(INTER_NEAREST_EXACT): 이미지의 INTER_LINEAR_EXACT·INTER_AREA(패치 배율)와 같은 격자.
        INTER_NEAREST(왼쪽 위 기준)는 4배 축소에서 정답을 평균 0.38 출력 px 밀어낸다.
     2. nearest는 블록마다 한 픽셀만 읽어서, 블록보다 얇은 결함은 통째로 사라지거나
        (4배 축소의 3×3 점 결함 약 43%) 점선으로 끊긴다(비스듬한 1px 흠집 94%, 2px 70%).
@@ -531,6 +532,24 @@ def scaled_size(width: int, height: int, scale: float) -> Tuple[int, int]:
     return max(1, int(round(width * scale))), max(1, int(round(height * scale)))
 
 
+# tiling 규칙에 적을 수 있는 보간 (OpenCV 플래그 이름). LINEAR_EXACT는 이 키가 없던 9.33 첫 빌드 모델용으로만 남긴다.
+SCALE_INTERPOLATIONS = ("INTER_AREA", "INTER_LINEAR_EXACT")
+
+
+def scale_image(image: np.ndarray, size: Tuple[int, int], interpolation: str = PATCH_SCALE_INTERPOLATION):
+    """패치 배율로 판정 영역을 (세로, 가로) 크기로 줄인다. 학습 데이터와 추론이 이 함수 하나를 쓴다.
+
+        1px 크랙, 25%로 축소 (크랙 위치 0~3 = 4픽셀 묶음 안 자리)
+            INTER_LINEAR_EXACT  남는 대비 0 · 50 · 50 · 0 %  → 절반 위치에서 사라짐 (점선이 됨)
+            INTER_AREA          남는 대비 25 · 25 · 25 · 25 % → 어디서나 옅은 선으로 남음
+    """
+    import cv2
+    if interpolation not in SCALE_INTERPOLATIONS:
+        raise ValueError(f"미지원 패치 배율 보간: {interpolation!r}")
+    height, width = size
+    return cv2.resize(np.asarray(image), (int(width), int(height)), interpolation=getattr(cv2, interpolation))
+
+
 def patch_origins(length: int, patch: int, stride: int) -> List[int]:
     """한 축을 덮는 패치 시작 위치. 마지막 패치는 끝에 맞춰 이미지 밖으로 나가지 않는다 (짧으면 [0])."""
     if length <= patch:
@@ -557,7 +576,8 @@ class PatchSegmentationDataset(SegmentationDataset):
     """
 
     def __init__(self, img_dir: str, mask_dir: str, *, patch_size: int, patches_per_image: int = 0,
-                 defect_ratio: float = 0.5, cache_limit_mb: int = 1536, scale: float = 1.0, **kwargs):
+                 defect_ratio: float = 0.5, cache_limit_mb: int = 1536, scale: float = 1.0,
+                 interpolation: str = PATCH_SCALE_INTERPOLATION, **kwargs):
         if patch_size < 32:
             raise ValueError("패치 크기는 32px 이상이어야 합니다")
         scaled_size(1, 1, scale)  # 배율 범위 확인
@@ -568,8 +588,11 @@ class PatchSegmentationDataset(SegmentationDataset):
         self.patch_size = int(patch_size)
         self.defect_ratio = float(defect_ratio)
         # 배율 < 1: 이미지를 먼저 그만큼 줄인 뒤 패치를 자른다 (추론 계산량 ∝ 배율²).
-        # 마스크는 작은 결함을 보존하는 축소(resize_label_mask)를 쓴다.
+        # 이미지는 모든 픽셀을 평균하는 축소(scale_image), 마스크는 작은 결함을 보존하는 축소(resize_label_mask).
         self.scale = float(scale)
+        if interpolation not in SCALE_INTERPOLATIONS:
+            raise ValueError(f"미지원 패치 배율 보간: {interpolation!r}")
+        self.interpolation = interpolation
         self._native = OrderedDict()           # 경로 → (이미지, 마스크, 결함 픽셀 위치 표본)
         self._native_bytes = 0
         self._native_limit = int(cache_limit_mb) * 1024 * 1024
@@ -619,7 +642,7 @@ class PatchSegmentationDataset(SegmentationDataset):
                 mask = mask.astype(np.uint8) if mask.max(initial=0) <= 255 else mask.astype(np.uint16)
         if self.scale != 1:
             target_w, target_h = scaled_size(width, height, self.scale)
-            image = resize(image, (target_h, target_w))  # 전체 이미지 학습과 같은 INTER_LINEAR_EXACT
+            image = scale_image(image, (target_h, target_w), self.interpolation)  # 1px 크랙도 옅은 선으로 남는다
             mask = resize_label_mask(mask, (target_h, target_w))  # 얇은 흠집·작은 점이 사라지지 않게
         foreground = np.flatnonzero((mask > 0) & (mask != 255))
         if foreground.size > 20000:
