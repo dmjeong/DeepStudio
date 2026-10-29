@@ -88,7 +88,8 @@ class PersistentInferenceCache:
             heatmap = {**heatmap, "image_path": image_path, "original": arrays["original"],
                        "activation": arrays["activation"], "base_image": arrays.get("base_image"),
                        "valid_mask": arrays.get("valid_mask")}
-        return {"preview": arrays.get("preview"), "heatmap": heatmap, "info": row.get("info", "")}
+        return {"preview": arrays.get("preview"), "original": arrays.get("original"),
+                "heatmap": heatmap, "info": row.get("info", "")}
 
 
 def inference_result(row):

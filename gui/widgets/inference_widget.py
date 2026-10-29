@@ -548,6 +548,12 @@ class InferenceWidget(QWidget, InferenceOperations):
             "QCheckBox { color: #E8EAEF; font-size: 12px; }"
         )
         gradcam_row.addWidget(self.gradcam_checkbox)
+        self.region_names_check = QCheckBox("클래스명")
+        self.region_names_check.setChecked(True)
+        self.region_names_check.setToolTip("검출한 각 영역에 모델의 클래스 이름을 표시합니다.")
+        self.region_names_check.toggled.connect(self._update_region_labels)
+        self.region_names_check.hide()
+        gradcam_row.addWidget(self.region_names_check)
 
         alpha_label = QLabel("강도:")
         alpha_label.setStyleSheet("color: #8A92A4; font-size: 11px;")
@@ -590,6 +596,9 @@ class InferenceWidget(QWidget, InferenceOperations):
         range_hint.setWordWrap(True)
         range_hint.setStyleSheet("color: #8A92A4; font-size: 11px;")
         self.image_label_hint = range_hint.text()
+        self._heatmap_display_controls = [alpha_label, self.gradcam_alpha_combo]
+        self._heatmap_display_controls.extend(range_row.itemAt(i).widget() for i in range(range_row.count())
+                                               if range_row.itemAt(i).widget() is not None)
         range_hint.deleteLater()
         self.heatmap_lower_spin.setToolTip(self.image_label_hint)
         self.heatmap_upper_spin.setToolTip(self.image_label_hint)
@@ -801,7 +810,9 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._preview_cache.clear()
         self._inference_results.clear()
         self._current_preview_rgb = None
+        self._original_preview_rgb = None
         self._current_result = None
+        self.image_label.set_regions([])
         if self._current_image and os.path.isfile(self._current_image):
             self._show_image(self._current_image)
         self.image_label.set_result()
@@ -871,7 +882,7 @@ class InferenceWidget(QWidget, InferenceOperations):
     def _activate_model(self, *, path, device, model=None, patchcore=None,
                         gradcam=None, class_names=(),
                         input_size=(224, 224), normalization=None, threshold=None, info="", process=False,
-                        score_normalized=False, center_crop=None):
+                        score_normalized=False, center_crop=None, task=None):
         from center_crop import validate_center_crop
         center_crop = validate_center_crop(patchcore.center_crop if patchcore is not None else center_crop)
         if self._gradcam is not None:
@@ -882,6 +893,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._infer_device = device
         self._active_checkpoint = path
         self._process_model = process
+        self._active_task = task or getattr(model, "task", "anomaly" if patchcore is not None else "")
         self.class_names = list(class_names)
         self._input_size = tuple(input_size)
         self._normalization = normalization
@@ -889,13 +901,17 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._anomaly_threshold = threshold
         self.result_review.set_saved_threshold(threshold, normalized=score_normalized)
         self._clear_results()
+        self.region_names_check.setVisible(self._active_task == "segment")
+        if self._active_task == "segment":
+            self.gradcam_checkbox.setChecked(False)
+        self._update_region_labels()
         crop_info = f" | 중앙 크롭: {center_crop['width']}×{center_crop['height']} px" if center_crop else ""
         self.model_info.setText(info + crop_info)
         self.model_info.setStyleSheet("color: #34C759;")
         self.infer_btn.setEnabled(True)
         self.gradcam_checkbox.setEnabled(gradcam is not None)
         self.gradcam_checkbox.setToolTip(
-            "모델 출력에 대한 민감도 히트맵. 커스텀 분할에서는 체크를 해제하면 클래스 마스크를 표시합니다." if gradcam is not None else
+            "모델 반응을 보는 별도 히트맵입니다. 분할 결과는 기본으로 검출 영역과 클래스명을 표시합니다." if gradcam is not None else
             "이 엔진의 Grad-CAM은 지원하지 않습니다. PatchCore는 자체 이상 맵을 표시합니다.")
         self._update_device_info()
         self._region_changed()
@@ -955,7 +971,7 @@ class InferenceWidget(QWidget, InferenceOperations):
             self._model_inspection_failed(str(exc))
             return
         self._activate_model(path=path, device=device, class_names=names,
-                             input_size=shape, threshold=result.get("anomaly_threshold"), info=info, process=True,
+                             input_size=shape, threshold=result.get("anomaly_threshold"), info=info, process=True, task=task,
                              center_crop=(result.get("center_crop") if patchcore_info is None else
                                           patchcore_info.get("center_crop")),
                              score_normalized=patchcore_info is not None)
@@ -994,6 +1010,8 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.result_review.set_saved_threshold(None)
         self.result_review.set_context(self._batch_images, self.project)
         self._inference_results = {p: inference_result(row) for p, row in cache.entries.items()}
+        if any(result.task == "segment" for result in self._inference_results.values()):
+            self.gradcam_checkbox.setChecked(False)
         self._batch_results = {i: self._inference_results[p] for i, p in enumerate(self._batch_images)}
         for result in self._inference_results.values():
             self.result_review.update_result(result)
@@ -1119,6 +1137,7 @@ class InferenceWidget(QWidget, InferenceOperations):
     def _show_image(self, filepath: str):
         """이미지 표시"""
         self._current_preview_rgb = None
+        self.image_label.set_regions([])
         pixmap = QPixmap(filepath)
         if not pixmap.isNull():
             self.image_label.setPixmap(pixmap)
@@ -1251,6 +1270,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         from dataclasses import replace
         started = time.perf_counter()
         self._stage_timings = {}
+        self._original_preview_rgb = None
         self.gradcam_enabled = self.gradcam_checkbox.isChecked()
         self._current_image = image_path
         self._current_result = None
@@ -1300,6 +1320,8 @@ class InferenceWidget(QWidget, InferenceOperations):
         raw_result = result
         result = effective_result(result, self.result_review.threshold)
         self._current_result = result
+        self.region_names_check.setVisible(result.task == "segment")
+        self._update_region_labels()
         if render_card or self.result_review.threshold is not None:
             self._render_result_card(result)
         self._last_infer_time = result.elapsed_sec
@@ -1385,7 +1407,12 @@ class InferenceWidget(QWidget, InferenceOperations):
             evaluation = details.get("segmentation_evaluation") or {}
             if evaluation:
                 title = "세그멘테이션 클래스별 평가 · 픽셀 분포"
-            lines = evaluation_lines(evaluation) + ["", "예측 픽셀 분포"] + lines
+            found = []
+            if "region_count" in details:
+                found = [f"검출 영역: {details['region_count']}개"]
+                if details.get("region_labels_truncated"):
+                    found.append("모든 영역을 색으로 표시하며, 클래스 이름은 큰 영역 256개까지만 표시합니다.")
+            lines = found + evaluation_lines(evaluation) + ["", "예측 픽셀 분포"] + lines
         elif result.task == "segment" and details.get("num_detections") is not None:
             title = "세그멘테이션 결과"
             lines = [f"분할 객체: {int(details['num_detections'])}개"]
@@ -1415,7 +1442,7 @@ class InferenceWidget(QWidget, InferenceOperations):
                 preview = None
         try:
             self._preview_cache.put(result.image_path, preview, self._heatmap_cache,
-                                    self.gradcam_info.text())
+                                    self.gradcam_info.text(), original=getattr(self, "_original_preview_rgb", None))
         except (OSError, ValueError) as exc:
             self.gradcam_info.setText(f"결과 이미지 캐시 저장 실패: {exc}. 추론 시작으로 다시 저장해 주세요.")
 
@@ -1425,6 +1452,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._current_image = image_path
         self._current_result = None
         self._current_preview_rgb = None
+        self.image_label.set_regions([])
         result = self._inference_results.get(image_path)
         if result is None:
             self._show_image(image_path)
@@ -1441,6 +1469,12 @@ class InferenceWidget(QWidget, InferenceOperations):
             if entry is None:
                 raise OSError("저장된 결과 이미지 없음")
             self.gradcam_info.setText(entry["info"])
+            original = entry.get("original")
+            if original is None and os.path.isfile(image_path):
+                from PIL import Image
+                with Image.open(image_path) as source:
+                    original = np.array(source.convert("RGB"))
+            self._display_original(original)
             if entry["heatmap"] is not None:
                 self._heatmap_cache = entry["heatmap"]
                 self._render_cached_heatmap()
@@ -1508,10 +1542,41 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._schedule_heatmap_render()
 
     def _on_gradcam_toggled(self, checked):
+        self._update_region_labels()
         if self._heatmap_cache is not None:
             self._schedule_heatmap_render()
         elif checked and self._gradcam is not None:
             self.gradcam_info.setText("Grad-CAM을 표시하려면 추론을 실행해 주세요.")
+
+    def _update_region_labels(self, *_):
+        result = getattr(self, "_current_result", None)
+        task = (result.task if result is not None else "") or getattr(self, "_active_task", "")
+        self.gradcam_checkbox.setText("모델 반응 (Grad-CAM)" if task == "segment" else "Grad-CAM")
+        for control in self._heatmap_display_controls:
+            control.setVisible(task != "segment" or self.gradcam_checkbox.isChecked())
+        details = (result.details or {}) if result is not None else {}
+        regions = details.get("segmentation_regions", []) if result is not None and result.task == "segment" else []
+        self.image_label.set_regions(regions, details.get("original_size"))
+        heatmap = getattr(self, "_heatmap_cache", None)
+        visible = self.region_names_check.isChecked() and not (
+            heatmap is not None and heatmap.get("kind") == "Grad-CAM" and self.gradcam_checkbox.isChecked())
+        self.image_label.set_regions_visible(visible)
+        for cell in getattr(self, "_grid_cells", []):
+            cell.thumb_label.set_regions_visible(self.region_names_check.isChecked()
+                                                and not getattr(cell, "_showing_heatmap", False))
+
+    def _display_original(self, original):
+        if original is None:
+            self.original_label.setText("저장된 원본 없음")
+            self.image_label.set_pixel_source(None)
+            return
+        from core.image_display import display_rgb
+        original = display_rgb(original)
+        h, w = original.shape[:2]
+        image = QImage(original.data, w, h, original.strides[0], QImage.Format.Format_RGB888).copy()
+        self.original_label.setPixmap(QPixmap.fromImage(image))
+        self.original_label.set_pixel_source(original)
+        self.image_label.set_pixel_source(original)
 
     def _schedule_heatmap_render(self, *_):
         if self._heatmap_cache is not None:
@@ -1776,6 +1841,7 @@ class InferenceWidget(QWidget, InferenceOperations):
 
             # 썸네일 이미지 로드 및 설정
             pixmap = QPixmap()
+            heatmap_visible = False
             try:
                 entry = self._preview_cache.get(img_path, thumbnail=True)
                 if entry is not None:
@@ -1787,6 +1853,7 @@ class InferenceWidget(QWidget, InferenceOperations):
                             if preview is None:
                                 preview = cached_map["original"]
                         else:
+                            heatmap_visible = True
                             _, preview = render_heatmap(
                                 cached_map["activation"], cached_map["original"],
                                 self.gradcam_alpha_combo.currentData(),
@@ -1808,6 +1875,12 @@ class InferenceWidget(QWidget, InferenceOperations):
             if pixmap.isNull():
                 pixmap = QPixmap(img_path)
             cell.set_image(pixmap)
+            cell._showing_heatmap = heatmap_visible
+            result = self._batch_results.get(i)
+            if result is not None and result.task == "segment":
+                details = result.details or {}
+                cell.thumb_label.set_regions(details.get("segmentation_regions", []), details.get("original_size"))
+                cell.thumb_label.set_regions_visible(self.region_names_check.isChecked() and not heatmap_visible)
 
             # 셀 클릭 → 단일 뷰로 전환 + 상세 표시
             cell.clicked.connect(self._on_grid_cell_clicked)

@@ -189,6 +189,7 @@ class InferenceOperations:
         # 화면과 컬러 히트맵용 변환은 모델 추론 후에만 수행한다.
         from core.image_display import display_rgb
         original_np = display_rgb(original)
+        self._original_preview_rgb = original_np
 
         from core.spatial_preview import draw_detection_boxes, segmentation_preview
         base_preview = original_np
@@ -204,10 +205,20 @@ class InferenceOperations:
             base_preview = draw_detection_boxes(original_np, detections)
         elif task == "segment":
             region = original_np[box[1]:box[3], box[0]:box[2]] if crop else original_np
-            base_preview, counts = segmentation_preview(pred_mask, region, self.model.num_classes)
+            regions = {}
+            base_preview, counts = segmentation_preview(pred_mask, region, self.model.num_classes,
+                                                        class_names=self.class_names or (), details_out=regions)
             if crop:
                 base_preview = paste_crop_preview(original_np, base_preview, crop)
-            prediction.details.update(pixel_counts=counts, class_names=list(self.class_names))
+                for item in regions["segmentation_regions"]:
+                    x1, y1, x2, y2 = item["bbox"]
+                    item["bbox"] = [x1 + box[0], y1 + box[1], x2 + box[0], y2 + box[1]]
+            prediction.details.update(pixel_counts=counts, class_names=list(self.class_names),
+                                      original_size=[original_np.shape[1], original_np.shape[0]], **regions)
+            names = list(self.class_names or [])
+            found = [f"{names[c] if c < len(names) else f'클래스 {c}'} {n}개"
+                     for c, n in regions["region_counts"].items()]
+            prediction = replace(prediction, summary=" · ".join(found) if found else "검출 영역 없음")
             from core.segmentation_evaluation import evaluate_segmentation
             prediction.details["segmentation_evaluation"] = evaluate_segmentation(
                 pred_mask, image_path, original_np.shape, self.class_names,
@@ -316,6 +327,7 @@ class InferenceEngine(InferenceOperations):
             self._onnx_runtime = None
         self._heatmap_cache = None
         self._current_preview_rgb = None
+        self._original_preview_rgb = None
         self.info = ""
         from center_crop import validate_center_crop
         self._saved_center_crop = validate_center_crop(
@@ -393,6 +405,7 @@ class InferenceEngine(InferenceOperations):
         started = time.perf_counter()
         self._stage_timings = {}
         self._heatmap_cache = self._current_preview_rgb = None
+        self._original_preview_rgb = None
         self.info = ""
         try:
             self.prepare()

@@ -34,8 +34,10 @@ class InferenceWorker(QThread):
                 image_started = time.perf_counter()
                 result = self.engine.infer(path)
                 try:
+                    original = getattr(self.engine, "_original_preview_rgb", None)
                     self.cache.put(path, self.engine._current_preview_rgb,
-                                   self.engine._heatmap_cache, self.engine.info)
+                                   self.engine._heatmap_cache, self.engine.info,
+                                   **({"original": original} if original is not None else {}))
                 except Exception as exc:
                     raise OSError(f"결과 이미지 캐시 저장 실패 ({path}): {exc}") from exc
                 finally:

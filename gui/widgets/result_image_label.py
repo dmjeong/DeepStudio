@@ -1,6 +1,6 @@
 """원본 이미지와 추론 결과를 분리하여 표시하는 이미지 라벨."""
 
-from PySide6.QtCore import Qt, QRect, QSize, QPointF, Signal
+from PySide6.QtCore import Qt, QRect, QRectF, QSize, QPointF, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPixmap
 from PySide6.QtWidgets import QLabel, QSizePolicy, QStyle
 
@@ -14,6 +14,9 @@ class ResultImageLabel(QLabel):
         super().__init__(text, parent)
         self._source_pixmap = QPixmap()
         self._result_text = ""
+        self._regions = []
+        self._regions_size = None
+        self._regions_visible = True
         self._zoom = 1.0
         self._pan = QPointF()
         self._drag = None
@@ -48,9 +51,21 @@ class ResultImageLabel(QLabel):
         self.setToolTip(self._result_text)
         self.update()
 
+    def set_regions(self, regions=(), image_size=None):
+        """Class labels stay readable in screen pixels, including Korean names."""
+        self._regions = list(regions)
+        self._regions_size = image_size
+        self.update()
+
+    def set_regions_visible(self, visible):
+        self._regions_visible = bool(visible)
+        self.update()
+
     def _reset_image(self):
         self._source_pixmap = QPixmap()
         self._result_text = ""
+        self._regions = []
+        self._regions_size = None
         self.setToolTip("")
 
     def setText(self, text: str):
@@ -116,7 +131,7 @@ class ResultImageLabel(QLabel):
         max_height = self._content_rect().bottom() - image_rect.top() - 7
         if max_width <= 12 or max_height <= 8:
             return QRect()
-        metrics = QFontMetrics(self._badge_font())
+        metrics = QFontMetrics(self._badge_font(), self)
         text = " ".join(self._result_text.splitlines())
         width = min(max_width, metrics.horizontalAdvance(text) + 12)
         height = min(max_height, metrics.height() + 8)
@@ -130,6 +145,7 @@ class ResultImageLabel(QLabel):
             painter.fillRect(self._content_rect(), QColor("#10161d"))
             painter.drawPixmap(self._image_rect(), self._source_pixmap)
             painter.end()
+        self._paint_regions()
         badge = self._badge_rect()
         if badge.isEmpty():
             return
@@ -148,6 +164,53 @@ class ResultImageLabel(QLabel):
                 text, Qt.TextElideMode.ElideRight, text_rect.width())
             painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                              text)
+        finally:
+            painter.end()
+
+    def _region_label_rects(self):
+        if not self._regions_visible or self._source_pixmap.isNull():
+            return []
+        image = self._image_rect()
+        clip = image.intersected(self._content_rect())
+        if clip.isEmpty():
+            return []
+        width, height = self._regions_size or (self._source_pixmap.width(), self._source_pixmap.height())
+        if width <= 0 or height <= 0:
+            return []
+        metrics = QFontMetrics(self._badge_font(), self)
+        result = []
+        for region in self._regions:
+            x1, y1, x2, y2 = region["bbox"]
+            box = QRectF(image.x() + x1 * image.width() / width, image.y() + y1 * image.height() / height,
+                         (x2 - x1) * image.width() / width, (y2 - y1) * image.height() / height)
+            if not box.intersects(QRectF(clip)):
+                continue
+            text = str(region.get("label", region.get("name", "")))
+            w = min(clip.width(), metrics.horizontalAdvance(text) + 16)
+            h = min(clip.height(), metrics.height() + 4)
+            x = max(clip.left(), min(round(box.left()), clip.right() - w + 1))
+            y = max(clip.top(), min(round(box.top()) - h, clip.bottom() - h + 1))
+            rect = QRect(x, y, w, h)
+            if rect.intersects(self._badge_rect()):
+                rect.moveTop(min(clip.bottom() - h + 1, self._badge_rect().bottom() + 2))
+            result.append((rect, text, region.get("color", "#47D6AE")))
+        return result
+
+    def _paint_regions(self):
+        labels = self._region_label_rects()
+        if not labels:
+            return
+        painter = QPainter(self)
+        try:
+            painter.setClipRect(self._image_rect().intersected(self._content_rect()))
+            painter.setFont(self._badge_font())
+            for rect, text, color in labels:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(10, 12, 16, 220))
+                painter.drawRoundedRect(rect, 2, 2)
+                painter.setPen(QColor(color))
+                text = painter.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, max(0, rect.width() - 8))
+                painter.drawText(rect.adjusted(4, 2, -4, -2), Qt.AlignmentFlag.AlignVCenter, text)
         finally:
             painter.end()
 

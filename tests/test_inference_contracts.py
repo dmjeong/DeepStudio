@@ -50,6 +50,9 @@ class Label:
         self.result_text = text
         self.result_color = color
 
+    def set_regions(self, regions, image_size=None):
+        self.regions = list(regions)
+
     def text(self):
         return self.value
 
@@ -189,6 +192,8 @@ class InferenceContractTests(unittest.TestCase):
         widget._clear_heatmap_preview = lambda: None
         widget._cache_inference_result = lambda _: None
         widget._render_result_card = lambda _: None
+        widget.region_names_check = Mock()
+        widget._update_region_labels = Mock()
         widget._grid_cells = []
         widget.model, widget._patchcore_model = object(), None
         errors = []

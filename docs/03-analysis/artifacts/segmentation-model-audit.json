@@ -1,0 +1,34 @@
+{
+  "unet_1ch": {
+    "training_epochs": 2,
+    "pretrained": true,
+    "checkpoint": "best.pt",
+    "reload": "passed",
+    "inference": "ok",
+    "evaluation": "ok",
+    "mIoU": 0.9548472982578657,
+    "qt_display": "passed"
+  },
+  "unet_3ch": {
+    "training_epochs": 2,
+    "pretrained": true,
+    "checkpoint": "best.pt",
+    "reload": "passed",
+    "inference": "ok",
+    "evaluation": "ok",
+    "mIoU": 0.060302734375,
+    "qt_display": "passed"
+  },
+  "sam2_loader": {
+    "status": "reproduced_failure",
+    "error": "SAM2 multi-graph checkpoint uses export_sam2_checkpoint",
+    "scope": "current generic checkpoint resolver rejects before loading weights"
+  },
+  "conditions": {
+    "platform": "macOS ARM64 CPU",
+    "purpose": "functional pipeline smoke, not an accuracy experiment",
+    "data": "6 synthetic train + 2 synthetic val images, 64x64",
+    "pretrained_weights": "official resnet18-f37072fd.pth; SHA256-verified by builtin asset preparer",
+    "training_epochs": 2
+  }
+}

@@ -10,7 +10,7 @@
     "dataset-first-class-visibility",
     "pretrained-manifest-recovery"
   ],
-  "primaryFeature": "segmentation-inference-metrics",
+  "primaryFeature": "segmentation-result-display",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -334,6 +334,37 @@
         "full": "1233 passed, 12 skipped, exit 0",
         "windows": "not run"
       }
+    },
+    "segmentation-result-display": {
+      "phase": "completed",
+      "status": "completed",
+      "documents": {
+        "plan": "docs/01-plan/features/segmentation-result-display.plan.md",
+        "design": "docs/02-design/features/segmentation-result-display.design.md",
+        "analysis": "docs/03-analysis/segmentation-result-display.analysis.md",
+        "report": "docs/04-report/segmentation-result-display.report.md"
+      },
+      "version": "9.56",
+      "validation": {
+        "targeted": "110 passed",
+        "full": "1244 passed, 12 skipped, exit 0",
+        "ui": "actual Qt screenshot on synthetic image",
+        "windows": "not run"
+      }
+    },
+    "segmentation-model-readiness-audit": {
+      "phase": "analysis",
+      "status": "in_progress",
+      "findings": [
+        "SAM2 generic inference loader rejects the checkpoint",
+        "SAM2 prompt binary mask contract differs from automatic semantic classes",
+        "U-Net 1ch/3ch pretrained train-save-reload-infer-Qt smoke passed on synthetic data"
+      ],
+      "open": [
+        "SAM2 prompt/semantic inference integration",
+        "User Windows failure model, stage and error message requested"
+      ],
+      "artifact": "docs/03-analysis/artifacts/segmentation-model-audit.json"
     }
   },
   "pipeline": {

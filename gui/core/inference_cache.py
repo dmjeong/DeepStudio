@@ -30,12 +30,14 @@ class InferencePreviewCache:
         image.thumbnail((limit, limit), resampling)
         return np.asarray(image).copy()
 
-    def put(self, image_path, preview, heatmap=None, info=""):
+    def put(self, image_path, preview, heatmap=None, info="", *, original=None):
         """소유권을 가진 배열 복사본을 저장한다. 실패를 호출자에게 전달한다."""
         if self._directory is None:
             self._directory = TemporaryDirectory(prefix="deep-studio-inference-")
         key = sha256(os.fsencode(image_path)).hexdigest()
         arrays = {}
+        if original is not None:
+            arrays["original"] = np.asarray(original, dtype=np.uint8)
         if preview is not None:
             arrays["preview"] = np.asarray(preview, dtype=np.uint8)
         metadata = {"image_path": image_path, "info": info, "kind": "", "heatmap_info": ""}
@@ -78,4 +80,5 @@ class InferencePreviewCache:
                        "info": entry["heatmap_info"], "original": arrays["original"],
                        "activation": arrays["activation"], "base_image": arrays.get("base_image"),
                        "valid_mask": arrays.get("valid_mask"), "detections": deepcopy(entry.get("detections"))}
-        return {"preview": arrays.get("preview"), "heatmap": heatmap, "info": entry["info"]}
+        return {"preview": arrays.get("preview"), "original": arrays.get("original"),
+                "heatmap": heatmap, "info": entry["info"]}
