@@ -217,12 +217,12 @@ def test_segmentation_dataset_page_shows_regions_not_image_classes(page):
     options = [widget.tab_filters["train"].itemText(i) for i in range(widget.tab_filters["train"].count())]
     assert options == ["전체", "scratch", "dent", FILTER_UNLABELED, "배경만 있는 이미지"]
     badges = {Path(t.image_path).stem: t.class_label for t in widget._thumbs["train"]}
-    assert badges == {"a": "scratch 3 · dent 1", "b": "배경만", "c": "미라벨"}
+    assert badges == {"a": "scratch 3 · dent 1", "b": "배경만", "c": "자동 배경"}
     for text, expected in (("scratch", {"a"}), ("배경만 있는 이미지", {"b"}), (FILTER_UNLABELED, {"c"})):
         widget.tab_filters["train"].setCurrentText(text)
         assert {Path(t.image_path).stem for t in widget._thumbs["train"]} == expected, text
     table = [[widget.stats_table.item(r, c).text() for c in range(2)] for r in range(widget.stats_table.rowCount())]
-    assert table == [["scratch", "3개 · 1장"], ["dent", "1개 · 1장"], ["배경만", "1장"], ["미라벨", "1장"]]
+    assert table == [["scratch", "3개 · 1장"], ["dent", "1개 · 1장"], ["배경만", "1장"], ["자동 배경 (미라벨)", "1장"]]
     assert "영역 4개" in widget.summary_label.text()
 
 

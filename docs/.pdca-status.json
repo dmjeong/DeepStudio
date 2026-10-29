@@ -1,13 +1,14 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-10-22T02:06:03.049248+00:00",
+  "lastUpdated": "2026-10-29T02:59:41.630187+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
     "model-packs-windows-distribution",
-    "annotation-workspace"
+    "annotation-workspace",
+    "segmentation-background-contract"
   ],
-  "primaryFeature": "annotation-workspace",
+  "primaryFeature": "segmentation-background-contract",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -248,6 +249,29 @@
           "same-operator annotation time/quality comparison"
         ]
       }
+    },
+    "segmentation-background-contract": {
+      "phase": "completed",
+      "documents": {
+        "plan": "docs/01-plan/features/segmentation-background-contract.plan.md",
+        "design": "docs/02-design/features/segmentation-background-contract.design.md",
+        "analysis": "docs/03-analysis/segmentation-background-contract.analysis.md",
+        "report": "docs/04-report/features/segmentation-background-contract.report.md"
+      },
+      "branchBase": "2bfa569",
+      "validation": {
+        "targeted": "277 passed, 2 skipped",
+        "runtime": "U-Net, DeepLab, official SAM2 Tiny train/export passed",
+        "windows_cuda": "not run",
+        "full_suite": "1187 passed / 12 skipped / 1 release-document failure corrected; both version-policy tests passed on rerun",
+        "additional_regressions": "28 passed including post-review class-scoped erase restoration",
+        "lint": "passed",
+        "release": "9.43"
+      },
+      "timestamps": {
+        "lastUpdated": "2026-10-29T02:59:41.630187+00:00"
+      },
+      "completedAt": "2026-10-29T03:05:18.327189+00:00"
     }
   },
   "pipeline": {

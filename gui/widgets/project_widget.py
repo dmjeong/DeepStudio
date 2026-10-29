@@ -309,8 +309,8 @@ class ProjectWidget(QWidget):
                 "예: OK, NG_scratch, NG_dent"
             ),
             "segment": (
-                "세그멘테이션 클래스 이름을 쉼표(,)로 구분하여 입력하세요.\n"
-                "예: background, defect, crack"
+                "이미지 안에 표시할 클래스 이름을 입력하세요. 배경(0)은 자동 등록됩니다.\n"
+                "예: defect, crack · 라벨 없는 이미지는 배경으로 학습합니다."
             ),
             "detect": (
                 "탐지할 객체 클래스 이름을 쉼표(,)로 구분하여 입력하세요.\n"
@@ -390,6 +390,7 @@ class ProjectWidget(QWidget):
                 project_dir=project_dir,
                 class_names=class_names,
             )
+            class_names = list(project.data.class_names)
 
             # 입력 채널 설정
             in_ch = 3 if self.channel_combo.currentIndex() == 0 else 1

@@ -358,6 +358,11 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                          "color_jitter": color_jitter},
         **loss_details,
     }
+    if spec.task == "segment":
+        training_config["unlabeled_policy"] = "background"
+        training_config["automatic_background_images"] = {
+            split: len(getattr(getattr(loader, "dataset", None), "unlabeled", []))
+            for split, loader in (("train", train_loader), ("val", val_loader))}
     start_epoch = 0
     history: list[dict] = []
     best_metric = float("inf") if policy.direction == "min" else float("-inf")

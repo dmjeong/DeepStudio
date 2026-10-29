@@ -25,6 +25,23 @@ from datetime import datetime
 from typing import List, Dict, Any
 
 
+SEGMENTATION_BACKGROUND_NAMES = frozenset({"background", "bg", "배경", "good", "normal", "정상"})
+
+
+def segmentation_class_names(names):
+    """Reserve pixel zero for background when creating a NEW class vocabulary.
+
+    Never call this on an existing populated project's vocabulary: that would
+    silently change the meaning of every stored foreground pixel.
+    """
+    names = list(names)
+    if not names or names[0].casefold() not in SEGMENTATION_BACKGROUND_NAMES:
+        names.insert(0, "background")
+    if len(names) > 255:
+        raise ValueError("분할 클래스는 배경 포함 255개까지입니다. 255는 학습 제외 픽셀입니다.")
+    return names
+
+
 # ── 지원 태스크 ────────────────────────────────────
 SUPPORTED_TASKS = {
     "classify": {
@@ -331,7 +348,8 @@ class ProjectManager:
         info = SUPPORTED_TASKS[task]
         if class_names is None:
             class_names = []
-        class_names = list(class_names)
+        class_names = (segmentation_class_names(class_names) if task == "segment"
+                       else list(class_names))
         for cls_name in class_names:
             ProjectManager.validate_name(cls_name, "클래스")
         if len({c.casefold() for c in class_names}) != len(class_names):

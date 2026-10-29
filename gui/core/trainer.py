@@ -334,6 +334,8 @@ class TrainWorker(TrainingEngine):
                 "best_metric": best_metric, "best_epoch": best_epoch,
                 "best_metric_name": primary_metric_name, "trained_device": str(device),
             })
+            if self.project.task == "segment":
+                checkpoint["unlabeled_policy"] = "background"
             if getattr(self, "_class_weight_details", None) is not None:
                 checkpoint["class_weight_details"] = self._class_weight_details
             record_epoch_time(self._training_clock, metrics_history,

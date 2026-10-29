@@ -105,7 +105,7 @@ def test_finetune_checkpoint_rejects_a_different_hiera_variant(tmp_path, monkeyp
         load_sam2_checkpoint("sam2_hiera_tiny", checkpoint_path=checkpoint)
 
 
-def test_sam2_training_preflight_requires_foreground_in_each_split(tmp_path):
+def test_sam2_training_preflight_accepts_background_and_foreground(tmp_path):
     import numpy as np
     from PIL import Image
     from sam2_trainer import _validate_prompt_masks
@@ -121,12 +121,92 @@ def test_sam2_training_preflight_requires_foreground_in_each_split(tmp_path):
     class Loader:
         dataset = Dataset()
 
-    with pytest.raises(ValueError, match="클래스 ID 0은 배경"):
-        _validate_prompt_masks(Loader(), "train", ["background", "part"])
+    report = _validate_prompt_masks(Loader(), "train", ["background", "part"])
+    assert report['background_images'] == 1 and report['annotated_images'] == 0
 
     pixels = np.zeros((6, 8), dtype=np.uint8)
     pixels[2:4, 3:5] = 1
     Image.fromarray(pixels).save(mask)
     assert _validate_prompt_masks(Loader(), "train", ["background", "part"]) == {
         "images": 1, "annotated_images": 1, "foreground_class_ids": [1],
+        "background_images": 0, "automatic_background_images": 0, "excluded_images": 0,
     }
+
+
+def test_finetune_rejects_incomplete_decoder_weights(tmp_path, monkeypatch):
+    import sam2_assets
+    import torch
+
+    checkpoint = tmp_path / "partial.pt"
+    torch.save(
+        {
+            "type": "sam2_finetune",
+            "model_id": "sam2_hiera_tiny",
+            "model_state_dict": {"sam_mask_decoder.some_weight": torch.ones(1)},
+        },
+        checkpoint,
+    )
+
+    class Model:
+        def load_state_dict(self, *args, **kwargs):
+            return ["sam_mask_decoder.mask_tokens.weight"], []
+
+    monkeypatch.setattr(sam2_assets, "load_sam2_pretrained", lambda *a, **k: Model())
+    with pytest.raises(ValueError, match="모델 구조"):
+        sam2_assets.load_sam2_checkpoint("sam2_hiera_tiny", checkpoint_path=checkpoint)
+
+
+def test_finetune_reuses_the_exact_selected_local_encoder_when_bundle_is_absent(
+    tmp_path, monkeypatch
+):
+    import hashlib
+    from types import SimpleNamespace
+
+    import builtin_assets
+    import sam2_assets
+    import torch
+
+    base = tmp_path / "official_tiny.pt"
+    base.write_bytes(b"the exact encoder selected for training")
+    digest = hashlib.sha256(base.read_bytes()).hexdigest()
+    fine = tmp_path / "fine.pt"
+    torch.save(
+        {
+            "type": "sam2_finetune",
+            "model_id": "sam2_hiera_tiny",
+            "model_state_dict": {"sam_mask_decoder.weight": torch.ones(1)},
+            "base_checkpoint": {
+                "model_id": "sam2_hiera_tiny",
+                "path": str(base),
+                "sha256": digest,
+            },
+        },
+        fine,
+    )
+
+    def missing(_):
+        raise FileNotFoundError("no installed assets in this development checkout")
+
+    monkeypatch.setattr(builtin_assets, "builtin_asset_path", missing)
+    calls = []
+
+    class Model:
+        def __init__(self):
+            self.sam_mask_decoder = SimpleNamespace(dynamic_multimask_via_stability=True)
+
+        def load_state_dict(self, state, strict=False):
+            return [], []
+
+    def selected(model_id, **kwargs):
+        calls.append(kwargs)
+        return Model()
+
+    monkeypatch.setattr(sam2_assets, "load_sam2_pretrained", selected)
+    model = sam2_assets.load_sam2_checkpoint("sam2_hiera_tiny", checkpoint_path=fine)
+    assert calls == [{"device": "cpu", "checkpoint_path": base.resolve()}]
+    assert model.dvs_multimask_output is False
+    assert model.sam_mask_decoder.dynamic_multimask_via_stability is False
+    base.write_bytes(b"a different encoder at the same path")
+    with pytest.raises(ValueError, match="SHA256"):
+        sam2_assets.load_sam2_checkpoint("sam2_hiera_tiny", checkpoint_path=fine)
+    assert len(calls) == 1

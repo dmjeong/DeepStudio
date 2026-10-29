@@ -159,3 +159,7 @@ worker와 encoder/decoder ONNX export에 연결되어 있고, video memory-state
 최소사양은 UI/CPU 추론, GPU 학습, Docker 확장으로 구분하며 모델별 실측 후 확정합니다.
 현재 초안은 RAM16GB/CPU 실행, RAM32GB·VRAM12GB/GPU 학습을 검증 기준으로 제시하며,
 모든 모델·해상도의 실행 보장을 뜻하지 않습니다.
+
+### 세그멘테이션 첫 클래스 / 자동 배경
+
+배경은 자동 예약되며 라벨 없는 이미지는 배경으로 학습합니다. 기존 프로젝트의 첫 클래스 복구 방법과 마스크 규칙은 [사용 안내](docs/SEGMENTATION_BACKGROUND.ko.md)를 참고하세요.

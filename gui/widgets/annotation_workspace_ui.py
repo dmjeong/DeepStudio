@@ -84,6 +84,9 @@ class AnnotationWorkspaceUI:
         for i in range(len(self.names)):
             self.class_combo.setItemData(i, i)
         if self.task == "segment":
+            if self.names:
+                self.class_combo.setItemText(0, self.names[0] + " · 배경(자동)")
+                self.class_combo.model().item(0).setEnabled(False)
             self.class_combo.addItem("학습 제외 영역 (255)", 255)
         if self.task == "segment" and len(self.names) > 1:
             self.class_combo.setCurrentIndex(1)

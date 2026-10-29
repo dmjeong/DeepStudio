@@ -9,6 +9,7 @@ and ONNX export.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -76,9 +77,57 @@ def load_sam2_pretrained(model_id: str, *, device: str = "cpu", checkpoint_path:
     except ImportError as exc:
         raise RuntimeError("SAM2 공식 런타임이 없습니다. build.bat으로 설치본을 다시 빌드하세요.") from exc
     try:
-        return build_sam2(asset.config_name, ckpt_path=str(path), device=device, mode="eval")
+        model = build_sam2(asset.config_name, ckpt_path=str(path), device=device, mode="eval")
     except Exception as exc:
         raise RuntimeError(f"SAM2.1 {asset.variant} 로드 실패: {exc}") from exc
+
+    if hasattr(model, 'state_dict'):
+        model.dvs_base_checkpoint = {'model_id': model_id, 'path': str(path.resolve()),
+                                     'sha256': _file_sha256(path)}
+    return model
+
+
+def _file_sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _delta_base(model_id, payload, checkpoint_path, device):
+    provenance = payload.get("base_checkpoint")
+    if provenance is None:
+        return load_sam2_pretrained(model_id, device=device)
+    if not isinstance(provenance, dict):
+        raise ValueError("SAM2 기반 가중치 provenance 형식 오류")  # noqa: TRY004 - invalid checkpoint metadata
+    digest = provenance.get("sha256")
+    if (
+        provenance.get("model_id") != model_id
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(c not in "0123456789abcdef" for c in digest)
+    ):
+        raise ValueError("SAM2 기반 가중치 model_id 또는 SHA256 오류")
+    candidates = []
+    from builtin_assets import builtin_asset_path
+
+    try:
+        candidates.append(builtin_asset_path(model_id))
+    except (FileNotFoundError, RuntimeError):
+        # A selected local source remains valid without a separate bundled copy.
+        candidates = []
+    hint = provenance.get("path")
+    if isinstance(hint, str) and hint:
+        candidates.append((checkpoint_path.parent / hint).resolve())
+    for candidate in candidates:
+        if candidate.is_file() and _file_sha256(candidate) == digest:
+            return load_sam2_pretrained(
+                model_id, device=device, checkpoint_path=candidate
+            )
+    raise ValueError(
+        "SAM2 학습 당시와 SHA256이 같은 기반 가중치를 찾을 수 없습니다. 원본 파일 또는 기본 가중치 설치를 확인하세요."
+    )
 
 
 def _fine_tune_payload(path: Path):
@@ -120,11 +169,14 @@ def load_sam2_checkpoint(model_id: str, *, device: str = "cpu",
     state = payload.get("model_state_dict")
     if not isinstance(state, dict) or not state:
         raise ValueError("SAM2 미세조정 체크포인트에 model_state_dict가 없습니다.")
-    model = load_sam2_pretrained(model_id, device=device)
+    model = _delta_base(model_id, payload, path, device)
     try:
         _missing, unexpected = model.load_state_dict(state, strict=False)
     except (RuntimeError, TypeError) as exc:
         raise ValueError("SAM2 미세조정 체크포인트의 모델 구조가 맞지 않습니다.") from exc
-    if unexpected:
+    if unexpected or any(name.startswith(("sam_prompt_encoder.", "sam_mask_decoder.")) for name in _missing):
         raise ValueError("SAM2 미세조정 체크포인트의 모델 구조가 선택한 Hiera 변형과 다릅니다.")
+    model.dvs_multimask_output = False
+    if hasattr(model, 'sam_mask_decoder'):
+        model.sam_mask_decoder.dynamic_multimask_via_stability = False
     return model

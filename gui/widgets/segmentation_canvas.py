@@ -456,6 +456,9 @@ class SegmentationCanvas(DetectionCanvas):
                 self.viewport().update()
                 event.accept()
                 return
+            if self.class_id == 0 and self.mode in {"polygon", "brush", "rectangle", "fill", "ai_point", "ai_box"}:
+                self.status_changed.emit("배경은 자동 처리됩니다. '클래스 추가'로 검사할 클래스를 등록한 뒤 선택하세요.")
+                return
             if self.mode in {"polygon", "rectangle"}:
                 point = self._snap(point)
             self.start = point

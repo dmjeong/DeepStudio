@@ -86,7 +86,7 @@ def region_summary(row, task):
     if regions:
         return " · ".join(f"{name} {count}" for name, count in regions.items())
     if not row.get("annotated"):
-        return "미라벨"
+        return "자동 배경" if task == "segment" else "미라벨"
     return "배경만" if task == "segment" else "객체 없음"
 
 
@@ -324,7 +324,7 @@ class ImageThumbnail(QFrame):
         if label:
             badge = QLabel()
             badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            muted = label in ("미라벨", "배경만", "객체 없음")
+            muted = label in ("미라벨", "자동 배경", "배경만", "객체 없음")
             color = "#E05555" if label == "정답 오류" else "#8A92A4" if muted else "#5590F0"
             badge.setStyleSheet(
                 f"color: {color}; font-size: 10px; font-weight: bold;"
@@ -525,6 +525,14 @@ class DatasetWidget(QWidget):
         self.add_class_btn.clicked.connect(self._add_class)
         add_layout.addWidget(self.add_class_btn)
 
+        self.repair_class_btn = QPushButton("첫 클래스 복구")
+        self.repair_class_btn.setToolTip(
+            "0번에 등록된 첫 클래스를 전경으로 복구합니다. 기존 1번 이상 클래스 번호는 유지합니다. "
+            "편집 이력이 있는 영역은 복구하고, 이력이 없는 배경 픽셀은 그대로 둡니다. 원본은 백업됩니다.")
+        self.repair_class_btn.clicked.connect(self._repair_first_class)
+        self.repair_class_btn.hide()
+        add_layout.addWidget(self.repair_class_btn)
+
         # 클래스 삭제 버튼
         self.del_class_btn = QPushButton("클래스 삭제")
         self.del_class_btn.setStyleSheet("""
@@ -587,10 +595,14 @@ class DatasetWidget(QWidget):
         self.stats_table.setHorizontalHeaderLabels(
             ["클래스", "Train", "Val", "Test"]
         )
-        # 클래스 이름 열만 남는 폭을 흡수하고, 숫자 열은 내용 폭에 맞춘다
-        # (전 열 Stretch 는 클래스명을 "NG_d..." 로 잘라먹는다)
+        # Keep class names readable even when count columns need horizontal scroll.
+        # Stretch squeezed the first class into a few pixels on smaller windows.
         header = self.stats_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.stats_table.setColumnWidth(0, 150)
+        self.stats_table.verticalHeader().hide()
+        self.stats_table.verticalHeader().setDefaultSectionSize(26)
+        self.stats_table.setMinimumHeight(150)
         for col in range(1, 4):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         stats_inner.addWidget(self.stats_table)
@@ -608,10 +620,12 @@ class DatasetWidget(QWidget):
         self.size_table.setHorizontalHeaderLabels(["클래스", "영역", "면적 중앙값", "최소", "학습 1px↓"])
         self.size_table.verticalHeader().hide()
         size_header = self.size_table.horizontalHeader()
-        size_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        size_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.size_table.setColumnWidth(0, 110)
+        self.size_table.verticalHeader().setDefaultSectionSize(26)
         for col in range(1, 5):
             size_header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        self.size_table.setMaximumHeight(150)
+        self.size_table.setFixedHeight(110)
         self.size_table.hide()
         stats_inner.addWidget(self.size_table)
         self.size_warning = QLabel()
@@ -630,7 +644,12 @@ class DatasetWidget(QWidget):
         open_folder_btn.clicked.connect(self._open_data_folder)
         stats_inner.addWidget(open_folder_btn)
 
-        stats_layout.addWidget(stats_group)
+        # Statistics stay usable at short window heights instead of overlapping.
+        self.stats_scroll = QScrollArea()
+        self.stats_scroll.setWidgetResizable(True)
+        self.stats_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.stats_scroll.setWidget(stats_group)
+        stats_layout.addWidget(self.stats_scroll)
         splitter.addWidget(stats_widget)
 
         # 오른쪽: 이미지 브라우저 (탭)
@@ -723,7 +742,7 @@ class DatasetWidget(QWidget):
         browser_layout.addWidget(self.selection_label)
         splitter.addWidget(browser_widget)
 
-        splitter.setSizes([350, 650])
+        splitter.setSizes([440, 600])
         layout.addWidget(splitter, stretch=1)
 
     @staticmethod
@@ -742,6 +761,8 @@ class DatasetWidget(QWidget):
             self._class_filter = "전체"
         self._filter_project_key = project_key
         self.project = project
+        from core.segmentation_classes import needs_first_class_repair
+        self.repair_class_btn.setVisible(needs_first_class_repair(project))
         self.annotation_row.setVisible(project.task in OBJECT_TASKS)
         available = self._filter_options(project)
         if self._class_filter != "전체" and self._class_filter not in available:
@@ -751,6 +772,8 @@ class DatasetWidget(QWidget):
             f"Task: {task_info.get('name', '')} — "
             f"{task_info.get('description', '')}\n"
             f"Data: {project.data.root}"
+            + ("\n배경(0)은 자동 등록 · 라벨 없는 이미지는 배경으로 학습 · 결함 영역에만 클래스를 지정하세요."
+               if project.task == "segment" else "")
         )
 
         # 콤보/탭을 프로그램이 갱신하는 동안 동기화 시그널 차단
@@ -968,6 +991,19 @@ class DatasetWidget(QWidget):
             lambda: ClassManager.add(self.project, name),
             lambda _: self._classes_updated(f"클래스 '{name}' 추가 및 저장 완료"),
             "클래스 추가 중...",
+        )
+
+    def _repair_first_class(self):
+        if not self._ensure_idle():
+            return
+        from core.segmentation_classes import repair_first_class
+        self.about_to_change.emit()
+        self._start_class_operation(
+            lambda: repair_first_class(self.project),
+            lambda result: self._classes_updated(
+                f"첫 클래스 '{result['class_name']}'를 {result['class_id']}번 전경으로 복구했습니다. "
+                f"영역 복구 {result['restored_regions']}개 · 원본 백업: {result['backup']}"),
+            "첫 클래스와 정답 복구 중...",
         )
 
     def _delete_class(self):
@@ -1228,7 +1264,7 @@ class DatasetWidget(QWidget):
             rows.append((name, cells))
         rows.append(("배경만" if task == "segment" else "객체 없음",
                      [f"{by_split.get(s, {}).get('empty', 0)}장" for s in SPLITS]))
-        rows.append(("미라벨", [f"{by_split.get(s, {}).get('unlabeled', 0)}장" for s in SPLITS]))
+        rows.append(("자동 배경 (미라벨)" if task == "segment" else "미라벨", [f"{by_split.get(s, {}).get('unlabeled', 0)}장" for s in SPLITS]))
         self.stats_table.setRowCount(len(rows))
         for row, (name, cells) in enumerate(rows):
             self.stats_table.setItem(row, 0, QTableWidgetItem(name))
@@ -1240,6 +1276,7 @@ class DatasetWidget(QWidget):
         self.stats_hint.setText(
             f"클래스는 이미지 전체가 아니라 이미지 안의 영역마다 붙습니다. "
             f"'12개 · 5장' = 영역 12개가 이미지 5장에 있음. 영역 = {unit}.")
+        self.stats_hint.setMinimumHeight(46)
         self.stats_hint.show()
 
     def _update_stats_table(self, stats: dict):

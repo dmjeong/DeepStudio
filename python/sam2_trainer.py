@@ -27,17 +27,22 @@ from sam2_assets import load_sam2_checkpoint
 def _prompt_targets(masks: torch.Tensor, *, class_offset: int = 0) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Return binary masks, SAM pixel coordinates, and valid-batch indices.
 
-    Pixels ``0`` and ``255`` are background and ignore respectively.  An image
+    Pixels ``0`` and ``255`` are background and ignore respectively.
+    Background-only images receive an empty target and a negative point.
+    Ignore pixels remain 255 in the binary target, never negative supervision.  An image
     can contain several semantic classes; the deterministic offset rotates the
     selected class each epoch while preserving SAM2's one-object contract.
     """
     targets, points, valid = [], [], []
     for index, mask in enumerate(masks):
         classes = torch.unique(mask[(mask > 0) & (mask != 255)])
-        if not len(classes):
-            continue
-        target = mask == classes[(class_offset + index) % len(classes)]
-        coordinates = torch.nonzero(target, as_tuple=False)
+        valid_pixels = mask != 255
+        if not valid_pixels.any():
+            continue  # Ignore-only samples have no supervised pixels.
+        foreground = (mask == classes[(class_offset + index) % len(classes)]
+                      if len(classes) else torch.zeros_like(mask, dtype=torch.bool))
+        target = foreground.to(torch.long).masked_fill(~valid_pixels, 255)
+        coordinates = torch.nonzero(foreground if len(classes) else valid_pixels, as_tuple=False)
         # ``coordinates`` is y,x.  The middle foreground pixel is guaranteed
         # positive and avoids a centroid falling into a hollow object.
         y, x = coordinates[len(coordinates) // 2]
@@ -45,19 +50,20 @@ def _prompt_targets(masks: torch.Tensor, *, class_offset: int = 0) -> tuple[torc
         points.append(torch.stack((x, y)).to(dtype=torch.float32))
         valid.append(index)
     if not valid:
-        empty = masks.new_empty((0, *masks.shape[-2:]), dtype=torch.bool)
+        empty = masks.new_empty((0, *masks.shape[-2:]), dtype=torch.long)
         return empty, masks.new_empty((0, 1, 2), dtype=torch.float32), masks.new_empty((0,), dtype=torch.long)
     return (torch.stack(targets), torch.stack(points).unsqueeze(1),
             torch.tensor(valid, dtype=torch.long, device=masks.device))
 
 
-def _sam2_logits(model, images: torch.Tensor, point_coords: torch.Tensor) -> torch.Tensor:
+def _sam2_logits(model, images: torch.Tensor, point_coords: torch.Tensor, point_labels=None) -> torch.Tensor:
     """Run the official image path used by the paired ONNX exporter."""
     features = model.forward_image(images)["backbone_fpn"]
     image_embeddings = features[2]
     if model.directly_add_no_mem_embed:
         image_embeddings = image_embeddings + model.no_mem_embed.reshape(1, -1, 1, 1)
-    point_labels = torch.ones(point_coords.shape[:2], device=images.device, dtype=torch.int32)
+    if point_labels is None:
+        point_labels = torch.ones(point_coords.shape[:2], device=images.device, dtype=torch.int32)
     sparse, dense = model.sam_prompt_encoder(
         points=(point_coords, point_labels), boxes=None, masks=None)
     logits, _, _, _ = model.sam_mask_decoder(
@@ -100,43 +106,33 @@ def _loss_and_scores(logits: torch.Tensor, targets: torch.Tensor) -> tuple[torch
 
 def _validate_prompt_masks(loader, split: str, class_names: list[str] | None = None) -> dict:
     """Reject empty/misindexed SAM masks before loading the multi-GB model."""
-    from PIL import Image
     import numpy as np
+    from spatial_data import load_semantic_mask
 
     pairs = getattr(getattr(loader, "dataset", None), "pairs", None)
     if not pairs:
-        raise ValueError(f"SAM2 {split} 데이터에 이미지-마스크 쌍이 없습니다. images/{split}과 masks/{split}을 확인하세요.")
+        raise ValueError(f"SAM2 {split} 데이터에 이미지가 없습니다.")
     seen_foreground = set()
-    annotated = 0
+    annotated = background = excluded = automatic = 0
     for image_path, mask_path in pairs:
-        with Image.open(image_path) as source_image:
-            image_size = source_image.size
-        with Image.open(mask_path) as source:
-            if source.mode not in ("P", "L", "I", "I;16", "I;16L", "I;16B"):
-                raise ValueError(f"SAM2 마스크는 단일 채널 클래스 인덱스 PNG여야 합니다: {mask_path}")
-            if source.size != image_size:
-                raise ValueError(f"이미지와 마스크 크기가 다릅니다: {image_path} / {mask_path}")
-            values = np.asarray(source)
-        if values.ndim != 2:
-            raise ValueError(f"SAM2 마스크는 단일 채널이어야 합니다: {mask_path}")
-        valid_values = values[values != 255]
-        if class_names and valid_values.size and int(valid_values.max()) >= len(class_names):
-            raise ValueError(
-                f"SAM2 마스크 클래스 번호가 클래스 목록과 맞지 않습니다: {mask_path}. "
-                f"현재 클래스 수={len(class_names)}, 허용 번호=0~{len(class_names) - 1} 및 255"
-            )
-        foreground = np.unique(values[(values > 0) & (values != 255)])
+        values, _ = load_semantic_mask(image_path, mask_path,
+                                       len(class_names) if class_names else None)
+        valid = values[values != 255]
+        automatic += mask_path is None
+        if not valid.size:
+            excluded += 1
+            continue
+        foreground = np.unique(valid[valid > 0])
         if foreground.size:
             annotated += 1
             seen_foreground.update(int(value) for value in foreground)
-    if not seen_foreground:
-        raise ValueError(
-            f"SAM2 {split} 마스크에 학습할 전경 영역이 없습니다. 현재 규칙에서 클래스 ID 0은 배경, "
-            "1 이상은 전경, 255는 학습 제외 픽셀입니다. 데이터 티칭에서 배경이 아닌 클래스를 선택해 "
-            f"폴리곤/브러시로 표시하고 저장하세요. (검사한 마스크 {len(pairs)}개)"
-        )
+        else:
+            background += 1
+    if annotated + background == 0:
+        raise ValueError(f"SAM2 {split} 마스크에 학습·평가할 픽셀이 없습니다. 모두 학습 제외(255)입니다.")
     return {"images": len(pairs), "annotated_images": annotated,
-            "foreground_class_ids": sorted(seen_foreground)}
+            "background_images": background, "automatic_background_images": automatic,
+            "excluded_images": excluded, "foreground_class_ids": sorted(seen_foreground)}
 
 
 def _checkpoint_payload(model, optimizer, *, model_id: str, epoch: int, best_dice: float,
@@ -147,13 +143,15 @@ def _checkpoint_payload(model, optimizer, *, model_id: str, epoch: int, best_dic
         "backend": "sam2",
         "task": "segment",
         "model_id": model_id,
-        "training_contract": "semantic-mask-to-positive-point-object-mask-v1",
+        "training_contract": "semantic-mask-positive-negative-point-v2",
+        "unlabeled_policy": "background",
         "frozen_modules": ["image_encoder"],
         "epoch": epoch,
         "best_metric": best_dice,
         "metric_name": "prompt_dice",
         "metrics_history": history,
         "source_checkpoint": source_checkpoint or "bundled_official_sam2.1",
+        "base_checkpoint": getattr(model, "dvs_base_checkpoint", None),
         # Keep only the modules this worker changes.  The immutable Hiera image
         # encoder remains the verified bundled asset, so a fine-tune result does
         # not duplicate hundreds of MB of pretrained parameters.
@@ -199,7 +197,8 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
     output.mkdir(parents=True, exist_ok=True)
     train_loader, val_loader = create_segmentation_loaders(
         str(data_root), input_size=(1024, 1024), batch_size=batch_size, in_channels=3,
-        flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
+        flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter,
+        num_classes=len(class_names) if class_names else None, pin_memory=torch_device.type == "cuda")
     train_data = _validate_prompt_masks(train_loader, "train", class_names)
     val_data = _validate_prompt_masks(val_loader, "val", class_names)
     from dataset import unlabeled_message
@@ -209,6 +208,9 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
     # Check the data contract before allocating/downloading SAM2 weights. This
     # makes the common missing-mask/background-only error immediate and clear.
     model = load_sam2_checkpoint(model_id, checkpoint_path=initial_checkpoint, device=str(torch_device))
+    # Train, validation and export must all use the trained single-mask token.
+    model.dvs_multimask_output = False
+    model.sam_mask_decoder.dynamic_multimask_via_stability = False
     for parameter in model.parameters():
         parameter.requires_grad_(False)
     for module in (model.sam_prompt_encoder, model.sam_mask_decoder):
@@ -245,7 +247,8 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
             targets, coords = targets.to(torch_device), coords.to(torch_device)
             optimizer.zero_grad(set_to_none=True)
             with (torch.autocast(device_type="cuda", enabled=True) if amp_enabled else nullcontext()):
-                logits = _sam2_logits(model, images, coords)
+                logits = _sam2_logits(model, images, coords,
+                                     ((targets == 1).flatten(1).any(1)).to(torch.int32).unsqueeze(1))
                 loss, dice, _ = _loss_and_scores(logits, targets)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -254,7 +257,7 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
             train_dice += dice * len(indices)
             train_count += len(indices)
         if not train_count:
-            raise RuntimeError("SAM2 학습 마스크에 전경 클래스(1 이상)가 없습니다. 0은 배경, 255는 ignore여야 합니다.")
+            raise RuntimeError("SAM2 학습 배치에 유효한 픽셀이 없습니다. 255는 학습 제외 픽셀입니다.")
 
         model.eval()
         val_loss, val_dice, val_iou, val_count = 0.0, 0.0, 0.0, 0
@@ -265,16 +268,18 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
                     continue
                 images = images.index_select(0, indices).to(torch_device, non_blocking=True)
                 targets, coords = targets.to(torch_device), coords.to(torch_device)
-                logits = _sam2_logits(model, images, coords)
+                logits = _sam2_logits(model, images, coords,
+                                     ((targets == 1).flatten(1).any(1)).to(torch.int32).unsqueeze(1))
                 loss, dice, iou = _loss_and_scores(logits, targets)
                 val_loss += float(loss.detach().cpu()) * len(indices)
                 val_dice += dice * len(indices)
                 val_iou += iou * len(indices)
                 val_count += len(indices)
         if not val_count:
-            raise RuntimeError("SAM2 검증 마스크에 전경 클래스(1 이상)가 없습니다. images/val과 masks/val을 확인하세요.")
+            raise RuntimeError("SAM2 검증 배치에 유효한 픽셀이 없습니다. images/val과 masks/val을 확인하세요.")
         event = {
             "event": "epoch_finished", "epoch": epoch, "total_epochs": epochs,
+            "train_images": train_count, "val_images": val_count,
             "train_loss": train_loss / train_count, "val_loss": val_loss / val_count,
             "metric_name": "prompt_dice", "metric": val_dice / val_count,
             "metrics": {"prompt_dice": val_dice / val_count, "prompt_iou": val_iou / val_count},

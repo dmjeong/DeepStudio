@@ -415,32 +415,25 @@ class SegmentationDataset(Dataset):
         print("Segmentation 데이터셋 로드")
         print(f"   이미지-마스크 쌍: {len(self.pairs)}")
         if self.unlabeled:
-            print(f"   마스크 없는 이미지 {len(self.unlabeled)}장은 학습에서 제외 (아직 라벨링 안 함)")
+            print(f"   마스크 없는 이미지 {len(self.unlabeled)}장은 자동 배경(ID 0)으로 학습에 포함")
 
-    def _find_pairs(self) -> List[Tuple[str, str]]:
-        from spatial_data import labeled_semantic_pairs
-        # 마스크가 없는 이미지(아직 라벨링 안 함)는 학습에서 빼고 개수를 남긴다 (spatial_data 참고).
-        pairs, self.unlabeled = labeled_semantic_pairs(self.img_dir, self.mask_dir)
-        if not pairs and self.unlabeled:
-            raise ValueError(
-                f"라벨링한 이미지가 없습니다: {self.img_dir} (마스크 없는 이미지 {len(self.unlabeled)}장). "
-                "데이터셋 화면에서 이미지를 열어 결함 영역을 그리거나, 결함이 없으면 '배경만 있음 확인' 후 저장하세요.")
+    def _find_pairs(self):
+        from spatial_data import semantic_training_pairs
+        pairs, self.unlabeled = semantic_training_pairs(self.img_dir, self.mask_dir)
         return pairs
 
-    def _resized_mask(self, mask_path: str) -> Tuple[np.ndarray, Tuple[int, int]]:
-        """학습 크기로 줄인 클래스 마스크(복사본)와 원본 (W, H)."""
+    def _resized_mask(self, mask_path, image_path=None):
+        """Training-size labels and original (W, H), without modifying source files."""
+        from spatial_data import load_semantic_mask
+        if mask_path is None:
+            with Image.open(image_path) as image:
+                size = image.size
+            return np.zeros(self.input_size, dtype=np.uint8), size
         stat = os.stat(mask_path)
-        key = (mask_path, stat.st_mtime_ns, stat.st_size)
+        key = (mask_path, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
         cached = self._mask_cache.get(key)
         if cached is None:
-            # 팔레트 마스크는 표시 색이 아닌 인덱스를 보존한다.
-            with Image.open(mask_path) as source_mask:
-                if source_mask.mode not in ("P", "L", "I", "I;16"):
-                    raise ValueError(
-                        f"정답 마스크는 클래스 인덱스 이미지 필요 (팔레트/L/I): {mask_path}"
-                    )
-                original = np.asarray(source_mask)
-                size = source_mask.size
+            original, size = load_semantic_mask(image_path or mask_path, mask_path, self.num_classes)
             cached = (resize_label_mask(original, self.input_size), size)
             nbytes = cached[0].nbytes
             if nbytes <= self._mask_cache_limit:
@@ -456,8 +449,8 @@ class SegmentationDataset(Dataset):
     def class_pixel_counts(self, num_classes: int) -> List[int]:
         """학습 크기 마스크의 클래스별 픽셀 수 (255 학습 제외 픽셀은 세지 않음)."""
         counts = np.zeros(num_classes, dtype=np.int64)
-        for _, mask_path in self.pairs:
-            mask = self._resized_mask(mask_path)[0]
+        for image_path, mask_path in self.pairs:
+            mask = self._resized_mask(mask_path, image_path)[0]
             values = np.bincount(mask[mask != 255].ravel().astype(np.int64), minlength=num_classes)
             if values.size > num_classes:
                 raise ValueError(f"정답 마스크 클래스 범위 오류: {mask_path}")
@@ -472,7 +465,7 @@ class SegmentationDataset(Dataset):
 
         # 이미지 로드 — 채널 수에 따라 RGB 또는 Grayscale 변환
         image = Image.fromarray(read_image(img_path, self.in_channels))
-        mask_array, mask_size = self._resized_mask(mask_path)
+        mask_array, mask_size = self._resized_mask(mask_path, img_path)
         if image.size != mask_size:
             raise ValueError(f"이미지/마스크 원본 크기 불일치: {img_path} {image.size}, {mask_path} {mask_size}")
 
@@ -569,8 +562,8 @@ class AnomalyDataset(Dataset):
 
         print(f"Anomaly 데이터셋 로드: {root}")
         print(f"   이미지 수: {len(self.samples)}")
-        good_count = sum(1 for l in self.labels if l == 0)
-        defect_count = sum(1 for l in self.labels if l == 1)
+        good_count = sum(1 for label in self.labels if label == 0)
+        defect_count = sum(1 for label in self.labels if label == 1)
         print(f"   Good: {good_count} | Defect: {defect_count}")
 
     def _scan_directory(self, root):
@@ -855,14 +848,14 @@ def create_classification_loaders(
 
 
 def unlabeled_message(*loaders) -> str:
-    """학습에서 뺀 미라벨 이미지(마스크 없음) 안내 문구. 없으면 빈 문자열."""
+    """자동 배경으로 포함한 미라벨 이미지 개수. 없으면 빈 문자열."""
     counts = [(name, len(getattr(getattr(loader, "dataset", None), "unlabeled", []) or []))
               for name, loader in zip(("train", "val"), loaders)]
     if not any(count for _, count in counts):
         return ""
     detail = ", ".join(f"{name} {count}장" for name, count in counts if count)
-    return (f"마스크 없는 이미지({detail})는 아직 라벨링하지 않은 것으로 보고 학습에서 제외합니다. "
-            "결함이 없는 이미지는 작업실에서 '배경만 있음 확인' 후 저장하면 학습에 들어갑니다.")
+    return (f"마스크 없는 이미지({detail})는 자동 배경(ID 0)으로 학습·검증에 포함합니다. "
+            "결함이 있는 이미지는 결함 영역을 표시해 주세요.")
 
 
 def create_segmentation_loaders(

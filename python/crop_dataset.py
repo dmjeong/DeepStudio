@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PIL import Image
 from center_crop import center_crop_box, load_crop_image, validate_center_crop
-from spatial_data import image_files, labeled_semantic_pairs, read_spatial_labels
+from spatial_data import image_files, semantic_training_pairs, load_semantic_mask, read_spatial_labels
 
 
 def crop_spatial_rows(rows, task, image_size, crop):
@@ -59,7 +59,7 @@ def crop_spatial_rows(rows, task, image_size, crop):
 
 
 def prepare_crop_dataset(root, output_parent, task, crop, *, native=False,
-                         num_classes=1, should_stop=lambda: False, log=lambda message: None):
+                         num_classes=None, should_stop=lambda: False, log=lambda message: None):
     crop = validate_center_crop(crop)
     if crop is None:
         return str(root)
@@ -73,8 +73,8 @@ def prepare_crop_dataset(root, output_parent, task, crop, *, native=False,
     files = image_files(root / "images" if spatial else root)
     if not files:
         raise ValueError("중앙 크롭할 이미지가 없습니다")
-    # 마스크 없는(미라벨) 이미지는 크롭한 이미지만 두고 마스크는 만들지 않는다. 학습 로더가 제외한다.
-    pairs = dict(labeled_semantic_pairs(root / "images", root / "masks")[0]) if semantic else {}
+    # Keep absent masks absent: the training loader supplies background in memory.
+    pairs = dict(semantic_training_pairs(root / "images", root / "masks")[0]) if semantic else {}
     parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".center-crop-", dir=parent))
     final = parent / staging.name.lstrip(".")
@@ -108,7 +108,8 @@ def prepare_crop_dataset(root, output_parent, task, crop, *, native=False,
                     target = staging / relative
                     target.parent.mkdir(parents=True, exist_ok=True)
                     image.save(target, format="PNG")
-                if semantic and str(path) in pairs:
+                if semantic and pairs[str(path)] is not None:
+                    load_semantic_mask(path, pairs[str(path)], num_classes)
                     with Image.open(pairs[str(path)]) as mask:
                         if mask.size != size:
                             raise ValueError("이미지와 정답 마스크의 원본 크기가 다릅니다")
@@ -117,9 +118,9 @@ def prepare_crop_dataset(root, output_parent, task, crop, *, native=False,
                         destination = staging / "masks" / relative.relative_to("images")
                         destination.parent.mkdir(parents=True, exist_ok=True)
                         mask.crop(box).save(destination, format="PNG")
-                elif spatial:
+                elif spatial and not semantic:
                     label = root / "labels" / path.relative_to(root / "images").with_suffix(".txt")
-                    rows = crop_spatial_rows(read_spatial_labels(label, task, num_classes), task, size, crop)
+                    rows = crop_spatial_rows(read_spatial_labels(label, task, num_classes or 1), task, size, crop)
                     destination = staging / "labels" / relative.relative_to("images").with_suffix(".txt")
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_text("".join(" ".join(format(v, ".12g") for v in row)+"\n" for row in rows), encoding="utf-8")
