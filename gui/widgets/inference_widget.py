@@ -1065,7 +1065,9 @@ class InferenceWidget(QWidget, InferenceOperations):
             return
         self._model_task = str(task)
         if result.get("tiling"):
-            info += f" | 패치 학습 모델 · 원본 해상도 타일 {result['tiling']['tile']}px 추론"
+            scale = float(result["tiling"].get("scale", 1.0))
+            info += (" | 패치 학습 모델 · " + ("원본 해상도" if scale == 1 else f"배율 {scale:.0%}")
+                     + " · 판정 영역 한 번에 추론")
         if result.get("sam2"):
             info += f" | SAM2 {result['sam2']} · 격자 점 자동 분할"
         self._activate_model(path=path, device=device, class_names=names,

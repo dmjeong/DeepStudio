@@ -467,16 +467,25 @@ class TrainingWidget(TrainingForm, QWidget):
         self.patch_check.setVisible(segment)
         self.patch_check.setEnabled(segment and not sam2 and not resume)
         patch = segment and not sam2 and self.patch_check.isChecked()
-        for control in (self.patch_count_label, self.patch_count_spin, self.patch_info):
+        for control in (self.patch_count_label, self.patch_count_spin, self.patch_info,
+                        self.patch_scale_label, self.patch_scale_combo):
             control.setVisible(segment and self.patch_check.isChecked())
         self.patch_count_spin.setEnabled(patch and not resume)
+        self.patch_scale_combo.setEnabled(patch and not resume)
         if patch:
             size = self.input_size_spin.value()
-            crop = (f"중앙 {self.pc_crop_width_spin.value()}×{self.pc_crop_height_spin.value()} px"
-                    if self.pc_crop_check.isChecked() else "원본")
+            scale = float(self.patch_scale_combo.currentData() or 1.0)
+            if self.pc_crop_check.isChecked():
+                width, height = self.pc_crop_width_spin.value(), self.pc_crop_height_spin.value()
+                area = (f"중앙 {width}×{height} px → 배율 적용 {max(1, round(width * scale))}×"
+                        f"{max(1, round(height * scale))} px" if scale != 1 else f"중앙 {width}×{height} px")
+            else:
+                area = "원본 이미지" + (f" × {scale:.0%}" if scale != 1 else "")
             self.patch_info.setText(
-                f"{crop}에서 {size}×{size} 패치를 원본 해상도로 잘라 학습합니다(줄이지 않음). "
-                f"추론은 {size}px 타일을 {size // 4}px씩 겹쳐 합칩니다. 배치 크기는 패치 수 기준입니다.")
+                f"{area}에서 {size}×{size} 패치를 잘라 학습합니다"
+                + ("(줄이지 않음)" if scale == 1 else "") + ". 추론은 같은 배율로 판정 영역 전체를 한 번에 계산합니다"
+                f"(메모리가 모자라면 {size}px 타일). 추론 계산량 ≈ 원본 해상도의 {scale * scale:.0%}. "
+                "배치 크기는 패치 수 기준입니다.")
         elif segment and sam2:
             self.patch_info.setText("SAM2는 패치 학습을 쓰지 않습니다.")
         self.selection_combo.setEnabled(not is_pc and not resume)
@@ -593,6 +602,11 @@ class TrainingWidget(TrainingForm, QWidget):
         self.segmentation_loss_combo.setCurrentIndex(max(loss_index, 0))
         self.patch_check.setChecked(bool(getattr(cfg, "patch_training", False)))
         self.patch_count_spin.setValue(int(getattr(cfg, "patches_per_image", 0)))
+        scale_index = self.patch_scale_combo.findData(float(getattr(cfg, "patch_scale", 1.0)))
+        if scale_index < 0:  # 목록에 없는 값(직접 편집한 프로젝트)도 그대로 보여 준다
+            self.patch_scale_combo.addItem(f"{float(cfg.patch_scale):.0%}", float(cfg.patch_scale))
+            scale_index = self.patch_scale_combo.count() - 1
+        self.patch_scale_combo.setCurrentIndex(scale_index)
 
         # 데이터 증강 설정 복원
         aug = cfg.augmentation
@@ -791,6 +805,7 @@ class TrainingWidget(TrainingForm, QWidget):
         sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
         cfg.patch_training = (self.project.task == "segment" and not sam2 and self.patch_check.isChecked())
         cfg.patches_per_image = self.patch_count_spin.value()
+        cfg.patch_scale = float(self.patch_scale_combo.currentData() or 1.0)
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
         cfg.augmentation.rotation = self.rotation_spin.value()
         cfg.augmentation.color_jitter = self.color_jitter_spin.value()

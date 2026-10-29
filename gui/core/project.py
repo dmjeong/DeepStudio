@@ -138,6 +138,8 @@ class TrainingConfig:
     # 추론은 겹치는 타일로 나눠 합친다. patches_per_image 0 = 자동(이미지 면적 ÷ 패치 면적).
     patch_training: bool = False
     patches_per_image: int = 0
+    # 패치 학습 배율: 1.0 = 원본 해상도. 0.5면 이미지를 절반으로 줄인 뒤 자른다 (추론 계산량 1/4).
+    patch_scale: float = 1.0
     device: str = "auto"  # auto, cpu, cuda, cuda:0, cuda:1
     use_amp: bool = True              # Mixed Precision (GPU 시 자동 활성화)
     # ── 학습 모드 ──

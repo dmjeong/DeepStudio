@@ -127,7 +127,10 @@ def test_checkpoints_record_the_tiling_contract():
     from builtin_models import build_builtin_model, make_builtin_checkpoint
     from checkpoint import make_checkpoint_metadata, tiling_contract
     contract = tiling_contract(512)
-    assert contract == {"tile": 512, "overlap": 128, "blend": "center_weighted_softmax"} and tiling_contract(0) is None
+    assert contract == {"tile": 512, "overlap": 128, "blend": "center_weighted_softmax", "scale": 1.0}
+    assert tiling_contract(0) is None and tiling_contract(512, .5)["scale"] == .5
+    with pytest.raises(ValueError):
+        tiling_contract(512, 1.5)
     custom = make_checkpoint_metadata("segment", 2, ["background", "scratch"], 512, 1, tiling=contract)
     assert custom["tiling"] == contract and custom["preprocessing"]["tiling"] == contract
     with pytest.raises(ValueError):
@@ -169,11 +172,139 @@ def test_training_page_saves_patch_settings_for_segmentation(tmp_path):
     widget.patch_check.setChecked(True)
     widget.patch_count_spin.setValue(24)
     assert widget.patch_count_spin.isVisibleTo(widget) and "512×512" in widget.patch_info.text()
+    widget.pc_crop_check.setChecked(True)
+    widget.pc_crop_width_spin.setValue(3500)
+    widget.pc_crop_height_spin.setValue(1504)
+    widget.patch_scale_combo.setCurrentIndex(widget.patch_scale_combo.findData(.5))
+    # 배율을 고르면 줄인 크기와 추론 계산량을 바로 보여 준다
+    assert "1750×752" in widget.patch_info.text() and "25%" in widget.patch_info.text()
     widget._sync_config()
     assert project.training.patch_training is True and project.training.patches_per_image == 24
+    assert project.training.patch_scale == .5
     # 저장·다시 열기에도 유지된다
     ProjectManager.save(project)
     reloaded = ProjectManager.load(ProjectManager.get_active_filepath(project))
     assert reloaded.training.patch_training is True and reloaded.training.patches_per_image == 24
+    assert reloaded.training.patch_scale == .5
+    # 끄면(체크 해제) 이전과 같은 전체 이미지 학습
+    widget.patch_check.setChecked(False)
+    widget._sync_config()
+    assert project.training.patch_training is False and not widget.patch_scale_combo.isVisibleTo(widget)
     widget.close()
     widget.deleteLater()
+
+
+
+def test_whole_image_pass_matches_tiles_and_crops_the_padding():
+    """완전 합성곱 모델은 판정 영역 전체를 한 번에 넣어도 된다 (32의 배수로 채웠다가 잘라 낸다)."""
+    from core.inference_engine import InferenceOperations
+    torch.manual_seed(0)
+    engine = InferenceOperations()
+    engine.model = _LocalModel().eval()
+    image = np.random.default_rng(1).integers(0, 255, (301, 699), dtype=np.uint8)  # 32의 배수가 아님
+    whole = engine._patch_probabilities(image, {"tile": 128, "overlap": 32}, [.5], [.25], "cpu")
+    assert engine._patch_run == "whole" and engine._tile_count == 1 and whole.shape == (2, 301, 699)
+    engine._patch_mode = "tiles"
+    tiled = engine._patch_probabilities(image, {"tile": 128, "overlap": 32}, [.5], [.25], "cpu")
+    assert engine._patch_run == "tiles" and engine._tile_count > 1
+    # 오른쪽·아래 채움 경계(원래 이미지 끝)는 타일도 이미지 끝이라 같은 0 채움 → 전체가 같다
+    assert torch.allclose(whole, tiled, atol=1e-3)
+
+
+def test_out_of_memory_on_the_whole_image_falls_back_to_tiles():
+    from core.inference_engine import InferenceOperations
+
+    class Hungry(_LocalModel):
+        def forward(self, x):
+            if x.shape[-1] > 128:
+                raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+            return super().forward(x)
+
+    engine = InferenceOperations()
+    engine.model = Hungry().eval()
+    image = np.zeros((200, 300), np.uint8)
+    probabilities = engine._patch_probabilities(image, {"tile": 128, "overlap": 32}, [.5], [.25], "cpu")
+    assert engine._patch_run == "tiles_after_oom" and probabilities.shape == (2, 200, 300)
+
+    class Broken(_LocalModel):
+        def forward(self, x):
+            raise RuntimeError("shape mismatch")  # 메모리 문제가 아닌 오류는 숨기지 않는다
+
+    engine.model = Broken().eval()
+    with pytest.raises(RuntimeError, match="shape mismatch"):
+        engine._patch_probabilities(image, {"tile": 128, "overlap": 32}, [.5], [.25], "cpu")
+
+
+def test_scale_shrinks_training_images_but_keeps_thin_defects(tmp_path):
+    root = _dataset(tmp_path, sizes=((800, 400), (600, 300)), defect=(100, 200, 300, 1))  # 1px 흠집
+    dataset = PatchSegmentationDataset(str(root / "images" / "val"), str(root / "masks" / "val"),
+                                       patch_size=128, in_channels=1, is_train=False, num_classes=2, scale=.5)
+    image, mask, _foreground = dataset._load_native(0)
+    assert image.shape == (200, 400) and mask.shape == (200, 400)
+    # 1px 흠집을 절반으로 줄여도(nearest면 절반이 사라짐) 이어진 선으로 남는다
+    assert int((mask == 1).sum()) >= 140 and dataset._sizes == [(400, 200), (300, 150)]
+    with pytest.raises(ValueError):
+        PatchSegmentationDataset(str(root / "images" / "val"), str(root / "masks" / "val"), patch_size=128,
+                                 in_channels=1, is_train=False, num_classes=2, scale=0)
+
+
+def test_scaled_patch_model_reports_defects_in_original_image_coordinates(tmp_path):
+    """배율 50% 모델: 추론은 줄인 해상도, 결함 좌표·면적은 원본 이미지 기준."""
+    from builtin_models import build_builtin_model, make_builtin_checkpoint
+    from checkpoint import tiling_contract
+    from core.inference_loading import load_inference_engine
+    torch.manual_seed(0)
+    model = build_builtin_model("unet_resnet18", 2, 1).eval()
+    checkpoint = make_builtin_checkpoint("unet_resnet18", model, num_classes=2, input_size=128, in_channels=1,
+                                         class_names=["background", "scratch"], tiling=tiling_contract(128, .5))
+    torch.save(checkpoint, tmp_path / "scaled.pt")
+    image = tmp_path / "part.png"
+    Image.fromarray(np.full((300, 700), 120, np.uint8), "L").save(image)
+    engine = load_inference_engine(tmp_path / "scaled.pt", segment_review={"min_area": 1, "min_score": 0,
+                                                                           "split_dirs": []})
+
+    def one_defect(inputs):  # 줄인 해상도(350×150)에서 (100..109, 40..44)만 결함
+        out = torch.zeros(inputs.shape[0], 2, *inputs.shape[-2:])
+        out[:, 0] = 5
+        out[:, 1, 40:45, 100:110] = 9
+        return out
+
+    engine.model.forward = one_defect
+    result = engine.infer(str(image))
+    assert result.status == "ok", result.error
+    assert result.details["tiling"]["run"] == "whole" and result.details["tiling"]["inference_size"] == [350, 150]
+    defect, = result.details["defects"]
+    # 줄인 좌표 ×2 = 원본 좌표 (nearest 블록 그대로)
+    assert (defect["x"], defect["y"], defect["w"], defect["h"], defect["area"]) == (200, 80, 20, 10, 200)
+    # 픽셀 분포·미리보기는 원본 크기(판정 영역)에서 센다
+    assert sum(result.details["pixel_counts"].values()) == 300 * 700
+    assert "배율 50%" in engine.info and "이미지 한 번에" in engine.info
+
+
+def test_custom_csp_segmentation_gets_rotation_colour_and_patch_settings(tmp_path, monkeypatch):
+    """Custom CSP 분할 로더: 회전·색상 증강(이전엔 좌우반전만)과 패치 학습 설정이 실제로 전달된다."""
+    import dataset as dataset_module
+    from core.project import ProjectManager
+    from core.trainer import TrainWorker
+    root = _dataset(tmp_path / "data")
+    project = ProjectManager.create_new("csp", "segment", str(tmp_path / "p"), ["background", "scratch"])
+    project.data.root = str(root)
+    cfg = project.training
+    cfg.augmentation.rotation, cfg.augmentation.color_jitter = 12.0, .15
+    cfg.patch_training, cfg.input_size, cfg.patches_per_image, cfg.patch_scale = True, 128, 5, .5
+    seen = {}
+
+    def capture(**kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("stop after capturing loader arguments")
+
+    monkeypatch.setattr(dataset_module, "create_segmentation_loaders", capture)
+    worker = TrainWorker(project)
+    try:
+        worker._create_dataloaders("segment", project.data, cfg)
+    except RuntimeError:
+        pass
+    assert seen["rotation"] == 12.0 and seen["color_jitter"] == .15
+    assert (seen["patch_size"], seen["patches_per_image"], seen["patch_scale"]) == (128, 5, .5)
+    metadata = worker._checkpoint_metadata()
+    assert metadata["tiling"] == {"tile": 128, "overlap": 32, "blend": "center_weighted_softmax", "scale": .5}

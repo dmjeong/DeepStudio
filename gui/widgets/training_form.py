@@ -404,7 +404,18 @@ class TrainingForm:
         self.patch_check.toggled.connect(self._on_patchcore_settings_changed)
         self.patch_count_spin.valueChanged.connect(self._on_patchcore_settings_changed)
         self.patch_count_label = QLabel("이미지당 패치:")
+        # 패치 배율: 추론 속도와 작은 결함 크기의 교환. 계산량은 배율²에 비례한다.
+        self.patch_scale_combo = NoWheelComboBox()
+        for label, value in (("100% (원본 해상도)", 1.0), ("75%", .75), ("50%", .5), ("35%", .35), ("25%", .25)):
+            self.patch_scale_combo.addItem(label, value)
+        self.patch_scale_combo.setToolTip(
+            "판정 영역을 이 배율로 줄인 뒤 패치를 자릅니다. 추론도 같은 배율로 줄여 한 번에 계산합니다.\n"
+            "계산량(추론 시간)은 배율²에 비례합니다: 50% = 1/4, 25% = 1/16.\n"
+            "줄인 뒤 가장 가는 결함이 1.5~2px 이상 남는 배율을 고르세요(마스크는 작은 결함을 보존해 줄입니다).")
+        self.patch_scale_combo.currentIndexChanged.connect(self._on_patchcore_settings_changed)
+        self.patch_scale_label = QLabel("패치 배율:")
         hp_layout.addRow("", self.patch_check)
+        hp_layout.addRow(self.patch_scale_label, self.patch_scale_combo)
         hp_layout.addRow(self.patch_count_label, self.patch_count_spin)
         hp_layout.addRow(self.patch_info)
         hp_layout.addRow("", self.pc_crop_check)

@@ -12,6 +12,14 @@ ensure_python_path()
 from center_crop import center_crop_box, restore_detections, paste_crop_preview
 
 
+def _out_of_memory(exc):
+    """PyTorch CPU·CUDA 메모리 부족 예외인지 (메시지가 버전마다 달라 여러 형태를 본다)."""
+    if isinstance(exc, MemoryError) or type(exc).__name__ == "OutOfMemoryError":
+        return True
+    message = str(exc).lower()
+    return "out of memory" in message or "can't allocate memory" in message or "not enough memory" in message
+
+
 class InferenceOperations:
     def _run_upstream_inference(self, image_path: str):
         """Adapt public LibreYOLO Results to Deep Vision Studio's result contract."""
@@ -113,7 +121,7 @@ class InferenceOperations:
             if tiling:
                 input_tensor = None
                 prepared = time.perf_counter()
-                output = self._tiled_probabilities(img, tiling, mean, std, device).unsqueeze(0)
+                output = self._patch_probabilities(img, tiling, mean, std, device).unsqueeze(0)
             else:
                 # 입력 텐서를 선택된 디바이스로 전송
                 input_tensor = transform(img).unsqueeze(0).to(device)
@@ -160,7 +168,8 @@ class InferenceOperations:
                                              details={"num_classes": self.model.num_classes,
                                                       "pixel_counts": pixel_counts})
                 if tiling:
-                    prediction.details["tiling"] = {**tiling, "tiles": self._tile_count}
+                    prediction.details["tiling"] = {**tiling, "tiles": self._tile_count, "run": self._patch_run,
+                                                    "inference_size": list(pred_mask.shape[::-1])}
 
             elif task == "detect":
                 from detection import postprocess_detections
@@ -265,9 +274,79 @@ class InferenceOperations:
         if crop:
             self._set_info((getattr(self, "info", "") or "") + f" | 판정 범위: 중앙 {crop['width']}×{crop['height']} px")
         if task == "segment" and tiling:
-            self._set_info((getattr(self, "info", "") or "") + f" | 타일 추론 {tiling['tile']}px × {self._tile_count}개 "
-                           f"(겹침 {tiling.get('overlap', 0)}px, 원본 해상도)")
+            scale = float(tiling.get("scale", 1.0))
+            size = "×".join(str(v) for v in pred_mask.shape[::-1])
+            how = ("이미지 한 번에" if self._patch_run == "whole" else
+                   f"타일 {tiling['tile']}px × {self._tile_count}개"
+                   + (" (메모리 부족으로 전환)" if self._patch_run == "tiles_after_oom" else ""))
+            self._set_info((getattr(self, "info", "") or "") + " | 패치 모델: "
+                           + ("원본 해상도" if scale == 1 else f"배율 {scale:.0%}") + f" {size} · {how}")
         return prediction
+
+    def _forward_probabilities(self, inputs, device):
+        """모델 → softmax 확률 (CPU). GPU는 FP16 autocast로 계산하고, 결과가 유한하지 않으면 FP32로 다시 한다."""
+        inputs = inputs.to(device)
+        if torch.device(device).type == "cuda":
+            with torch.autocast("cuda", dtype=torch.float16):
+                probabilities = F.softmax(self.model(inputs).float(), dim=1)
+            if torch.isfinite(probabilities).all():
+                return probabilities.cpu()
+        probabilities = F.softmax(self.model(inputs).float(), dim=1)
+        if not torch.isfinite(probabilities).all():
+            raise ValueError("모델 출력이 유한하지 않습니다")
+        return probabilities.cpu()
+
+    @staticmethod
+    def _normalized_pixels(image, mean, std):
+        pixels = torch.from_numpy(np.ascontiguousarray(image)).float().div_(255)
+        pixels = pixels.unsqueeze(0) if pixels.ndim == 2 else pixels.permute(2, 0, 1)
+        return (pixels - torch.tensor(mean).view(-1, 1, 1)) / torch.tensor(std).view(-1, 1, 1)
+
+    def _patch_probabilities(self, image, tiling, mean, std, device):
+        """패치 학습 모델 추론 → (C, h, w) 확률. h, w는 배율을 적용한 판정 영역 크기.
+
+        분할 모델 셋(U-Net·DeepLabV3+·Custom CSP)은 전역 풀링이 없는 완전 합성곱이라, 패치로 학습해도
+        판정 영역 전체를 한 번에 넣을 수 있다. 타일보다 빠르다(겹친 부분을 다시 계산하지 않음: 3500×1504를
+        512 타일 36개로 나누면 9.4M 픽셀을 계산한다, 한 번에는 5.3M). 이음매도 없다.
+        메모리가 모자라면(큰 이미지 · GPU) 타일로 바꿔 다시 한다.
+
+            배율 s: 판정 영역을 s배로 줄인 뒤 추론 (학습도 같은 배율로 줄인 뒤 잘랐다) → 계산량 ∝ s²
+        """
+        from dataset import scaled_size
+        from opencv_preprocess import resize
+        scale = float(tiling.get("scale", 1.0))
+        height, width = image.shape[:2]
+        if scale != 1:
+            target_w, target_h = scaled_size(width, height, scale)
+            image = resize(image, (target_h, target_w))  # 학습과 같은 INTER_LINEAR_EXACT
+        if getattr(self, "_patch_mode", "auto") != "tiles":
+            try:
+                probabilities = self._whole_probabilities(image, mean, std, device)
+                self._patch_run, self._tile_count = "whole", 1
+                return probabilities
+            except (RuntimeError, MemoryError) as exc:
+                if not _out_of_memory(exc):
+                    raise
+                if torch.device(device).type == "cuda":
+                    torch.cuda.empty_cache()
+                self._patch_run = "tiles_after_oom"
+        else:
+            self._patch_run = "tiles"
+        return self._tiled_probabilities(image, tiling, mean, std, device)
+
+    def _whole_probabilities(self, image, mean, std, device, multiple=32):
+        """판정 영역 전체를 한 번에. 백본의 최대 보폭(32)의 배수가 되게 오른쪽·아래를 0으로 채우고 잘라 낸다
+        (학습 패치가 이미지 밖으로 나갈 때와 같은 채움)."""
+        height, width = image.shape[:2]
+        pixels = self._normalized_pixels(image, mean, std)
+        padded_h, padded_w = -(-height // multiple) * multiple, -(-width // multiple) * multiple
+        if (padded_h, padded_w) != (height, width):
+            filled = torch.zeros(pixels.shape[0], padded_h, padded_w)
+            filled[:, :height, :width] = pixels
+            pixels = filled
+        with torch.inference_mode():
+            probabilities = self._forward_probabilities(pixels.unsqueeze(0), device)[0]
+        return probabilities[:, :height, :width]
 
     def _tiled_probabilities(self, image, tiling, mean, std, device, batch=4):
         """원본 해상도에서 tile×tile 창을 overlap만큼 겹쳐 밀며 softmax 확률을 합친다 → (C, H, W) CPU 텐서.
@@ -287,9 +366,7 @@ class InferenceOperations:
         tile, overlap = int(tiling["tile"]), int(tiling.get("overlap", int(tiling["tile"]) // 4))
         margin = overlap // 2
         height, width = image.shape[:2]
-        pixels = torch.from_numpy(np.ascontiguousarray(image)).float().div_(255)
-        pixels = pixels.unsqueeze(0) if pixels.ndim == 2 else pixels.permute(2, 0, 1)
-        pixels = (pixels - torch.tensor(mean).view(-1, 1, 1)) / torch.tensor(std).view(-1, 1, 1)
+        pixels = self._normalized_pixels(image, mean, std)
         if height < tile or width < tile:
             padded = torch.zeros(pixels.shape[0], max(height, tile), max(width, tile))
             padded[:, :height, :width] = pixels
@@ -311,10 +388,8 @@ class InferenceOperations:
         with torch.inference_mode():
             for start in range(0, len(origins), batch):
                 group = origins[start:start + batch]
-                inputs = torch.stack([pixels[:, y:y + tile, x:x + tile] for y, x in group]).to(device)
-                probabilities = F.softmax(self.model(inputs).float(), dim=1).cpu()
-                if not torch.isfinite(probabilities).all():
-                    raise ValueError("모델 출력이 유한하지 않습니다")
+                inputs = torch.stack([pixels[:, y:y + tile, x:x + tile] for y, x in group])
+                probabilities = self._forward_probabilities(inputs, device)
                 if sums is None:
                     sums = torch.zeros(probabilities.shape[1], full_h, full_w)
                     weight_sum = torch.zeros(1, full_h, full_w)

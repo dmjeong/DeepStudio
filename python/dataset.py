@@ -522,6 +522,15 @@ class SegmentationDataset(Dataset):
         return image, mask
 
 
+def scaled_size(width: int, height: int, scale: float) -> Tuple[int, int]:
+    """패치 학습 배율을 적용한 (가로, 세로). 학습 데이터와 추론이 같은 크기를 쓰도록 한 곳에서 정한다."""
+    if not 0 < scale <= 1:
+        raise ValueError("패치 학습 배율은 0보다 크고 1 이하여야 합니다")
+    if scale == 1:
+        return int(width), int(height)
+    return max(1, int(round(width * scale))), max(1, int(round(height * scale)))
+
+
 def patch_origins(length: int, patch: int, stride: int) -> List[int]:
     """한 축을 덮는 패치 시작 위치. 마지막 패치는 끝에 맞춰 이미지 밖으로 나가지 않는다 (짧으면 [0])."""
     if length <= patch:
@@ -548,19 +557,23 @@ class PatchSegmentationDataset(SegmentationDataset):
     """
 
     def __init__(self, img_dir: str, mask_dir: str, *, patch_size: int, patches_per_image: int = 0,
-                 defect_ratio: float = 0.5, cache_limit_mb: int = 1536, **kwargs):
+                 defect_ratio: float = 0.5, cache_limit_mb: int = 1536, scale: float = 1.0, **kwargs):
         if patch_size < 32:
             raise ValueError("패치 크기는 32px 이상이어야 합니다")
+        scaled_size(1, 1, scale)  # 배율 범위 확인
         kwargs["input_size"] = (patch_size, patch_size)
         super().__init__(img_dir, mask_dir, **kwargs)
         if not 0 <= defect_ratio <= 1:
             raise ValueError("결함 중심 패치 비율은 0~1이어야 합니다")
         self.patch_size = int(patch_size)
         self.defect_ratio = float(defect_ratio)
+        # 배율 < 1: 이미지를 먼저 그만큼 줄인 뒤 패치를 자른다 (추론 계산량 ∝ 배율²).
+        # 마스크는 작은 결함을 보존하는 축소(resize_label_mask)를 쓴다.
+        self.scale = float(scale)
         self._native = OrderedDict()           # 경로 → (이미지, 마스크, 결함 픽셀 위치 표본)
         self._native_bytes = 0
         self._native_limit = int(cache_limit_mb) * 1024 * 1024
-        self._sizes = [self._image_size(image) for image, _mask in self.pairs]
+        self._sizes = [scaled_size(*self._image_size(image), self.scale) for image, _mask in self.pairs]
         if patches_per_image <= 0:
             # 자동: 이미지 면적 ÷ 패치 면적 (3500×1504, 512 → 이미지당 20개 = 한 epoch에 이미지 전체를 한 번 본 셈)
             area = max(w * h for w, h in self._sizes)
@@ -571,7 +584,8 @@ class PatchSegmentationDataset(SegmentationDataset):
             self.tiles = [(index, x, y) for index, (w, h) in enumerate(self._sizes)
                           for y in patch_origins(h, patch_size, patch_size)
                           for x in patch_origins(w, patch_size, patch_size)]
-        print(f"   패치 학습: {patch_size}×{patch_size}, "
+        print(f"   패치 학습: {patch_size}×{patch_size}"
+              + (f", 배율 {self.scale:.0%}" if self.scale != 1 else ", 원본 해상도") + ", "
               + (f"이미지당 {self.patches_per_image}개 (결함 중심 {self.defect_ratio:.0%})" if self.is_train
                  else f"검증 타일 {len(self.tiles)}개"))
 
@@ -602,7 +616,11 @@ class PatchSegmentationDataset(SegmentationDataset):
                     raise ValueError(f"이미지/마스크 원본 크기 불일치: {img_path} {(width, height)}, "
                                      f"{mask_path} {source.size}")
                 mask = np.asarray(source)
-                mask = mask.astype(np.uint8) if mask.max(initial=0) <= 255 else mask.astype(np.int64)
+                mask = mask.astype(np.uint8) if mask.max(initial=0) <= 255 else mask.astype(np.uint16)
+        if self.scale != 1:
+            target_w, target_h = scaled_size(width, height, self.scale)
+            image = resize(image, (target_h, target_w))  # 전체 이미지 학습과 같은 INTER_LINEAR_EXACT
+            mask = resize_label_mask(mask, (target_h, target_w))  # 얇은 흠집·작은 점이 사라지지 않게
         foreground = np.flatnonzero((mask > 0) & (mask != 255))
         if foreground.size > 20000:
             foreground = foreground[np.random.default_rng(index).choice(foreground.size, 20000, replace=False)]
@@ -1026,11 +1044,13 @@ def create_segmentation_loaders(
     pin_memory: bool = False,
     patch_size: int = 0,
     patches_per_image: int = 0,
+    patch_scale: float = 1.0,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Segmentation 데이터 로더 생성
 
-    patch_size > 0이면 원본 해상도 패치 학습(PatchSegmentationDataset). input_size는 무시하고 패치 크기를 쓴다.
+    patch_size > 0이면 패치 학습(PatchSegmentationDataset). input_size는 무시하고 패치 크기를 쓴다.
+    patch_scale < 1이면 이미지를 그 배율로 줄인 뒤 자른다 (1 = 원본 해상도).
 
     필요 구조:
         data_root/images/train/, data_root/images/val/
@@ -1043,7 +1063,8 @@ def create_segmentation_loaders(
         train_loader, val_loader
     """
     if patch_size:
-        common = {"patch_size": int(patch_size), "patches_per_image": int(patches_per_image)}
+        common = {"patch_size": int(patch_size), "patches_per_image": int(patches_per_image),
+                  "scale": float(patch_scale)}
         dataset_type = PatchSegmentationDataset
     else:
         common = {"input_size": input_size}

@@ -1,7 +1,7 @@
 """모델을 독립적으로 복원하기 위한 체크포인트 메타데이터."""
 
 
-def tiling_contract(patch_size):
+def tiling_contract(patch_size, scale=1.0):
     """패치 학습 모델의 추론 규칙: 원본 해상도에서 tile×tile 창을 overlap만큼 겹쳐 민다.
 
     겹침은 타일의 1/4. 각 타일은 이미지 안쪽으로 난 가장자리 overlap/2 띠를 거의 믿지 않고(가중치 1e-4),
@@ -12,7 +12,11 @@ def tiling_contract(patch_size):
     tile = int(patch_size)
     if tile < 32:
         raise ValueError("타일 크기는 32px 이상이어야 합니다")
-    return {"tile": tile, "overlap": tile // 4, "blend": "center_weighted_softmax"}
+    scale = float(scale)
+    if not 0 < scale <= 1:
+        raise ValueError("패치 학습 배율은 0보다 크고 1 이하여야 합니다")
+    # scale: 추론 전에 판정 영역을 줄이는 배율 (학습 패치를 자르기 전에 줄인 것과 같다). 1 = 원본 해상도.
+    return {"tile": tile, "overlap": tile // 4, "blend": "center_weighted_softmax", "scale": scale}
 
 
 def make_checkpoint_metadata(task, num_classes, class_names, input_size,

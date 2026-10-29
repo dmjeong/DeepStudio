@@ -490,7 +490,8 @@ class TrainWorker(TrainingEngine):
             {"backbone_channels": list(model.backbone_channels),
              "csp_depth": list(model.csp_depth), "dropout": model.dropout},
             center_crop=configured_center_crop(cfg),
-            tiling=tiling_contract(cfg.input_size if patch else 0))
+            tiling=tiling_contract(cfg.input_size if patch else 0,
+                                   float(getattr(cfg, "patch_scale", 1.0)) if patch else 1.0))
 
     def _restore_training_state(self, model, optimizer, scheduler, scaler, run_dir):
         return {}
@@ -859,10 +860,15 @@ class TrainWorker(TrainingEngine):
                     pin_memory=pin_memory,
                     in_channels=cfg.in_channels,
                     flip_prob=flip_prob,
+                    # 9.33 이전에는 분할에 회전·색상을 넘기지 않아 로그와 달리 좌우반전만 적용됐다
+                    # (기본 모델 분할과 분류는 적용). 마스크 회전의 빈 곳은 학습 제외(255)로 채운다.
+                    rotation=rotation,
+                    color_jitter=color_jitter,
                     num_classes=data_cfg.num_classes,
-                    # 원본 해상도 패치 학습: 입력 크기 = 패치 크기, 추론은 타일 (checkpoint의 tiling)
+                    # 패치 학습: 입력 크기 = 패치 크기, 추론은 checkpoint의 tiling 규칙
                     patch_size=input_size[0] if patch else 0,
                     patches_per_image=int(getattr(cfg, "patches_per_image", 0)),
+                    patch_scale=float(getattr(cfg, "patch_scale", 1.0)) if patch else 1.0,
                 )
                 from dataset import unlabeled_message
                 if unlabeled_message(*loaders):

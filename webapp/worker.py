@@ -163,6 +163,7 @@ def _train_builtin_project(context, project, device):
                          # 데스크톱에서 켜는 분할 패치 학습 (프로젝트 설정 그대로 전달)
                          patch_training=bool(getattr(cfg, "patch_training", False)) and project.task == "segment",
                          patches_per_image=int(getattr(cfg, "patches_per_image", 0)),
+                         patch_scale=float(getattr(cfg, "patch_scale", 1.0)),
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),

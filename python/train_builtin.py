@@ -183,7 +183,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   selection_metric: str = "engine_default",
                   class_names: Iterable[str] | None = None,
                   segmentation_loss: str = "ce_dice", class_weights: str = "none",
-                  patch_training: bool = False, patches_per_image: int = 0,
+                  patch_training: bool = False, patches_per_image: int = 0, patch_scale: float = 1.0,
                   should_stop=lambda: False) -> Path:
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
@@ -224,7 +224,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if patch_training and input_size[0] != input_size[1]:
         raise ValueError("패치 학습은 정사각형 입력 크기(= 패치 크기)가 필요합니다")
     from checkpoint import tiling_contract
-    tiling = tiling_contract(input_size[0] if patch_training else 0)
+    tiling = tiling_contract(input_size[0] if patch_training else 0, patch_scale if patch_training else 1.0)
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise ValueError("CUDA device requested but CUDA is unavailable")
     target = torch.device(device)
@@ -253,7 +253,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             num_workers=num_workers, pin_memory=pin_memory,
             in_channels=in_channels, num_classes=num_classes,
             flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter,
-            patch_size=input_size[0] if patch_training else 0, patches_per_image=patches_per_image)
+            patch_size=input_size[0] if patch_training else 0, patches_per_image=patches_per_image,
+            patch_scale=patch_scale if patch_training else 1.0)
         from dataset import unlabeled_message
         if unlabeled_message(train_loader, val_loader):
             log(unlabeled_message(train_loader, val_loader))
@@ -365,7 +366,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         "selection_metric": policy.metric, "selection_direction": policy.direction,
         "augmentation": {"horizontal_flip": horizontal_flip, "rotation": rotation,
                          "color_jitter": color_jitter},
-        "patch_training": ({"patch_size": input_size[0],
+        "patch_training": ({"patch_size": input_size[0], "scale": tiling["scale"],
                             "patches_per_image": train_loader.dataset.patches_per_image, "tiling": tiling}
                            if tiling else None),
         **loss_details,
