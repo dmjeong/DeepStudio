@@ -68,6 +68,24 @@ Dice_c = (2·Σ p_c·y_c + 1) / (Σ p_c + Σ y_c + 1)   (255 픽셀은 p, y 모�
 - 다음 창 넘겨주기: 이전 창이 최대화·전체 화면이면 다음 창에 실제 크기를 먼저 준다. 창 관리자가 최대화를 반영하기 전에 원래 크기로 한 번 그려지거나 화면 맞춤이 작은 크기로 계산되던 경우를 막는다. 최대화를 풀면 원래 크기로 돌아간다.
 - 회귀 테스트 `tests/test_annotation_input.py`(13개): Shift+클릭이 5개 도구 모두에서 선택만 하고 고른 클래스가 저장되는지, Shift+드래그 지우개, 방금 그린 객체는 클래스 선택에 바뀌지 않는지, 탐지 Shift+클릭이 박스를 지우지 않는지, 그리고 Space가 포커스된 체크박스를 바꾸지 않고 화면 이동이 되는지, 글자 입력칸은 Space를 입력하는지, 사각형 뒤 브러시가 새 객체인지, 이어 그린 브러시 객체는 분리되는지, 미라벨 이미지를 빼고 학습하는지. 버그를 다루는 3개는 수정 전 코드에서 실패한다.
 
+### 사전학습 가중치가 없을 때
+
+앱은 실행 중에 가중치를 받지 않는다. 사전학습 가중치는 `build.bat`이 `gui/builtin_assets`에 받아 설치본에 넣는다. 그래서 소스에서 바로 실행하거나 빌드가 중간에 멈춘 설치본에서는 다음 문제가 있었다.
+- "ImageNet 가중치로 시작" 학습이 시작한 뒤에야 "가중치가 설치본에 없습니다"로 실패했다.
+- SAM2 모델을 고르면 설정을 동기화하는 단계에서 처리되지 않은 예외가 났다.
+
+변경 사항:
+- 학습 시작 전에 이 설정에 필요한 가중치를 확인한다(`required_pretrained_asset`). 대응은 다음과 같다.
+  - 기본 모델: UNet → resnet18, DeepLabV3+ → resnet34, ResNet/ConvNeXt는 같은 이름
+  - EfficientNet B0/B1
+  - LibreYOLO·RT-DETR, SAM2
+  - PatchCore ImageNet 백본
+- 없으면 어떤 파일이 없는지, 설치본이면 `build.bat`, 소스 실행이면 아래 명령, 또는 "무작위 초기화로 시작"을 안내하고 학습을 시작하지 않는다.
+  - `python python/prepare_builtin_assets.py --output gui/builtin_assets --only resnet18`
+- `prepare_builtin_assets.py --only`는 지정한 모델만 받고 기존 manifest에 합친다(SHA-256 검증 동일). `build.bat`은 지금처럼 전부 받는다.
+- 확인 결과: resnet18·resnet34를 각각 받으면 manifest가 합쳐졌고, 이 가중치로 UNet·DeepLabV3+가 ImageNet 사전학습 상태(`weight_provenance.source = imagenet`)에서 학습을 마쳤다.
+- 회귀 테스트 `tests/test_pretrained_assets.py`(13개). 학습 화면 확인 테스트는 수정 전 코드에서 실패한다.
+
 ### 데이터셋 화면: 이미지가 아닌 영역 단위 클래스
 
 분할·탐지의 클래스는 이미지 전체가 아니라 이미지 안의 영역에 붙는다. 9.23까지는 분류처럼 "이미지가 어느 클래스인가"로 보여줬다.
@@ -186,7 +204,7 @@ CE만 쓸 때 seed에 따라 0.47/0.29로 크게 흔들렸다. Dice를 더하면
 - 새 회귀 테스트 `tests/test_dataset_regions.py`(16개): 영역 수·면적·굵기·bbox, 8-연결과 255 제외, 맞닿은 작업실 객체, 폴리곤 정답, 캐시와 무효화, 박스 영역, 학습 크기·중앙 크롭 배율, 영역 하나만 클래스 변경(다른 픽셀 불변·백업), 삭제와 오래된 선택 거부, 잠긴 객체, 탐지 박스 편집, 데스크톱 화면(클래스 선택 숨김, 필터, 배지, 통계 표, 1px 경고, 썸네일 겹침 색, 영역 목록 필터·작업실 열기·편집 후 자동 갱신, 작업실 확대·선택 규칙, 클래스 삭제 대상).
 - 새 회귀 테스트 `tests/test_segmentation_imbalance.py`: 얇은 결함 보존·끊김, 큰 결함 불변, 255/다른 클래스 보존, 캐시 무효화, 픽셀 수, CE 동일성, Dice 신호, 255 제외, 빈 배치, 설정 검증, `train_builtin` 기록, 픽셀 없는 클래스 오류, 기본 손실, Custom CSP 손실, 객체 ID 재부여 시 캐시 유지, 마스크 미리 읽기 무효화.
 - `tests/test_annotation_navigation.py`, `tests/test_segmentation_training_contracts.py`(9.33 1차 커밋).
-- 전체 `pytest tests/`: 1,147 통과, 9 건너뜀, 1 실패. 실패한 `test_inference_contracts::test_failed_batch_image_is_error_and_preserves_timing`은 9.33 이전 커밋에서도 같은 이유로 실패하며 이번 변경과 무관하다.
+- 전체 `pytest tests/`: 1,161 통과, 9 건너뜀, 1 실패. 실패한 `test_inference_contracts::test_failed_batch_image_is_error_and_preserves_timing`은 9.33 이전 커밋에서도 같은 이유로 실패하며 이번 변경과 무관하다.
 - `ruff`(CI 범위)와 `git diff --check` 통과.
 
 ## 호환 범위

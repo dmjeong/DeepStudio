@@ -50,10 +50,17 @@ def _download_upstream(model_id: str, destination: Path) -> None:
         raise RuntimeError(f"{model_id} 기본 가중치 다운로드가 완료되지 않았습니다")
 
 
-def prepare(output: str | Path) -> Path:
+def prepare(output: str | Path, only=None) -> Path:
+    """가중치를 받고 SHA-256 manifest를 쓴다. only가 있으면 그 모델들만 받고 기존 manifest에 합친다
+    (소스에서 실행할 때 필요한 모델만 준비). 빌드(build.bat)는 전부 받는다."""
     root = Path(output).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
-    for model_id, relative in ASSET_FILES.items():
+    selected = list(ASSET_FILES) if not only else list(only)
+    unknown = [model_id for model_id in selected if model_id not in ASSET_FILES]
+    if unknown:
+        raise SystemExit(f"알 수 없는 가중치 ID: {unknown}. 가능한 값: {', '.join(ASSET_FILES)}")
+    for model_id in selected:
+        relative = ASSET_FILES[model_id]
         target = root / relative
         if model_id.startswith("sam2_"):
             downloaded = download_sam2_pretrained(model_id, target.parent)
@@ -70,8 +77,15 @@ def prepare(output: str | Path) -> Path:
         if not target.is_file() or target.stat().st_size == 0:
             raise RuntimeError(f"기본 가중치 다운로드가 완료되지 않았습니다: {model_id}")
         print(f"[ready] {model_id}: {target}")
-    files = {relative: {"sha256": _sha256(root / relative), "bytes": (root / relative).stat().st_size}
-             for relative in ASSET_FILES.values()}
+    files = {}
+    if only and (root / "manifest.json").is_file():
+        try:  # 이미 받은 다른 모델의 항목은 유지한다
+            files = json.loads((root / "manifest.json").read_text(encoding="utf-8")).get("files", {})
+        except (OSError, ValueError):
+            files = {}
+    for model_id in selected:
+        relative = ASSET_FILES[model_id]
+        files[relative] = {"sha256": _sha256(root / relative), "bytes": (root / relative).stat().st_size}
     (root / "manifest.json").write_text(json.dumps({"schema_version": 1, "files": files}, indent=2) + "\n",
                                            encoding="utf-8")
     print(f"[ready] manifest: {root / 'manifest.json'}")
@@ -81,8 +95,10 @@ def prepare(output: str | Path) -> Path:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Download packaged Deep Vision Studio basic-model weights")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--only", default="",
+                        help="쉼표로 구분한 가중치 ID만 받는다 (예: resnet18,resnet34). 생략하면 전부")
     args = parser.parse_args(argv)
-    prepare(args.output)
+    prepare(args.output, [v.strip() for v in args.only.split(",") if v.strip()] or None)
     return 0
 
 

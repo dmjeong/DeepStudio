@@ -725,7 +725,11 @@ class TrainingWidget(TrainingForm, QWidget):
             mcfg.model_id = selected_model
             if str(selected_model).startswith("sam2_hiera_"):
                 from builtin_assets import builtin_asset_path
-                mcfg.pretrained_weights = str(builtin_asset_path(selected_model))
+                try:
+                    mcfg.pretrained_weights = str(builtin_asset_path(selected_model))
+                except (FileNotFoundError, RuntimeError):
+                    # 설치본에 없으면 설정 저장은 계속하고, 학습 시작 전 확인에서 받는 방법을 안내한다
+                    mcfg.pretrained_weights = ""
         if mcfg.model_id not in {"efficientnet_b0", "efficientnet_b1"} and cfg.training_mode.startswith("efficientnet"):
             cfg.training_mode = "custom"
         if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
@@ -828,6 +832,21 @@ class TrainingWidget(TrainingForm, QWidget):
         except ValueError as error:
             QMessageBox.warning(self, "학습 설정 확인", str(error))
             return
+
+        # 사전학습 가중치가 설치본에 없으면 학습을 시작한 뒤가 아니라 지금 알리고 받는 방법을 안내한다
+        cfg = self.project.training
+        from builtin_assets import builtin_asset_path, missing_asset_help, required_pretrained_asset
+        asset = required_pretrained_asset(
+            self.project.task, cfg.training_mode,
+            cfg.efficientnet_model if cfg.training_mode.startswith("efficientnet") else getattr(self.project.model, "model_id", ""),
+            efficientnet_model=cfg.efficientnet_model, anomaly_method=cfg.anomaly_method,
+            patchcore_source=cfg.patchcore_weight_source, patchcore_backbone=cfg.patchcore_backbone)
+        if asset:
+            try:
+                builtin_asset_path(asset, verify=False)
+            except (FileNotFoundError, RuntimeError, ValueError):
+                QMessageBox.warning(self, "사전학습 가중치 없음", missing_asset_help(asset))
+                return
 
         # ── 모드별 유효성 검사 ──
         mode = self.project.training.training_mode

@@ -225,7 +225,10 @@ class ProjectPersistenceTests(unittest.TestCase):
         self.project.task = 'anomaly'
         self.project.training.training_mode = 'unsupported_finetune'  # 기존 JSON 기본값
         ui = PassiveForm(self.project)
-        start(ui)
+        # PatchCore ImageNet 백본은 설치본 가중치가 필요하다 (시작 전 확인). 설치된 것으로 둔다.
+        import builtin_assets
+        with patch.object(builtin_assets, 'builtin_asset_path', return_value=Path(__file__)):
+            start(ui)
         self.assertEqual(len(created), 1)
         self.assertIsNot(created[0].project, self.project)
         created[0].project.training.epochs = 7

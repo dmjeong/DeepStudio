@@ -83,6 +83,46 @@ def builtin_asset_path(model_id: str, *, verify: bool = True) -> Path:
     return path.resolve()
 
 
+# 기본 모델 → ImageNet 백본 가중치 (builtin_models._torchvision_base 와 같은 대응)
+BUILTIN_BACKBONE_ASSETS = {
+    "resnet18": "resnet18",
+    "resnet50": "resnet50",
+    "convnext_v1_tiny": "convnext_v1_tiny",
+    "unet_resnet18": "resnet18",
+    "deeplabv3plus_resnet34": "resnet34",
+}
+
+
+def required_pretrained_asset(task: str, mode: str, model_id: str = "", *,
+                              efficientnet_model: str = "", anomaly_method: str = "",
+                              patchcore_source: str = "", patchcore_backbone: str = "") -> str | None:
+    """이 학습 설정이 시작 전에 꼭 필요로 하는 설치본 가중치 ID (필요 없으면 None)."""
+    if task == "anomaly":
+        if anomaly_method == "patchcore" and patchcore_source == "imagenet":
+            return patchcore_backbone if patchcore_backbone in ASSET_FILES else None
+        return None
+    if str(model_id).startswith("sam2_hiera_"):
+        return model_id  # SAM2는 모든 모드에서 기본 가중치 구조를 쓴다
+    if mode == "builtin_finetune":
+        return BUILTIN_BACKBONE_ASSETS.get(model_id)
+    if mode == "efficientnet_finetune":
+        return efficientnet_model if efficientnet_model in ASSET_FILES else None
+    if mode == "upstream_finetune":
+        return model_id if model_id in ASSET_FILES else None
+    return None
+
+
+def missing_asset_help(asset_id: str) -> str:
+    """설치본에 가중치가 없을 때 무엇을 하면 되는지 (사용자 안내 문구)."""
+    return (
+        f"이 학습에 필요한 사전학습 가중치({asset_id})가 설치본에 없습니다: {builtin_asset_root() / ASSET_FILES[asset_id]}\n\n"
+        "설치본(EXE)이면 build.bat을 끝까지 다시 실행해 설치본을 만드세요.\n"
+        "소스에서 실행 중이면 저장소 폴더에서 이 모델의 가중치만 받으세요 (인터넷 필요, 한 번만):\n"
+        f"  python python/prepare_builtin_assets.py --output gui/builtin_assets --only {asset_id}\n\n"
+        "또는 학습 모드를 '무작위 초기화로 시작'으로 바꾸면 가중치 없이 학습합니다(보통 정확도가 낮고 더 오래 걸립니다)."
+    )
+
+
 def builtin_assets_ready() -> bool:
     try:
         return all(builtin_asset_path(model_id).is_file() for model_id in ASSET_FILES)
