@@ -76,7 +76,7 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
 
 
 def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None,
-                        pixel_counts_out=None):
+                        pixel_counts_out=None, class_report_out=None):
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
@@ -105,14 +105,19 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
                 intersection = torch.zeros(classes, dtype=torch.float64)
                 union = torch.zeros(classes, dtype=torch.float64)
                 gt_area = torch.zeros(classes, dtype=torch.float64)
+                predicted_area = torch.zeros(classes, dtype=torch.float64)
             for cls in range(classes):
                 truth = valid & (masks == cls)
                 guess = valid & (predicted == cls)
                 intersection[cls] += (truth & guess).sum().item()
                 union[cls] += (truth | guess).sum().item()
                 gt_area[cls] += truth.sum().item()
+                predicted_area[cls] += guess.sum().item()
     if samples == 0 or intersection is None:
         raise ValueError("segmentation loader contains no samples")
+    if class_report_out is not None:  # 클래스별 IoU·예측/정답 픽셀 수 (지표에는 넣지 않는다: 로그용)
+        class_report_out.update(iou=(intersection / union.clamp(min=1)).tolist(),
+                                predicted=predicted_area.tolist(), truth=gt_area.tolist())
     if pixel_counts_out is not None:  # 이 epoch에 본 클래스별 정답 픽셀 수 (255 제외)
         pixel_counts_out[:] = [int(value) for value in gt_area.tolist()]
     evaluated = gt_area > 0
@@ -168,6 +173,32 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
     torch.save(state, output)
 
 
+def _class_report(report, class_names):
+    """검증의 결함 클래스별 IoU 한 줄과, 결함 픽셀을 하나도 예측하지 않았는지(전부 배경).
+
+    학습 지표 mIoU는 배경을 포함해 평균한다. 모두 배경으로 예측해도 3클래스면 약 0.33이고, CE+Dice의 Dice 항은
+    결함 없는 검증 패치에서 0이라 val loss도 낮다. 그래서 '결함을 못 찾는 상태'가 지표만으로 보이지 않는다.
+    """
+    names = list(class_names) or [str(index) for index in range(len(report["iou"]))]
+    parts, foreground = [], []
+    for index in range(1, len(report["iou"])):
+        if report["truth"][index] <= 0:
+            continue
+        foreground.append(report["iou"][index])
+        parts.append(f"{names[index] if index < len(names) else index} {report['iou'][index]:.3f}")
+    if not foreground:
+        return "", False
+    collapsed = sum(report["predicted"][1:]) == 0
+    line = (f"  결함 클래스 IoU (배경 제외): {' · '.join(parts)} | 평균 {sum(foreground) / len(foreground):.3f}"
+            + (" | ⚠ 결함 픽셀 예측 0 (전부 배경)" if collapsed else ""))
+    return line, collapsed
+
+
+COLLAPSE_HELP = ("⚠ 검증에서 결함 픽셀을 하나도 예측하지 않았습니다(모두 배경). val loss가 낮아도 결함을 못 찾는 상태입니다. "
+                 "흔한 원인: ① 이미지를 입력 크기로 줄이며 가는 결함이 사라짐 → 패치 학습을 켜거나 학습 화면의 "
+                 "'데이터에 맞게 자동 설정' ② 결함 픽셀이 너무 적음 → 클래스 가중치 Sqrt ③ epoch 부족.")
+
+
 def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   input_size: int | tuple[int, int] | None = None, in_channels: int = 3,
                   epochs: int = 1, batch_size: int = 4, learning_rate: float = 1e-3,
@@ -185,7 +216,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   class_names: Iterable[str] | None = None,
                   segmentation_loss: str = "ce_dice", class_weights: str = "none",
                   patch_training: bool = False, patches_per_image: int = 0, patch_scale: float = 1.0,
-                  should_stop=lambda: False) -> Path:
+                  class_report: bool = False, should_stop=lambda: False) -> Path:
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
     if gui_path not in sys.path:
@@ -417,11 +448,13 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         torch.save(resume_best_checkpoint, destination / "best.pt")
     completed_epochs = start_epoch
     epochs_without_improvement = max(0, start_epoch - best_epoch) if best_epoch else 0
+    collapsed_epochs, collapse_warned = {}, False  # 결함 예측 0인 epoch (데스크톱 class_report)
     for epoch in range(start_epoch, epochs):
         if should_stop():
             break
         training_clock.start_epoch()
         validation_metrics = {}
+        report = None
         if spec.task == "classify":
             train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target)
             val_loss, val_metric = _classification_epoch(model, val_loader, criterion, None, target, validation_metrics)
@@ -431,7 +464,10 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                                            pixel_counts_out=seen_pixels)
             if epoch == start_epoch and class_weights == "none":
                 _log_rare_class_hint(seen_pixels, class_names, log)
-            val_loss, val_metric = _segmentation_epoch(model, val_loader, criterion, None, target, validation_metrics)
+            report = {} if class_report else None
+            extra = {"class_report_out": report} if report is not None else {}  # 기본 호출 모양은 그대로
+            val_loss, val_metric = _segmentation_epoch(model, val_loader, criterion, None, target, validation_metrics,
+                                                       **extra)
         selected_value = policy.value(validation_metrics)
         if not all(torch.isfinite(torch.tensor(value)) for value in (train_loss, train_metric, val_loss, val_metric)):
             raise ValueError("training produced a non-finite metric")
@@ -439,6 +475,14 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         event_metrics = dict(validation_metrics)
         event_metrics.update(epoch_time_sec=epoch_time_sec, elapsed_time_sec=elapsed_time_sec)
         log(f"epoch {epoch + 1}/{epochs}: train_loss={train_loss:.6f} val_loss={val_loss:.6f} metric={val_metric:.6f}")
+        if spec.task == "segment" and report:  # 데스크톱: 배경을 뺀 결함 클래스 성적 (지표·웹 로그는 그대로)
+            line, collapsed = _class_report(report, class_names or [])
+            if line:
+                log(line)
+            collapsed_epochs[epoch + 1] = collapsed
+            if collapsed and epoch + 1 >= 3 and not collapse_warned:
+                log(COLLAPSE_HELP)
+                collapse_warned = True
         log(f"  Epoch {epoch + 1} 시간 | 소요 {format_hms(epoch_time_sec)} | "
             f"누적 {format_hms(elapsed_time_sec)}")
         completed_epochs = epoch + 1
@@ -481,6 +525,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             break
     if completed_epochs == start_epoch and start_epoch >= epochs:
         raise ValueError("resume checkpoint already reached the requested epochs")
+    if collapsed_epochs.get(best_epoch):
+        log("⚠ 저장된 best 모델이 검증 결함을 하나도 예측하지 않습니다. " + COLLAPSE_HELP.removeprefix("⚠ "))
     log_total_time(log, training_clock.elapsed())
     (destination / "training.json").write_text(json.dumps({"model_id": model_id,
         "task": spec.task, "epochs": epochs, "input_size": list(input_size),

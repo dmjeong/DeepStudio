@@ -159,3 +159,39 @@ def test_training_page_offers_dinov2_for_segmentation(tmp_path):
     assert widget.input_size_spin.value() == 448 and project.model.model_id == "dinov2_vits14_seg"
     assert widget.mode_combo.findData("builtin_finetune") >= 0
     widget.deleteLater()
+
+
+def test_desktop_segmentation_log_reports_defect_iou_and_all_background(tmp_path):
+    """mIoU는 배경을 포함해(전부 배경이어도 3클래스 0.33) 결함을 못 찾는 상태가 안 보였다.
+    데스크톱 학습(class_report)만 결함 클래스별 IoU와 '전부 배경' 경고를 로그에 남긴다. 기본(웹)은 그대로."""
+    from train_builtin import _class_report, train_builtin
+    line, collapsed = _class_report({"iou": [.99, 0.0, 0.0], "predicted": [100, 0, 0], "truth": [90, 5, 5]},
+                                    ["background", "scratch", "dot"])
+    assert collapsed and "scratch 0.000 · dot 0.000" in line and "전부 배경" in line
+    line, collapsed = _class_report({"iou": [.99, .5, 0.0], "predicted": [90, 6, 0], "truth": [90, 5, 0]},
+                                    ["background", "scratch", "dot"])
+    assert not collapsed and "scratch 0.500" in line and "dot" not in line  # 정답 없는 클래스는 빼고 평균
+    for split in ("train", "val"):
+        (tmp_path / "data" / "images" / split).mkdir(parents=True)
+        (tmp_path / "data" / "masks" / split).mkdir(parents=True)
+        for index in range(2):
+            Image.new("L", (64, 64), 100).save(tmp_path / "data" / "images" / split / f"{index}.png")
+            mask = np.zeros((64, 64), np.uint8)
+            mask[20:30, 20:30] = 1
+            Image.fromarray(mask, "L").save(tmp_path / "data" / "masks" / split / f"{index}.png")
+    for report in (False, True):
+        logs = []
+        train_builtin("unet_resnet18", tmp_path / "data", num_classes=2, input_size=64, in_channels=1, epochs=1,
+                      batch_size=2, output_dir=tmp_path / f"run{report}", device="cpu", num_workers=0,
+                      class_names=["background", "crack"], class_report=report,
+                      log=lambda m: logs.append(m) if isinstance(m, str) else None)
+        assert any("결함 클래스 IoU" in line for line in logs) is report
+
+
+def test_only_the_desktop_training_request_asks_for_the_class_report():
+    import inspect
+    from webapp import worker
+    source = inspect.getsource(worker.train)
+    assert 'class_report=bool(payload.get("class_report"))' in source  # 웹 요청에는 이 키가 없다
+    qt_source = (ROOT / "gui" / "core" / "qt_training.py").read_text(encoding="utf-8")
+    assert '"class_report": True' in qt_source

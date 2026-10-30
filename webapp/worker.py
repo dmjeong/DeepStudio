@@ -84,7 +84,7 @@ def _container_model_spec(project):
     return None
 
 
-def _train_builtin_project(context, project, device):
+def _train_builtin_project(context, project, device, *, class_report=False):
     """Train a registered adapter with the selected weight source."""
     from core.project import ProjectManager, RunRecord
     from core.training_artifacts import publish_best, training_hyperparameters
@@ -164,6 +164,8 @@ def _train_builtin_project(context, project, device):
                          patch_training=bool(getattr(cfg, "patch_training", False)) and project.task == "segment",
                          patches_per_image=int(getattr(cfg, "patches_per_image", 0)),
                          patch_scale=float(getattr(cfg, "patch_scale", 1.0)),
+                         # 데스크톱 요청만: 결함 클래스별 IoU와 '전부 배경' 경고를 로그에 (웹 로그는 그대로)
+                         class_report=bool(class_report) and project.task == "segment",
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
@@ -461,7 +463,7 @@ def train(context, payload):
         context.emit("log_message", ["GPU 합성곱과 역전파 검사 통과"])
     before = len(project.runs)
     config = {key: payload["project"][key] for key in ("task", "data", "model", "training")}
-    builtin_record = _train_builtin_project(context, project, device)
+    builtin_record = _train_builtin_project(context, project, device, class_report=bool(payload.get("class_report")))
     upstream_record = None if builtin_record is not None else _train_upstream_project(context, project, device)
     sam2_record = None if builtin_record is not None or upstream_record is not None else _train_sam2_project(context, project, device)
     if builtin_record is not None or upstream_record is not None or sam2_record is not None:
