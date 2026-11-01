@@ -12,7 +12,8 @@ from PySide6.QtGui import QTextCursor
 from core.project import ProjectData, ProjectManager
 from core.qt_training import TrainWorker, PatchCoreWorker
 from core.training_modes import (training_engine_name, training_capabilities, MODE_LABELS,
-                                 BUILTIN_ADAPTER_IDS, UPSTREAM_ADAPTER_IDS, SAM2_ADAPTER_IDS)
+                                 BUILTIN_ADAPTER_IDS, BUILTIN_SCRATCH_ONLY_IDS, UPSTREAM_ADAPTER_IDS,
+                                 SAM2_ADAPTER_IDS)
 from core.training_progress import remaining_seconds, run_description
 from core.training_time import format_hms
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
@@ -91,7 +92,12 @@ class TrainingWidget(TrainingForm, QWidget):
         """Only offer initialization paths that belong to the selected model."""
         model_id = self.model_id_combo.currentData() or ""
         name = self.model_id_combo.currentText()
-        if model_id in BUILTIN_ADAPTER_IDS:
+        if model_id in BUILTIN_SCRATCH_ONLY_IDS:
+            # 사전학습 가중치가 없는 모델: 고를 수 없는 '사전학습으로 시작'은 보여 주지 않는다
+            choices = [("builtin_scratch", f"{name} 처음부터 학습"),
+                       ("builtin_transfer", f"{name} 이전 학습 결과(.pt)로 이어서")]
+            self.mode_desc.setText(f"선택 모델: {name}\n사전학습 가중치 없음 — 라이선스 걱정 없이 내 데이터로만 학습합니다.")
+        elif model_id in BUILTIN_ADAPTER_IDS:
             source = "LVD-142M" if model_id.startswith("dinov2_") else "ImageNet"  # DINOv2는 자기지도 사전학습
             choices = [("builtin_finetune", f"{name} {source} 가중치로 시작"),
                        ("builtin_transfer", f"{name} 로컬 가중치로 시작"),

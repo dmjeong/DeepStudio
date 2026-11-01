@@ -219,11 +219,35 @@ def class_iou(confusion, class_names=()):
 
 
 def rules_of(details, rules=None):
-    """사용자가 바꾼 기준이 있으면 그것, 없으면 추론 때 저장한 기준."""
+    """사용자가 바꾼 기준이 있으면 그것, 없으면 추론 때 저장한 기준.
+
+    기준 = 기본 {"min_area", "min_score"} + 선택 "per_class": {클래스 이름: {"min_area", "min_score"}}.
+    클래스별 기준이 있는 클래스는 그 값을, 없는 클래스는 기본 값을 쓴다 (예: crack만 점수 0.85).
+    """
     merged = dict(DEFAULT_RULES)
     merged.update((details or {}).get("defect_rules") or {})
     merged.update(rules or {})
-    return {"min_area": max(1, int(merged["min_area"])), "min_score": float(merged["min_score"])}
+    result = {"min_area": max(1, int(merged["min_area"])), "min_score": float(merged["min_score"])}
+    per_class = {}
+    for name, rule in (merged.get("per_class") or {}).items():
+        rule = rule or {}
+        per_class[str(name)] = {"min_area": max(1, int(rule.get("min_area", result["min_area"]))),
+                                "min_score": float(rule.get("min_score", result["min_score"]))}
+    if per_class:
+        result["per_class"] = per_class
+    return result
+
+
+def class_rule(rules, class_name):
+    """이 클래스에 적용되는 (최소 면적, 최소 점수)."""
+    rule = (rules.get("per_class") or {}).get(str(class_name)) or rules
+    return int(rule["min_area"]), float(rule["min_score"])
+
+
+def passes(item, rules):
+    """결함 하나가 판정 기준을 넘는가 (점수가 없는 결함은 면적만 본다)."""
+    min_area, min_score = class_rule(rules, item["class_name"])
+    return item["area"] >= min_area and (item.get("score") is None or item["score"] >= min_score)
 
 
 def judge(details, rules=None):
@@ -233,9 +257,7 @@ def judge(details, rules=None):
     """
     details = details or {}
     rules = rules_of(details, rules)
-    kept = [item for item in details.get("defects") or []
-            if item["area"] >= rules["min_area"]
-            and (item.get("score") is None or item["score"] >= rules["min_score"])]
+    kept = [item for item in details.get("defects") or [] if passes(item, rules)]
     counts = {}
     for item in kept:
         counts[item["class_name"]] = counts.get(item["class_name"], 0) + 1
@@ -334,3 +356,113 @@ def segment_split_dirs(project):
                     else Path(root) / "masks" / split)
         result.append([str(image_dir), str(mask_dir)])
     return result
+
+
+def per_image_alarm_bound(normal_images, confidence=0.95):
+    """정상 이미지 n장에서 오검출 0이었을 때, 이미지 한 장의 오검출 확률의 신뢰 상한 (n이 크면 약 3/n)."""
+    return None if normal_images <= 0 else 1.0 - (1.0 - confidence) ** (1.0 / normal_images)
+
+
+def zero_alarm_rules(details_list, rules=None, *, unlabeled_are_normal=True, margin=0.02, max_score=0.99):
+    """정상에서는 결함이 하나도 남지 않는 클래스별 (최소 면적, 최소 점수)를 찾는다.
+
+        정상 이미지의 예측 덩어리 = 모두 오검출 ──▶ 이것들이 전부 걸러지는 기준 후보
+        라벨 결함(정답 마스크)                ──▶ 후보 중 결함을 가장 많이 남기는 기준을 고른다
+
+    정답 마스크가 있는 이미지: 정답과 겹치지 않는 덩어리가 오검출, 정답 결함은 검출률 계산에 쓴다.
+    정답이 없는 이미지: unlabeled_are_normal이면 '불량 없는 정상'으로 보고 모든 덩어리를 오검출로 센다.
+    기준 후보는 면적 문턱(오검출 덩어리 면적 + 1)마다, 그 면적 이상 오검출의 최고 점수 + margin.
+    라벨 결함이 없는 클래스는 면적을 지금 값으로 두고 점수만 올린다 (근거 없이 큰 결함까지 버리지 않게).
+    """
+    import math
+    base = rules_of({}, rules)
+    negatives, positives = {}, {}
+    normal_images = labeled_images = 0
+    for details in details_list:
+        details = details or {}
+        if "defects" not in details:
+            continue
+        truth = details.get("ground_truth")
+        if truth is None and not unlabeled_are_normal:
+            continue
+        truth_defects = (truth or {}).get("defects") or []
+        normal_images += not truth_defects
+        labeled_images += truth is not None
+        by_id = {item["id"]: item for item in details["defects"]}
+        for item in details["defects"]:
+            if truth is None or not item.get("truth"):
+                negatives.setdefault(item["class_name"], []).append(
+                    (item["area"], 1.0 if item.get("score") is None else item["score"]))
+        for item in truth_defects:
+            positives.setdefault(item["class_name"], []).append(
+                [(by_id[i]["area"], 1.0 if by_id[i].get("score") is None else by_id[i]["score"])
+                 for i in item["predicted"] if i in by_id])
+
+    def count(blobs, area, score):
+        return sum(a >= area and s >= score for a, s in blobs)
+
+    classes, proposed = [], dict(base.get("per_class") or {})
+    for name in sorted(set(negatives) | set(positives)):
+        area_now, score_now = class_rule(base, name)
+        neg, pos = negatives.get(name, []), positives.get(name, [])
+        options = []
+        for area in sorted({area_now} | {a + 1 for a, _ in neg if a + 1 > area_now}):
+            blocking = [s for a, s in neg if a >= area]
+            score = score_now if not blocking else max(score_now, math.ceil((max(blocking) + margin) * 100) / 100)
+            if score > max_score:
+                continue  # 점수만으로는 못 거르는 오검출 → 더 큰 면적 문턱에서 찾는다
+            found = sum(any(a >= area and s >= score for a, s in blobs) for blobs in pos)
+            # 같은 검출 수면 면적 문턱이 작은 쪽: 면적 문턱은 정상 덩어리 크기에 맞춰져 작은 실제 결함을 통째로 버린다
+            options.append((found, -area, -score, area, score) if pos else (-area, -score, 0, area, score))
+        if not options:
+            classes.append({"class_name": name, "current": [area_now, score_now], "proposed": None,
+                            "false_now": count(neg, area_now, score_now), "negatives": len(neg),
+                            "truth": len(pos), "found_now": sum(count(b, area_now, score_now) > 0 for b in pos)})
+            continue
+        area, score = max(options)[3:]
+        if (area, score) != (area_now, score_now):  # 바꿀 필요가 없는 클래스는 기본·기존 기준 그대로 둔다
+            proposed[name] = {"min_area": int(area), "min_score": round(float(score), 4)}
+        classes.append({"class_name": name, "current": [area_now, score_now], "proposed": [int(area), float(score)],
+                        "false_now": count(neg, area_now, score_now), "false_after": count(neg, area, score),
+                        "negatives": len(neg), "truth": len(pos),
+                        "found_now": sum(count(b, area_now, score_now) > 0 for b in pos),
+                        "found_after": sum(count(b, area, score) > 0 for b in pos)})
+    result_rules = {"min_area": base["min_area"], "min_score": base["min_score"]}
+    if proposed:
+        result_rules["per_class"] = proposed
+    return {"rules": result_rules, "classes": classes, "normal_images": normal_images,
+            "labeled_images": labeled_images, "bound": per_image_alarm_bound(normal_images),
+            "complete": all(row["proposed"] is not None for row in classes)}
+
+
+RULES_SUFFIX = ".rules.json"
+
+
+def model_rules_path(checkpoint_path):
+    """모델 옆에 저장하는 판정 기준 파일 (best.pt → best.rules.json). 내보내기가 모델과 함께 담는다."""
+    path = Path(checkpoint_path)
+    return path.with_name(path.stem + RULES_SUFFIX)
+
+
+def load_model_rules(checkpoint_path):
+    import json
+    try:
+        value = json.loads(model_rules_path(checkpoint_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("schema_version") != 1 or not isinstance(value.get("rules"), dict):
+        return None
+    try:
+        return rules_of({}, value["rules"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def save_model_rules(checkpoint_path, rules, *, note=""):
+    import json
+    payload = {"schema_version": 1, "rules": rules_of({}, rules)}
+    if note:
+        payload["note"] = note
+    target = model_rules_path(checkpoint_path)
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return target

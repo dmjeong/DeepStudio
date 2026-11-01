@@ -34,7 +34,12 @@ BUILTIN_MODEL_SPECS = {
     "dinov2_vitb14_cls": BuiltinModelSpec("dinov2_vitb14_cls", "classify", (224, 224), (1, 3)),
     "dinov2_vits14_seg": BuiltinModelSpec("dinov2_vits14_seg", "segment", (448, 448), (1, 3)),
     "dinov2_vitb14_seg": BuiltinModelSpec("dinov2_vitb14_seg", "segment", (448, 448), (1, 3)),
+    # 초경량 U-Net: 사전학습 가중치 없이 처음부터 학습(라이선스 걱정 없음). 원본 해상도 패치 학습용.
+    "unet_lite": BuiltinModelSpec("unet_lite", "segment", (256, 256), (1, 3)),
 }
+
+# 사전학습 가중치가 없는 모델: '처음부터 학습'과 같은 모델의 로컬 체크포인트로만 시작한다.
+SCRATCH_ONLY_MODELS = frozenset({"unet_lite"})
 
 # 새로 학습하는 머리 부분(나머지는 사전학습 백본: 백본 학습률 배수·동결 대상)과,
 # 클래스 순서가 다른 체크포인트로 추가 학습할 때 버리는 마지막 분류층.
@@ -46,12 +51,14 @@ HEAD_PREFIXES = {
     "dinov2_vits14_cls": ("head.",), "dinov2_vitb14_cls": ("head.",),
     "dinov2_vits14_seg": ("neck.", "detail", "fuse", "head."),
     "dinov2_vitb14_seg": ("neck.", "detail", "fuse", "head."),
+    "unet_lite": ("",),  # 사전학습 백본이 없어 전부 머리(같은 학습률)
 }
 CLASS_HEAD_PREFIX = {
     "resnet18": "fc.", "resnet50": "fc.", "convnext_v1_tiny": "classifier.2.",
     "deeplabv3plus_resnet34": "decoder.6.", "unet_resnet18": "head.",
     "dinov2_vits14_cls": "head.", "dinov2_vitb14_cls": "head.",
     "dinov2_vits14_seg": "head.", "dinov2_vitb14_seg": "head.",
+    "unet_lite": "head.",
 }
 
 # Pin a concrete revision rather than torchvision's mutable DEFAULT alias.
@@ -100,6 +107,7 @@ _GRADCAM_TARGET_LAYERS = {
     "unet_resnet18": "enc4",
     "dinov2_vits14_cls": "feature_map", "dinov2_vitb14_cls": "feature_map",  # 패치 토큰을 펼친 (B, D, h, w) 지도
     "dinov2_vits14_seg": "neck", "dinov2_vitb14_seg": "neck",
+    "unet_lite": "e4",
 }
 
 
@@ -344,6 +352,54 @@ class DinoV2Segmenter(nn.Module):
         return y[..., :height, :width]
 
 
+class UNetLite(nn.Module):
+    """초경량 U-Net (약 0.36M 매개변수). 3500×1500 같은 큰 영상을 원본 해상도 그대로 CPU에서 분할한다.
+
+        입력 ─▶ e1 s2 (c, 1/2) ─▶ e2 s2 (2c, 1/4) ─▶ e3 s2 (4c, 1/8) ─▶ e4 s2 (8c, 1/16)
+                   │                  │                   │                   │
+                   └── d1 ◀── 1×1 합침+3×3 ◀── d2 ◀── … ◀── d3 ◀──────────────┘
+        1/2 해상도 출력 ─▶ ×2 확대 = 원본 해상도
+
+    첫 stride-2 합성곱이 모든 픽셀을 보므로 1px 선도 지워지지 않는다. 원본 해상도에서는 계산보다 메모리가
+    병목이라, 폭 8과 16의 속도가 같다(3504×1504, CPU 4스레드 약 245 ms) → 폭 16을 쓴다.
+    """
+
+    WIDTH = 16
+
+    def __init__(self, num_classes: int, in_channels: int = 3, width: int = WIDTH):
+        super().__init__()
+        c = width
+
+        def block(cin, cout, kernel=3, stride=1):
+            return nn.Sequential(nn.Conv2d(cin, cout, kernel, stride, kernel // 2, bias=False),
+                                 nn.BatchNorm2d(cout), nn.ReLU(inplace=True))
+
+        self.e1 = nn.Sequential(block(in_channels, c, 3, 2), block(c, c))
+        self.e2 = nn.Sequential(block(c, 2 * c, 3, 2), block(2 * c, 2 * c))
+        self.e3 = nn.Sequential(block(2 * c, 4 * c, 3, 2), block(4 * c, 4 * c))
+        self.e4 = nn.Sequential(block(4 * c, 8 * c, 3, 2), block(8 * c, 8 * c))
+        self.d3 = nn.Sequential(block(12 * c, 4 * c, 1), block(4 * c, 4 * c))
+        self.d2 = nn.Sequential(block(6 * c, 2 * c, 1), block(2 * c, 2 * c))
+        self.d1 = nn.Sequential(block(3 * c, c, 1), block(c, c))
+        self.head = nn.Conv2d(c, num_classes, 1)
+        self.weight_provenance = {"source": "random_init"}
+
+    @staticmethod
+    def _up(x, ref):
+        return F.interpolate(x, size=ref.shape[-2:], mode="bilinear", align_corners=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        size = x.shape[-2:]
+        e1 = self.e1(x)
+        e2 = self.e2(e1)
+        e3 = self.e3(e2)
+        e4 = self.e4(e3)
+        y = self.d3(torch.cat((self._up(e4, e3), e3), 1))
+        y = self.d2(torch.cat((self._up(y, e2), e2), 1))
+        y = self.d1(torch.cat((self._up(y, e1), e1), 1))
+        return F.interpolate(self.head(y), size=size, mode="bilinear", align_corners=False)
+
+
 def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *,
                         pretrained: bool = False, backbone_weights=None) -> nn.Module:
     """Construct the adapter; pretrained/local loading must be requested explicitly."""
@@ -361,6 +417,10 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
     elif model_id == "unet_resnet18":
         model = UNetResNet18(int(num_classes), in_channels,
                             pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id == "unet_lite":
+        if pretrained or backbone_weights is not None:
+            raise ValueError("초경량 U-Net은 사전학습 가중치가 없습니다. '처음부터 학습'을 선택하세요.")
+        model = UNetLite(int(num_classes), in_channels)
     elif model_id in ("dinov2_vits14_seg", "dinov2_vitb14_seg"):
         model = DinoV2Segmenter(model_id.removeprefix("dinov2_").removesuffix("_seg"), int(num_classes),
                                 in_channels, pretrained=pretrained, weights_path=backbone_weights)

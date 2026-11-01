@@ -523,6 +523,30 @@ class SegmentationDataset(Dataset):
         return image, mask
 
 
+def common_image_size(image_dir, limit: int = 200):
+    """폴더 영상들의 가장 흔한 (가로, 세로). 패치 학습 모델의 '판정 영역' 크기로 체크포인트에 남긴다.
+
+    헤더만 읽으므로 빠르다. 영상이 없으면 None.
+    """
+    from collections import Counter
+    from pathlib import Path
+    sizes = Counter()
+    root = Path(image_dir)
+    if not root.is_dir():
+        return None
+    for path in sorted(root.rglob("*")):
+        if path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"):
+            continue
+        try:
+            with Image.open(path) as image:
+                sizes[image.size] += 1
+        except OSError:
+            continue
+        if sum(sizes.values()) >= limit:
+            break
+    return list(sizes.most_common(1)[0][0]) if sizes else None
+
+
 def scaled_size(width: int, height: int, scale: float) -> Tuple[int, int]:
     """패치 학습 배율을 적용한 (가로, 세로). 학습 데이터와 추론이 같은 크기를 쓰도록 한 곳에서 정한다."""
     if not 0 < scale <= 1:

@@ -413,7 +413,8 @@ class InferenceOperations:
         review = {"min_area", "min_score", "split_dirs": [(이미지 폴더, 마스크 폴더), ...]}.
         이미지가 데이터셋에 있고 정답 마스크가 있으면 정답과 비교한다(IoU·놓침·오검출).
         """
-        from core.segment_defects import analyze_segmentation, judge, load_truth, summary_text, truth_mask_path
+        from core.segment_defects import (analyze_segmentation, judge, load_truth, rules_of, summary_text,
+                                          truth_mask_path)
         num_classes = num_classes or self.model.num_classes
         names = list(self.class_names) or [f"Class {i}" for i in range(num_classes)]
         truth, truth_path, note = None, truth_mask_path(image_path, review.get("split_dirs") or ()), ""
@@ -434,8 +435,8 @@ class InferenceOperations:
             analysis = analyze_segmentation(mask, probabilities, size=labels.shape[::-1], labels=labels,
                                             class_names=names, offset=offset, num_classes=num_classes)
         details = dict(prediction.details)
-        details.update(analysis, defect_rules={"min_area": int(review.get("min_area", 1)),
-                                               "min_score": float(review.get("min_score", 0.0))})
+        details.update(analysis, defect_rules=rules_of({}, {key: review[key] for key in
+                                                            ("min_area", "min_score", "per_class") if key in review}))
         if truth is not None and "ground_truth" in analysis:
             details["ground_truth"]["mask"] = truth_path
         if note:

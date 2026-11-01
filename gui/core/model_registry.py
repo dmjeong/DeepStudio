@@ -230,6 +230,10 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
             f"dinov2_{variant}_seg", "DINOv2", label, "segment", ("windows_native", "onnx"), common, (448, 448), (1, 3),
             "export_verified", pretrained_asset=asset, metadata=desktop,
             notes="ViT 의미 특징(1/14) + 합성곱 세부 경로(1/2·1/4) 디코더; 1~2px 결함은 U-Net 원본 해상도가 낫다"))
+    specs.append(ModelSpec(
+        "unet_lite", "U-Net", "Lite", "segment", ("windows_native", "onnx"), common, (256, 256), (1, 3),
+        "export_verified", metadata=desktop,
+        notes="초경량 U-Net(사전학습 없음, 라이선스 걱정 없음); 원본 해상도 패치 학습으로 1~2px 결함, 3504×1504 CPU 약 0.25초"))
     sam2_contract = {"contracts": {"graphs": {
         "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},
                     "outputs": ["image_embeddings", "image_features_0", "image_features_1"]},

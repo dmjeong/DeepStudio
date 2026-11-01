@@ -7,7 +7,7 @@
 PATCH_SCALE_INTERPOLATION = "INTER_AREA"
 
 
-def tiling_contract(patch_size, scale=1.0):
+def tiling_contract(patch_size, scale=1.0, region=None):
     """패치 학습 모델의 추론 규칙: 원본 해상도에서 tile×tile 창을 overlap만큼 겹쳐 민다.
 
     겹침은 타일의 1/4. 각 타일은 이미지 안쪽으로 난 가장자리 overlap/2 띠를 거의 믿지 않고(가중치 1e-4),
@@ -23,8 +23,15 @@ def tiling_contract(patch_size, scale=1.0):
         raise ValueError("패치 학습 배율은 0보다 크고 1 이하여야 합니다")
     # scale: 추론 전에 판정 영역을 줄이는 배율 (학습 패치를 자르기 전에 줄인 것과 같다). 1 = 원본 해상도.
     # interpolation: 그때 쓰는 보간. 이 키가 없는 규칙(9.33 첫 빌드)은 INTER_LINEAR_EXACT로 학습됐다.
-    return {"tile": tile, "overlap": tile // 4, "blend": "center_weighted_softmax", "scale": scale,
-            "interpolation": PATCH_SCALE_INTERPOLATION}
+    contract = {"tile": tile, "overlap": tile // 4, "blend": "center_weighted_softmax", "scale": scale,
+                "interpolation": PATCH_SCALE_INTERPOLATION}
+    # region: 학습 영상의 (가로, 세로). C++ 배포는 이 크기의 판정 영역을 한 번에 넣는 고정 입력으로 내보낸다.
+    if region:
+        width, height = (int(v) for v in region)
+        if width < 1 or height < 1:
+            raise ValueError("판정 영역 크기가 올바르지 않습니다")
+        contract["region"] = [width, height]
+    return contract
 
 
 def make_checkpoint_metadata(task, num_classes, class_names, input_size,

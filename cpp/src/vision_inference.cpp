@@ -472,6 +472,41 @@ bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::s
             }
             if (config.task == "anomaly")
                 config.anomaly_threshold = post.value("threshold", 0.0f);
+            if (config.task == "segment" && post.contains("defect_rules"))
+            {
+                // 모델과 함께 저장한 분할 판정 기준: 클래스 번호별 (최소 면적, 최소 점수)
+                const auto& rules = post.at("defect_rules");
+                auto rule_of = [](const nlohmann::json& item, InferenceConfig::DefectRule fallback) {
+                    if (!item.is_object()) throw std::invalid_argument("defect_rules entries must be objects.");
+                    if (item.contains("min_area")) {
+                        if (!item.at("min_area").is_number_integer() || item.at("min_area").get<int64_t>() < 1 ||
+                            item.at("min_area").get<int64_t>() > std::numeric_limits<int>::max())
+                            throw std::invalid_argument("defect_rules min_area must be a positive integer.");
+                        fallback.min_area = item.at("min_area").get<int>();
+                    }
+                    if (item.contains("min_score")) {
+                        if (!item.at("min_score").is_number()) throw std::invalid_argument("defect_rules min_score must be a number.");
+                        const double score = item.at("min_score").get<double>();
+                        if (!std::isfinite(score) || score < 0.0 || score > 1.0)
+                            throw std::invalid_argument("defect_rules min_score must be within [0, 1].");
+                        fallback.min_score = static_cast<float>(score);
+                    }
+                    return fallback;
+                };
+                const InferenceConfig::DefectRule base = rule_of(rules, {});
+                config.defect_rules.assign(static_cast<size_t>(config.num_classes), base);
+                if (rules.contains("classes")) {
+                    if (!rules.at("classes").is_array()) throw std::invalid_argument("defect_rules classes must be an array.");
+                    for (const auto& item : rules.at("classes")) {
+                        if (!item.is_object() || !item.contains("class_id") || !item.at("class_id").is_number_integer())
+                            throw std::invalid_argument("defect_rules class entries need class_id.");
+                        const auto id = item.at("class_id").get<int64_t>();
+                        if (id < 1 || id >= config.num_classes)
+                            throw std::invalid_argument("defect_rules class_id is out of range.");
+                        config.defect_rules[static_cast<size_t>(id)] = rule_of(item, base);
+                    }
+                }
+            }
         }
         if (doc.contains("preprocessing"))
         {
@@ -509,6 +544,34 @@ bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::s
                     (config.input_channels == 1 ? "GRAY" : "RGB"))
                 throw std::invalid_argument("Unsupported preprocessing contract.");
             config.input_value_range = prep.value("value_range", std::string("uint8_0_255"));
+            if (prep.contains("whole_image") && !prep.at("whole_image").is_null())
+            {
+                // 패치 학습 분할 모델: 판정 영역 전체를 한 번에 (내보내기의 whole_image_contract)
+                const auto& whole = prep.at("whole_image");
+                auto pair = [&whole](const char* key) {
+                    const auto& value = whole.at(key);
+                    if (!value.is_array() || value.size() != 2 || !value[0].is_number_integer() ||
+                        !value[1].is_number_integer() || value[0].get<int64_t>() < 1 || value[1].get<int64_t>() < 1 ||
+                        value[0].get<int64_t>() > 65536 || value[1].get<int64_t>() > 65536)
+                        throw std::invalid_argument(std::string("whole_image ") + key + " must be two positive integers.");
+                    return std::make_pair(value[0].get<int>(), value[1].get<int>());
+                };
+                if (config.task != "segment" || !whole.is_object())
+                    throw std::invalid_argument("whole_image is a segmentation contract.");
+                const auto region = pair("region"), scaled = pair("scaled"), input = pair("input");
+                const auto interpolation = whole.value("interpolation", std::string("INTER_LINEAR_EXACT"));
+                if (interpolation != "INTER_AREA" && interpolation != "INTER_LINEAR_EXACT")
+                    throw std::invalid_argument("Unsupported whole_image interpolation.");
+                if (input.first != config.input_height || input.second != config.input_width ||
+                    scaled.first > config.input_width || scaled.second > config.input_height ||
+                    whole.value("pad", std::string()) != "zero_after_normalize" || config.crop_width > 0)
+                    throw std::invalid_argument("Inconsistent whole_image contract.");
+                config.region_width = region.first;
+                config.region_height = region.second;
+                config.scaled_width = scaled.first;
+                config.scaled_height = scaled.second;
+                config.region_interpolation = interpolation == "INTER_AREA" ? cv::INTER_AREA : cv::INTER_LINEAR_EXACT;
+            }
             if (config.backend == "patchcore" &&
                 (config.input_value_range != "uint8_0_255_or_uint16_0_65535" ||
                  prep.value("implementation", std::string()) != "opencv_full_range_v2"))
@@ -544,6 +607,135 @@ std::vector<float> VisionInference::Preprocess(const cv::Mat& source)
     cv::Mat converted, resized;
     PreprocessInto(source, tensor.data(), tensor.size(), converted, resized);
     return tensor;
+}
+
+std::vector<float> VisionInference::PreprocessWholeRegion(const cv::Mat& region)
+{
+    /**
+     * 패치 학습 분할 모델 전처리 (데스크톱 엔진의 '판정 영역 한 번에'와 같은 계산)
+     *
+     *   판정 영역 W×H ─▶ 색 변환 ─▶ scaled 크기로 축소(학습과 같은 보간) ─▶ 정규화
+     *                ─▶ 입력 텐서 왼쪽 위에 놓고 나머지는 0 (정규화 뒤 0 = 학습 패치가 영상 밖일 때의 채움)
+     */
+    if (region.cols != m_config.region_width || region.rows != m_config.region_height)
+        throw std::invalid_argument("This model was exported for a " + std::to_string(m_config.region_width) + "x" +
+                                    std::to_string(m_config.region_height) + " region; got " +
+                                    std::to_string(region.cols) + "x" + std::to_string(region.rows) +
+                                    ". Pass the judgement region or re-export with this size.");
+    if (region.depth() != CV_8U) throw std::invalid_argument("Patch-trained segmentation input must be 8-bit.");
+    const int source_channels = region.channels();
+    const int channels = m_config.input_channels;
+    if (source_channels != 1 && source_channels != 3 && source_channels != 4)
+        throw std::invalid_argument("Supported image channels: gray, BGR, BGRA.");
+    if (m_config.normalize_mean.size() != static_cast<size_t>(channels) ||
+        m_config.normalize_std.size() != static_cast<size_t>(channels))
+        throw std::invalid_argument("Invalid normalization coefficients.");
+    cv::Mat converted;
+    const cv::Mat* pixels = &converted;
+    if (channels == 1) {
+        if (source_channels == 1) pixels = &region;
+        else cv::cvtColor(region, converted, source_channels == 3 ? cv::COLOR_BGR2GRAY : cv::COLOR_BGRA2GRAY);
+    } else {
+        cv::cvtColor(region, converted, source_channels == 1 ? cv::COLOR_GRAY2RGB :
+                                       source_channels == 3 ? cv::COLOR_BGR2RGB : cv::COLOR_BGRA2RGB);
+    }
+    cv::Mat scaled;
+    if (pixels->cols != m_config.scaled_width || pixels->rows != m_config.scaled_height)
+        cv::resize(*pixels, scaled, cv::Size(m_config.scaled_width, m_config.scaled_height), 0, 0,
+                   m_config.region_interpolation);
+    else
+        scaled = *pixels;
+    const int width = m_config.input_width, height = m_config.input_height;
+    const size_t plane = static_cast<size_t>(width) * height;
+    std::vector<float> tensor(plane * channels, 0.0f);
+    for (int y = 0; y < scaled.rows; ++y) {
+        const uint8_t* row = scaled.ptr<uint8_t>(y);
+        for (int x = 0; x < scaled.cols; ++x)
+            for (int c = 0; c < channels; ++c)
+                tensor[c * plane + static_cast<size_t>(y) * width + x] =
+                    (static_cast<float>(row[x * channels + c]) / 255.0f - m_config.normalize_mean[c]) /
+                    m_config.normalize_std[c];
+    }
+    return tensor;
+}
+
+void VisionInference::ApplyDefectRules(cv::Mat& mask, const cv::Mat& scores, const cv::Size& output_size,
+                                       SegmentResult& result) const
+{
+    /**
+     * 판정 기준 미달 덩어리를 마스크에서 지운다 (데스크톱 판정과 같은 계산).
+     *
+     *   덩어리 = 같은 클래스의 8-연결 픽셀.  면적 = 원본(판정 영역) 픽셀 수,  점수 = 그 클래스 softmax 평균
+     *   마스크는 원본 크기로 nearest 확대된다 → 모델 픽셀 하나가 원본의 직사각형 블록이 되므로,
+     *   모델 해상도에서 블록 넓이(row_h × col_w)를 가중치로 세면 원본에서 센 것과 같다.
+     */
+    cv::Mat work = mask, work_scores = scores;
+#if CV_VERSION_MAJOR > 4 || (CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR >= 5)
+    const int nearest = cv::INTER_NEAREST_EXACT;
+#else
+    const int nearest = cv::INTER_NEAREST;
+#endif
+    // 모델 행·열마다 확대 뒤 몇 개의 원본 행·열이 되는지 (마스크 확대와 같은 보간으로 번호를 확대해 센다)
+    auto counts = [nearest](int source, int target) {
+        cv::Mat index(1, source, CV_32S), mapped;
+        for (int i = 0; i < source; ++i) index.at<int>(0, i) = i;
+        cv::resize(index, mapped, cv::Size(target, 1), 0, 0, nearest);
+        std::vector<int> count(static_cast<size_t>(source), 0);
+        for (int i = 0; i < target; ++i) ++count[static_cast<size_t>(mapped.at<int>(0, i))];
+        return count;
+    };
+    std::vector<int> row_h = counts(work.rows, output_size.height), col_w = counts(work.cols, output_size.width);
+    if (std::count(row_h.begin(), row_h.end(), 0) || std::count(col_w.begin(), col_w.end(), 0)) {
+        // 원본이 모델 출력보다 작다(축소): 사라지는 모델 픽셀이 있어 원본 크기에서 그대로 센다
+        cv::resize(mask, work, output_size, 0, 0, nearest);
+        cv::resize(scores, work_scores, output_size, 0, 0, nearest);
+        row_h.assign(static_cast<size_t>(output_size.height), 1);
+        col_w.assign(static_cast<size_t>(output_size.width), 1);
+    }
+    std::vector<int> start_y(row_h.size(), 0), start_x(col_w.size(), 0);
+    for (size_t i = 1; i < row_h.size(); ++i) start_y[i] = start_y[i - 1] + row_h[i - 1];
+    for (size_t i = 1; i < col_w.size(); ++i) start_x[i] = start_x[i - 1] + col_w[i - 1];
+    for (int class_id = 1; class_id < static_cast<int>(m_config.defect_rules.size()); ++class_id) {
+        const cv::Mat binary = work == class_id;
+        if (!cv::countNonZero(binary)) continue;
+        cv::Mat labels, stats, centroids;
+        const int count = cv::connectedComponentsWithStats(binary, labels, stats, centroids, 8, CV_32S);
+        std::vector<double> area(static_cast<size_t>(count), 0.0), score(static_cast<size_t>(count), 0.0);
+        for (int y = 0; y < labels.rows; ++y) {
+            const int* label = labels.ptr<int>(y);
+            const float* probability = work_scores.ptr<float>(y);
+            for (int x = 0; x < labels.cols; ++x) {
+                if (!label[x]) continue;
+                const double weight = static_cast<double>(row_h[y]) * col_w[x];
+                area[label[x]] += weight;
+                score[label[x]] += weight * probability[x];
+            }
+        }
+        const auto& rule = m_config.defect_rules[static_cast<size_t>(class_id)];
+        std::vector<uchar> remove(static_cast<size_t>(count), 0);
+        for (int index = 1; index < count; ++index) {
+            const int pixels = static_cast<int>(std::lround(area[index]));
+            // 데스크톱 결과 파일과 같은 반올림(소수 4자리)으로 비교한다
+            const float mean = static_cast<float>(std::round(score[index] / std::max(area[index], 1.0) * 1e4) / 1e4);
+            if (pixels < rule.min_area || mean < rule.min_score) {
+                remove[index] = 1;
+                ++result.removed_defects;
+                continue;
+            }
+            const int x = stats.at<int>(index, cv::CC_STAT_LEFT), y = stats.at<int>(index, cv::CC_STAT_TOP);
+            const int w = stats.at<int>(index, cv::CC_STAT_WIDTH), h = stats.at<int>(index, cv::CC_STAT_HEIGHT);
+            const int left = start_x[x], top = start_y[y];
+            result.defects.push_back({class_id, cv::Rect(left, top, start_x[x + w - 1] + col_w[x + w - 1] - left,
+                                                         start_y[y + h - 1] + row_h[y + h - 1] - top), pixels, mean});
+        }
+        for (int y = 0; y < labels.rows; ++y) {
+            const int* label = labels.ptr<int>(y);
+            uchar* value = work.ptr<uchar>(y);
+            for (int x = 0; x < labels.cols; ++x)
+                if (label[x] && remove[static_cast<size_t>(label[x])]) value[x] = 0;
+        }
+    }
+    mask = work;
 }
 
 void VisionInference::PreprocessInto(const cv::Mat& source, float* data, size_t count,
@@ -804,7 +996,12 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
     auto start = std::chrono::steady_clock::now();
 
     // ── 1. 전처리 ────────────────────────────────────
-    std::vector<float> input_tensor = Preprocess(image);
+    cv::Rect roi(0, 0, image.cols, image.rows);
+    if (m_config.crop_width > 0)
+        roi = cv::Rect((image.cols-m_config.crop_width)/2, (image.rows-m_config.crop_height)/2,
+                       m_config.crop_width, m_config.crop_height);
+    const bool whole = m_config.region_width > 0;
+    std::vector<float> input_tensor = whole ? PreprocessWholeRegion(image) : Preprocess(image);
 
     // ── 2. 입력 텐서 ─────────────────────────────────
     std::vector<int64_t> input_shape = {
@@ -844,15 +1041,38 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
     int out_height = static_cast<int>(output_shape[2]);
     int out_width = static_cast<int>(output_shape[3]);
 
-    // Argmax 마스크 생성
-    cv::Mat seg_mask = ArgmaxMask(output_data, out_classes,
-                                   out_height, out_width);
+    // Argmax 마스크 생성 (판정 영역 한 번에 모델: 0으로 채운 오른쪽·아래는 잘라 낸다)
+    const int valid_height = whole ? std::min(m_config.scaled_height, out_height) : out_height;
+    const int valid_width = whole ? std::min(m_config.scaled_width, out_width) : out_width;
+    cv::Mat seg_mask;
+    if (!whole && m_config.defect_rules.empty()) {
+        seg_mask = ArgmaxMask(output_data, out_classes, out_height, out_width);
+    } else {
+        // 판정 기준에는 픽셀마다 이긴 클래스의 softmax 확률이 필요하다
+        seg_mask.create(valid_height, valid_width, CV_8UC1);
+        cv::Mat scores(valid_height, valid_width, CV_32F);
+        const size_t plane = static_cast<size_t>(out_height) * out_width;
+        for (int h = 0; h < valid_height; ++h) {
+            uchar* label = seg_mask.ptr<uchar>(h);
+            float* probability = scores.ptr<float>(h);
+            for (int w = 0; w < valid_width; ++w) {
+                const float* pixel = output_data + static_cast<size_t>(h) * out_width + w;
+                int best = 0;
+                float best_value = pixel[0];
+                for (int c = 1; c < out_classes; ++c)
+                    if (pixel[c * plane] > best_value) { best_value = pixel[c * plane]; best = c; }
+                label[w] = static_cast<uchar>(best);
+                if (m_config.defect_rules.empty()) continue;
+                double sum = 0.0;
+                for (int c = 0; c < out_classes; ++c) sum += std::exp(static_cast<double>(pixel[c * plane] - best_value));
+                probability[w] = static_cast<float>(1.0 / sum);
+            }
+        }
+        if (!m_config.defect_rules.empty())
+            ApplyDefectRules(seg_mask, scores, roi.size(), result);
+    }
 
     // 원본 이미지 크기로 리사이즈
-    cv::Rect roi(0, 0, image.cols, image.rows);
-    if (m_config.crop_width > 0)
-        roi = cv::Rect((image.cols-m_config.crop_width)/2, (image.rows-m_config.crop_height)/2,
-                       m_config.crop_width, m_config.crop_height);
     if (seg_mask.size() != roi.size())
     {
         // 클래스 번호는 보간하지 않는다. INTER_NEAREST_EXACT는 픽셀 중심 기준이라

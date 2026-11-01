@@ -174,6 +174,86 @@ def _positive_int(value, name):
     return int(value)
 
 
+WHOLE_IMAGE_MULTIPLE = 32  # 분할 백본의 최대 보폭: 판정 영역을 이 배수로 채워 넣는다 (데스크톱 엔진과 같은 규칙)
+
+
+def whole_image_contract(spec, model, region=None):
+    """패치 학습 분할 모델 → C++ 고정 입력 계약: 판정 영역 전체를 한 번에 넣는다 (데스크톱 엔진과 같은 계산).
+
+        판정 영역 W×H ─▶ 배율 s로 축소(학습과 같은 보간) ─▶ 오른쪽·아래를 0으로 채워 32의 배수 ─▶ 모델
+                                                                       ─▶ 채운 부분을 잘라 내고 W×H로 확대
+
+    ViT(DINOv2)는 주의가 입력 전체를 봐서 한 번에 넣으면 학습과 다른 함수가 된다 → None (C++ 배포 미지원).
+    region: (가로, 세로). 없으면 학습 때 기록한 영상 크기.
+    """
+    tiling = (spec.get("preprocessing") or {}).get("tiling")
+    if spec["task"] != "segment" or not tiling or getattr(model, "global_attention", False):
+        return None
+    region = region or tiling.get("region")
+    if not region:
+        raise ValueError("패치 학습 모델은 판정 영역 크기(가로×세로 px)가 있어야 C++에서 한 번에 추론할 수 있습니다. "
+                         "내보내기 화면에서 판정 영역 크기를 입력하세요.")
+    width, height = (_positive_int(v, "region") for v in region)
+    from dataset import scaled_size
+    scaled_w, scaled_h = scaled_size(width, height, float(tiling.get("scale", 1.0)))
+    multiple = WHOLE_IMAGE_MULTIPLE
+    return {"region": [width, height], "scaled": [scaled_w, scaled_h],
+            "interpolation": tiling.get("interpolation", "INTER_LINEAR_EXACT"), "pad": "zero_after_normalize",
+            "input": [-(-scaled_h // multiple) * multiple, -(-scaled_w // multiple) * multiple]}
+
+
+def deployment_defect_rules(checkpoint_path, class_names):
+    """모델 옆 판정 기준(best.rules.json) → C++ SDK 계약 (클래스 번호별). 없으면 None.
+
+    {"min_area", "min_score", "classes": [{"class_id", "class_name", "min_area", "min_score"}, ...]}
+    """
+    path = Path(checkpoint_path)
+    path = path.with_name(path.stem + ".rules.json")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ValueError(f"판정 기준 파일을 읽을 수 없습니다: {path} ({exc})") from exc
+    rules = value.get("rules") if isinstance(value, dict) and value.get("schema_version") == 1 else None
+    if not isinstance(rules, dict):
+        raise ValueError(f"판정 기준 파일 형식이 올바르지 않습니다: {path}")
+    min_area, min_score = max(1, int(rules.get("min_area", 1))), float(rules.get("min_score", 0.0))
+    classes = []
+    for name, rule in (rules.get("per_class") or {}).items():
+        if name not in class_names:
+            raise ValueError(f"판정 기준의 클래스 '{name}'가 모델 클래스에 없습니다: {path}")
+        classes.append({"class_id": class_names.index(name), "class_name": name,
+                        "min_area": max(1, int(rule.get("min_area", min_area))),
+                        "min_score": float(rule.get("min_score", min_score))})
+    if not all(math.isfinite(v) and 0 <= v <= 1 for v in [min_score, *(c["min_score"] for c in classes)]):
+        raise ValueError("판정 기준 점수는 0~1이어야 합니다")
+    return {"min_area": min_area, "min_score": min_score, "classes": sorted(classes, key=lambda c: c["class_id"])}
+
+
+def deployment_preview(checkpoint_path):
+    """내보내기 화면의 'C++ 배포' 안내: 패치 학습 여부·판정 영역·함께 담길 판정 기준. 실패하면 빈 사전."""
+    import torch
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    except Exception:
+        return {}
+    if not isinstance(checkpoint, dict):
+        return {}
+    preprocessing = checkpoint.get("preprocessing") or {}
+    tiling = checkpoint.get("tiling") or preprocessing.get("tiling") or {}
+    model_id = checkpoint.get("model_id") or (checkpoint.get("model_config") or {}).get("model_id") or ""
+    task = checkpoint.get("task")
+    preview = {"task": task, "patch": bool(tiling) and task == "segment", "vit": str(model_id).startswith("dinov2_"),
+               "region": tiling.get("region"), "scale": float(tiling.get("scale", 1.0)), "rules": None}
+    if task == "segment":
+        try:
+            preview["rules"] = deployment_defect_rules(checkpoint_path, list(checkpoint.get("class_names") or []))
+        except ValueError as exc:
+            preview["rules_error"] = str(exc)
+    return preview
+
+
 def resolve_checkpoint_spec(checkpoint, overrides=None):
     """체크포인트를 기준으로 모델 구조와 전처리 규약을 복원한다.
 
@@ -636,6 +716,18 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
         if backend in {"custom", "efficientnet", "builtin", "redetr_v4"}:
             spec = resolve_checkpoint_spec(checkpoint, overrides)
             model = load_custom_model(checkpoint, spec)
+            whole = whole_image_contract(spec, model, (overrides or {}).get("region_size"))
+            if whole is not None:
+                spec = {**spec, "input_height": whole["input"][0], "input_width": whole["input"][1],
+                        "preprocessing": {**spec["preprocessing"], "whole_image": whole}}
+                log(f"패치 학습 모델: 판정 영역 {whole['region'][0]}×{whole['region'][1]}을 한 번에 넣는 고정 입력"
+                    f" {whole['input'][1]}×{whole['input'][0]}로 내보냅니다 (배율 {whole['scaled'][0]}×{whole['scaled'][1]})")
+            defect_rules = (deployment_defect_rules(checkpoint_path, list(spec["class_names"]))
+                            if spec["task"] == "segment" else None)
+            if defect_rules is not None:
+                log("판정 기준 포함: 기본 면적 ≥ {min_area}px · 점수 ≥ {min_score:.2f}".format(**defect_rules)
+                    + "".join(f" | {c['class_name']} 면적 ≥ {c['min_area']}px · 점수 ≥ {c['min_score']:.2f}"
+                              for c in defect_rules["classes"]))
             reference_model = model if backend == "efficientnet" else None
             verification_profile = verification_tolerances(spec["task"])
             if backend == "efficientnet":
@@ -826,6 +918,13 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                 manifest["num_threads"] = runtime_settings["num_threads"]
                 manifest["export"]["verified_runtime_settings"] = runtime_settings
                 manifest["export"]["runtime_attempts"] = runtime_attempts
+        if backend in {"custom", "builtin"} and spec["task"] == "segment":
+            if spec["preprocessing"].get("tiling") and "whole_image" not in spec["preprocessing"]:
+                manifest["cpp_supported"] = False  # ViT 패치 모델: 타일 추론이 필요하다 (데스크톱 엔진만 지원)
+                manifest["cpp_unsupported_reason"] = "ViT patch model requires tiled inference"
+            if defect_rules is not None:
+                # C++ SDK가 Segment에서 기준 미달 덩어리를 마스크에서 지운다 (설비 코드 변경 없음)
+                manifest.setdefault("postprocessing", {})["defect_rules"] = defect_rules
         if backend == "redetr_v4":
             manifest["export"]["output_names"] = ["pred_boxes", "pred_logits"]
             manifest["postprocessing"]["class_scores"] = spec["model_config"].get("score_activation", "sigmoid")

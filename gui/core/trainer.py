@@ -39,6 +39,7 @@ Deep Vision Studio — 학습 엔진
 """
 
 import os
+from pathlib import Path
 import math
 import traceback
 from datetime import datetime
@@ -485,13 +486,17 @@ class TrainWorker(TrainingEngine):
         cfg, data, model = self.project.training, self.project.data, self.project.model
         from checkpoint import tiling_contract
         patch = self.project.task == "segment" and getattr(cfg, "patch_training", False)
+        region = None
+        if patch:
+            from dataset import common_image_size
+            region = common_image_size(data.train_dir or Path(data.root) / "images" / "train")
         return make_checkpoint_metadata(self.project.task, data.num_classes, data.class_names,
             cfg.input_size, cfg.in_channels,
             {"backbone_channels": list(model.backbone_channels),
              "csp_depth": list(model.csp_depth), "dropout": model.dropout},
             center_crop=configured_center_crop(cfg),
             tiling=tiling_contract(cfg.input_size if patch else 0,
-                                   float(getattr(cfg, "patch_scale", 1.0)) if patch else 1.0))
+                                   float(getattr(cfg, "patch_scale", 1.0)) if patch else 1.0, region))
 
     def _restore_training_state(self, model, optimizer, scheduler, scaler, run_dir):
         return {}

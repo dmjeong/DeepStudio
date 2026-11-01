@@ -124,6 +124,8 @@ def advise(project, index, *, weights_ready=None):
     reasons["segmentation_loss"] = "CE + Dice: 배경이 대부분인 결함 마스크에서 작은 결함의 손실을 키웁니다."
     reasons["class_weights"] = (f"결함 픽셀이 {share:.2%}로 적어 Sqrt 가중치로 결함 쪽 손실을 키웁니다."
                                 if share < .01 else f"결함 픽셀 {share:.1%}: 지금 설정을 유지합니다.")
+    notes.append("ImageNet 가중치를 쓰지 않아야 하거나(라이선스) CPU에서 원본 해상도 그대로 빨라야 하면 "
+                 "'U-Net Lite'를 '처음부터 학습'으로 고르세요. 3504×1504 CPU 약 0.25초, 같은 데이터에서 검출은 한 단계 낮습니다.")
     if weights_ready is None:
         try:
             from core.paths import ensure_python_path

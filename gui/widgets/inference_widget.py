@@ -970,6 +970,8 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.sam2_row.hide()  # SAM2 모델이면 검사 결과를 받은 쪽(_model_inspected)에서 다시 보인다
         self._set_model_task("anomaly" if patchcore is not None else getattr(model, "task", "") if model is not None
                              else self._model_task)
+        # 분할 모델이면 모델 옆에 저장된 판정 기준(best.rules.json)으로 시작한다 — 내보내기·C++과 같은 기준
+        self.result_review.set_model_path(path if self._model_task == "segment" else None)
         self.gradcam_checkbox.setEnabled(gradcam is not None)
         self.gradcam_checkbox.setToolTip(
             "모델 출력에 대한 민감도 히트맵. 커스텀 분할에서는 체크를 해제하면 클래스 마스크를 표시합니다." if gradcam is not None else

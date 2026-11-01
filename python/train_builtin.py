@@ -256,7 +256,11 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if patch_training and input_size[0] != input_size[1]:
         raise ValueError("패치 학습은 정사각형 입력 크기(= 패치 크기)가 필요합니다")
     from checkpoint import tiling_contract
-    tiling = tiling_contract(input_size[0] if patch_training else 0, patch_scale if patch_training else 1.0)
+    region = None
+    if patch_training:
+        from dataset import common_image_size
+        region = common_image_size(Path(data_root) / "images" / "train")  # C++ 고정 입력 내보내기의 판정 영역
+    tiling = tiling_contract(input_size[0] if patch_training else 0, patch_scale if patch_training else 1.0, region)
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise ValueError("CUDA device requested but CUDA is unavailable")
     target = torch.device(device)
@@ -542,7 +546,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
 def main() -> None:
     specs = tuple(get_builtin_spec(model_id) for model_id in (
         "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18",
-        "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg"))
+        "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg", "unet_lite"))
     parser = argparse.ArgumentParser(description="Train a built-in Deep Vision Studio adapter")
     parser.add_argument("--model", choices=[spec.model_id for spec in specs], required=True)
     parser.add_argument("--data_root", required=True)
