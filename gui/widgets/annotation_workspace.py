@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 from core.annotation_tools import AnnotationDraftStore, fingerprint
+from core.class_management import is_background_name
 from PySide6.QtCore import QEvent, QObject, QRectF, QSignalBlocker, Qt, QTimer, Slot
 from PySide6.QtGui import QImage, QPixmap, QTransform
 from PySide6.QtWidgets import (
@@ -557,8 +558,42 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         name = self.names[class_id] if 0 <= class_id < len(self.names) else str(class_id)
         self.status.setText(f"선택한 영역 {len(indices)}개를 '{name}'(으)로 바꿨습니다. Ctrl+Z로 되돌립니다.")
 
+    def _background_slot_blocked(self):
+        """분할 0번이 배경 이름이 아니면 True: 0번은 '그리지 않은 픽셀'이라 그 이름으로 칠해도 저장·학습되지 않는다."""
+        return self.task == "segment" and bool(self.names) and not is_background_name(self.names[0])
+
+    def _mark_background_slot(self, combo, label=False):
+        """배경 자리(0번)에 결함 이름이 있으면 콤보에서 고를 수 없게 막는다.
+
+            0: 시프트 더블 (배경 자리 · 그릴 수 없음)   ← 회색, 선택 불가
+            1: crack
+        label=True(메인 콤보)이면 항목 이름과 작업실 위 경고 줄도 바꾼다. 영역 표의 콤보는 이름을 그대로 둔다
+        (목록 비교로 다시 만들지 않게).
+        """
+        blocked = self._background_slot_blocked()
+        if label and hasattr(self, "background_warning"):
+            self.background_warning.setVisible(blocked)
+            if blocked:
+                self.background_warning.setText(
+                    f"0번 '{self.names[0]}'은(는) 배경 자리입니다. 이 클래스로 칠해도 '안 칠함'과 같아 저장·학습되지 않습니다. "
+                    "작업실을 닫고 데이터셋 화면의 '0번에 배경 추가'를 누르면 번호가 한 칸씩 올라가 그릴 수 있습니다.")
+        if not blocked:
+            return
+        item = combo.model().item(0) if hasattr(combo.model(), "item") else None
+        if item is None:
+            return
+        item.setEnabled(False)
+        item.setToolTip("분할의 0번은 '그리지 않은 픽셀 = 배경'입니다. 데이터셋 화면에서 '0번에 배경 추가'를 누르세요.")
+        if label:
+            item.setText(f"{self.names[0]} (0번 = 배경 자리 · 그릴 수 없음)")
+        if combo.currentIndex() == 0 and combo.count() > 1:
+            combo.setCurrentIndex(1)
+
     def _active_class(self, index):
         if not hasattr(self, "view"):
+            return
+        if self._background_slot_blocked() and self._active_class_id() == 0 and self.class_combo.count() > 1:
+            self.class_combo.setCurrentIndex(1)  # 0번(배경 자리)으로는 그리지 않는다 → 다시 불린다
             return
         if self.task == "segment":
             self.view.class_id = self._active_class_id()
@@ -879,6 +914,7 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
                         combo.addItem(name, cid)
                     if self.task == "segment":
                         combo.addItem("학습 제외 (255)", 255)
+                    self._mark_background_slot(combo)
                 combo.setProperty("index", index)
                 combo.setCurrentIndex(combo.findData(self._class_id(index)))
                 combo.setToolTip(combo.currentText())
@@ -918,6 +954,8 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             for i, name in enumerate(self.names):
                 # 분할의 0번은 클래스가 아니라 배경 (선택 영역에 적용하지 않는다)
                 suffix = "  · 배경" if self.task == "segment" and i == 0 else ""
+                if i == 0 and self._background_slot_blocked():
+                    suffix = "  · 배경 자리 (그릴 수 없음)"
                 self.class_list.addItem(f"{i}  {name}{suffix}")
         self._filter_classes(self.class_search.text())
         self.history.clear()
@@ -1007,6 +1045,10 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             )
 
     def _class_list_selected(self, row):
+        if row == 0 and self._background_slot_blocked():
+            self.status.setText(f"0번 '{self.names[0]}'은(는) 배경 자리라 그릴 수 없습니다. "
+                                "데이터셋 화면에서 '0번에 배경 추가'를 누르세요.")
+            return
         if 0 <= row < len(self.names):
             self.class_combo.setCurrentIndex(row)
             self._class_picked()
@@ -1040,6 +1082,7 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
                 self.class_combo.setItemData(i, i)
             if self.task == "segment":
                 self.class_combo.addItem("학습 제외 영역 (255)", 255)
+            self._mark_background_slot(self.class_combo, label=True)
             self._active_class(self.class_combo.currentIndex())
             if self.task == "segment":
                 self._baseline_state["document"].classes = len(self.names)

@@ -542,6 +542,11 @@ class DatasetWidget(QWidget):
         self.fix_background_btn.hide()
         add_layout.addWidget(self.fix_background_btn)
 
+        # 분할 클래스 번호: 마스크 픽셀 값 = 번호, 칠하지 않은 픽셀 = 0번. 번호가 안 보이면 0번이 배경인지 알 수 없다
+        self.class_index_label = QLabel()
+        self.class_index_label.hide()
+        add_layout.addWidget(self.class_index_label)
+
         add_layout.addStretch()
 
         # 드래그&드롭 안내
@@ -789,6 +794,7 @@ class DatasetWidget(QWidget):
             self.del_class_btn.show()
 
         self.fix_background_btn.setVisible(ClassManager.needs_background(project))
+        self._show_class_numbers(project)
 
         # Anomaly는 val 분할을 쓰지 않음 (train=good만, test=good/defect)
         self.split_combo.clear()
@@ -954,6 +960,27 @@ class DatasetWidget(QWidget):
             self.summary_label.setText("클래스 변경 실패. 오류 내용 확인 필요")
             return
         callback(result)
+
+    def _show_class_numbers(self, project):
+        """분할 프로젝트의 클래스 번호를 보여 준다. 0번이 배경이 아니면 무엇이 문제인지 빨갛게 함께.
+
+            번호: 0 background · 1 shift · 2 crack
+            ⚠ 0번 '시프트 더블'은 배경 자리라 그려도 학습되지 않습니다 | 번호: 0 시프트 더블 · 1 crack
+        """
+        names = list(project.data.class_names or [])
+        if project.task != "segment" or not names:
+            self.class_index_label.hide()
+            return
+        numbered = [f"{i} {name}" for i, name in enumerate(names)]
+        shown = " · ".join(numbered[:8]) + (" · …" if len(numbered) > 8 else "")
+        self.class_index_label.setToolTip("분할 클래스 번호 (마스크 픽셀 값):\n" + "\n".join(numbered))
+        if ClassManager.needs_background(project):
+            self.class_index_label.setText(f"⚠ 0번 '{names[0]}'은(는) 배경 자리라 그려도 학습되지 않습니다  |  번호: {shown}")
+            self.class_index_label.setStyleSheet("color: #E05555;")
+        else:
+            self.class_index_label.setText(f"번호: {shown}")
+            self.class_index_label.setStyleSheet("")
+        self.class_index_label.show()
 
     def _classes_updated(self, message):
         # 저장이 성공한 모델로 콤보, 모든 분할 필터, 통계를 함께 다시 구성.

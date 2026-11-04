@@ -77,6 +77,12 @@ class AnnotationWorkspaceUI:
         restore.addWidget(discard)
         self.restore_bar.hide()
         layout.addWidget(self.restore_bar)
+        # 배경 없이 만든 분할 프로젝트: 0번 클래스는 '그리지 않은 픽셀'이라 칠해도 저장되지 않는다
+        self.background_warning = QLabel()
+        self.background_warning.setWordWrap(True)
+        self.background_warning.setStyleSheet("color: #E05555;")
+        self.background_warning.hide()
+        layout.addWidget(self.background_warning)
         properties = QGridLayout()
         properties.addWidget(QLabel("클래스"), 0, 0)
         self.class_combo = NoWheelComboBox()
@@ -87,6 +93,7 @@ class AnnotationWorkspaceUI:
             self.class_combo.addItem("학습 제외 영역 (255)", 255)
         if self.task == "segment" and len(self.names) > 1:
             self.class_combo.setCurrentIndex(1)
+        self._mark_background_slot(self.class_combo, label=True)
         properties.addWidget(self.class_combo, 0, 1)
         properties.setColumnStretch(1, 1)
         self.apply_class_button = QPushButton("선택에 적용")

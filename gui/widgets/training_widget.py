@@ -951,6 +951,30 @@ class TrainingWidget(TrainingForm, QWidget):
             return False
         return box.clickedButton() is keep_button
 
+    def _background_slot_ok(self):
+        """분할 0번이 배경이 아니면 학습 전에 묻는다. 이대로 학습하면 칠하지 않은 픽셀(배경)이 0번 이름으로 학습되고
+        0번 클래스 자체는 한 번도 학습되지 않는다 (추론에서 배경 전체가 그 이름으로 보인다)."""
+        from core.class_management import ClassManager
+        if not ClassManager.needs_background(self.project):
+            return True
+        first = self.project.data.class_names[0]
+        box = QMessageBox(QMessageBox.Icon.Warning, "0번 클래스가 배경이 아닙니다",
+                          f"분할에서 0번은 '칠하지 않은 픽셀 = 배경'입니다. 지금 0번은 '{first}'입니다.\n\n"
+                          f"이대로 학습하면 배경 전체가 '{first}'(으)로 학습되고, 실제 '{first}' 결함은 학습되지 않습니다.\n\n"
+                          "'배경 추가'를 누르면 0번에 background를 넣고 그려 둔 정답 번호를 한 칸씩 올립니다(원본 백업). "
+                          "끝나면 학습 시작을 다시 누르세요.", parent=self)
+        dataset_page = getattr(self.window(), "dataset_page", None)
+        fix_button = (box.addButton("배경 추가", QMessageBox.ButtonRole.ActionRole)
+                      if hasattr(dataset_page, "_insert_background") else None)
+        keep_button = box.addButton("그대로 학습", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(fix_button or keep_button)
+        box.exec()
+        if fix_button is not None and box.clickedButton() is fix_button:
+            dataset_page._insert_background()  # 데이터셋 화면의 확인·진행 표시를 그대로 쓴다 (비동기)
+            return False
+        return box.clickedButton() is keep_button
+
     def _start_training(self):
         """
         학습 시작 — 선택된 모드에 따라 적절한 워커 생성
@@ -1008,6 +1032,9 @@ class TrainingWidget(TrainingForm, QWidget):
                 from widgets.pretrained_weights import offer_weight_import
                 if not offer_weight_import(self, asset):
                     return
+        # 0번이 배경이 아니면(배경 없이 만든 프로젝트) 시작 전에 고칠 수 있게 묻는다
+        if self.project.task == "segment" and not self._background_slot_ok():
+            return
         # 가는 결함이 학습 해상도에서 1px보다 가늘어지면(사라지면) 시작 전에 알린다
         if self.project.task == "segment" and not self._thin_defects_ok():
             return
