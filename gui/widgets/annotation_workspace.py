@@ -687,7 +687,8 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             for key in keys:
                 self.object_meta.pop(key, None)
             for i in base:
-                mask = self.document.render(copy_pixels=False) == (-i - 2)
+                # 원본 층 픽셀만 지운다. 이전에는 '그 클래스 픽셀 전체'를 지워 같은 클래스로 새로 그린 객체도 사라졌다.
+                mask = self.document.base_layer_mask(-i - 2)
                 if mask.any():
                     self.document.shapes.append(
                         self.document.raster_shape(mask, 0, scope_class=-i - 2)

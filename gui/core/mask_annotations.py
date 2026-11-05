@@ -56,6 +56,7 @@ class MaskDocument:
         self.objects = self._validate_objects(objects or {})
         self._cache_key = None
         self._pixels = self._owners = None
+        self._base_left = None   # 아직 남은 원본 층 클래스 (렌더 캐시가 바뀌면 다시 센다)
         self.managed_cache = False
         self._cache_valid = False
         self._rendering = False
@@ -109,6 +110,7 @@ class MaskDocument:
         if item.get("operation") != "erase":
             self._key_indices.setdefault(self.key(index), index)
         self._apply(self._pixels, self._owners, item, index)
+        self._base_left = None
         self._cache_key = None
         self._cache_valid = bool(self.managed_cache)
         return self.shape_region(item)[0]
@@ -390,6 +392,7 @@ class MaskDocument:
             finally:
                 self._rendering = False
             self._pixels, self._owners, self._cache_key = pixels, owners, key
+            self._base_left = None
         self._cache_valid = True
 
     def render(self, preview=None, *, copy_pixels=True):
@@ -411,6 +414,24 @@ class MaskDocument:
         owners = self._owners[y : y + h, x : x + w].copy()
         self._apply(pixels, owners, item, len(self.shapes), (x, y))
         return bounds, pixels
+
+    def base_classes_left(self):
+        """원본 층(그리기 기록 없는 PNG 픽셀) 중 아직 픽셀이 남은 클래스.
+
+        원본 층 픽셀의 소유자는 -클래스-2이고, 지우면 -2(배경), 다른 객체로 덮으면 그 객체가 된다.
+        base_classes는 파일을 열 때의 값이라, 지운 'PNG 1'도 계속 목록에 남아 삭제가 안 된 것처럼 보였다.
+        """
+        self._ensure_cache()
+        if self._base_left is None:
+            owned = self._owners[self._owners <= -3]          # 배경(-2)과 그린 객체(≥0)는 빼고
+            counts = np.bincount(-owned - 2) if owned.size else np.zeros(0, np.int64)
+            self._base_left = tuple(int(c) for c in np.flatnonzero(counts) if c in self.base_classes)
+        return self._base_left
+
+    def base_layer_mask(self, class_id):
+        """원본 층에서 아직 class_id로 남은 픽셀. 나중에 같은 클래스로 그린 객체 픽셀은 포함하지 않는다."""
+        self._ensure_cache()
+        return self._owners == -int(class_id) - 2
 
     def owner_at(self, x, y):
         self._ensure_cache()
