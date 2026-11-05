@@ -1,3 +1,6 @@
+epoch 61/80: train_loss=0.348512 val_loss=1.373433 metric=0.507021
+  결함 클래스 IoU (배경 제외): Shift 0.332 · Double 0.105 · FM 0.597 · Crack 0.349 · Flip 0.675 | 평균 0.412
+  Epoch 61 시간 | 소요 00:00:22 | 누적 00:24:08
 {
   "model_id": "unet_lite",
   "task": "segment",
