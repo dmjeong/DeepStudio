@@ -957,6 +957,9 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
                 suffix = "  · 배경" if self.task == "segment" and i == 0 else ""
                 if i == 0 and self._background_slot_blocked():
                     suffix = "  · 배경 자리 (그릴 수 없음)"
+                key = i if self.task == "segment" else i + 1   # 분할은 0번(배경)을 건너뛴다
+                if 1 <= key <= 12 and not (self.task == "segment" and i == 0):
+                    suffix += f"  [F{key}]"
                 self.class_list.addItem(f"{i}  {name}{suffix}")
         self._filter_classes(self.class_search.text())
         self.history.clear()

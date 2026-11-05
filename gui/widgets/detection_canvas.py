@@ -435,6 +435,8 @@ class DetectionCanvas(QGraphicsView):
             self.command.emit("previous" if key == Qt.Key.Key_J else "next")
         elif Qt.Key.Key_1 <= key <= Qt.Key.Key_9:
             self.command.emit(f"class:{key - Qt.Key.Key_1}")
+        elif Qt.Key.Key_F1 <= key <= Qt.Key.Key_F12:   # F1~F12도 숫자키와 같은 클래스 선택 (12개까지)
+            self.command.emit(f"class:{key - Qt.Key.Key_F1}")
         elif key in (Qt.Key.Key_B, Qt.Key.Key_D, Qt.Key.Key_E, Qt.Key.Key_H):
             self.command.emit(
                 {
