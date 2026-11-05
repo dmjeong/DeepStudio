@@ -564,7 +564,9 @@ bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::s
                     throw std::invalid_argument("Unsupported whole_image interpolation.");
                 if (input.first != config.input_height || input.second != config.input_width ||
                     scaled.first > config.input_width || scaled.second > config.input_height ||
-                    whole.value("pad", std::string()) != "zero_after_normalize" || config.crop_width > 0)
+                    whole.value("pad", std::string()) != "zero_after_normalize" ||
+                    (config.crop_width > 0 && (config.crop_width != region.first || config.crop_height != region.second)))
+                    // 중앙 크롭과 함께 쓰면 판정 영역 = 크롭 영역 (크롭한 데이터로 학습한 모델)
                     throw std::invalid_argument("Inconsistent whole_image contract.");
                 config.region_width = region.first;
                 config.region_height = region.second;
@@ -1001,7 +1003,10 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
         roi = cv::Rect((image.cols-m_config.crop_width)/2, (image.rows-m_config.crop_height)/2,
                        m_config.crop_width, m_config.crop_height);
     const bool whole = m_config.region_width > 0;
-    std::vector<float> input_tensor = whole ? PreprocessWholeRegion(image) : Preprocess(image);
+    if (whole && (roi.x < 0 || roi.y < 0 || roi.br().x > image.cols || roi.br().y > image.rows))
+        throw std::invalid_argument("Center crop exceeds original image size.");
+    // 판정 영역 한 번에: 중앙 크롭이 있으면 크롭한 영역이 판정 영역이다 (학습 데이터와 같은 영역)
+    std::vector<float> input_tensor = whole ? PreprocessWholeRegion(image(roi)) : Preprocess(image);
 
     // ── 2. 입력 텐서 ─────────────────────────────────
     std::vector<int64_t> input_shape = {
@@ -1068,8 +1073,13 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
                 probability[w] = static_cast<float>(1.0 / sum);
             }
         }
-        if (!m_config.defect_rules.empty())
+        if (!m_config.defect_rules.empty()) {
             ApplyDefectRules(seg_mask, scores, roi.size(), result);
+            for (auto& defect : result.defects) {  // 크롭 좌표 → 원본 좌표 (데스크톱 결함 목록과 같은 기준)
+                defect.box.x += roi.x;
+                defect.box.y += roi.y;
+            }
+        }
     }
 
     // 원본 이미지 크기로 리사이즈

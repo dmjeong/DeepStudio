@@ -155,11 +155,17 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
                             scheduler=None, metric: float | None = None,
                             training_config: dict | None = None,
                             metrics_history: list[dict] | None = None,
-                            tiling: dict | None = None) -> None:
+                            tiling: dict | None = None, center_crop: dict | None = None) -> None:
     model.eval()
     state = make_builtin_checkpoint(model_id, model, num_classes=num_classes,
                                     input_size=input_size, in_channels=in_channels,
                                     class_names=class_names, tiling=tiling)
+    if center_crop:
+        # 학습 데이터를 중앙 크롭해 학습한 모델: 추론·내보내기도 같은 크롭을 먼저 한다 (checkpoint_center_crop이 읽는다).
+        # 없으면 원본 전체를 추론해, 학습에서 본 적 없는 크롭 바깥이 불량으로 나온다.
+        from center_crop import validate_center_crop
+        state["center_crop"] = validate_center_crop(center_crop)
+        state["preprocessing"]["center_crop"] = state["center_crop"]
     state["epoch"] = int(epoch)
     state["metric"] = None if metric is None else float(metric)
     if optimizer is not None:
@@ -216,7 +222,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   class_names: Iterable[str] | None = None,
                   segmentation_loss: str = "ce_dice", class_weights: str = "none",
                   patch_training: bool = False, patches_per_image: int = 0, patch_scale: float = 1.0,
-                  class_report: bool = False, should_stop=lambda: False) -> Path:
+                  class_report: bool = False, should_stop=lambda: False,
+                  center_crop: dict | None = None) -> Path:
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
     if gui_path not in sys.path:
@@ -508,7 +515,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                 in_channels=in_channels, class_names=class_names,
                                 epoch=epoch, optimizer=optimizer, scheduler=scheduler,
                                 metric=selected_value, training_config=training_config,
-                                metrics_history=history, tiling=tiling)
+                                metrics_history=history, tiling=tiling, center_crop=center_crop)
         improved = selected_value < best_metric if policy.direction == "min" else selected_value > best_metric
         if improved:
             best_metric = selected_value
@@ -519,7 +526,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                     in_channels=in_channels, class_names=class_names,
                                     epoch=epoch, optimizer=optimizer, scheduler=scheduler,
                                     metric=selected_value, training_config=training_config,
-                                    metrics_history=history, tiling=tiling)
+                                    metrics_history=history, tiling=tiling, center_crop=center_crop)
             log({"event": "best_epoch_updated", "epoch": completed_epochs,
                  "train_loss": train_loss, "val_loss": val_loss, "metrics": validation_metrics})
         else:

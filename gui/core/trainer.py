@@ -490,6 +490,10 @@ class TrainWorker(TrainingEngine):
         if patch:
             from dataset import common_image_size
             region = common_image_size(data.train_dir or Path(data.root) / "images" / "train")
+            crop = configured_center_crop(cfg)
+            if crop and region:
+                # 크롭한 데이터로 학습했으니 판정 영역도 크롭 크기다 (원본 크기를 쓰면 내보낸 고정 입력이 어긋난다)
+                region = [crop["width"], crop["height"]]
         return make_checkpoint_metadata(self.project.task, data.num_classes, data.class_names,
             cfg.input_size, cfg.in_channels,
             {"backbone_channels": list(model.backbone_channels),

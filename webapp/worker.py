@@ -166,6 +166,9 @@ def _train_builtin_project(context, project, device, *, class_report=False):
                          patch_scale=float(getattr(cfg, "patch_scale", 1.0)),
                          # 데스크톱 요청만: 결함 클래스별 IoU와 '전부 배경' 경고를 로그에 (웹 로그는 그대로)
                          class_report=bool(class_report) and project.task == "segment",
+                         # 데스크톱 요청만: 학습한 중앙 크롭을 체크포인트에 남겨 추론·내보내기가 같은 영역을 본다
+                         # (이전에는 크롭 데이터로 학습하고 원본 전체를 추론했다). 웹 동작은 그대로.
+                         center_crop=crop if class_report else None,
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
