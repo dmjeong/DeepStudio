@@ -1022,7 +1022,7 @@ class DatasetWidget(QWidget):
             return
         self.about_to_change.emit()
         self._start_class_operation(
-            lambda: ClassManager.insert_background(self.project),
+            lambda: ClassManager.insert_background(self.project, keep_drawings=True),
             lambda result: self._classes_updated(
                 f"0번에 background 추가 완료 · '{first}'는 이제 1번으로 그릴 수 있습니다. "
                 f"번호를 올린 픽셀 {result[1]:,}개, 폴리곤 {result[2]}개 · 원본 보관: {result[0]}"
@@ -1083,7 +1083,7 @@ class DatasetWidget(QWidget):
             return
         self.about_to_change.emit()
         self._start_class_operation(
-            lambda: ClassManager.delete(self.project, preview.class_name, preview),
+            lambda: ClassManager.delete(self.project, preview.class_name, preview, keep_drawings=True),
             lambda archive: self._classes_updated(
                 f"클래스 '{preview.class_name}' 삭제 및 저장 완료. 원본 보관: {archive}"
             ),

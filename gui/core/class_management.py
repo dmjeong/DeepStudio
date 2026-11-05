@@ -197,6 +197,53 @@ def with_background(class_names):
     return ["background"] + names
 
 
+def _remap_drawings(path, lut, classes_before, classes_after, expected):
+    """작업실 그리기 기록이 있는 마스크 PNG면 기록 속 클래스 번호도 lut대로 바꿔 PNG 바이트로 돌려준다.
+
+        픽셀만 바꾸면 기록이 무효가 되어, 이미지의 모든 라벨이 작업실에서 'PNG <번호>' 덩어리로 바뀐다
+        (객체 하나씩 고칠 수 없음). 클래스를 지우거나 배경을 끼울 때마다 데이터셋 전체가 그렇게 되었다.
+
+    바꾼 기록을 다시 그린 결과가 expected(픽셀만 바꾼 결과)와 한 픽셀이라도 다르면 None을 돌려준다
+    → 호출자는 이전처럼 픽셀만 저장한다. 그래서 학습 정답은 어느 쪽이든 같다.
+    """
+    import numpy as np
+    from core.mask_annotations import METADATA_KEY, MaskDocument
+    expected = np.asarray(expected)
+    if path.suffix.lower() != ".png" or expected.dtype != np.uint8:
+        return None
+    try:
+        with Image.open(path) as image:
+            if METADATA_KEY not in image.info:
+                return None
+            image.load()
+            document = MaskDocument.from_image(image, image.width, image.height, classes_before)
+        if not document.shapes:          # 기록이 무효였거나 없으면 지킬 것도 없다
+            return None
+        remap = lambda value: int(lut[int(value)])
+        key = lambda value: (f"base:{remap(value.split(':', 1)[1])}"
+                             if isinstance(value, str) and value.startswith("base:") else value)
+        shapes = []
+        for shape in document.shapes:
+            shape = dict(shape)
+            for field in ("class_id", "scope_class"):
+                if field in shape:
+                    shape[field] = remap(shape[field])
+            if "scope_object" in shape:
+                shape["scope_object"] = key(shape["scope_object"])
+            if "protected_objects" in shape:
+                shape["protected_objects"] = [key(value) for value in shape["protected_objects"]]
+            shapes.append(shape)
+        objects = {key(name): value for name, value in document.objects.items()}
+        base = np.asarray(lut, dtype=np.uint8)[document.base]
+        remapped = MaskDocument(document.width, document.height, classes_after, base=base,
+                                shapes=shapes, objects=objects)
+        if not np.array_equal(remapped.render(), expected):
+            return None
+        return remapped.encode()
+    except (OSError, ValueError, TypeError, KeyError, IndexError):
+        return None
+
+
 def _shift_mask(path, count):
     """배경 삽입용: 픽셀 1~count-1을 한 칸씩 올린다. 0(배경)과 255(학습 제외)는 그대로."""
     if path.suffix.lower() not in LOSSLESS_MASK_EXTENSIONS:
@@ -433,7 +480,7 @@ class ClassManager:
                              pixels, shifted_pixels, changed)
 
     @staticmethod
-    def delete(project, class_name, preview=None):
+    def delete(project, class_name, preview=None, keep_drawings=False):
         current = ClassManager.preview_delete(project, class_name)
         if preview is not None and preview != current:
             raise ValueError("미리보기 이후 데이터가 변경되었습니다. 삭제 내용을 다시 확인해 주세요.")
@@ -445,7 +492,15 @@ class ClassManager:
                 content, removed, remapped = _remap_labels(path, preview.class_index, len(names), project.task)
                 return (content, None) if removed + remapped else None
             mask, image_format, removed, remapped = _remap_mask(path, preview.class_index, len(names))
-            return (mask, image_format) if removed + remapped else None
+            if not removed + remapped:
+                return None
+            if keep_drawings:  # 데스크톱: 작업실 그리기 기록도 같은 번호로 (지운 클래스로 칠한 곳은 배경)
+                deleted = preview.class_index
+                lut = [255 if v == 255 else 0 if v == deleted else v - (v > deleted) for v in range(256)]
+                kept = _remap_drawings(path, lut, len(names), len(names) - 1, mask)
+                if kept is not None:
+                    return kept, None
+            return mask, image_format
 
         def update():
             project.data.class_names = [name for name in names if name != class_name]
@@ -465,7 +520,7 @@ class ClassManager:
         return project.task == "segment" and bool(names) and not is_background_name(names[0])
 
     @staticmethod
-    def insert_background(project, name="background"):
+    def insert_background(project, name="background", keep_drawings=False):
         """0번에 배경 클래스를 끼워 넣고 기존 클래스 번호를 하나씩 올린다.
 
             이전  0:scratch(그릴 수 없음)  1:dent
@@ -500,7 +555,14 @@ class ClassManager:
                 return (content, None) if shifted else None
             mask, image_format, shifted = _shift_mask(path, len(names))
             totals["pixels"] += shifted
-            return (mask, image_format) if shifted else None
+            if not shifted:
+                return None
+            if keep_drawings:  # 데스크톱: 작업실 그리기 기록도 한 칸씩 올린다
+                lut = [0 if v == 0 else 255 if v == 255 else v + 1 for v in range(256)]
+                kept = _remap_drawings(path, lut, len(names), len(names) + 1, mask)
+                if kept is not None:
+                    return kept, None
+            return mask, image_format
 
         def update():
             project.data.class_names = [name] + names
