@@ -124,3 +124,19 @@ def test_training_start_fix_button_runs_the_dataset_page_background_insert(app, 
         assert widget._background_slot_ok() is False  # 고친 뒤 사용자가 학습 시작을 다시 누른다
     assert calls == [True]
     widget.deleteLater()
+
+
+def test_segmentation_augmentation_can_be_edited_on_the_desktop_training_page(app, tmp_path):
+    """분할 학습은 좌우반전·회전·색상을 적용하는데 칸이 잠겨 기본값(0.5 · 15°)을 바꿀 수 없었다."""
+    from widgets.training_widget import TrainingWidget
+    project = ProjectManager.create_new("aug", "segment", str(tmp_path / "p"), ["background", "shift"])
+    widget = TrainingWidget()
+    widget.set_project(project)
+    widget.model_id_combo.setCurrentIndex(widget.model_id_combo.findData("unet_lite"))
+    for control in (widget.hflip_spin, widget.rotation_spin, widget.color_jitter_spin):
+        assert control.isEnabled()
+    widget.hflip_spin.setValue(0)
+    widget.rotation_spin.setValue(0)
+    widget._sync_config()
+    assert (project.training.augmentation.horizontal_flip, project.training.augmentation.rotation) == (0, 0)
+    widget.deleteLater()

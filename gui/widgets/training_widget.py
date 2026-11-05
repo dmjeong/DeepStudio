@@ -402,6 +402,24 @@ class TrainingWidget(TrainingForm, QWidget):
                                      self.mode_combo.currentData(), self.anomaly_method_combo.currentData(),
                                      model_id=self.model_id_combo.currentData() or "")
 
+    def _desktop_augmentation(self, capabilities):
+        """데스크톱 학습이 실제로 적용하는 증강 항목 (이 항목만 화면에서 바꿀 수 있다).
+
+        공용 capabilities(웹 서버도 씀)는 분류에만 증강을 열어 두지만, 데스크톱 분할 학습(core/trainer.py)은
+        좌우반전·회전·색상을 모두 적용한다. 그래서 분할에서는 칸이 잠긴 채 기본값(0.5 · 15° · 0.2)이
+        학습에 들어가 바꿀 방법이 없었다. 회전 자체가 불량인 클래스(시프트)에서는 15°가 학습을 망친다.
+
+            분류            좌우반전 · 회전 · 색상  (그대로)
+            분할(SAM2 제외)  좌우반전 · 회전 · 색상  ← 데스크톱에서만 연다
+            SAM2            없음 (자체 학습 경로)
+        """
+        keys = list(capabilities.get("augmentation", []))
+        mode = str(self.mode_combo.currentData() or "")
+        if self.project is not None and self.project.task == "segment" and mode in MODE_LABELS \
+                and not mode.startswith("sam2"):
+            keys = ["horizontal_flip", "rotation", "color_jitter"]
+        return keys
+
     def _reset_unsupported_augmentation(self):
         if self.project:
             self.project.training.augmentation.vertical_flip = 0.0
@@ -508,9 +526,10 @@ class TrainingWidget(TrainingForm, QWidget):
             control.setEnabled(capabilities["layer_debug"])
         self.debug_info.setText("선택한 초기 배치만 관찰한 뒤 전체 학습을 계속합니다. Gradient는 AMP 배율을 제거합니다."
                                 if capabilities["layer_debug"] else capabilities["layer_debug_reason"])
+        applied = self._desktop_augmentation(capabilities)
         for key, control in (("horizontal_flip", self.hflip_spin), ("rotation", self.rotation_spin),
                              ("color_jitter", self.color_jitter_spin)):
-            control.setEnabled(not resume and key in capabilities["augmentation"])
+            control.setEnabled(not resume and key in applied)
         self.amp_check.setEnabled(not is_pc and not resume and self._device_manager.cuda_available)
         self.tl_group.setVisible(not is_pc and self._selected_container_spec()[0] is None and
                                  (is_anomaly or self.mode_combo.currentData() == "custom"))
