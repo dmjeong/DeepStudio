@@ -29,7 +29,40 @@ def _legacy_class_names(count: int) -> list[str]:
     return [str(index) for index in range(count)]
 
 
-def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None):
+class _Stopped(Exception):
+    """학습 중지 요청. 배치 사이에서 확인한다 (이전에는 에폭이 시작할 때만 봐서, 긴 에폭 중에는 중지가 먹지 않았다)."""
+
+
+class _BatchProgress:
+    """에폭 안의 진행을 로그로 남긴다 (데스크톱 요청만). 에폭이 끝날 때만 기록하면, 느린 학습과 멈춘 학습을 구분할 수 없다.
+
+        첫 배치 완료 0.84초 (cuda)                       ← 이 줄이 안 나오면 데이터 로더·모델 준비에서 멈춘 것
+        에폭 3 학습 120/688 · 배치당 0.08초 · 남은 시간 약 1분   ← 30초마다
+    """
+
+    INTERVAL = 30.0
+
+    def __init__(self, log, label, total, device, clock=None):
+        import time
+        self.log, self.label, self.total, self.device = log, label, total, device
+        self.clock = clock or time.perf_counter
+        self.started = self.last = self.clock()
+
+    def __call__(self, done):
+        now = self.clock()
+        per_batch = (now - self.started) / max(done, 1)
+        if done == 1:
+            self.log(f"  {self.label}: 첫 배치 완료 {now - self.started:.2f}초 ({self.device})")
+            self.last = now
+        elif now - self.last >= self.INTERVAL and done < self.total:
+            left = per_batch * (self.total - done)
+            remain = f"약 {left / 60:.0f}분" if left >= 60 else f"약 {left:.0f}초"
+            self.log(f"  {self.label} {done}/{self.total} · 배치당 {per_batch:.2f}초 · 남은 시간 {remain}")
+            self.last = now
+
+
+def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None,
+                          should_stop=None, progress=None):
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
@@ -39,7 +72,9 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
     non_blocking = torch.device(device).type == "cuda"
     context = torch.enable_grad() if training else torch.inference_mode()
     with context:
-        for images, labels in loader:
+        for index, (images, labels) in enumerate(loader):
+            if should_stop is not None and should_stop():
+                raise _Stopped()
             images = images.to(device, non_blocking=non_blocking)
             labels = labels.to(device, non_blocking=non_blocking)
             logits = model(images)
@@ -56,6 +91,8 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
                                         minlength=classes * classes).reshape(classes, classes)
                 confusion = counts if confusion is None else confusion + counts
             samples += labels.shape[0]
+            if progress is not None:
+                progress(index + 1)
     if samples == 0:
         raise ValueError("classification loader contains no samples")
     if metrics_out is not None:
@@ -76,7 +113,7 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
 
 
 def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None,
-                        pixel_counts_out=None, class_report_out=None):
+                        pixel_counts_out=None, class_report_out=None, should_stop=None, progress=None):
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
@@ -87,7 +124,9 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
     non_blocking = torch.device(device).type == "cuda"
     context = torch.enable_grad() if training else torch.inference_mode()
     with context:
-        for images, masks in loader:
+        for index, (images, masks) in enumerate(loader):
+            if should_stop is not None and should_stop():
+                raise _Stopped()
             images = images.to(device, non_blocking=non_blocking)
             masks = masks.to(device, dtype=torch.long, non_blocking=non_blocking)
             logits = model(images)
@@ -113,6 +152,8 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
                 union[cls] += (truth | guess).sum().item()
                 gt_area[cls] += truth.sum().item()
                 predicted_area[cls] += guess.sum().item()
+            if progress is not None:
+                progress(index + 1)
     if samples == 0 or intersection is None:
         raise ValueError("segmentation loader contains no samples")
     if class_report_out is not None:  # 클래스별 IoU·예측/정답 픽셀 수 (지표에는 넣지 않는다: 로그용)
@@ -277,6 +318,9 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if num_workers < 0:
         raise ValueError("num_workers must be zero or greater")
     pin_memory = target.type == "cuda"
+    if class_report:  # 데스크톱: 실제로 쓰는 장치 (GPU를 골랐는데 CPU로 도는 경우를 바로 알 수 있게)
+        name = torch.cuda.get_device_name(target) if target.type == "cuda" else "CPU"
+        log(f"  학습 장치: {target} ({name})")
     log(f"data loader: workers={num_workers}, pin_memory={pin_memory}, "
         f"persistent_workers={num_workers > 0}, prefetch_factor={2 if num_workers else 0}")
     if spec.task == "classify":
@@ -466,19 +510,30 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         training_clock.start_epoch()
         validation_metrics = {}
         report = None
-        if spec.task == "classify":
-            train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target)
-            val_loss, val_metric = _classification_epoch(model, val_loader, criterion, None, target, validation_metrics)
-        else:
-            seen_pixels = []
-            train_loss, train_metric = _segmentation_epoch(model, train_loader, criterion, optimizer, target,
-                                                           pixel_counts_out=seen_pixels)
-            if epoch == start_epoch and class_weights == "none":
-                _log_rare_class_hint(seen_pixels, class_names, log)
-            report = {} if class_report else None
-            extra = {"class_report_out": report} if report is not None else {}  # 기본 호출 모양은 그대로
-            val_loss, val_metric = _segmentation_epoch(model, val_loader, criterion, None, target, validation_metrics,
-                                                       **extra)
+        # 데스크톱 요청만: 배치마다 중지 요청 확인 + 에폭 안의 진행 기록. 웹 요청은 기본 호출 모양 그대로
+        watch = (lambda label, loader: {"should_stop": should_stop,
+                                        "progress": _BatchProgress(log, f"에폭 {epoch + 1} {label}", len(loader), target)}
+                 if class_report else {})
+        try:
+            if spec.task == "classify":
+                train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target,
+                                                                 **watch("학습", train_loader))
+                val_loss, val_metric = _classification_epoch(model, val_loader, criterion, None, target,
+                                                             validation_metrics, **watch("검증", val_loader))
+            else:
+                seen_pixels = []
+                train_loss, train_metric = _segmentation_epoch(model, train_loader, criterion, optimizer, target,
+                                                               pixel_counts_out=seen_pixels,
+                                                               **watch("학습", train_loader))
+                if epoch == start_epoch and class_weights == "none":
+                    _log_rare_class_hint(seen_pixels, class_names, log)
+                report = {} if class_report else None
+                extra = {"class_report_out": report} if report is not None else {}  # 기본 호출 모양은 그대로
+                val_loss, val_metric = _segmentation_epoch(model, val_loader, criterion, None, target,
+                                                           validation_metrics, **extra, **watch("검증", val_loader))
+        except _Stopped:
+            log(f"중지 요청: 에폭 {epoch + 1} 도중에 멈춥니다 (이 에폭은 저장하지 않음, 이전 best는 그대로).")
+            break
         selected_value = policy.value(validation_metrics)
         if not all(torch.isfinite(torch.tensor(value)) for value in (train_loss, train_metric, val_loss, val_metric)):
             raise ValueError("training produced a non-finite metric")
