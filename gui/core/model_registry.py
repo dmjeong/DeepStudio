@@ -234,6 +234,11 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         "unet_lite", "U-Net", "Lite", "segment", ("windows_native", "onnx"), common, (256, 256), (1, 3),
         "export_verified", metadata=desktop,
         notes="초경량 U-Net(사전학습 없음, 라이선스 걱정 없음); 원본 해상도 패치 학습으로 1~2px 결함, 3504×1504 CPU 약 0.25초"))
+    specs.append(ModelSpec(
+        "unet_mobilenetv2", "U-Net", "MobileNetV2", "segment", ("windows_native", "onnx"), common, (512, 512), (1, 3),
+        "export_verified", pretrained_asset="MobileNet_V2_Weights.IMAGENET1K_V1", metadata=desktop,
+        notes="경량 사전학습 백본 U-Net(ImageNet MobileNetV2 + 얇은 디코더); ResNet18 U-Net처럼 넓게 보고 "
+              "3504×1504 CPU 약 0.7초(ResNet18 U-Net 약 2.5초). 패치 학습 = 전체 추론 (전역 연산 없음)"))
     sam2_contract = {"contracts": {"graphs": {
         "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},
                     "outputs": ["image_embeddings", "image_features_0", "image_features_1"]},

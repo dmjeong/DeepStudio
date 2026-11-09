@@ -26,6 +26,7 @@ _TORCHVISION_URLS = {
     "resnet50": "https://download.pytorch.org/models/resnet50-0676ba61.pth",
     "wide_resnet50_2": "https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth",
     "convnext_v1_tiny": "https://download.pytorch.org/models/convnext_tiny-983f1562.pth",
+    "mobilenet_v2": "https://download.pytorch.org/models/mobilenet_v2-b0353104.pth",
 }
 
 

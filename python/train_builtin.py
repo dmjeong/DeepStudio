@@ -608,7 +608,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
 def main() -> None:
     specs = tuple(get_builtin_spec(model_id) for model_id in (
         "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18",
-        "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg", "unet_lite"))
+        "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg", "unet_lite",
+        "unet_mobilenetv2"))
     parser = argparse.ArgumentParser(description="Train a built-in Deep Vision Studio adapter")
     parser.add_argument("--model", choices=[spec.model_id for spec in specs], required=True)
     parser.add_argument("--data_root", required=True)

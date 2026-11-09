@@ -39,7 +39,7 @@ BUILTIN_ADAPTER_IDS = frozenset({
     "resnet18", "resnet50", "convnext_v1_tiny",
     "deeplabv3plus_resnet34", "unet_resnet18",
     "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg",
-    "unet_lite",
+    "unet_lite", "unet_mobilenetv2",
 })
 # 사전학습 가중치가 없는 기본 모델 (python/builtin_models.SCRATCH_ONLY_MODELS와 같은 목록)
 BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite"})

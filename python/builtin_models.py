@@ -36,6 +36,8 @@ BUILTIN_MODEL_SPECS = {
     "dinov2_vitb14_seg": BuiltinModelSpec("dinov2_vitb14_seg", "segment", (448, 448), (1, 3)),
     # 초경량 U-Net: 사전학습 가중치 없이 처음부터 학습(라이선스 걱정 없음). 원본 해상도 패치 학습용.
     "unet_lite": BuiltinModelSpec("unet_lite", "segment", (256, 256), (1, 3)),
+    # 경량 사전학습 백본 U-Net: MobileNetV2(ImageNet) 인코더 + Lite 폭 디코더. 넓게 보면서 빠르다.
+    "unet_mobilenetv2": BuiltinModelSpec("unet_mobilenetv2", "segment", (512, 512), (1, 3)),
 }
 
 # 사전학습 가중치가 없는 모델: '처음부터 학습'과 같은 모델의 로컬 체크포인트로만 시작한다.
@@ -52,13 +54,14 @@ HEAD_PREFIXES = {
     "dinov2_vits14_seg": ("neck.", "detail", "fuse", "head."),
     "dinov2_vitb14_seg": ("neck.", "detail", "fuse", "head."),
     "unet_lite": ("",),  # 사전학습 백본이 없어 전부 머리(같은 학습률)
+    "unet_mobilenetv2": ("dec", "head."),
 }
 CLASS_HEAD_PREFIX = {
     "resnet18": "fc.", "resnet50": "fc.", "convnext_v1_tiny": "classifier.2.",
     "deeplabv3plus_resnet34": "decoder.6.", "unet_resnet18": "head.",
     "dinov2_vits14_cls": "head.", "dinov2_vitb14_cls": "head.",
     "dinov2_vits14_seg": "head.", "dinov2_vitb14_seg": "head.",
-    "unet_lite": "head.",
+    "unet_lite": "head.", "unet_mobilenetv2": "head.",
 }
 
 # Pin a concrete revision rather than torchvision's mutable DEFAULT alias.
@@ -67,6 +70,7 @@ IMAGENET_WEIGHTS = {
     "resnet34": ("ResNet34_Weights", "IMAGENET1K_V1"),
     "resnet50": ("ResNet50_Weights", "IMAGENET1K_V2"),
     "convnext_tiny": ("ConvNeXt_Tiny_Weights", "IMAGENET1K_V1"),
+    "mobilenet_v2": ("MobileNet_V2_Weights", "IMAGENET1K_V1"),
 }
 
 
@@ -82,7 +86,7 @@ def _torchvision_base(name, *, pretrained=False, weights_path=None):
         enum, revision = IMAGENET_WEIGHTS[name]
         weights = getattr(getattr(models, enum), revision)
         key = {"resnet18": "resnet18", "resnet34": "resnet34", "resnet50": "resnet50",
-               "convnext_tiny": "convnext_v1_tiny"}[name]
+               "convnext_tiny": "convnext_v1_tiny", "mobilenet_v2": "mobilenet_v2"}[name]
         source = builtin_asset_path(key)
         provenance.update(source="imagenet", weights=f"{enum}.{revision}", url=weights.url)
     elif weights_path:
@@ -108,6 +112,7 @@ _GRADCAM_TARGET_LAYERS = {
     "dinov2_vits14_cls": "feature_map", "dinov2_vitb14_cls": "feature_map",  # 패치 토큰을 펼친 (B, D, h, w) 지도
     "dinov2_vits14_seg": "neck", "dinov2_vitb14_seg": "neck",
     "unet_lite": "e4",
+    "unet_mobilenetv2": "encoder.17",
 }
 
 
@@ -352,6 +357,63 @@ class DinoV2Segmenter(nn.Module):
         return y[..., :height, :width]
 
 
+class UNetMobileNetV2(nn.Module):
+    """경량 사전학습 백본 U-Net: torchvision MobileNetV2(ImageNet) 인코더 + U-Net Lite 폭의 디코더.
+
+        입력 ─▶ 1/2 (16ch) ─▶ 1/4 (24) ─▶ 1/8 (32) ─▶ 1/16 (96) ─▶ 1/32 (320)   ← MobileNetV2 features 0~17
+                   │            │           │            │              │
+                   └─ dec1 ◀── dec2 ◀───── dec3 ◀────── dec4 ◀──────────┘   1×1 합침 + 3×3 (폭 16·32·64·64)
+        1/2 해상도 출력 ─▶ ×2 확대 = 원본 해상도
+
+    · U-Net ResNet18처럼 1/32까지 내려가 넓게 본다(조각 판정 방지). Lite는 1/16·약 120px.
+    · 깊이별 합성곱 인코더와 얇은 디코더라 3504×1504 CPU 4스레드 약 0.7초 (ResNet18 U-Net 약 2.5초).
+    · MobileNetV3가 아니라 V2인 이유: V3의 SE 블록은 입력 전체를 평균한다. 패치로 학습하고 판정 영역 전체로
+      추론하면(데스크톱·C++ 모두) 다른 함수가 된다. V2에는 전역 연산이 없어 패치 학습 = 전체 추론이다.
+    · 마지막 1280ch 1×1 층(features 18)은 분류용이라 쓰지 않는다.
+    """
+
+    TAPS = (1, 3, 6, 13, 17)                 # 각 해상도 단계의 마지막 층
+    CHANNELS = (16, 24, 32, 96, 320)
+    WIDTHS = (16, 32, 64, 64)                # dec1..dec4 출력 폭
+
+    def __init__(self, num_classes: int, in_channels: int = 3, **weights):
+        super().__init__()
+        base = _torchvision_base("mobilenet_v2", **weights)
+        self.weight_provenance = base.weight_provenance
+        features = base.features
+        features[0][0] = _replace_conv_in_channels(features[0][0], in_channels)
+        self.encoder = nn.Sequential(*list(features)[:self.TAPS[-1] + 1])
+
+        def block(cin, cout, kernel=3):
+            return nn.Sequential(nn.Conv2d(cin, cout, kernel, 1, kernel // 2, bias=False),
+                                 nn.BatchNorm2d(cout), nn.ReLU(inplace=True))
+
+        c, w = self.CHANNELS, self.WIDTHS
+        self.dec4 = nn.Sequential(block(c[4] + c[3], w[3], 1), block(w[3], w[3]))
+        self.dec3 = nn.Sequential(block(w[3] + c[2], w[2], 1), block(w[2], w[2]))
+        self.dec2 = nn.Sequential(block(w[2] + c[1], w[1], 1), block(w[1], w[1]))
+        self.dec1 = nn.Sequential(block(w[1] + c[0], w[0], 1), block(w[0], w[0]))
+        self.head = nn.Conv2d(w[0], num_classes, 1)
+
+    @staticmethod
+    def _merge(x: torch.Tensor, skip: torch.Tensor, block: nn.Module) -> torch.Tensor:
+        x = F.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
+        return block(torch.cat((x, skip), dim=1))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        size = x.shape[-2:]
+        skips = []
+        for index, layer in enumerate(self.encoder):
+            x = layer(x)
+            if index in self.TAPS:
+                skips.append(x)
+        y = self._merge(skips[4], skips[3], self.dec4)
+        y = self._merge(y, skips[2], self.dec3)
+        y = self._merge(y, skips[1], self.dec2)
+        y = self._merge(y, skips[0], self.dec1)
+        return F.interpolate(self.head(y), size=size, mode="bilinear", align_corners=False)
+
+
 class UNetLite(nn.Module):
     """초경량 U-Net (약 0.36M 매개변수). 3500×1500 같은 큰 영상을 원본 해상도 그대로 CPU에서 분할한다.
 
@@ -417,6 +479,9 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
     elif model_id == "unet_resnet18":
         model = UNetResNet18(int(num_classes), in_channels,
                             pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id == "unet_mobilenetv2":
+        model = UNetMobileNetV2(int(num_classes), in_channels,
+                                pretrained=pretrained, weights_path=backbone_weights)
     elif model_id == "unet_lite":
         if pretrained or backbone_weights is not None:
             raise ValueError("초경량 U-Net은 사전학습 가중치가 없습니다. '처음부터 학습'을 선택하세요.")

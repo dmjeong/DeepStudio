@@ -31,6 +31,7 @@ USED_BY = {
     "resnet50": "ResNet50 분류",
     "wide_resnet50_2": "PatchCore 이상 탐지 (ImageNet 백본)",
     "convnext_v1_tiny": "ConvNeXt Tiny 분류",
+    "mobilenet_v2": "U-Net MobileNetV2 분할 (경량)",
     "dinov2_vits14": "DINOv2 ViT-S/14 분류·분할",
     "dinov2_vitb14": "DINOv2 ViT-B/14 분류·분할",
     "libreyolo_classify_mobilenetv4_small": "MobileNetV4 분류",

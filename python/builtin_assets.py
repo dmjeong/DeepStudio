@@ -32,6 +32,7 @@ ASSET_FILES = {
     "resnet50": "torchvision/resnet50-0676ba61.pth",
     "wide_resnet50_2": "torchvision/wide_resnet50_2-95faca4d.pth",
     "convnext_v1_tiny": "torchvision/convnext_tiny-983f1562.pth",
+    "mobilenet_v2": "torchvision/mobilenet_v2-b0353104.pth",
     "dinov2_vits14": "dinov2/dinov2_vits14_pretrain.pth",
     "dinov2_vitb14": "dinov2/dinov2_vitb14_pretrain.pth",
     "libreyolo_classify_mobilenetv4_small": "libreyolo/LibreMobileNetV4s-cls.pt",
@@ -55,6 +56,7 @@ SOURCE_URLS = {
     "resnet50": "https://download.pytorch.org/models/resnet50-0676ba61.pth",
     "wide_resnet50_2": "https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth",
     "convnext_v1_tiny": "https://download.pytorch.org/models/convnext_tiny-983f1562.pth",
+    "mobilenet_v2": "https://download.pytorch.org/models/mobilenet_v2-b0353104.pth",
     "dinov2_vits14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth",
     "dinov2_vitb14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth",
     "libreyolo_classify_mobilenetv4_small":
@@ -256,6 +258,7 @@ BUILTIN_BACKBONE_ASSETS = {
     "convnext_v1_tiny": "convnext_v1_tiny",
     "unet_resnet18": "resnet18",
     "deeplabv3plus_resnet34": "resnet34",
+    "unet_mobilenetv2": "mobilenet_v2",
     # 모델 ID(…_cls 분류, …_seg 분할)는 main의 DINOv2 분할(dinov2_vits14)과 겹치지 않게, 가중치 ID는 같은 공식 파일이라 공유
     "dinov2_vits14_cls": "dinov2_vits14", "dinov2_vits14_seg": "dinov2_vits14",
     "dinov2_vitb14_cls": "dinov2_vitb14", "dinov2_vitb14_seg": "dinov2_vitb14",
