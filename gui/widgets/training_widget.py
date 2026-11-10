@@ -489,9 +489,15 @@ class TrainingWidget(TrainingForm, QWidget):
                         self.pc_candidates_spin, self.pc_bank_spin, self.pc_seed_spin):
             control.setEnabled(is_pc)
         for control in (self.epochs_spin, self.lr_spin, self.wd_spin, self.optimizer_combo,
-                        self.scheduler_combo, self.patience_spin, self.hflip_spin,
-                        self.rotation_spin, self.color_jitter_spin):
+                        self.scheduler_combo, self.patience_spin):
             control.setEnabled(not is_pc and not resume)
+        for control in (self.pc_aug_views_label, self.pc_aug_views_spin, self.pc_aug_info):
+            control.setVisible(is_pc)
+        self.pc_aug_views_spin.setEnabled(is_pc)
+        views = self.pc_aug_views_spin.value()
+        self.pc_aug_info.setText(
+            (f"원본 1장 + 증강 {views}장으로 특징 수집. " if views else "현재 증강 꺼짐: 추가 증강 수를 1 이상으로 설정하세요. ")
+            + "반전·회전이 불량에 해당하면 아래 값을 0으로 두세요. 증강도 정상으로 저장됩니다.")
         for control in (self.batch_spin, self.input_size_spin, self.class_weight_combo):
             control.setEnabled(not resume)
         # SAM2는 자체 prompt 손실을 쓰므로 분할 손실·가중치 선택이 적용되지 않는다.
@@ -724,6 +730,7 @@ class TrainingWidget(TrainingForm, QWidget):
             self.pc_candidates_spin.setValue(cfg.patchcore_max_candidates)
             self.pc_bank_spin.setValue(cfg.patchcore_max_memory_bank)
             self.pc_seed_spin.setValue(cfg.patchcore_seed)
+            self.pc_aug_views_spin.setValue(getattr(cfg, "patchcore_augmentation_views", 0))
 
         self.pc_crop_check.setChecked(cfg.patchcore_crop_enabled)
         self.pc_crop_width_spin.setValue(cfg.patchcore_crop_width)
@@ -869,6 +876,7 @@ class TrainingWidget(TrainingForm, QWidget):
             cfg.patchcore_max_candidates = self.pc_candidates_spin.value()
             cfg.patchcore_max_memory_bank = self.pc_bank_spin.value()
             cfg.patchcore_seed = self.pc_seed_spin.value()
+            cfg.patchcore_augmentation_views = self.pc_aug_views_spin.value()
 
         cfg.patchcore_crop_enabled = self.pc_crop_check.isChecked()
         cfg.patchcore_crop_width = self.pc_crop_width_spin.value()

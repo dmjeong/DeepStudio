@@ -150,16 +150,38 @@ def input_tensor(path, size, preprocessing="opencv_full_range_v2", center_crop=N
 
 
 class PatchCoreDataset:
-    def __init__(self, samples, input_size, labels=None, preprocessing="opencv_full_range_v2", center_crop=None):
+    def __init__(self, samples, input_size, labels=None, preprocessing="opencv_full_range_v2", center_crop=None,
+                 *, augmentation=None, augmentation_views=0, seed=0):
+        from patchcore_augmentation import augmentation_config
+
         self.samples = list(samples)
-        self.labels = list(labels) if labels is not None else [0] * len(samples)
+        self.labels = list(labels) if labels is not None else [0] * len(self.samples)
         self.input_size, self.preprocessing = int(input_size), preprocessing
         self.center_crop = validate_center_crop(center_crop)
         if len(self.samples) != len(self.labels):
             raise ValueError("이미지와 평가 라벨 수 불일치")
+        if isinstance(augmentation_views, bool) or int(augmentation_views) != augmentation_views or not 0 <= augmentation_views <= 10:
+            raise ValueError("PatchCore 원본당 추가 증강 수는 0..10 정수여야 합니다")
+        if int(seed) != seed or seed < 0:
+            raise ValueError("PatchCore 증강 시드는 0 이상 정수여야 합니다")
+        self.augmentation_views, self.seed = int(augmentation_views), int(seed)
+        self.augmentation = augmentation_config(augmentation) if self.augmentation_views else augmentation_config()
+        if self.augmentation_views and any(label != 0 for label in self.labels):
+            raise ValueError("PatchCore 증강은 정상 학습 이미지에만 적용할 수 있습니다")
 
     def __len__(self):
-        return len(self.samples)
+        return len(self.samples) * (1 + self.augmentation_views)
 
     def __getitem__(self, index):
-        return input_tensor(self.samples[index], self.input_size, self.preprocessing, self.center_crop), self.labels[index]
+        sample, view = divmod(index, 1 + self.augmentation_views)
+        tensor = input_tensor(self.samples[sample], self.input_size, self.preprocessing, self.center_crop)
+        if view:
+            from patchcore_augmentation import augment_normal_tensor
+            tensor = augment_normal_tensor(tensor, self.augmentation, seed=self.seed,
+                                           sample_index=sample, view_index=view)
+        return tensor, self.labels[sample]
+
+    def augmentation_info(self):
+        return {"implementation": "patchcore_normal_views_v1", "extra_views_per_image": self.augmentation_views,
+                "original_images": len(self.samples), "total_views": len(self), "seed": self.seed,
+                "applied": dict(self.augmentation), "keeps_original": True}

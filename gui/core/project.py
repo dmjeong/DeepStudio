@@ -185,6 +185,7 @@ class TrainingConfig:
     patchcore_max_candidates: int = 20000
     patchcore_max_memory_bank: int = 4096
     patchcore_seed: int = 0
+    patchcore_augmentation_views: int = 0  # 원본 + 이 개수의 정상 증강 영상으로 특징 수집
     # Shared by every task; retain legacy key names for saved project compatibility.
     patchcore_crop_enabled: bool = False
     patchcore_crop_width: int = 1024

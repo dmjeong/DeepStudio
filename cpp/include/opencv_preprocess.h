@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -9,6 +10,39 @@
 #include <opencv2/imgproc.hpp>
 
 namespace vision_preprocess {
+// Whole-region segmentation: already resized RGB/gray bytes -> padded NCHW.
+// A byte has only 256 values. Compute the ORIGINAL float expression for each
+// value, rather than changing it to an affine approximation (different rounding).
+inline std::vector<float> normalize_padded_u8(const cv::Mat& pixels, int width, int height,
+    const std::vector<float>& mean, const std::vector<float>& stddev) {
+    const int channels = pixels.channels();
+    if (pixels.empty() || pixels.depth() != CV_8U || (channels != 1 && channels != 3) ||
+        width < pixels.cols || height < pixels.rows ||
+        mean.size() != static_cast<size_t>(channels) || stddev.size() != mean.size())
+        throw std::invalid_argument("Invalid whole-region normalization dimensions.");
+    std::array<std::array<float, 256>, 3> tables;
+    for (int c = 0; c < channels; ++c) {
+        if (!std::isfinite(mean[c]) || !std::isfinite(stddev[c]) || stddev[c] <= 0)
+            throw std::invalid_argument("Invalid normalization coefficients.");
+        for (int value = 0; value < 256; ++value)
+            tables[c][value] = (static_cast<float>(value) / 255.0f - mean[c]) / stddev[c];
+    }
+    const size_t plane = static_cast<size_t>(width) * height;
+    // Padding stays zero AFTER normalization, exactly as in patch training.
+    std::vector<float> tensor(plane * channels, 0.0f);
+    for (int c = 0; c < channels; ++c) {
+        const float* table = tables[c].data();
+        for (int y = 0; y < pixels.rows; ++y) {
+            const uint8_t* source = pixels.ptr<uint8_t>(y) + c;
+            float* destination = tensor.data() + c * plane + static_cast<size_t>(y) * width;
+            // Channel-first writes are contiguous; row access supports strided ROIs.
+            for (int x = 0; x < pixels.cols; ++x)
+                destination[x] = table[source[x * channels]];
+        }
+    }
+    return tensor;
+}
+
 inline void resize_normalize_into(const cv::Mat& source, int width, int height,
     const std::vector<float>& mean, const std::vector<float>& stddev,
     float* tensor, size_t count, cv::Mat& scratch) {

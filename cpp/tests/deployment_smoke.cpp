@@ -157,6 +157,31 @@ int main(int argc, char** argv)
         require(!engine.InitializeFromJson((root / "gray_contract.json").u8string()), "Conflicting preprocessing channels accepted.");
         check_classification(gray);
 
+        // Shape checks alone are insufficient: corrupt values must fail at
+        // every tested position, even if they would not win argmax/NMS.
+        for (const auto* bad : {"nan", "posinf", "neginf"}) {
+            for (const int position : {0, 6, 11}) {
+                const auto file = "segment_" + std::string(bad) + "_" + std::to_string(position) + ".json";
+                require(engine.InitializeFromJson((root / file).u8string()), "Invalid-output fixture load failed.");
+                bool failed = false;
+                try { engine.Segment(gray); }
+                catch (const std::runtime_error& error) {
+                    failed = std::string(error.what()) == "Model returned non-finite values.";
+                }
+                require(failed, "Segmentation accepted a non-finite output or failed for the wrong reason.");
+            }
+            for (const auto* field : {"boxes", "scores"}) {
+                const auto file = "redetr_" + std::string(field) + "_" + bad + ".json";
+                require(engine.InitializeFromJson((root / file).u8string()), "Invalid Re-DETR fixture load failed.");
+                bool failed = false;
+                try { engine.Detect(gray); }
+                catch (const std::runtime_error& error) {
+                    failed = std::string(error.what()) == "Re-DETR returned non-finite " + std::string(field) + ".";
+                }
+                require(failed, "Re-DETR accepted a non-finite output or failed for the wrong reason.");
+            }
+        }
+
         require(engine.InitializeFromJson((root / "segment.json").u8string()), "Segmentation load failed.");
         const auto segmented = engine.Segment(bgra);
         require(segmented.mask.rows == 2 && segmented.mask.cols == 3, "Segmentation shape mismatch.");

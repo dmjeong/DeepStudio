@@ -228,7 +228,7 @@ class TrainingForm:
         pc_layout.addRow("", self.pc_append_check)
 
         self.pc_sampling_spin = NoWheelDoubleSpinBox()
-        self.pc_sampling_spin.setRange(0.001, 0.5)
+        self.pc_sampling_spin.setRange(0.001, 1.0)
         self.pc_sampling_spin.setDecimals(3)
         self.pc_sampling_spin.setSingleStep(0.005)
         self.pc_sampling_spin.setValue(0.01)
@@ -244,10 +244,9 @@ class TrainingForm:
         self.pc_neighbors_spin.setRange(1, 50)
         self.pc_neighbors_spin.setValue(9)
         self.pc_neighbors_spin.setToolTip(
-            "kNN 이웃 수: 이상 스코어 계산에 사용할 최근접 패치 수\n"
-            "  9 — 기본값, 안정적인 거리 추정\n"
-            "  1~3 — 민감한 감지 (노이즈에 취약)\n"
-            "  20+ — 안정적이지만 미세 이상 놓칠 수 있음"
+            "현재 점수 방식: 패치 지도는 가장 가까운 정상 특징 1개로 계산합니다.\n"
+            "이 값은 이미지 이상 점수 재가중에 쓰는 이웃 수입니다.\n"
+            "값을 바꾼 후에는 판정 기준을 다시 보정하세요."
         )
         pc_layout.addRow("kNN 이웃 수:", self.pc_neighbors_spin)
 
@@ -258,6 +257,10 @@ class TrainingForm:
         self.pc_bank_spin = NoWheelSpinBox()
         self.pc_bank_spin.setRange(1, 100000)
         self.pc_bank_spin.setValue(4096)
+        self.pc_bank_spin.setToolTip(
+            "최종 대표 특징 수의 상한입니다. 비율을 올려도 이 한도에 걸리면 개수가 늘지 않습니다.\n"
+            "현재 C++ ONNX 내보내기는 대표 특징 4096개 이하를 지원합니다."
+        )
         pc_layout.addRow("메모리 뱅크 한도:", self.pc_bank_spin)
         self.pc_seed_spin = NoWheelSpinBox()
         self.pc_seed_spin.setRange(0, 2147483647)
@@ -278,8 +281,9 @@ class TrainingForm:
         self.pc_crop_height_spin.valueChanged.connect(self._on_patchcore_settings_changed)
         self.pc_info_label = QLabel(
             "사전학습 백본을 고정하고 정상 이미지 특징을 저장합니다. "
-            "에폭, 학습률, 옵티마이저, 증강은 사용하지 않습니다. "
-            "ImageNet은 최초 실행 시 다운로드하며, 오프라인에서는 로컬 가중치를 선택하세요. "
+            "에폭, 학습률, 옵티마이저는 사용하지 않습니다. "
+            "고급 설정의 데이터 증강에서 원본당 추가 증강 수와 변형을 설정할 수 있습니다. "
+            "ImageNet은 준비된 기본 가중치를 사용합니다. "
             "후보/뱅크 한도에 도달하면 특징을 샘플링하므로 성능을 검증하세요."
         )
         self.pc_info_label.setWordWrap(True)
@@ -493,6 +497,17 @@ class TrainingForm:
         # ── 데이터 증강 ──
         aug_group = QGroupBox("데이터 증강")
         aug_layout = QFormLayout(aug_group)
+
+        self.pc_aug_views_label = QLabel("원본당 추가 증강 수:")
+        self.pc_aug_views_spin = NoWheelSpinBox()
+        self.pc_aug_views_spin.setRange(0, 10)
+        self.pc_aug_views_spin.setValue(0)
+        self.pc_aug_views_spin.setToolTip("0 = 증강 끔. 2 = 원본 1장 + 증강 2장으로 정상 특징 수집. 검증·추론에는 적용하지 않습니다.")
+        self.pc_aug_views_spin.valueChanged.connect(self._on_patchcore_settings_changed)
+        aug_layout.addRow(self.pc_aug_views_label, self.pc_aug_views_spin)
+        self.pc_aug_info = QLabel()
+        self.pc_aug_info.setWordWrap(True)
+        aug_layout.addRow(self.pc_aug_info)
 
         self.hflip_spin = NoWheelDoubleSpinBox()
         self.hflip_spin.setRange(0, 1)

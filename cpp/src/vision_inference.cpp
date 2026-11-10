@@ -182,7 +182,10 @@ void ValidateOutput(const Ort::Value& output, const InferenceConfig& config, siz
         (rank == 3 && shape[1] <= 0) || (rank == 4 && (shape[2] <= 0 || shape[3] <= 0)))
         throw std::runtime_error("Model output does not match the deployment contract.");
     const float* values = output.GetTensorData<float>();
-    for (size_t i = 0; i < info.GetElementCount(); ++i)
+    // GetElementCount crosses the ORT C API. Query once, not once per pixel/class
+    // (26+ million calls for a full-resolution five-class segmentation output).
+    const size_t element_count = info.GetElementCount();
+    for (size_t i = 0; i < element_count; ++i)
         if (!std::isfinite(values[i]))
             throw std::runtime_error("Model returned non-finite values.");
 }
@@ -647,18 +650,8 @@ std::vector<float> VisionInference::PreprocessWholeRegion(const cv::Mat& region)
                    m_config.region_interpolation);
     else
         scaled = *pixels;
-    const int width = m_config.input_width, height = m_config.input_height;
-    const size_t plane = static_cast<size_t>(width) * height;
-    std::vector<float> tensor(plane * channels, 0.0f);
-    for (int y = 0; y < scaled.rows; ++y) {
-        const uint8_t* row = scaled.ptr<uint8_t>(y);
-        for (int x = 0; x < scaled.cols; ++x)
-            for (int c = 0; c < channels; ++c)
-                tensor[c * plane + static_cast<size_t>(y) * width + x] =
-                    (static_cast<float>(row[x * channels + c]) / 255.0f - m_config.normalize_mean[c]) /
-                    m_config.normalize_std[c];
-    }
-    return tensor;
+    return vision_preprocess::normalize_padded_u8(scaled, m_config.input_width, m_config.input_height,
+                                                 m_config.normalize_mean, m_config.normalize_std);
 }
 
 void VisionInference::ApplyDefectRules(cv::Mat& mask, const cv::Mat& scores, const cv::Size& output_size,
@@ -1191,9 +1184,11 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
         boxes = outputs[native_order ? 1 : 0].GetTensorData<float>();
         scores = outputs[native_order ? 0 : 1].GetTensorData<float>();
         candidates = box_shape[1];
-        for (size_t index = 0; index < logit_info.GetElementCount(); ++index)
+        const size_t score_count = logit_info.GetElementCount();
+        const size_t box_count = box_info.GetElementCount();
+        for (size_t index = 0; index < score_count; ++index)
             if (!std::isfinite(scores[index])) throw std::runtime_error("Re-DETR returned non-finite scores.");
-        for (size_t index = 0; index < box_info.GetElementCount(); ++index)
+        for (size_t index = 0; index < box_count; ++index)
             if (!std::isfinite(boxes[index])) throw std::runtime_error("Re-DETR returned non-finite boxes.");
     } else {
         if (outputs.size() != 1) throw std::runtime_error("Detection output count mismatch.");

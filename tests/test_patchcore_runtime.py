@@ -227,7 +227,8 @@ class PatchCoreRuntimeTests(PatchCoreFixture):
         self.assertEqual(list(self.path.glob(".patchcore-*")), [])
 
     def test_corrupt_checkpoint_and_legacy_preprocessing(self):
-        pc = self.model()
+        from patchcore import LEGACY_FEATURE_AGGREGATION
+        pc = self.model(feature_aggregation=LEGACY_FEATURE_AGGREGATION)
         pc.fit(self.batches())
         filename = self.path / "model.pt"
         pc.save(filename)
@@ -239,6 +240,7 @@ class PatchCoreRuntimeTests(PatchCoreFixture):
                 PatchCore.load(filename)
         data["backbone_state_dict"] = state
         data["schema_version"] = 2
+        data.pop("feature_aggregation")
         data.pop("preprocessing")
         torch.save(data, filename)
         self.assertEqual(PatchCore.load(filename).preprocessing, "legacy_pil_rgb")
@@ -287,7 +289,7 @@ class PatchCoreRuntimeTests(PatchCoreFixture):
         loaded = PatchCore.load(checkpoint)
         self.assertEqual(loaded.center_crop, crop)
         self.assertEqual(loaded.get_info()["center_crop"], crop)
-        self.assertEqual(torch.load(checkpoint, weights_only=False)["schema_version"], 5)
+        self.assertEqual(torch.load(checkpoint, weights_only=False)["schema_version"], 6)
         expected = loaded.predict(tensor.unsqueeze(0))
         for direct, from_path in zip(expected, loaded.predict_from_path(path)):
             np.testing.assert_array_equal(direct, from_path)
@@ -420,6 +422,14 @@ class PatchCoreUISettingsTests(unittest.TestCase):
             self.assertFalse(widget.pc_append_check.isEnabled())
             self.assertFalse(widget.lr_spin.isEnabled())
             self.assertFalse(widget.epochs_spin.isEnabled())
+            self.assertTrue(widget.hflip_spin.isEnabled())
+            self.assertTrue(widget.rotation_spin.isEnabled())
+            self.assertTrue(widget.color_jitter_spin.isEnabled())
+            self.assertTrue(widget.pc_aug_views_spin.isEnabled())
+            self.assertEqual(widget.pc_aug_views_spin.value(), 0)
+            widget.pc_aug_views_spin.setValue(2)
+            widget.rotation_spin.setValue(5)
+            widget.pc_sampling_spin.setValue(1.0)
             self.assertFalse(widget.amp_check.isEnabled())
             self.assertTrue(widget.batch_spin.isEnabled())
             self.assertTrue(widget.tl_group.isHidden())
@@ -433,6 +443,9 @@ class PatchCoreUISettingsTests(unittest.TestCase):
             self.assertFalse(widget.pc_backbone_combo.isEnabled())
             widget.pc_append_check.setChecked(True)
             widget.collect_config()
+            self.assertEqual(cfg.patchcore_augmentation_views, 2)
+            self.assertEqual(cfg.augmentation.rotation, 5)
+            self.assertEqual(cfg.patchcore_sampling_ratio, 1.0)
             self.assertTrue(cfg.patchcore_append)
             self.assertEqual(cfg.patchcore_crop_width, 384)
             self.assertEqual(cfg.patchcore_crop_height, 192)

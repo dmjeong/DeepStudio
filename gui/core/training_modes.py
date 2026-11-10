@@ -93,7 +93,7 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
         "models": ["efficientnet_b0", "efficientnet_b1"] if engine == "efficientnet" else [],
         "resume": mode.endswith("_resume") and task != "anomaly",
         "input_channels": [3] if engine == "sam2" else [1, 3],
-        "augmentation": ["horizontal_flip", "rotation", "color_jitter"] if not patchcore and task == "classify" else [],
+        "augmentation": ["horizontal_flip", "rotation", "color_jitter"] if patchcore or task == "classify" else [],
         "layer_debug": not patchcore and not separate_adapter,
         "layer_debug_reason": "레이어 관찰은 현재 EfficientNet과 Custom CSP에서 지원합니다. 선택한 모델의 학습 경로에는 연결되어 있지 않습니다.",
         "default_layer_patterns": "features.0,features.1.*,classifier.1" if engine == "efficientnet" else "backbone.stem,backbone.stage1,backbone.stage4",

@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-11-10T00:00:19.275Z",
+  "lastUpdated": "2026-11-10T06:08:56.161071+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -11,9 +11,12 @@
     "pretrained-manifest-recovery",
     "segmentation-weight-preparation",
     "dinov2-segmentation",
-    "claude-main-seg-evaluation"
+    "claude-main-seg-evaluation",
+    "patchcore-augmentation",
+    "patchcore-feature-aggregation",
+    "cpp-output-validation-latency"
   ],
-  "primaryFeature": "claude-main-seg-evaluation",
+  "primaryFeature": "cpp-output-validation-latency",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -461,6 +464,43 @@
         "windows": "VS2017 Release/Debug CI added; local Windows execution not performed"
       },
       "completedAt": "2026-11-10T00:00:19.275Z"
+    },
+    "patchcore-augmentation": {
+      "phase": "completed",
+      "matchRate": 100,
+      "documents": {
+        "plan": "docs/01-plan/features/patchcore-augmentation.plan.md",
+        "design": "docs/02-design/features/patchcore-augmentation.design.md",
+        "report": "docs/04-report/patchcore-augmentation.report.md"
+      },
+      "validation": "116 targeted Python/Qt/C++ tests passed; pretrained ResNet18 augmented fit/save/load/ONNX smoke passed; Windows not executed locally",
+      "completedAt": "2026-11-10T02:50:53.142853+00:00"
+    },
+    "patchcore-feature-aggregation": {
+      "phase": "completed",
+      "documents": {
+        "design": "docs/02-design/features/patchcore-feature-aggregation.design.md",
+        "report": "docs/04-report/patchcore-feature-aggregation.report.md"
+      },
+      "completedAt": "2026-11-10T03:15:41.961088+00:00",
+      "validation": "136 passed; pretrained 336-patch research parity; 14-patch PyTorch/ORT/native parity on macOS",
+      "acceptance": {
+        "implementation": "verified locally; not pushed",
+        "production_quality": "unverified; synthetic 23/33 detected with 0/1087 false positives, 10 misses remain",
+        "windows": "not run"
+      }
+    },
+    "cpp-output-validation-latency": {
+      "phase": "completed",
+      "documents": {
+        "design": "docs/02-design/features/output-validation-latency.design.md",
+        "report": "docs/RELEASE_11.72.md"
+      },
+      "validation": "C++ CTest 7/7; Python preprocessing/segmentation 8/8; bitwise normalization parity; all NaN/Inf cases rejected",
+      "measurements": "Apple M4 Release: validation 99.150 -> 6.116 ms; preprocessing 8.908 -> 6.075 ms",
+      "userBuild": "Debug (confirmed); target performance must be measured with Release/x64",
+      "windowsValidation": "not run",
+      "completedAt": "2026-11-10T06:08:56.161071+00:00"
     }
   },
   "pipeline": {

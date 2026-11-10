@@ -58,6 +58,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+LEGACY_FEATURE_AGGREGATION = "align_then_pool_v1"
+STANDARD_FEATURE_AGGREGATION = "pool_then_align_v2"
+SUPPORTED_FEATURE_AGGREGATIONS = {LEGACY_FEATURE_AGGREGATION, STANDARD_FEATURE_AGGREGATION}
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  특징 추출 백본 (WideResNet-50 기반)
@@ -87,8 +91,12 @@ class PatchCoreBackbone(nn.Module):
     - Layer 4: 너무 추상적 (의미 수준 — 위치 정보 손실)
     """
 
-    def __init__(self, backbone_name: str = "wide_resnet50_2", pretrained: bool = True):
+    def __init__(self, backbone_name: str = "wide_resnet50_2", pretrained: bool = True,
+                 feature_aggregation: str = STANDARD_FEATURE_AGGREGATION):
         super().__init__()
+        if feature_aggregation not in SUPPORTED_FEATURE_AGGREGATIONS:
+            raise ValueError("PatchCore 특징 집계 방식 오류")
+        self.feature_aggregation = feature_aggregation
         from patchcore_weights import BACKBONES, build_backbone
         base = build_backbone(backbone_name, pretrained)
         self.feat2_channels, self.feat3_channels = BACKBONES[backbone_name][:2]
@@ -134,6 +142,11 @@ class PatchCoreBackbone(nn.Module):
         x = self.layer1(x)
         feat2 = self.layer2(x)     # (B, 512, 28, 28) for WRN-50-2
         feat3 = self.layer3(feat2)  # (B, 1024, 14, 14)
+
+        if self.feature_aggregation == STANDARD_FEATURE_AGGREGATION:
+            # Preserve each layer's original neighbourhood before resizing.
+            feat2 = F.avg_pool2d(feat2, 3, stride=1, padding=1)
+            feat3 = F.avg_pool2d(feat3, 3, stride=1, padding=1)
 
         # feat3을 feat2 해상도로 업샘플하여 결합
         feat3_up = F.interpolate(
@@ -244,6 +257,7 @@ class PatchCore:
         preprocessing: str = "opencv_full_range_v2",
         center_crop: dict | None = None,
         score_definition: str = STANDARD_SCORE_DEFINITION,
+        feature_aggregation: str = STANDARD_FEATURE_AGGREGATION,
     ):
         """
         Args:
@@ -280,7 +294,8 @@ class PatchCore:
         from center_crop import validate_center_crop
         self.center_crop = validate_center_crop(center_crop)
         self.training_metadata = {}
-        self.backbone = PatchCoreBackbone(backbone_name, pretrained=pretrained and not backbone_weights)
+        self.backbone = PatchCoreBackbone(backbone_name, pretrained=pretrained and not backbone_weights,
+                                          feature_aggregation=feature_aggregation)
         self.weight_source = {"kind": "imagenet" if pretrained else "uninitialized",
                               "backbone": backbone_name, "weights": "IMAGENET1K_V1" if pretrained else "none"}
         if backbone_weights:
@@ -291,8 +306,21 @@ class PatchCore:
         # 메모리 뱅크 (fit 후 채워짐)
         self.memory_bank: Optional[torch.Tensor] = None
 
-        # 이웃 패치 집계용 풀링 (3×3)
-        self._avg_pool = nn.AvgPool2d(3, stride=1, padding=1)
+        self.set_feature_aggregation(feature_aggregation)
+
+    @property
+    def feature_aggregation(self) -> str:
+        return self.backbone.feature_aggregation
+
+    def set_feature_aggregation(self, value: str) -> None:
+        """Change feature space only before building a bank; old banks must not mix."""
+        if value not in SUPPORTED_FEATURE_AGGREGATIONS:
+            raise ValueError("PatchCore 특징 집계 방식 오류")
+        if self.memory_bank is not None and value != self.feature_aggregation:
+            raise ValueError("특징 집계를 바꾸려면 기존 메모리 뱅크를 비우고 새로 구축해야 합니다")
+        self.backbone.feature_aggregation = value
+        self._avg_pool = (nn.AvgPool2d(3, stride=1, padding=1)
+                          if value == LEGACY_FEATURE_AGGREGATION else nn.Identity())
 
     @torch.no_grad()
     def _extract_features(self, images: torch.Tensor) -> torch.Tensor:
@@ -319,6 +347,8 @@ class PatchCore:
     @torch.no_grad()
     def fit(self, train_loader, progress_callback=None, cancel_callback=None, *, append=False):
         """고정된 백본으로 정상 특징을 구축한다. 취소 시 기존 뱅크는 유지한다."""
+        from time import perf_counter
+
         _check_cancel(cancel_callback)
         from patchcore_sampling import FeatureReservoir, coreset
         self.backbone.eval()
@@ -330,6 +360,7 @@ class PatchCore:
             raise ValueError(f"기존 대표 패치 {old_count:,}개로 저장 한도 도달. 최대 대표 패치 수를 늘리거나 새 뱅크 구축 선택 필요")
         pool = FeatureReservoir(self.max_candidates, self.seed)
         total_batches = len(train_loader)
+        extraction_started = perf_counter()
         for batch_idx, batch in enumerate(train_loader):
             _check_cancel(cancel_callback)
             images = batch[0] if isinstance(batch, (list, tuple)) else batch
@@ -348,9 +379,26 @@ class PatchCore:
         _check_cancel(cancel_callback)
         if pool.features is None:
             raise ValueError("특징을 추출할 정상 학습 배치 없음")
-        target = min(max(int(pool.seen * self.sampling_ratio), 1), self.max_memory_bank - old_count)
+        extraction_seconds = perf_counter() - extraction_started
+        requested = max(int(pool.seen * self.sampling_ratio), 1)
+        remaining = self.max_memory_bank - old_count
+        candidates = pool.features.shape[0]
+        target = min(requested, candidates, remaining)
+        limited_by = []
+        if requested > candidates:
+            limited_by.append("candidate_limit")
+        if requested > remaining:
+            limited_by.append("memory_limit")
+        if progress_callback:
+            reason = " / ".join({"candidate_limit": "후보 패치 한도", "memory_limit": "메모리 잔여 한도"}[key]
+                                for key in limited_by) or "없음"
+            progress_callback(0, target,
+                f"코어셋: 전체 {pool.seen:,} × {self.sampling_ratio:.1%} → 요청 {requested:,}개 | "
+                f"후보 {candidates:,}, 메모리 잔여 {remaining:,} → 실제 {target:,}개 | 제한: {reason}")
+        selection_started = perf_counter()
         selected = coreset(pool.features, target, seed=self.seed,
                            cancel=lambda: _check_cancel(cancel_callback), progress=progress_callback)
+        selection_seconds = perf_counter() - selection_started
         new_bank = selected.to(self.device)
         if existing is not None:
             new_bank = torch.cat((existing, new_bank))
@@ -359,12 +407,20 @@ class PatchCore:
         self.anomaly_threshold = None
         self.score_normalization = None
         self.calibration = {"evaluable": False, "reason": "메모리 뱅크 변경 후 임계값 재보정 필요"}
-        self.training_metadata = {"seen_patches": pool.seen, "candidate_patches": pool.features.shape[0],
+        self.training_metadata = {"feature_aggregation": self.feature_aggregation,
+                                  "seen_patches": pool.seen, "candidate_patches": pool.features.shape[0],
                                   "retained_patches": old_count, "new_patches": selected.shape[0],
                                   "candidate_limit_applied": pool.seen > self.max_candidates,
+                                  "sampling_ratio": self.sampling_ratio, "requested_new_patches": requested,
+                                  "effective_new_ratio": selected.shape[0] / pool.seen, "limited_by": limited_by,
+                                  "feature_extraction_seconds": extraction_seconds,
+                                  "coreset_selection_seconds": selection_seconds,
                                   "seed": self.seed, "append": append}
         if progress_callback:
-            progress_callback(1, 1, f"메모리 뱅크 구축 완료: {new_bank.shape[0]:,}개 대표 패치")
+            progress_callback(1, 1,
+                f"메모리 뱅크 구축 완료: {new_bank.shape[0]:,}개 대표 패치 "
+                f"(신규 실제 비율 {selected.shape[0] / pool.seen:.2%}) | "
+                f"특징 추출 {extraction_seconds:.3f}초 / 코어셋 선별 {selection_seconds:.3f}초")
 
     @torch.no_grad()
     def predict(
@@ -599,7 +655,8 @@ class PatchCore:
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "type": "patchcore",
-            "schema_version": 5,
+            "schema_version": 6,
+            "feature_aggregation": self.feature_aggregation,
             "center_crop": self.center_crop,
             "preprocessing": self.preprocessing,
             "weight_source": self.weight_source,
@@ -653,8 +710,15 @@ class PatchCore:
         if not isinstance(data, dict) or data.get("type") != "patchcore":
             raise ValueError("PatchCore 체크포인트 형식 오류")
         schema_version = data.get("schema_version", 1)
-        if schema_version not in (1, 2, 3, 4, 5):
+        if schema_version not in (1, 2, 3, 4, 5, 6):
             raise ValueError("미지원 PatchCore 체크포인트 버전")
+        if schema_version >= 6 and "feature_aggregation" not in data:
+            raise ValueError("PatchCore 특징 집계 설정 누락")
+        aggregation = data.get("feature_aggregation", LEGACY_FEATURE_AGGREGATION)
+        if aggregation not in SUPPORTED_FEATURE_AGGREGATIONS:
+            raise ValueError("PatchCore 특징 집계 방식 오류")
+        if schema_version < 6 and aggregation != LEGACY_FEATURE_AGGREGATION:
+            raise ValueError("PatchCore 특징 집계와 체크포인트 버전 불일치")
         from center_crop import validate_center_crop
         if schema_version >= 5 and "center_crop" not in data:
             raise ValueError("PatchCore 중앙 크롭 설정 누락")
@@ -687,6 +751,7 @@ class PatchCore:
             seed=data.get("seed", 0), preprocessing=data.get("preprocessing", "legacy_pil_rgb"),
             center_crop=crop,
             score_definition=score_definition,
+            feature_aggregation=aggregation,
         )
         if "backbone_state_dict" in data:
             state = data["backbone_state_dict"]
@@ -758,6 +823,7 @@ class PatchCore:
             "n_neighbors": self.n_neighbors,
             "sampling_ratio": self.sampling_ratio,
             "input_size": self.input_size,
+            "feature_aggregation": self.feature_aggregation,
         }
 
 
