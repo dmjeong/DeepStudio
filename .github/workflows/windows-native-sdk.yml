@@ -361,6 +361,18 @@ jobs:
           $env:PATH = "$env:VISION_NATIVE_RUNTIME_DIR;$env:PATH"
           python -m pytest -q tests/test_cpp_patchcore_export.py
           if ($LASTEXITCODE -ne 0) { throw "PatchCore export -> C++ inference failed" }
+      - name: Verify LibreYOLO full-frame export in native C++
+        shell: pwsh
+        run: |
+          python -m pip install libreyolo==1.5.0
+          if ($LASTEXITCODE -ne 0) { throw "LibreYOLO test dependencies failed" }
+          $env:CLASSIFY_PROBE = Join-Path $env:RUNNER_TEMP "vision-cpp-build/Release/classify_probe.exe"
+          if (-not (Test-Path $env:CLASSIFY_PROBE)) { throw "Classification native probe is missing" }
+          $env:PATH = "$env:VISION_NATIVE_RUNTIME_DIR;$env:PATH"
+          $env:OMP_NUM_THREADS = "1"
+          $env:MKL_NUM_THREADS = "1"
+          python -m pytest -q tests/test_libreyolo_full_frame.py
+          if ($LASTEXITCODE -ne 0) { throw "LibreYOLO export -> C++ inference failed" }
       - name: Verify frozen CUDA training runtime without a GPU
         shell: pwsh
         run: |

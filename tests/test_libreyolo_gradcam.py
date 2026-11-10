@@ -34,7 +34,7 @@ def image_at(tmp_path, size):
 
 
 @pytest.mark.parametrize("size", [(331, 119), (117, 333), (224, 224)])
-def test_native_cam_preserves_prediction_weights_and_crop(checkpoint, tmp_path, size):
+def test_native_cam_preserves_prediction_weights_and_full_frame(checkpoint, tmp_path, size):
     from core.heatmap import render_heatmap
     path, rgb = image_at(tmp_path, size)
     engine = load_inference_engine(checkpoint, gradcam=True)
@@ -54,10 +54,10 @@ def test_native_cam_preserves_prediction_weights_and_crop(checkpoint, tmp_path, 
     assert all(p.grad is None for p in model.parameters())
     cache = engine._heatmap_cache
     assert cache["activation"].shape == rgb.shape[:2]
-    assert cache["valid_mask"].any() and not cache["valid_mask"].all()
+    assert cache["valid_mask"].all()
     assert cache["activation"].max() > 0
     _, overlay = render_heatmap(cache["activation"], rgb, 1., valid_mask=cache["valid_mask"])
-    np.testing.assert_array_equal(overlay[~cache["valid_mask"]], rgb[~cache["valid_mask"]])
+    assert overlay.shape == rgb.shape
     engine.gradcam_enabled = False
     repeated = engine.infer(str(path))
     assert repeated.gradcam_status == "not_run"

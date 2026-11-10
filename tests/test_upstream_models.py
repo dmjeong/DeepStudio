@@ -97,6 +97,9 @@ def test_libreyolo_classification_trains_with_prepared_dataset(tmp_path, monkeyp
             return {"best_checkpoint": "best.pt"}
 
     monkeypatch.setattr(upstream_models, "build_upstream_model", lambda *args, **kwargs: FakeModel())
+    import sys
+    monkeypatch.setitem(sys.modules, "libreyolo_training", SimpleNamespace(
+        train_classifier=lambda model, **kwargs: model.train(**kwargs)))
     events = []
     result = train_upstream_model(
         "libreyolo_classify_mobilenetv4_small", data_root=root,

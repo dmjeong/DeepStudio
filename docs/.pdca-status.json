@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-11-10T07:31:14.501902+00:00",
+  "lastUpdated": "2026-11-10T07:54:51.811351+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -17,9 +17,10 @@
     "cpp-output-validation-latency",
     "segmentation-stage-timing",
     "segmentation-thread-scaling-review",
-    "libreyolo-gradcam-comparison"
+    "libreyolo-gradcam-comparison",
+    "libreyolo-full-frame"
   ],
-  "primaryFeature": "libreyolo-gradcam-comparison",
+  "primaryFeature": "libreyolo-full-frame",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -536,6 +537,22 @@
         "runtime": "macOS CPU, pinned LibreYOLO 1.5.0, Qt offscreen",
         "windows_verified": false,
         "actual_button_and_worker_process_test": true
+      }
+    },
+    "libreyolo-full-frame": {
+      "phase": "completed",
+      "documents": {
+        "design": "docs/02-design/features/libreyolo-full-frame.design.md",
+        "report": "docs/RELEASE_11.84.md"
+      },
+      "verification": {
+        "tests_passed": 226,
+        "tests_skipped": 2,
+        "native_full_frame_tests_passed": 7,
+        "runtime": "macOS CPU, LibreYOLO 1.5.0, C++ Release ORT 1.29",
+        "windows_verified": false,
+        "actual_button_and_worker_process_test": true,
+        "actual_training_resume_export_cpp": true
       }
     }
   },

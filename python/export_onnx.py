@@ -112,13 +112,19 @@ def _upstream_spec(checkpoint):
         raise ValueError("기본 제공 LibreYOLO 분류 체크포인트 모델군 불일치")
     if task == "detect" and family not in {"yolo9", "rtdetrv4"}:
         raise ValueError("기본 제공 LibreYOLO 검출 체크포인트 모델군 불일치")
+    if task == "classify":
+        from libreyolo_classification import preprocessing_contract
+        from center_crop import checkpoint_center_crop
+        preprocessing = preprocessing_contract(size, checkpoint.get("studio_preprocessing"))
+        preprocessing["center_crop"] = checkpoint_center_crop(checkpoint)
+    else:
+        preprocessing = {"normalize_mean": [0.485, 0.456, 0.406],
+                         "normalize_std": [0.229, 0.224, 0.225],
+                         "input_size": [size, size], "in_channels": 3, "color_order": "RGB"}
     return {"family": family, "task": task, "num_classes": num_classes,
             "class_names": class_names, "input_height": size, "input_width": size,
             "in_channels": 3,
-            "preprocessing": {"normalize_mean": [0.485, 0.456, 0.406],
-                                "normalize_std": [0.229, 0.224, 0.225],
-                                "input_size": [size, size], "in_channels": 3,
-                                "color_order": "RGB"}}
+            "preprocessing": preprocessing}
 
 
 def _upstream_reference_outputs(model, family, dummy):
@@ -618,6 +624,10 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
         stage = Path(temporary)
         staged_model = stage / output.name
         log(f"내보내기 시작: LibreYOLO {family}")
+        if family == "mobilenetv4":
+            log("LibreYOLO 분류: 전체 입력 영역 크기 조정, 자동 중앙 자르기 없음")
+            if checkpoint.get("studio_preprocessing") is None:
+                log("기존 가중치를 전체 영상 전처리로 내보냅니다. 이전 중앙 자르기 추론과 판정이 달라질 수 있습니다.")
         model = load_upstream_checkpoint(checkpoint_path, device="cpu")
         exported = Path(model.export(format="onnx", output_path=str(staged_model),
                                      imgsz=(spec["input_height"], spec["input_width"]),

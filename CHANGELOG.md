@@ -1,3 +1,10 @@
+# 11.84 — 2026-11-10
+
+- Fix: LibreYOLO MobileNetV4 분류의 숨은 중앙 자르기와 학습의 무작위 자르기 제거. 전체 입력 영역을 OpenCV로 224×224에 맞추고 학습·검증·추론·Grad-CAM·ONNX/C++ 전처리를 통일.
+- Fix: 사용자가 지정한 크롭은 학습 데이터와 체크포인트·배포 JSON에 보존. 추론의 `원본 전체`는 저장 크롭을 해제하며, 지정 ROI의 CAM은 원본 위치로 복원.
+- Compatibility: 기존 가중치도 전체 영상으로 추론 가능. 입력 영역 변경으로 기존 판정 점수는 재확인 필요. 구형 중앙 자르기 학습의 중단 재개는 거부하고 기존 가중치를 이용한 추가 학습 안내. 새 전처리 계약은 best/last/epoch에 저장.
+- Validation: 실제 LibreYOLO 1.5.0 학습·검증·재개, spawn 데이터 로더, 네 가장자리 입력, GUI 버튼·CAM, ONNX 내보내기와 C++ 분류 확률 비교. Windows CI에도 회귀 검사 연결.
+
 # 11.83 — 2026-11-10
 
 - Fix: 기본 LibreYOLO MobileNetV4 분류 `.pt`에 Grad-CAM 연결. 풀링 전 공간 특징과 실제 예측 클래스의 logit을 사용하고 native 전처리의 중앙 잘림을 원본 좌표로 복원. 판정/확률은 native predict 결과를 유지.

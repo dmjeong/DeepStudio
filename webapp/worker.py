@@ -266,6 +266,9 @@ def _train_upstream_project(context, project, device):
                 )
             ])
             return
+        if event.get("event") == "preprocessing_configured":
+            context.emit("log_message", [event["message"]])
+            return
         if event.get("event") != "epoch_finished":
             return
         history.append(dict(event))
@@ -287,12 +290,14 @@ def _train_upstream_project(context, project, device):
     mode = str(cfg.training_mode)
     source = project.model.pretrained_weights or None
     context.emit("log_message", [f"기본 native 모델 학습: {spec.family}/{spec.size}"])
+    from center_crop import configured_center_crop
     result = train_upstream_model(
         model_id, data_root=data.root, class_names=list(data.class_names), output_dir=run_dir,
         epochs=cfg.epochs, batch_size=cfg.batch_size, learning_rate=cfg.learning_rate,
         device=str(device), weights=source, pretrained=mode == "upstream_finetune", resume=mode == "upstream_resume",
         use_amp=cfg.use_amp, patience=cfg.early_stop_patience,
-        val_split=data.val_split, seed=0, emit=progress)
+        val_split=data.val_split, seed=0, emit=progress,
+        center_crop=configured_center_crop(cfg) if spec.task == "classify" else None)
     checkpoint = result.get("best_checkpoint") or result.get("last_checkpoint")
     if not checkpoint or not Path(checkpoint).is_file():
         raise RuntimeError("upstream 학습이 best.pt 또는 last.pt를 만들지 않았습니다")
@@ -742,6 +747,8 @@ def inspect_model(context, payload):
         "patchcore": engine._patchcore_model.get_info() if engine._patchcore_model is not None else None,
         "upstream": getattr(engine, "_upstream_model", None) is not None,
         "gradcam_supported": gradcam_supported,
+        "preprocessing_policy": getattr(engine._upstream_model, "studio_input_policy", None),
+        "preprocessing_migrated": bool(getattr(engine._upstream_model, "studio_legacy_preprocessing", False)),
         "sam2": getattr(engine, "_sam2_model_id", None),
         "tiling": getattr(engine, "_tiling", None),
         "weights_sha256": digest(payload["weights"])}}

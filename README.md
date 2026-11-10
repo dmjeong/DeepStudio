@@ -7,7 +7,7 @@
 
 | 태스크 | 학습·추론 엔진 | 데이터 |
 |---|---|---|
-| 분류 | EfficientNet B0/B1, ResNet 18/50, ConvNeXt V1 Tiny, Custom CSP | 클래스별 이미지 폴더 |
+| 분류 | EfficientNet B0/B1, ResNet 18/50, ConvNeXt V1 Tiny, LibreYOLO MobileNetV4 Small, Custom CSP | 클래스별 이미지 폴더 |
 | 시맨틱 분할 | SAM2 Hiera Tiny/Small/Base+/Large, DeepLab V3+ ResNet34, U-Net ResNet18, DINOv2 ViT-S/14 + Detail, Custom CSP | 이미지와 클래스 인덱스 마스크 |
 | 박스 탐지 | Re-DETR v4 Small/Medium/Large, LibreYOLO9 Tiny, Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
 | 이상 탐지 | PatchCore 또는 Custom CSP 재구성 | 정상 이미지, 선택적 평가용 불량 이미지 |
@@ -17,6 +17,19 @@
 실행을 거부하며, 현재 엔진을 명시적으로 선택해야 합니다.
 
 ## 실행
+
+### LibreYOLO 분류의 전체 이미지 입력 (11.84)
+
+- 기본 제공 MobileNetV4는 이미지 전체를 224×224로 크기 조정합니다. 종횡비는 바뀔 수 있지만,
+  상하좌우를 자동으로 잘라 버리지 않습니다. 학습·검증·추론·Grad-CAM과 ONNX/C++가 같은 전처리를 사용합니다.
+- 추론 화면의 **원본 전체**는 저장된 크롭도 해제합니다. **모델 설정 / JSON 설정**에서는 사용자가
+  지정한 ROI만 자르며, Grad-CAM은 검사한 원본 위치에 표시합니다. 히트맵이 전체 시야를 대상으로 하더라도
+  모델이 중요하게 본 위치에만 강하게 표시됩니다.
+- 기존 `.pt`는 다시 학습하지 않아도 로드됩니다. 다만 중앙만 보던 이전 버전과 입력 범위가 달라져
+  점수·판정이 달라질 수 있으므로 검사 이미지로 확인하세요. 가장자리 정보까지 학습시키려면 기존 가중치로
+  **추가 학습**을 하세요. 구형 체크포인트의 **중단 재개**는 전처리와 이전 best 지표가 달라 허용하지 않습니다.
+- 새 best/last에는 전체 입력 정책과 지정 ROI를 저장하며 ONNX JSON에도 기록합니다.
+  C++에는 함께 내보낸 `.onnx`와 `.json`을 사용하세요.
 
 ### DINOv2 세그멘테이션 (10.57)
 

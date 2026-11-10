@@ -78,6 +78,9 @@ def load_upstream_checkpoint(path: str | Path, *, device: str):
     family = str(getattr(model, "FAMILY", getattr(model, "family", ""))).lower()
     if family not in {"mobilenetv4", "yolo9", "rtdetrv4"}:
         raise ValueError(f"Deep Vision Studio 기본 LibreYOLO 모델이 아닙니다: {family or 'unknown'}")
+    if family == "mobilenetv4":
+        from libreyolo_classification import configure_classifier
+        configure_classifier(model)
     return model
 
 
@@ -111,8 +114,9 @@ def build_upstream_model(model_id: str, *, num_classes: int, device: str,
         raise ValueError("num_classes must be positive")
     LibreMobileNetV4, LibreYOLO9, LibreRTDETRv4 = _api()
     if spec.family == "mobilenetv4":
-        return LibreMobileNetV4(model_path=weights, size=spec.size,
-                                nb_classes=num_classes, device=device)
+        from libreyolo_classification import configure_classifier
+        return configure_classifier(LibreMobileNetV4(model_path=weights, size=spec.size,
+                                                     nb_classes=num_classes, device=device))
     if spec.family == "yolo9":
         return LibreYOLO9(model_path=weights, size=spec.size,
                           nb_classes=num_classes, device=device, task="detect")
@@ -295,7 +299,7 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
                          output_dir: str | Path, epochs: int, batch_size: int,
                          learning_rate: float, device: str, weights: str | None, pretrained: bool = False,
                          resume: bool, use_amp: bool, patience: int,
-                         val_split: float = 0.2, seed: int = 0,
+                         val_split: float = 0.2, seed: int = 0, center_crop=None,
                          emit: Callable[[dict], None]) -> dict:
     """Run an upstream native trainer and return its documented result map."""
     spec = get_upstream_spec(model_id)
@@ -314,6 +318,10 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
                            patience=int(patience), callbacks=callback, val_loss=True,
                            eval_interval=1)
 
+    if center_crop is not None:
+        from crop_dataset import prepare_crop_dataset
+        data_root = prepare_crop_dataset(data_root, output.parent / "generated", "classify",
+                                         center_crop, num_classes=len(class_names))
     with prepare_classification_dataset(
         data_root, class_names, output.parent, val_split=val_split, seed=seed,
     ) as (prepared_root, summary):
@@ -321,8 +329,12 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
         model = build_upstream_model(model_id, num_classes=len(class_names), device=device,
                                      weights=weights, pretrained=pretrained)
         callback = _ProgressCallback(emit)
-        return model.train(data=str(prepared_root), epochs=int(epochs), batch=int(batch_size),
+        from libreyolo_training import train_classifier
+        emit({"event": "preprocessing_configured", "policy": "libreyolo_full_frame_v1",
+              "message": "전체 영상 크기 조정: 학습·검증에서 자동 자르기를 사용하지 않습니다."})
+        return train_classifier(model, data=str(prepared_root), epochs=int(epochs), batch=int(batch_size),
                            imgsz=spec.input_size, lr0=float(learning_rate), device=device,
                            project=str(output.parent), name=output.name, exist_ok=True,
                            resume=bool(resume), amp=bool(use_amp), patience=int(patience),
-                           callbacks=callback, val_loss=True, eval_interval=1)
+                           callbacks=callback, val_loss=True, eval_interval=1, seed=int(seed),
+                           center_crop=center_crop)

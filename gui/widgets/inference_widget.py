@@ -1094,6 +1094,10 @@ class InferenceWidget(QWidget, InferenceOperations):
             self._model_inspection_failed(str(exc))
             return
         self._model_task = str(task)
+        if result.get("preprocessing_policy") == "libreyolo_full_frame_v1":
+            info += " | 입력 영역 전체 사용 · 자동 자르기 없음"
+            if result.get("preprocessing_migrated"):
+                info += " | 구형 모델 전처리 변경 · 판정 재확인 필요"
         if result.get("tiling"):
             scale = float(result["tiling"].get("scale", 1.0))
             info += (" | 패치 학습 모델 · " + ("원본 해상도" if scale == 1 else f"배율 {scale:.0%}")

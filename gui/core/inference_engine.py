@@ -34,7 +34,14 @@ class InferenceOperations:
         model = self._upstream_model
         task = self._upstream_task
         with self._measure_inference_stage("inference"):
-            result = model.predict(image_path, imgsz=int(self._input_size[0]),
+            with Image.open(image_path) as source:
+                original = display_rgb(np.asarray(source.convert("RGB")))
+            source_image = image_path
+            crop = self._center_crop if task == "classify" else None
+            if task == "classify":
+                box = center_crop_box((original.shape[1], original.shape[0]), crop)
+                source_image = Image.fromarray(original[box[1]:box[3], box[0]:box[2]])
+            result = model.predict(source_image, imgsz=int(self._input_size[0]),
                                    conf=float(getattr(self, "detection_confidence", .25)),
                                    iou=float(getattr(self, "detection_iou", .5)),
                                    device=str(self._infer_device))
@@ -42,8 +49,6 @@ class InferenceOperations:
             if len(result) != 1:
                 raise ValueError("LibreYOLO 단일 이미지 추론 결과 형식 오류")
             result = result[0]
-        with Image.open(image_path) as source:
-            original = display_rgb(np.asarray(source.convert("RGB")))
         self._original_preview_rgb = original
         if task == "classify":
             probs = as_numpy(result.probs.data).reshape(-1).astype(np.float64)
@@ -55,7 +60,11 @@ class InferenceOperations:
                 raise ValueError("LibreYOLO 분류 클래스 목록 불일치")
             prediction = InferenceResult(image_path, "ok", task, f"{names[top]} {probs[top]:.1%}",
                                          details={"class_names": list(names), "probabilities": probs.tolist(),
-                                                  "runtime": "libreyolo-pytorch", "device": str(self._infer_device)})
+                                                  "runtime": "libreyolo-pytorch", "device": str(self._infer_device),
+                                                  "preprocessing_policy": getattr(model, "studio_input_policy", None),
+                                                  "preprocessing_migrated": bool(getattr(model, "studio_legacy_preprocessing", False)),
+                                                  "original_size": [original.shape[1], original.shape[0]],
+                                                  "crop_box": list(box), "center_crop": crop})
             self._current_preview_rgb = original
         elif task == "detect":
             if result.boxes is None:
@@ -79,13 +88,22 @@ class InferenceOperations:
             raise ValueError(f"LibreYOLO 태스크 미지원: {task}")
         self._heatmap_cache = None
         self.info = "LibreYOLO native PyTorch 추론"
+        preprocessing_info = ""
+        if task == "classify":
+            preprocessing_info = " | 입력 영역 전체 사용 · 자동 자르기 없음"
+            if getattr(model, "studio_legacy_preprocessing", False):
+                preprocessing_info += " | 구형 모델 전처리 변경: 판정 결과 재확인 필요"
+            self.info += preprocessing_info
         if task == "classify" and self.gradcam_enabled and self._gradcam is not None:
             try:
                 with self._measure_inference_stage("gradcam"):
-                    activation, valid = self._gradcam.generate_image(image_path, self._input_size[0], top)
+                    activation, valid = self._gradcam.generate_image(source_image, self._input_size[0], top)
+                    if crop:
+                        from core.heatmap import reproject_center_crop
+                        activation, valid = reproject_center_crop(activation, original.shape[:2], crop)
                 self._set_heatmap_preview(
                     image_path, original, activation, "Grad-CAM",
-                    f"LibreYOLO | 타겟: blocks | 클래스: {names[top]}", valid_mask=valid)
+                    f"LibreYOLO | 타겟: blocks | 클래스: {names[top]}" + preprocessing_info, valid_mask=valid)
             except Exception as exc:
                 self._clear_heatmap_preview()
                 self.info += f" | Grad-CAM 실패: {exc}"
