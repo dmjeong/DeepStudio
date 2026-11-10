@@ -30,6 +30,41 @@ BUILTIN_MODEL_SPECS = {
     "deeplabv3plus_resnet34": BuiltinModelSpec("deeplabv3plus_resnet34", "segment", (512, 512), (3,)),
     "unet_resnet18": BuiltinModelSpec("unet_resnet18", "segment", (512, 512), (1, 3)),
     "dinov2_vits14": BuiltinModelSpec("dinov2_vits14", "segment", (392, 392), (1, 3)),
+    # DINOv2 (자기지도 ViT, 패치 14px). 224·448은 14와 32의 공배수라 학습 화면의 입력 크기 단계(32)와 맞는다.
+    "dinov2_vits14_cls": BuiltinModelSpec("dinov2_vits14_cls", "classify", (224, 224), (1, 3)),
+    "dinov2_vitb14_cls": BuiltinModelSpec("dinov2_vitb14_cls", "classify", (224, 224), (1, 3)),
+    "dinov2_vits14_seg": BuiltinModelSpec("dinov2_vits14_seg", "segment", (448, 448), (1, 3)),
+    "dinov2_vitb14_seg": BuiltinModelSpec("dinov2_vitb14_seg", "segment", (448, 448), (1, 3)),
+    # 초경량 U-Net: 사전학습 가중치 없이 처음부터 학습(라이선스 걱정 없음). 원본 해상도 패치 학습용.
+    "unet_lite": BuiltinModelSpec("unet_lite", "segment", (256, 256), (1, 3)),
+    # 경량 사전학습 백본 U-Net: MobileNetV2(ImageNet) 인코더 + Lite 폭 디코더. 넓게 보면서 빠르다.
+    "unet_mobilenetv2": BuiltinModelSpec("unet_mobilenetv2", "segment", (512, 512), (1, 3)),
+}
+
+# 사전학습 가중치가 없는 모델: '처음부터 학습'과 같은 모델의 로컬 체크포인트로만 시작한다.
+SCRATCH_ONLY_MODELS = frozenset({"unet_lite"})
+
+# 새로 학습하는 머리 부분(나머지는 사전학습 백본: 백본 학습률 배수·동결 대상)과,
+# 클래스 순서가 다른 체크포인트로 추가 학습할 때 버리는 마지막 분류층.
+HEAD_PREFIXES = {
+    "dinov2_vits14": ("projections.", "fusion.", "detail.", "decoder.", "head."),
+    "resnet18": ("fc.",), "resnet50": ("fc.",),
+    "convnext_v1_tiny": ("classifier.",),
+    "deeplabv3plus_resnet34": ("aspp.", "low_projection.", "decoder."),
+    "unet_resnet18": ("dec", "head."),
+    "dinov2_vits14_cls": ("head.",), "dinov2_vitb14_cls": ("head.",),
+    "dinov2_vits14_seg": ("neck.", "detail", "fuse", "head."),
+    "dinov2_vitb14_seg": ("neck.", "detail", "fuse", "head."),
+    "unet_lite": ("",),  # 사전학습 백본이 없어 전부 머리(같은 학습률)
+    "unet_mobilenetv2": ("dec", "head."),
+}
+CLASS_HEAD_PREFIX = {
+    "dinov2_vits14": "head.",
+    "resnet18": "fc.", "resnet50": "fc.", "convnext_v1_tiny": "classifier.2.",
+    "deeplabv3plus_resnet34": "decoder.6.", "unet_resnet18": "head.",
+    "dinov2_vits14_cls": "head.", "dinov2_vitb14_cls": "head.",
+    "dinov2_vits14_seg": "head.", "dinov2_vitb14_seg": "head.",
+    "unet_lite": "head.", "unet_mobilenetv2": "head.",
 }
 
 # Pin a concrete revision rather than torchvision's mutable DEFAULT alias.
@@ -38,6 +73,7 @@ IMAGENET_WEIGHTS = {
     "resnet34": ("ResNet34_Weights", "IMAGENET1K_V1"),
     "resnet50": ("ResNet50_Weights", "IMAGENET1K_V2"),
     "convnext_tiny": ("ConvNeXt_Tiny_Weights", "IMAGENET1K_V1"),
+    "mobilenet_v2": ("MobileNet_V2_Weights", "IMAGENET1K_V1"),
 }
 
 
@@ -53,7 +89,7 @@ def _torchvision_base(name, *, pretrained=False, weights_path=None):
         enum, revision = IMAGENET_WEIGHTS[name]
         weights = getattr(getattr(models, enum), revision)
         key = {"resnet18": "resnet18", "resnet34": "resnet34", "resnet50": "resnet50",
-               "convnext_tiny": "convnext_v1_tiny"}[name]
+               "convnext_tiny": "convnext_v1_tiny", "mobilenet_v2": "mobilenet_v2"}[name]
         source = builtin_asset_path(key)
         provenance.update(source="imagenet", weights=f"{enum}.{revision}", url=weights.url)
     elif weights_path:
@@ -77,6 +113,10 @@ _GRADCAM_TARGET_LAYERS = {
     "deeplabv3plus_resnet34": "layer4",
     "unet_resnet18": "enc4",
     "dinov2_vits14": "fusion",
+    "dinov2_vits14_cls": "feature_map", "dinov2_vitb14_cls": "feature_map",  # 패치 토큰을 펼친 (B, D, h, w) 지도
+    "dinov2_vits14_seg": "neck", "dinov2_vitb14_seg": "neck",
+    "unet_lite": "e4",
+    "unet_mobilenetv2": "encoder.17",
 }
 
 
@@ -122,7 +162,49 @@ def _classification_model(model_id: str, num_classes: int, in_channels: int, **w
         model.features[0][0] = _replace_conv_in_channels(first, in_channels)
         model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
         return model
+    if model_id in ("dinov2_vits14_cls", "dinov2_vitb14_cls"):
+        return DinoV2Classifier(model_id.removeprefix("dinov2_").removesuffix("_cls"), num_classes, in_channels, **weights)
     raise ValueError(f"Unsupported classification adapter: {model_id}")
+
+
+def _dinov2_backbone(variant, in_channels, *, pretrained=False, weights_path=None):
+    """DINOv2 백본. pretrained면 공식 가중치(설치본·사용자 폴더), weights_path면 같은 키의 로컬 파일."""
+    from builtin_assets import SOURCE_URLS, builtin_asset_path
+    from dinov2 import VARIANTS, DinoV2ViT, load_pretrained
+
+    if pretrained and weights_path:
+        raise ValueError("공식 가중치와 로컬 가중치를 동시에 지정할 수 없습니다")
+    backbone = DinoV2ViT(**VARIANTS[variant])
+    provenance = {"source": "random", "backbone": f"dinov2_{variant}"}
+    if pretrained:
+        asset = f"dinov2_{variant}"
+        load_pretrained(backbone, builtin_asset_path(asset))
+        provenance.update(source="dinov2_lvd142m", weights=asset, url=SOURCE_URLS[asset])
+    elif weights_path:
+        load_pretrained(backbone, Path(weights_path))
+        provenance.update(source="local_backbone", file=Path(weights_path).name)
+    # 1채널(흑백): RGB 필터 합 → 회색을 RGB로 복제했을 때와 같은 응답 (ResNet과 같은 규칙)
+    backbone.patch_embed.proj = _replace_conv_in_channels(backbone.patch_embed.proj, in_channels)
+    backbone.weight_provenance = provenance
+    return backbone
+
+
+class DinoV2Classifier(nn.Module):
+    """DINOv2 분류: [CLS 토큰, 패치 토큰 평균]을 이어 붙여 선형 분류 (DINOv2 선형 평가와 같은 특징)."""
+
+    def __init__(self, variant: str, num_classes: int, in_channels: int = 3, **weights):
+        super().__init__()
+        self.backbone = _dinov2_backbone(variant, in_channels, **weights)
+        self.weight_provenance = self.backbone.weight_provenance
+        self.feature_map = nn.Identity()  # Grad-CAM이 붙는 (B, D, h, w) 패치 특징 지도
+        self.head = nn.Linear(self.backbone.embed_dim * 2, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        from dinov2 import tokens_to_map
+
+        cls, patches, grid, _ = self.backbone(x)
+        patch_map = self.feature_map(tokens_to_map(patches, grid))
+        return self.head(torch.cat((cls, patch_map.mean(dim=(2, 3))), dim=1))
 
 
 class _ConvBlock(nn.Module):
@@ -231,6 +313,159 @@ class UNetResNet18(nn.Module):
         return self.head(F.interpolate(y, size=original_size, mode="bilinear", align_corners=False))
 
 
+class DinoV2Segmenter(nn.Module):
+    """DINOv2 분할: ViT 의미 특징(1/14) + 얕은 합성곱 세부 경로(1/2·1/4)로 원본 해상도까지 복원.
+
+        이미지 ─▶ DINOv2 블록 3·6·9·12 (1/14) ─▶ 이어 붙임 ─▶ neck 1×1 (256)
+           │                                              │ 1/4로 확대
+           ├─▶ detail1 3×3 s2 (32, 1/2) ─▶ detail2 3×3 s2 (64, 1/4) ─┴▶ fuse4 ─▶ 1/2로 확대 ─▶ fuse2 ─▶ head
+           └──────────────────────────────────────────────────────────────────┘ (detail1과 합침)
+
+    14px 패치 특징만으로는 경계가 14px 단위로 뭉개진다. 세부 경로(처음부터 학습)가 가장자리·가는 결함 위치를 준다.
+    ViT 주의(attention)는 이미지 전체를 보므로 패치 학습 모델은 학습과 같은 크기의 타일로 추론한다(global_attention).
+    """
+
+    LAYERS = (2, 5, 8, 11)
+
+    def __init__(self, variant: str, num_classes: int, in_channels: int = 3, **weights):
+        super().__init__()
+        self.backbone = _dinov2_backbone(variant, in_channels, **weights)
+        self.weight_provenance = self.backbone.weight_provenance
+        dim = self.backbone.embed_dim
+        self.neck = nn.Sequential(nn.Conv2d(dim * len(self.LAYERS), 256, 1, bias=False),
+                                  nn.BatchNorm2d(256), nn.ReLU(inplace=True))
+        self.detail1 = nn.Sequential(nn.Conv2d(in_channels, 32, 3, stride=2, padding=1, bias=False),
+                                     nn.BatchNorm2d(32), nn.ReLU(inplace=True))
+        self.detail2 = nn.Sequential(nn.Conv2d(32, 64, 3, stride=2, padding=1, bias=False),
+                                     nn.BatchNorm2d(64), nn.ReLU(inplace=True))
+        self.fuse4 = _ConvBlock(256 + 64, 128)
+        self.fuse2 = _ConvBlock(128 + 32, 64)
+        self.head = nn.Conv2d(64, num_classes, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        from dinov2 import tokens_to_map
+
+        height, width = int(x.shape[-2]), int(x.shape[-1])  # 고정 크기 ONNX 추출에서도 상수
+        # 먼저 14의 배수로 채워(오른쪽·아래 0) 모든 경로를 같은 크기에서 계산하고, 마지막에 원래 크기로 자른다.
+        # 그래야 ViT 격자(채운 크기 / 14)와 세부 경로·출력 픽셀이 정확히 겹친다.
+        x = F.pad(x, (0, (-width) % 14, 0, (-height) % 14))
+        _, _, grid, layers = self.backbone(x, layers=self.LAYERS)
+        semantic = self.neck(torch.cat([tokens_to_map(tokens, grid) for tokens in layers], dim=1))
+        half = self.detail1(x)
+        quarter = self.detail2(half)
+        y = F.interpolate(semantic, size=quarter.shape[-2:], mode="bilinear", align_corners=False)
+        y = self.fuse4(torch.cat((y, quarter), dim=1))
+        y = F.interpolate(y, size=half.shape[-2:], mode="bilinear", align_corners=False)
+        y = self.fuse2(torch.cat((y, half), dim=1))
+        y = F.interpolate(self.head(y), size=x.shape[-2:], mode="bilinear", align_corners=False)
+        return y[..., :height, :width]
+
+
+class UNetMobileNetV2(nn.Module):
+    """경량 사전학습 백본 U-Net: torchvision MobileNetV2(ImageNet) 인코더 + U-Net Lite 폭의 디코더.
+
+        입력 ─▶ 1/2 (16ch) ─▶ 1/4 (24) ─▶ 1/8 (32) ─▶ 1/16 (96) ─▶ 1/32 (320)   ← MobileNetV2 features 0~17
+                   │            │           │            │              │
+                   └─ dec1 ◀── dec2 ◀───── dec3 ◀────── dec4 ◀──────────┘   1×1 합침 + 3×3 (폭 16·32·64·64)
+        1/2 해상도 출력 ─▶ ×2 확대 = 원본 해상도
+
+    · U-Net ResNet18처럼 1/32까지 내려가 넓게 본다(조각 판정 방지). Lite는 1/16·약 120px.
+    · 깊이별 합성곱 인코더와 얇은 디코더라 3504×1504 CPU 4스레드 약 0.7초 (ResNet18 U-Net 약 2.5초).
+    · MobileNetV3가 아니라 V2인 이유: V3의 SE 블록은 입력 전체를 평균한다. 패치로 학습하고 판정 영역 전체로
+      추론하면(데스크톱·C++ 모두) 다른 함수가 된다. V2에는 전역 연산이 없어 패치 학습 = 전체 추론이다.
+    · 마지막 1280ch 1×1 층(features 18)은 분류용이라 쓰지 않는다.
+    """
+
+    TAPS = (1, 3, 6, 13, 17)                 # 각 해상도 단계의 마지막 층
+    CHANNELS = (16, 24, 32, 96, 320)
+    WIDTHS = (16, 32, 64, 64)                # dec1..dec4 출력 폭
+
+    def __init__(self, num_classes: int, in_channels: int = 3, **weights):
+        super().__init__()
+        base = _torchvision_base("mobilenet_v2", **weights)
+        self.weight_provenance = base.weight_provenance
+        features = base.features
+        features[0][0] = _replace_conv_in_channels(features[0][0], in_channels)
+        self.encoder = nn.Sequential(*list(features)[:self.TAPS[-1] + 1])
+
+        def block(cin, cout, kernel=3):
+            return nn.Sequential(nn.Conv2d(cin, cout, kernel, 1, kernel // 2, bias=False),
+                                 nn.BatchNorm2d(cout), nn.ReLU(inplace=True))
+
+        c, w = self.CHANNELS, self.WIDTHS
+        self.dec4 = nn.Sequential(block(c[4] + c[3], w[3], 1), block(w[3], w[3]))
+        self.dec3 = nn.Sequential(block(w[3] + c[2], w[2], 1), block(w[2], w[2]))
+        self.dec2 = nn.Sequential(block(w[2] + c[1], w[1], 1), block(w[1], w[1]))
+        self.dec1 = nn.Sequential(block(w[1] + c[0], w[0], 1), block(w[0], w[0]))
+        self.head = nn.Conv2d(w[0], num_classes, 1)
+
+    @staticmethod
+    def _merge(x: torch.Tensor, skip: torch.Tensor, block: nn.Module) -> torch.Tensor:
+        x = F.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
+        return block(torch.cat((x, skip), dim=1))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        size = x.shape[-2:]
+        skips = []
+        for index, layer in enumerate(self.encoder):
+            x = layer(x)
+            if index in self.TAPS:
+                skips.append(x)
+        y = self._merge(skips[4], skips[3], self.dec4)
+        y = self._merge(y, skips[2], self.dec3)
+        y = self._merge(y, skips[1], self.dec2)
+        y = self._merge(y, skips[0], self.dec1)
+        return F.interpolate(self.head(y), size=size, mode="bilinear", align_corners=False)
+
+
+class UNetLite(nn.Module):
+    """초경량 U-Net (약 0.36M 매개변수). 3500×1500 같은 큰 영상을 원본 해상도 그대로 CPU에서 분할한다.
+
+        입력 ─▶ e1 s2 (c, 1/2) ─▶ e2 s2 (2c, 1/4) ─▶ e3 s2 (4c, 1/8) ─▶ e4 s2 (8c, 1/16)
+                   │                  │                   │                   │
+                   └── d1 ◀── 1×1 합침+3×3 ◀── d2 ◀── … ◀── d3 ◀──────────────┘
+        1/2 해상도 출력 ─▶ ×2 확대 = 원본 해상도
+
+    첫 stride-2 합성곱이 모든 픽셀을 보므로 1px 선도 지워지지 않는다. 원본 해상도에서는 계산보다 메모리가
+    병목이라, 폭 8과 16의 속도가 같다(3504×1504, CPU 4스레드 약 245 ms) → 폭 16을 쓴다.
+    """
+
+    WIDTH = 16
+
+    def __init__(self, num_classes: int, in_channels: int = 3, width: int = WIDTH):
+        super().__init__()
+        c = width
+
+        def block(cin, cout, kernel=3, stride=1):
+            return nn.Sequential(nn.Conv2d(cin, cout, kernel, stride, kernel // 2, bias=False),
+                                 nn.BatchNorm2d(cout), nn.ReLU(inplace=True))
+
+        self.e1 = nn.Sequential(block(in_channels, c, 3, 2), block(c, c))
+        self.e2 = nn.Sequential(block(c, 2 * c, 3, 2), block(2 * c, 2 * c))
+        self.e3 = nn.Sequential(block(2 * c, 4 * c, 3, 2), block(4 * c, 4 * c))
+        self.e4 = nn.Sequential(block(4 * c, 8 * c, 3, 2), block(8 * c, 8 * c))
+        self.d3 = nn.Sequential(block(12 * c, 4 * c, 1), block(4 * c, 4 * c))
+        self.d2 = nn.Sequential(block(6 * c, 2 * c, 1), block(2 * c, 2 * c))
+        self.d1 = nn.Sequential(block(3 * c, c, 1), block(c, c))
+        self.head = nn.Conv2d(c, num_classes, 1)
+        self.weight_provenance = {"source": "random_init"}
+
+    @staticmethod
+    def _up(x, ref):
+        return F.interpolate(x, size=ref.shape[-2:], mode="bilinear", align_corners=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        size = x.shape[-2:]
+        e1 = self.e1(x)
+        e2 = self.e2(e1)
+        e3 = self.e3(e2)
+        e4 = self.e4(e3)
+        y = self.d3(torch.cat((self._up(e4, e3), e3), 1))
+        y = self.d2(torch.cat((self._up(y, e2), e2), 1))
+        y = self.d1(torch.cat((self._up(y, e1), e1), 1))
+        return F.interpolate(self.head(y), size=size, mode="bilinear", align_corners=False)
+
+
 def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *,
                         pretrained: bool = False, backbone_weights=None) -> nn.Module:
     """Construct the adapter; pretrained/local loading must be requested explicitly."""
@@ -252,6 +487,16 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
         from dinov2_segmentation import DinoV2Segmentation
         model = DinoV2Segmentation(int(num_classes), in_channels,
                                   pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id == "unet_mobilenetv2":
+        model = UNetMobileNetV2(int(num_classes), in_channels,
+                                pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id == "unet_lite":
+        if pretrained or backbone_weights is not None:
+            raise ValueError("초경량 U-Net은 사전학습 가중치가 없습니다. '처음부터 학습'을 선택하세요.")
+        model = UNetLite(int(num_classes), in_channels)
+    elif model_id in ("dinov2_vits14_seg", "dinov2_vitb14_seg"):
+        model = DinoV2Segmenter(model_id.removeprefix("dinov2_").removesuffix("_seg"), int(num_classes),
+                                in_channels, pretrained=pretrained, weights_path=backbone_weights)
     else:
         raise ValueError(f"Unsupported segmentation adapter: {model_id}")
 
@@ -261,13 +506,23 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
     model.in_channels = int(in_channels)
     model.num_classes = int(num_classes)
     model.gradcam_target_layer = _GRADCAM_TARGET_LAYERS[model_id]
+    # ViT는 주의(attention)가 입력 전체를 본다: 패치 학습 모델을 큰 영역에 한 번에 넣으면 학습과 다른 함수가 된다.
+    # 추론 엔진은 이 표시가 있으면 학습한 패치 크기의 타일로 추론한다 (합성곱 모델은 한 번에).
+    model.global_attention = model_id.startswith("dinov2_")
+    # ViT 미세조정은 합성곱보다 훨씬 작은 백본 학습률이 필요하다. 클래스당 10장 분류(20 epoch)에서
+    # 백본 lr 1e-4(기본 배수 0.1)는 정확도가 우연 수준(0.33)으로 무너졌고, 1e-5(×0.1 더)는 0.97이었다.
+    model.backbone_lr_scale = 0.1 if model_id.startswith("dinov2_") else 1.0
     return model
 
 
 def make_builtin_checkpoint(model_id: str, model: nn.Module, *, num_classes: int,
                             input_size: int | Iterable[int] | None = None,
-                            in_channels: int = 3, class_names: Iterable[str] = ()) -> dict:
-    """Create a self-describing checkpoint for the generic ONNX exporter."""
+                            in_channels: int = 3, class_names: Iterable[str] = (),
+                            tiling: dict | None = None) -> dict:
+    """Create a self-describing checkpoint for the generic ONNX exporter.
+
+    tiling: 패치 학습 모델의 타일 추론 규칙 (checkpoint.tiling_contract). None이면 전체 이미지 리사이즈.
+    """
     spec = get_builtin_spec(model_id)
     if model.training:
         raise ValueError("model must be in eval mode before deployment checkpoint creation")
@@ -278,7 +533,7 @@ def make_builtin_checkpoint(model_id: str, model: nn.Module, *, num_classes: int
     class_names = list(class_names)
     if len(class_names) not in (0, num_classes):
         raise ValueError("class_names must be empty or match num_classes")
-    return {
+    payload = {
         "type": "builtin_model", "backend": "builtin", "model_id": model_id,
         "task": spec.task, "num_classes": int(num_classes), "in_channels": int(in_channels),
         "input_size": [int(size[0]), int(size[1])], "class_names": class_names,
@@ -293,6 +548,12 @@ def make_builtin_checkpoint(model_id: str, model: nn.Module, *, num_classes: int
                            "layout": "NCHW", "value_scale": 255.0,
                            "color_order": "GRAY" if in_channels == 1 else "RGB"},
     }
+    if tiling:
+        if spec.task != "segment":
+            raise ValueError("타일 추론은 분할 모델만 지원합니다")
+        payload["tiling"] = dict(tiling)
+        payload["preprocessing"]["tiling"] = dict(tiling)
+    return payload
 
 
 def load_builtin_checkpoint(checkpoint: dict) -> nn.Module:

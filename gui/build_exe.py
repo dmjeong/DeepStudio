@@ -155,9 +155,17 @@ def build():
         sys.exit(1)
     if PYTHON_DIR not in sys.path:
         sys.path.insert(0, PYTHON_DIR)
-    from builtin_assets import builtin_assets_ready, builtin_asset_root
-    if not builtin_assets_ready():
-        raise RuntimeError("기본 모델 가중치 묶음이 없거나 손상되었습니다. build.bat으로 빌드를 시작하세요.")
+    # 빠진 사전학습 가중치는 빌드를 막지 않는다. 그 모델을 쓸 때 앱의 Settings · 모델 관리에서 가져온다.
+    from builtin_assets import SOURCE_URLS, missing_assets, builtin_asset_root
+    # Verify and package the same root, including an explicit caller override.
+    asset_root = builtin_asset_root()
+    asset_root.mkdir(parents=True, exist_ok=True)
+    missing = missing_assets(bundle_only=True)
+    if missing:
+        print(f"[warning] 설치본에 넣지 못한 사전학습 가중치 {len(missing)}개 (빌드는 계속):")
+        for model_id in missing:
+            print(f"   - {model_id}: {SOURCE_URLS[model_id]}")
+        print("          앱 실행 후 Settings · 모델 관리 → 사전학습 가중치에서 받은 파일을 가져오세요.")
 
     print("=" * 60)
     print(f"{APP_NAME} 빌드 시작")
@@ -180,7 +188,7 @@ def build():
         "--add-data", f"{RESOURCES_DIR}{os.pathsep}resources",
         "--add-data", f"{builtin_asset_root()}{os.pathsep}builtin_assets",
         "--add-data", f"{PYTHON_DIR}{os.pathsep}python",
-        "--add-data", f"{os.path.join(PROJECT_ROOT, 'licenses')}{os.pathsep}licenses",
+        "--add-data", f"{os.path.join(PROJECT_ROOT, 'licenses')}{os.pathsep}licenses",  # DINOv2 Apache-2.0 고지
         "--add-data", f"{os.path.join(PROJECT_ROOT, 'model_sdk', 'schemas')}{os.pathsep}model_sdk/schemas",
         "--add-data", f"{MODEL_CATALOG_DIR}{os.pathsep}packaging/windows/models",
 
@@ -213,6 +221,7 @@ def build():
         "--hidden-import", "onnxruntime",
         "--hidden-import", "model_crypto",
         "--hidden-import", "dinov2_segmentation",
+        "--hidden-import", "dinov2",
         "--hidden-import", "cryptography.hazmat.primitives.ciphers.aead",
         "--hidden-import", "psutil",
         "--collect-submodules", "truststore",

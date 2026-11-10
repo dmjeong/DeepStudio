@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QGroupBox,
     QSplitter, QProgressBar, QComboBox, QCheckBox,
     QScrollArea, QGridLayout, QStackedWidget, QSizePolicy,
+    QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView, QDoubleSpinBox,
 )
 from PySide6.QtCore import Qt, Signal, QSize, QTimer, QSignalBlocker
 from PySide6.QtGui import QPixmap, QFont, QImage
@@ -50,6 +51,7 @@ from widgets.common import NoWheelSpinBox
 from widgets.result_image_label import ResultImageLabel
 from widgets.inference_review import InferenceReview
 from core.inference_review import effective_result
+from core.segment_defects import judge, segment_split_dirs
 
 
 
@@ -367,6 +369,9 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._heatmap_timer.timeout.connect(self._render_cached_heatmap)
         self._inference_worker = None
         self._busy_controls = []
+        self._model_task = ""
+        self._defect_base = None       # (이미지 경로, 사각형을 그리기 전 결과 이미지)
+        self._defect_rows = []         # 결함 표 행 → 결함/놓친 정답 사각형
         self._init_ui()
 
     def _init_ui(self):
@@ -475,6 +480,48 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.crop_region_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         region_row.addWidget(self.crop_region_info, 1)
         model_layout.addLayout(region_row, 2, 0, 1, 6)
+
+        # SAM2 자동 분할 설정: SAM2는 점을 찍은 곳을 자르는 모델이라 이미지 전체에 격자 점을 찍는다.
+        self.sam2_row = QWidget()
+        sam2_row = QHBoxLayout(self.sam2_row)
+        sam2_row.setContentsMargins(0, 0, 0, 0)
+        sam2_row.setSpacing(6)
+        sam2_row.addWidget(QLabel("SAM2 자동 분할  격자 N×N, N ="))
+        self.sam2_grid_spin = NoWheelSpinBox()
+        self.sam2_grid_spin.setRange(1, 32)
+        self.sam2_grid_spin.setToolTip("이미지 전체에 N×N개의 점을 찍어 점마다 SAM2 마스크를 만듭니다.\n"
+                                       "작은 결함을 놓치면 늘리세요(시간은 인코더 1회 + 점 수에 비례하는 디코더).")
+        sam2_row.addWidget(self.sam2_grid_spin)
+        sam2_row.addWidget(QLabel("점수 ≥"))
+        self.sam2_score_spin = QDoubleSpinBox()
+        self.sam2_score_spin.setRange(0, 1)
+        self.sam2_score_spin.setDecimals(2)
+        self.sam2_score_spin.setSingleStep(.05)
+        self.sam2_score_spin.setToolTip("SAM2가 예측한 마스크 품질 점수(IoU 예측)가 이보다 낮은 후보는 버립니다.")
+        sam2_row.addWidget(self.sam2_score_spin)
+        sam2_row.addWidget(QLabel("후보 면적 ≤"))
+        self.sam2_area_spin = QDoubleSpinBox()
+        self.sam2_area_spin.setRange(.1, 100)
+        self.sam2_area_spin.setDecimals(1)
+        self.sam2_area_spin.setSuffix(" %")
+        self.sam2_area_spin.setToolTip("배경에 찍힌 점은 배경 전체를 높은 점수로 돌려줍니다. 이미지의 이 비율보다 큰 후보는\n"
+                                       "배경으로 보고 버립니다. 100%면 C++ SDK Automatic과 같은 규칙입니다.")
+        sam2_row.addWidget(self.sam2_area_spin)
+        sam2_row.addStretch(1)
+        model_layout.addWidget(self.sam2_row, 3, 0, 1, 6)
+        from PySide6.QtCore import QSettings
+        from core.sam2_automatic import DEFAULT_SETTINGS
+        stored = QSettings("DeepVisionStudio", "Inference")
+        try:
+            self.sam2_grid_spin.setValue(int(stored.value("sam2/grid", DEFAULT_SETTINGS["grid"])))
+            self.sam2_score_spin.setValue(float(stored.value("sam2/min_score", DEFAULT_SETTINGS["min_score"])))
+            self.sam2_area_spin.setValue(float(stored.value("sam2/max_area_percent",
+                                                            DEFAULT_SETTINGS["max_area_percent"])))
+        except (TypeError, ValueError):
+            pass
+        for control in (self.sam2_grid_spin, self.sam2_score_spin, self.sam2_area_spin):
+            control.valueChanged.connect(self._sam2_settings_changed)
+        self.sam2_row.hide()
         self.crop_mode_combo.currentIndexChanged.connect(self._region_changed)
         self.crop_json_edit.textChanged.connect(self._region_changed)
         self._region_changed()
@@ -503,6 +550,13 @@ class InferenceWidget(QWidget, InferenceOperations):
         select_dir_btn = QPushButton("배치 폴더")
         select_dir_btn.clicked.connect(self._select_directory)
         img_btn_row.addWidget(select_dir_btn)
+
+        # 프로젝트 검증(val) 이미지를 골라 바로 추론: 정답이 있어 놓침·오검출·IoU가 함께 나온다
+        self.evaluate_val_btn = QPushButton("검증 데이터 평가")
+        self.evaluate_val_btn.setToolTip("프로젝트의 검증(val) 이미지 전체를 배치로 추론합니다.\n"
+                                         "분할은 정답 마스크와 비교해 결함 검출·놓침·오검출과 IoU를 보여 줍니다.")
+        self.evaluate_val_btn.clicked.connect(self._evaluate_validation)
+        img_btn_row.addWidget(self.evaluate_val_btn)
 
         self.infer_btn = QPushButton("추론 시작")
         self.infer_btn.setProperty("cssClass", "primary")
@@ -558,6 +612,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         alpha_label = QLabel("강도:")
         alpha_label.setStyleSheet("color: #8A92A4; font-size: 11px;")
         gradcam_row.addWidget(alpha_label)
+        self._gradcam_alpha_label = alpha_label
 
         self.gradcam_alpha_combo = QComboBox()
         for percent in range(0, 101, 10):
@@ -569,7 +624,10 @@ class InferenceWidget(QWidget, InferenceOperations):
         gradcam_row.addStretch(1)
         image_layout.addLayout(gradcam_row)
 
-        range_row = QHBoxLayout()
+        # 히트맵 표시 범위 줄. 분할·탐지 모델에서는 Grad-CAM과 함께 숨긴다.
+        self.heatmap_range_widget = QWidget()
+        range_row = QHBoxLayout(self.heatmap_range_widget)
+        range_row.setContentsMargins(0, 0, 0, 0)
         range_row.addWidget(QLabel("표시 시작:"))
         self.heatmap_lower_spin = NoWheelSpinBox()
         self.heatmap_lower_spin.setRange(0, 99)
@@ -588,7 +646,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.heatmap_reset_btn.clicked.connect(self._reset_heatmap_display)
         range_row.addWidget(self.heatmap_reset_btn)
         range_row.addStretch(1)
-        image_layout.addLayout(range_row)
+        image_layout.addWidget(self.heatmap_range_widget)
         range_hint = QLabel(
             "0~100%는 이미지별 반응 강도 범위이며 면적 비율이 아닙니다. "
             "0%부터 표시하면 반응 0도 파란색입니다. 중앙 잘림으로 모델이 보지 않은 영역은 원본으로 남습니다."
@@ -690,6 +748,22 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.task_details_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.task_details_scroll.setWidget(self.task_details_label)
         task_details_layout.addWidget(self.task_details_scroll)
+        # 분할 결함 표: 행을 누르면 그 결함을 확대하고 노란 사각형으로 표시한다.
+        self.defect_table = QTableWidget(0, 9)
+        self.defect_table.setHorizontalHeaderLabels(["#", "클래스", "점수", "X", "Y", "W", "H", "면적(px)", "정답"])
+        self.defect_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.defect_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.defect_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.defect_table.verticalHeader().hide()
+        self.defect_table.verticalHeader().setDefaultSectionSize(24)
+        self.defect_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.defect_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.defect_table.setMaximumHeight(220)
+        self.defect_table.setToolTip("행을 누르면 그 결함으로 확대합니다. 더블 클릭한 이미지는 화면 맞춤으로 돌아갑니다.\n"
+                                     "정답: 검출 = 정답 결함과 겹침, 오검출 = 정답에 없음, 놓침 = 정답에만 있음")
+        self.defect_table.currentCellChanged.connect(lambda row, *_: self._focus_defect(row))
+        self.defect_table.hide()
+        task_details_layout.addWidget(self.defect_table)
         self.task_details_group.hide()
         image_layout.addWidget(self.task_details_group)
 
@@ -882,7 +956,7 @@ class InferenceWidget(QWidget, InferenceOperations):
     def _activate_model(self, *, path, device, model=None, patchcore=None,
                         gradcam=None, class_names=(),
                         input_size=(224, 224), normalization=None, threshold=None, info="", process=False,
-                        score_normalized=False, center_crop=None, task=None):
+                        score_normalized=False, center_crop=None, task=None, tiling=None):
         from center_crop import validate_center_crop
         center_crop = validate_center_crop(patchcore.center_crop if patchcore is not None else center_crop)
         if self._gradcam is not None:
@@ -898,6 +972,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._input_size = tuple(input_size)
         self._normalization = normalization
         self._center_crop = center_crop
+        self._tiling = tiling  # 패치 학습 모델: 원본 해상도 타일 추론 규칙 (in-process 엔진이 읽는다)
         self._anomaly_threshold = threshold
         self.result_review.set_saved_threshold(threshold, normalized=score_normalized)
         self._clear_results()
@@ -909,12 +984,56 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.model_info.setText(info + crop_info)
         self.model_info.setStyleSheet("color: #34C759;")
         self.infer_btn.setEnabled(True)
+        self.sam2_row.hide()  # SAM2 모델이면 검사 결과를 받은 쪽(_model_inspected)에서 다시 보인다
+        self._set_model_task("anomaly" if patchcore is not None else getattr(model, "task", "") if model is not None
+                             else self._model_task)
+        # 분할 모델이면 모델 옆에 저장된 판정 기준(best.rules.json)으로 시작한다 — 내보내기·C++과 같은 기준
+        self.result_review.set_model_path(path if self._model_task == "segment" else None)
         self.gradcam_checkbox.setEnabled(gradcam is not None)
         self.gradcam_checkbox.setToolTip(
             "모델 반응을 보는 별도 히트맵입니다. 분할 결과는 기본으로 검출 영역과 클래스명을 표시합니다." if gradcam is not None else
             "이 엔진의 Grad-CAM은 지원하지 않습니다. PatchCore는 자체 이상 맵을 표시합니다.")
         self._update_device_info()
         self._region_changed()
+
+    def _shows_heatmap(self):
+        """분할·탐지는 마스크·박스가 위치를 직접 보여주므로 Grad-CAM이 판정에 도움이 되지 않는다."""
+        return getattr(self, "_model_task", "") not in ("segment", "detect", "obb")
+
+    def _set_model_task(self, task):
+        """모델 태스크에 맞춰 화면을 고른다: 분할·탐지는 Grad-CAM 대신 결함 목록과 판정 기준."""
+        self._model_task = task or ""
+        for control in (self.gradcam_checkbox, self._gradcam_alpha_label, self.gradcam_alpha_combo,
+                        self.heatmap_range_widget):
+            control.setVisible(self._shows_heatmap())
+
+    def _gradcam_requested(self):
+        return self.gradcam_checkbox.isChecked() and self._shows_heatmap()
+
+    def _segment_rules(self):
+        """분할 결과가 있으면 지금 판정 기준으로 다시 판정한다. 다른 태스크는 None(기존 동작)."""
+        if getattr(self, "_model_task", "") == "segment" or self._has_defects():
+            return self.result_review.segment_rules
+        return None
+
+    def _has_defects(self):
+        return any(r.task == "segment" and "defects" in (r.details or {}) for r in self._inference_results.values())
+
+    def _sam2_settings(self):
+        return {"grid": self.sam2_grid_spin.value(), "min_score": round(self.sam2_score_spin.value(), 4),
+                "max_area_percent": round(self.sam2_area_spin.value(), 3)}
+
+    def _sam2_settings_changed(self, *_):
+        from PySide6.QtCore import QSettings
+        stored = QSettings("DeepVisionStudio", "Inference")
+        for key, value in self._sam2_settings().items():
+            stored.setValue(f"sam2/{key}", value)
+
+    def _segment_review(self):
+        """분할 모델이면 엔진이 결함 목록을 만들고 데이터셋 이미지는 정답 마스크와 비교한다."""
+        if self._model_task != "segment":
+            return None
+        return {**self.result_review.segment_rules, "split_dirs": segment_split_dirs(self.project)}
 
     def _start_model_inspection(self, checkpoint_path=None):
         """모델 검사와 초기 로드를 별도 프로세스에서 수행한다."""
@@ -970,11 +1089,19 @@ class InferenceWidget(QWidget, InferenceOperations):
         except (KeyError, TypeError, ValueError, RuntimeError) as exc:
             self._model_inspection_failed(str(exc))
             return
+        self._model_task = str(task)
+        if result.get("tiling"):
+            scale = float(result["tiling"].get("scale", 1.0))
+            info += (" | 패치 학습 모델 · " + ("원본 해상도" if scale == 1 else f"배율 {scale:.0%}")
+                     + " · 판정 영역 한 번에 추론")
+        if result.get("sam2"):
+            info += f" | SAM2 {result['sam2']} · 격자 점 자동 분할"
         self._activate_model(path=path, device=device, class_names=names,
                              input_size=shape, threshold=result.get("anomaly_threshold"), info=info, process=True, task=task,
                              center_crop=(result.get("center_crop") if patchcore_info is None else
                                           patchcore_info.get("center_crop")),
                              score_normalized=patchcore_info is not None)
+        self.sam2_row.setVisible(bool(result.get("sam2")))
         self.gradcam_checkbox.setEnabled(patchcore_info is None and not upstream)
         if patchcore_info is None and not upstream:
             self.gradcam_checkbox.setToolTip("추론 프로세스에서 지원하는 모델의 Grad-CAM을 계산합니다.")
@@ -1032,6 +1159,11 @@ class InferenceWidget(QWidget, InferenceOperations):
             checkpoint = torch.load(path, map_location="cpu", weights_only=False)
             if not isinstance(checkpoint, dict):
                 raise ValueError("체크포인트는 설정과 가중치를 포함한 딕셔너리여야 합니다")
+            from core.inference_loading import _sam2_model_id
+            if _sam2_model_id(path, checkpoint):
+                # SAM2는 추론 프로세스에서 불러온다 (공식 Hiera 가중치 + 미세조정 디코더, 장치 선택 그대로)
+                self._start_model_inspection(path)
+                return True
             if checkpoint.get("type") == "patchcore":
                 self._load_patchcore_model(checkpoint, path)
             elif isinstance(checkpoint.get("model"), torch.nn.Module) or "train_args" in checkpoint:
@@ -1071,6 +1203,7 @@ class InferenceWidget(QWidget, InferenceOperations):
                     input_size=(spec["input_height"], spec["input_width"]),
                     normalization=normalization, threshold=threshold,
                     center_crop=spec["preprocessing"].get("center_crop"),
+                    tiling=spec["preprocessing"].get("tiling") if spec["task"] == "segment" else None,
                     info=f"{checkpoint.get('architecture_name', 'Custom CSP')} 준비 완료 | 태스크: {spec['task']} | 입력: {spec['input_width']}x{spec['input_height']} | "
                          f"{channel_info} | 디바이스: {self._device_manager.get_device_label(device)}")
             return True
@@ -1134,6 +1267,46 @@ class InferenceWidget(QWidget, InferenceOperations):
             if self._view_mode == "grid":
                 self._refresh_grid()
 
+    def _validation_images(self):
+        """프로젝트 검증(val) 이미지 경로 (하위 폴더 포함, 이름순)."""
+        data = getattr(self.project, "data", None)
+        if data is None or not getattr(data, "root", ""):
+            return []
+        folder = getattr(data, "val_dir", "") or (
+            os.path.join(data.root, "images", "val") if self.project.task in ("segment", "detect", "obb")
+            else os.path.join(data.root, "val"))
+        # 기존 이상 탐지 프로젝트의 val은 정상 학습 폴더의 별칭일 수 있다 → 그때는 평가(test) 폴더
+        train = getattr(data, "train_dir", "")
+        if (self.project.task == "anomaly" and train and os.path.isdir(folder)
+                and os.path.realpath(folder) == os.path.realpath(train)):
+            folder = getattr(data, "test_dir", "") or os.path.join(data.root, "test")
+        exts = ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff')
+        found = []
+        for root, _dirs, files in os.walk(folder):
+            found.extend(os.path.join(root, name) for name in files if name.lower().endswith(exts))
+        return sorted(found)
+
+    def _evaluate_validation(self):
+        """검증 이미지를 배치로 고르고, 모델이 로드돼 있으면 바로 추론한다."""
+        if getattr(self, "_inference_worker", None) is not None:
+            return
+        if self.project is None:
+            QMessageBox.information(self, "검증 데이터 평가", "프로젝트를 먼저 열어 주세요.")
+            return
+        images = self._validation_images()
+        if not images:
+            QMessageBox.information(self, "검증 데이터 평가",
+                                    "검증(val) 이미지가 없습니다. 데이터셋 화면에서 이미지를 val로 나눠 주세요.")
+            return
+        self._batch_images = images
+        self._current_image = images[0]
+        self._clear_results()  # 결과 표·격자를 새 목록으로 다시 구성하고 첫 이미지를 보여 준다
+        if self.infer_btn.isEnabled():
+            self._run_inference()
+        else:
+            self.batch_time_label.setText(f"검증 이미지 {len(images)}장을 골랐습니다. 모델을 로드한 뒤 '추론 시작'을 누르세요.")
+            self.batch_time_label.show()
+
     def _show_image(self, filepath: str):
         """이미지 표시"""
         self._current_preview_rgb = None
@@ -1185,15 +1358,18 @@ class InferenceWidget(QWidget, InferenceOperations):
             self._preview_cache = PersistentInferenceCache()
             worker = DesktopInferenceJob({"weights": self._active_checkpoint, "images": paths,
                 "input_region": region,
-                "device": str(self.infer_device_combo.currentData()), "gradcam": self.gradcam_checkbox.isChecked(),
+                "device": str(self.infer_device_combo.currentData()), "gradcam": self._gradcam_requested(),
+                "segment_review": self._segment_review(), "sam2": self._sam2_settings(),
                 "project": project_view(self.project) if self.project else {}}, self._preview_cache, self)
         else:
             state = {name: getattr(self, name, None) for name in InferenceEngine.STATE_FIELDS}
             from core.segmentation_evaluation import project_snapshot
             state["_evaluation_project"] = project_snapshot(getattr(self, "project", None))
             from core.inference_worker import InferenceWorker
-            worker = InferenceWorker(InferenceEngine(state, gradcam=self.gradcam_checkbox.isChecked(),
-                                                     input_region=region), paths, self._preview_cache, self)
+            worker = InferenceWorker(InferenceEngine(state, gradcam=self._gradcam_requested(), input_region=region,
+                                                     segment_review=self._segment_review(),
+                                                     sam2=self._sam2_settings()),
+                                     paths, self._preview_cache, self)
         self._inference_worker = worker
         # 모델 교체나 데이터 선택은 계산 종료까지 잠근다. 결과 탐색은 유지한다.
         self._busy_controls = [(control, control.isEnabled()) for control in
@@ -1213,7 +1389,7 @@ class InferenceWidget(QWidget, InferenceOperations):
     def _on_async_result(self, result):
         self._inference_results[result.image_path] = result
         self.result_review.update_result(result)
-        display = effective_result(result, self.result_review.threshold)
+        display = effective_result(result, self.result_review.threshold, self._segment_rules())
         if result.image_path in self._batch_images:
             index = self._batch_images.index(result.image_path)
             self._batch_results[index] = result
@@ -1260,6 +1436,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.batch_time_label.setToolTip(self.batch_time_label.text())
         self.batch_time_label.show()
         self._refresh_grid()
+        self.result_review._sync_segment()  # 배치 요약은 결과가 몰릴 때 미뤄 두므로 끝에서 한 번 확정한다
         if self._current_image in self._inference_results:
             self._display_cached_result(self._current_image)
         self._inference_worker = None
@@ -1275,6 +1452,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._current_image = image_path
         self._current_result = None
         self._current_preview_rgb = None
+        self._defect_base = None
         self._clear_heatmap_preview()
         self.gradcam_info.clear()
         self.image_label.set_result()
@@ -1318,7 +1496,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         """모든 추론 엔진의 결과를 이미지, 배치 목록, 격자에 함께 반영한다."""
         self.result_review.update_result(result)
         raw_result = result
-        result = effective_result(result, self.result_review.threshold)
+        result = effective_result(result, self.result_review.threshold, self._segment_rules())
         self._current_result = result
         self.region_names_check.setVisible(result.task == "segment")
         self._update_region_labels()
@@ -1371,6 +1549,12 @@ class InferenceWidget(QWidget, InferenceOperations):
 
     def _update_task_details(self, result):
         """선택한 태스크에 맞는 상세 결과를 이미지 패널에 표시한다."""
+        self.defect_table.hide()
+        self.task_details_scroll.setMaximumHeight(150)
+        if result is not None and result.status != "error" and result.task == "segment" \
+                and "defects" in (result.details or {}):
+            self._show_defects(result)
+            return
         if result is None or result.status == "error":
             self.task_details_group.hide()
             return
@@ -1429,6 +1613,72 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.task_details_label.setText("\n".join(lines))
         self.task_details_group.show()
 
+    def _show_defects(self, result):
+        """분할 결과: 판정 한 줄 + 정답 비교 + 결함 표, 그리고 이미지에 결함 사각형."""
+        details = result.details
+        verdict = judge(details, self.result_review.segment_rules)
+        rules = verdict["rules"]
+        counts = ", ".join(f"{name} {count}" for name, count in verdict["counts"].items())
+        lines = [f"{verdict['decision']} · 결함 {len(verdict['kept'])}개" + (f" ({counts})" if counts else "")
+                 + f"  |  기준: 면적 ≥ {rules['min_area']}px, 점수 ≥ {rules['min_score']:.2f}"]
+        if details.get("defects_dropped"):
+            lines.append(f"작은 덩어리 {details['defects_dropped']}개는 목록에서 생략했습니다(큰 결함부터 최대 1000개).")
+        missed = []
+        if "per_class" in verdict:
+            ious = " · ".join(f"{row['class_name']} IoU {row['iou']:.2f}" for row in verdict["per_class"])
+            lines.append(f"정답 비교: {ious or '결함 없음'} | 결함 검출 {verdict['found']}/{verdict['truth_defects']}"
+                         f" · 놓침 {verdict['missed']} · 오검출 {verdict['false_positives']}"
+                         f" · 정답 판정 {verdict['truth_decision']}")
+            kept_ids = {item["id"] for item in verdict["kept"]}
+            missed = [item for item in details["ground_truth"].get("defects") or []
+                      if not any(i in kept_ids for i in item["predicted"])]
+        elif details.get("ground_truth_note"):
+            lines.append(details["ground_truth_note"])
+        self.task_details_group.setTitle("분할 결함")
+        self.task_details_label.setText("\n".join(lines))
+        self.task_details_scroll.setMaximumHeight(70)
+        truth = "per_class" in verdict
+        self._defect_rows = [("defect", item) for item in verdict["kept"]] + [("missed", item) for item in missed]
+        with QSignalBlocker(self.defect_table):
+            self.defect_table.setRowCount(len(self._defect_rows))
+            for row, (kind, item) in enumerate(self._defect_rows):
+                score = item.get("score")
+                status = ("놓침" if kind == "missed" else ("검출" if item["truth"] else "오검출") if truth else "—")
+                values = ["—" if kind == "missed" else item["id"] + 1, item["class_name"],
+                          "" if score is None else f"{score:.2f}",
+                          item["x"], item["y"], item["w"], item["h"], item["area"], status]
+                for column, value in enumerate(values):
+                    cell = QTableWidgetItem()
+                    cell.setData(Qt.ItemDataRole.DisplayRole, value)
+                    if column == 8 and status in ("놓침", "오검출"):
+                        cell.setForeground(Qt.GlobalColor.red)
+                    self.defect_table.setItem(row, column, cell)
+            self.defect_table.clearSelection()
+        self.defect_table.setVisible(bool(self._defect_rows))
+        self.task_details_group.show()
+        self._draw_defects(result.image_path, verdict["kept"], missed)
+
+    def _draw_defects(self, image_path, defects, missed, selected=None):
+        """사각형을 그리기 전 이미지를 보관해 두고, 기준·선택이 바뀔 때마다 그 위에 다시 그린다."""
+        from core.spatial_preview import draw_defect_boxes
+        if image_path != self._current_image:
+            return
+        if self._defect_base is None or self._defect_base[0] != image_path:
+            if self._current_preview_rgb is None:
+                return
+            self._defect_base = (image_path, np.array(self._current_preview_rgb, copy=True))
+        self._shown_defects = (defects, missed)
+        self._display_numpy_image(draw_defect_boxes(self._defect_base[1], defects, missed, selected))
+
+    def _focus_defect(self, row):
+        """결함 표의 행 → 그 결함을 노란 사각형으로 강조하고 화면 가운데로 확대."""
+        if not 0 <= row < len(self._defect_rows) or self._current_image is None:
+            return
+        kind, item = self._defect_rows[row]
+        defects, missed = getattr(self, "_shown_defects", ([], []))
+        self._draw_defects(self._current_image, defects, missed, item["id"] if kind == "defect" else None)
+        self.image_label.focus_rect(item["x"], item["y"], item["w"], item["h"])
+
     def _cache_inference_result(self, result):
         """결과 수치는 메모리, 전체 이미지와 맵은 임시 디스크에 저장한다."""
         from PIL import Image
@@ -1448,6 +1698,7 @@ class InferenceWidget(QWidget, InferenceOperations):
 
     def _display_cached_result(self, image_path):
         """목록, 키보드, 격자 선택은 저장된 결과만 표시하고 추론하지 않는다."""
+        self._defect_base = None
         self._clear_heatmap_preview()
         self._current_image = image_path
         self._current_result = None
@@ -1734,7 +1985,7 @@ class InferenceWidget(QWidget, InferenceOperations):
     def _on_review_threshold_changed(self):
         # Reuse scores and previews; never run inference or overwrite saved results.
         for index, raw in self._batch_results.items():
-            result = effective_result(raw, self.result_review.threshold)
+            result = effective_result(raw, self.result_review.threshold, self._segment_rules())
             if index < len(self._grid_cells):
                 self._grid_cells[index].set_result(result.summary, result.color)
         if self._current_image in self._inference_results:
@@ -1836,7 +2087,7 @@ class InferenceWidget(QWidget, InferenceOperations):
 
             # 추론 결과가 있으면 오버레이 텍스트 설정
             if i in self._batch_results:
-                result = effective_result(self._batch_results[i], self.result_review.threshold)
+                result = effective_result(self._batch_results[i], self.result_review.threshold, self._segment_rules())
                 cell.set_result(result.summary, result.color)
 
             # 썸네일 이미지 로드 및 설정

@@ -80,7 +80,7 @@ jobs:
     # The public example must not wait for the 40+ minute vcpkg/full GUI build.
     # Use official binary SDKs, with the same ORT/OpenCV versions as that build.
     runs-on: windows-2022
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -177,6 +177,28 @@ jobs:
           ctest --test-dir example/build-v141-opencv -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "v141 OpenCV execution failed" }
 
+      - name: Build and evaluate semantic segmentation with VS2017 C++17
+        shell: pwsh
+        run: |
+          python -m pip install torchvision --index-url https://download.pytorch.org/whl/cpu
+          if ($LASTEXITCODE -ne 0) { throw "CPU torchvision installation failed" }
+          python -m pip install pytest pillow opencv-python-headless
+          if ($LASTEXITCODE -ne 0) { throw "Segmentation test dependencies failed" }
+          $deps = $env:EXAMPLE_DEPS
+          cmake -S example/cpp/segmentation_eval -B example/build-segment -G "Visual Studio 17 2022" -A x64 -T v141 `
+            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" "-DOpenCV_DIR=$deps/opencv/build/x64/vc16/lib"
+          if ($LASTEXITCODE -ne 0) { throw "Segmentation configure failed" }
+          foreach ($config in @('Release', 'Debug')) {
+            cmake --build example/build-segment --config $config --target segmentation_eval segmentation_metrics_test --parallel 2
+            if ($LASTEXITCODE -ne 0) { throw "Segmentation $config build failed" }
+            ctest --test-dir example/build-segment -C $config --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw "Segmentation $config metrics failed" }
+          }
+          $env:SEGMENT_EVALUATOR = (Resolve-Path example/build-segment/Release/segmentation_eval.exe).Path
+          $env:OMP_NUM_THREADS = '1'
+          python -m pytest -q tests/test_cpp_segmentation_evaluation.py
+          if ($LASTEXITCODE -ne 0) { throw "Export -> C++ segmentation evaluation failed" }
+
       - name: VS2017 encrypted BW8 Debug build and execution
         shell: pwsh
         run: |
@@ -184,6 +206,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "v141 Debug build failed" }
           ctest --test-dir example/build-v141-bw8 -C Debug --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "v141 Debug execution failed" }
+
+      - name: Verify the batch helper uses an isolated SDK build cache
+        shell: pwsh
+        run: |
+          cmake "-DONNXRUNTIME_ROOT=$env:EXAMPLE_DEPS/onnxruntime-win-x64-1.29.0" -P example/cpp/build_encrypted.cmake
+          if ($LASTEXITCODE -ne 0) { throw "Encrypted example batch helper failed" }
 
   csharp-sdk:
     runs-on: windows-latest
@@ -202,12 +230,6 @@ jobs:
 
       - name: Build encrypted C# example
         run: dotnet build example/csharp/encrypted/EncryptedExample.csproj --configuration Release --artifacts-path example/dotnet-encrypted
-
-      - name: Verify the batch helper uses an isolated SDK build cache
-        shell: pwsh
-        run: |
-          cmake "-DONNXRUNTIME_ROOT=$env:EXAMPLE_DEPS/onnxruntime-win-x64-1.29.0" -P example/cpp/build_encrypted.cmake
-          if ($LASTEXITCODE -ne 0) { throw "Encrypted example batch helper failed" }
 
   payload-contracts:
     runs-on: windows-latest

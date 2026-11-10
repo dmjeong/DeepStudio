@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-10-29",
+  "lastUpdated": "2026-11-10T00:00:19.275Z",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -10,9 +10,10 @@
     "dataset-first-class-visibility",
     "pretrained-manifest-recovery",
     "segmentation-weight-preparation",
-    "dinov2-segmentation"
+    "dinov2-segmentation",
+    "claude-main-seg-evaluation"
   ],
-  "primaryFeature": "dinov2-segmentation",
+  "primaryFeature": "claude-main-seg-evaluation",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -406,6 +407,60 @@
         "windows_cuda_managed_csharp": "not_run"
       },
       "completedAt": "2026-10-29"
+    },
+    "claude-main-seg-evaluation": {
+      "phase": "completed",
+      "matchRate": 100,
+      "iterationCount": 1,
+      "documents": {
+        "plan": "docs/01-plan/features/claude-main-seg-evaluation.plan.md",
+        "design": "docs/02-design/features/claude-main-seg-evaluation.design.md",
+        "analysis": "docs/03-analysis/claude-main-seg-evaluation.analysis.md",
+        "report": "docs/04-report/claude-main-seg-evaluation.report.md"
+      },
+      "taskChain": [
+        {
+          "phase": "plan",
+          "status": "completed",
+          "createdAt": "2026-11-09T23:45:02.882Z",
+          "completedAt": "2026-11-09T23:45:02.891Z"
+        },
+        {
+          "phase": "design",
+          "status": "completed",
+          "createdAt": "2026-11-09T23:45:02.882Z",
+          "completedAt": "2026-11-09T23:45:02.904Z"
+        },
+        {
+          "phase": "do",
+          "status": "completed",
+          "createdAt": "2026-11-09T23:45:02.882Z",
+          "completedAt": "2026-11-09T23:55:58.317Z"
+        },
+        {
+          "phase": "check",
+          "status": "completed",
+          "createdAt": "2026-11-09T23:45:02.882Z",
+          "completedAt": "2026-11-10T00:00:04.023Z"
+        },
+        {
+          "phase": "report",
+          "status": "completed",
+          "createdAt": "2026-11-09T23:45:02.882Z",
+          "completedAt": "2026-11-10T00:00:19.275Z"
+        }
+      ],
+      "timestamps": {
+        "started": "2026-11-09T23:45:02.882Z",
+        "lastUpdated": "2026-11-10T00:00:19.275Z"
+      },
+      "validation": {
+        "full": "1415 passed, 14 skipped; 2 packaging source checks corrected and covered by 47 passing targeted tests",
+        "native": "6 SDK CTests + 1 evaluator metrics CTest; 12 Python/native integration tests passed",
+        "trained_synthetic_trays": "10 evaluated; confusion matrix matched Python",
+        "windows": "VS2017 Release/Debug CI added; local Windows execution not performed"
+      },
+      "completedAt": "2026-11-10T00:00:19.275Z"
     }
   },
   "pipeline": {
@@ -416,7 +471,7 @@
   "session": {
     "startedAt": "2026-09-17T12:14:10.629Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-10-22T02:06:03.049248+00:00"
+    "lastActivity": "2026-11-10T00:00:19.275Z"
   },
   "history": [
     {
@@ -742,6 +797,84 @@
       "version": "9.23",
       "tests": "174 passed; 125/150/200% 10 each; web 14",
       "windows_acceptance": "pending"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "plan",
+      "to": "design",
+      "timestamp": "2026-11-09T23:45:02.889Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "plan",
+      "nextPhase": "design",
+      "timestamp": "2026-11-09T23:45:02.890Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "design",
+      "to": "design",
+      "timestamp": "2026-11-09T23:45:02.897Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "design",
+      "to": "do",
+      "timestamp": "2026-11-09T23:45:02.904Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "design",
+      "nextPhase": "do",
+      "timestamp": "2026-11-09T23:45:02.904Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "do",
+      "to": "check",
+      "timestamp": "2026-11-09T23:55:58.315Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "do",
+      "nextPhase": "check",
+      "timestamp": "2026-11-09T23:55:58.317Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "check",
+      "to": "act",
+      "timestamp": "2026-11-10T00:00:04.021Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "check",
+      "nextPhase": "act",
+      "timestamp": "2026-11-10T00:00:04.022Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "act",
+      "to": "report",
+      "timestamp": "2026-11-10T00:00:19.270Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "act",
+      "nextPhase": "report",
+      "timestamp": "2026-11-10T00:00:19.270Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "report",
+      "nextPhase": "completed",
+      "timestamp": "2026-11-10T00:00:19.275Z"
     }
   ]
 }

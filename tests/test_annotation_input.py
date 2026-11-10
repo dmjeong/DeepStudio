@@ -117,7 +117,7 @@ def test_training_includes_images_without_masks_as_background_and_says_so(tmp_pa
     masks.mkdir()
     for index in range(3):
         Image.new("L", (16, 16), 40).save(images / f"{index}.png")
-    Image.fromarray(np.zeros((16, 16), np.uint8), "L").save(masks / "0.png")  # background only, confirmed
+    Image.fromarray(np.zeros((16, 16), np.uint8), "L").save(masks / "0.png")
     Image.fromarray(np.ones((16, 16), np.uint8), "L").save(masks / "1.png")
     pairs, unlabeled = labeled_semantic_pairs(images, masks)
     assert [Path(p).stem for p, _ in pairs] == ["0", "1"] and [Path(p).stem for p in unlabeled] == ["2"]
@@ -132,7 +132,7 @@ def test_training_includes_images_without_masks_as_background_and_says_so(tmp_pa
         pass
     loader = Loader()
     loader.dataset = dataset
-    assert "train 1장" in unlabeled_message(loader, None)
+    assert "train 1장" in unlabeled_message(loader, None) and "배경(ID 0)으로 학습" in unlabeled_message(loader, None)
     (masks / "0.png").unlink()
     (masks / "1.png").unlink()
     background = SegmentationDataset(str(images), str(masks), input_size=(16, 16), in_channels=1,
@@ -206,15 +206,24 @@ def test_shift_drag_still_erases_with_the_brush(two_objects):
     assert dialog.document.shapes[-1].get("operation") == "erase"
 
 
-def test_picking_the_next_class_does_not_relabel_the_object_just_drawn(workspace):
+def test_picking_a_class_right_after_drawing_labels_that_object(workspace):
+    """Two rectangles kept the same class: picking a class after drawing did not reach the new box."""
+    from PySide6.QtCore import Qt as _Qt
+
     app, dialog = workspace
-    dialog.class_combo.setCurrentIndex(dialog.class_combo.findData(1))
+    dialog.class_list.setCurrentRow(1)
     dialog._set_mode("rectangle")
-    _drag(app, dialog, [(150, 20), (180, 50)])
-    drawn = dialog.selected
-    dialog.class_list.setCurrentRow(2)
+    _drag(app, dialog, [(20, 20), (60, 60)])
+    first = dialog.selected
+    _drag(app, dialog, [(100, 80), (150, 130)])
+    second = dialog.selected
+    dialog.class_list.setCurrentRow(2)           # draw, then label
     app.processEvents()
-    assert dialog._class_id(drawn) == 1 and dialog._active_class_id() == 2
+    assert (dialog._class_id(first), dialog._class_id(second)) == (1, 2)
+    QTest.keyClick(dialog.view, _Qt.Key.Key_Escape)  # deselect: the next pick only sets the drawing class
+    dialog.class_list.setCurrentRow(1)
+    app.processEvents()
+    assert (dialog._class_id(first), dialog._class_id(second)) == (1, 2) and dialog._active_class_id() == 1
 
 
 def test_detection_shift_click_selects_and_never_deletes_boxes(tmp_path):

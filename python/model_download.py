@@ -93,16 +93,20 @@ def _verify_hash(path, expected):
         raise ValueError(f"가중치 SHA256 불일치: {path}. 손상된 파일을 확인한 후 다시 다운로드하세요.")
 
 
-def cached_imagenet_weights(url, cache):
-    """Publish only complete, hash-checked files into torchvision's normal cache."""
+def cached_imagenet_weights(url, cache, *, sha256=None):
+    """Publish only complete, hash-checked files into torchvision's normal cache.
+
+    파일 이름에 SHA-256 접미사가 없는 공식 파일(DINOv2)은 sha256으로 전체 해시를 준다.
+    """
     parsed = urlparse(url)
     filename = Path(parsed.path).name
     match = re.search(r"-([a-f0-9]{8,64})\.[^.]+$", filename)
-    if parsed.scheme != "https" or not match:
-        raise ValueError("HTTPS와 SHA256 접미사가 있는 공식 가중치 URL 필요")
+    expected = sha256 or (match[1] if match else None)
+    if parsed.scheme != "https" or not expected:
+        raise ValueError("HTTPS와 SHA256(이름 접미사 또는 고정값)이 있는 공식 가중치 URL 필요")
     cache = Path(cache)
     destination = cache / filename
-    return cached_https_weights(url, destination, match[1])
+    return cached_https_weights(url, destination, expected)
 
 
 def cached_https_weights(url, destination, expected_sha256):

@@ -51,7 +51,7 @@ def _download_upstream(model_id: str, destination: Path) -> None:
         raise RuntimeError(f"{model_id} 기본 가중치 다운로드가 완료되지 않았습니다")
 
 
-def prepare(output: str | Path, only=None, *, register_existing: bool = False) -> Path:
+def prepare(output: str | Path, only=None, *, register_existing: bool = False, strict: bool = True) -> Path:
     """선택 모델마다 검증한 SHA-256을 기존 manifest에 원자적으로 합친다.
 
     개별 다운로드 실패에도 다음 모델을 시도하며 마지막에 실패 목록을 보고한다.
@@ -83,8 +83,10 @@ def prepare(output: str | Path, only=None, *, register_existing: bool = False) -
                     downloaded = download_sam2_pretrained(model_id, target.parent)
                     if downloaded.resolve() != target.resolve():
                         raise RuntimeError(f"SAM2 가중치 경로가 예상과 다릅니다: {downloaded}")
-                elif model_id == "dinov2_vits14":
-                    from dinov2_segmentation import DINOV2_URL, DINOV2_SHA256
+                elif model_id.startswith("dinov2_"):
+                    from builtin_assets import SOURCE_URLS, PINNED_SHA256
+                    DINOV2_URL = SOURCE_URLS[model_id]
+                    DINOV2_SHA256 = PINNED_SHA256[target.name]
                     from model_download import cached_https_weights
                     cached_https_weights(DINOV2_URL, target, expected_sha256=DINOV2_SHA256)
                 elif model_id.startswith(("libreyolo_", "re_detr_")):
@@ -104,9 +106,15 @@ def prepare(output: str | Path, only=None, *, register_existing: bool = False) -
     if failures:
         details = "\n".join(f"  {model_id}: {error}" for model_id, error in failures)
         retry = ",".join(model_id for model_id, _error in failures)
-        raise RuntimeError(
+        message = (
             f"가중치 준비 실패 {len(failures)}개. 성공한 모델의 파일과 manifest 항목은 유지됩니다.\n"
             f"{details}\n원인 해결 후 --only {retry} 로 실패한 모델만 재시도하세요.")
+        if strict or register_existing:
+            raise RuntimeError(message)
+        from builtin_assets import SOURCE_URLS
+        print(f"[warning] {message}\n빌드는 계속합니다.")
+        for model_id, _error in failures:
+            print(SOURCE_URLS[model_id])
     print(f"[ready] manifest: {root / 'manifest.json'}")
     return root
 
@@ -122,6 +130,8 @@ def main(argv=None) -> int:
     selection.add_argument("--only", default="",
                         help="쉼표로 구분한 가중치 ID만 받는다 (예: resnet18,resnet34). 생략하면 전부")
     selection.add_argument("--group", choices=["segment"], help="세그멘테이션 기본 가중치 전체")
+    parser.add_argument("--strict", action="store_true", help="다운로드 실패 시 중단")
+    parser.add_argument("--allow-partial", action="store_true", help="다운로드 실패를 경고로 표시하고 계속")
     parser.add_argument("--check", action="store_true", help="다운로드/파일 변경 없이 가중치 상태 검사")
     parser.add_argument("--register-existing", action="store_true",
                         help="다운로드 없이 검증된 로컬 파일만 manifest에 등록")
@@ -146,7 +156,7 @@ def main(argv=None) -> int:
         return 1 if failed else 0
     try:
         prepare(root, selected,
-                register_existing=args.register_existing)
+                register_existing=args.register_existing, strict=args.strict or not args.allow_partial)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1

@@ -106,6 +106,21 @@ struct InferenceConfig
     int detection_max_detections = 300;
     float anomaly_threshold = 0.0f;
     std::string input_value_range = "uint8_0_255"; ///< uint8 or full-range uint8/uint16 input contract
+
+    // ── 패치 학습 분할 모델 (preprocessing.whole_image): 판정 영역 전체를 한 번에 넣는다 ──
+    // 판정 영역(크롭 뒤 영상)이 region 크기여야 한다. scaled 크기로 줄여(학습과 같은 보간) 입력 텐서의
+    // 왼쪽 위에 넣고 나머지는 0(정규화 뒤 0)으로 채운다. 출력은 같은 영역만 잘라 판정 영역 크기로 확대한다.
+    int region_width = 0;         ///< 0이면 일반 모델 (영상 전체를 입력 크기로 리사이즈)
+    int region_height = 0;
+    int scaled_width = 0;
+    int scaled_height = 0;
+    int region_interpolation = 0; ///< cv::INTER_AREA 또는 cv::INTER_LINEAR_EXACT
+
+    // ── 분할 판정 기준 (postprocessing.defect_rules) ──
+    // 클래스 번호별 (최소 면적 px, 최소 점수). 점수 = 덩어리 픽셀의 그 클래스 softmax 평균.
+    // 기준 미달 덩어리는 마스크에서 배경(0)으로 지운다 → 설비 코드는 마스크·픽셀 수를 그대로 쓰면 된다.
+    struct DefectRule { int min_area = 1; float min_score = 0.0f; };
+    std::vector<DefectRule> defect_rules; ///< 비어 있으면 마스크를 그대로 둔다
 };
 
 
@@ -139,6 +154,10 @@ struct SegmentResult
     int num_classes = 0;           ///< 클래스 수
     std::vector<int> pixel_counts; ///< 클래스별 픽셀 수
     double inference_ms = 0.0;     ///< 추론 소요 시간
+    /// 판정 기준(defect_rules)이 있는 모델: 기준을 통과한 결함 (원본 영상 좌표). 비어 있으면 OK.
+    struct Defect { int class_id = 0; cv::Rect box; int area = 0; float score = 0.0f; };
+    std::vector<Defect> defects;
+    int removed_defects = 0;       ///< 기준 미달이라 마스크에서 지운 덩어리 수
 };
 
 struct Detection
@@ -288,6 +307,9 @@ private:
      * 6. 배치 차원 추가 (BCHW)
      */
     std::vector<float> Preprocess(const cv::Mat& image);
+    std::vector<float> PreprocessWholeRegion(const cv::Mat& region);
+    void ApplyDefectRules(cv::Mat& mask, const cv::Mat& scores, const cv::Size& output_size,
+                          SegmentResult& result) const;
     void PreprocessInto(const cv::Mat& image, float* data, size_t count,
                         cv::Mat& converted, cv::Mat& resized);
 

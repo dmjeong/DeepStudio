@@ -89,6 +89,7 @@ class AnnotationShortcuts(QObject):
             "[",
             "]",
             *(str(i) for i in range(1, 10)),
+            *(f"F{i}" for i in range(1, 13)),   # F1~F12 = 클래스 선택
         }
         for value in bindings.values():
             if not isinstance(value, str):
@@ -111,7 +112,7 @@ class AnnotationShortcuts(QObject):
                 raise ValueError("Ctrl·Shift 같은 보조키만 지정할 수 없습니다.")
             if key in reserved:
                 raise ValueError(
-                    "Space·Enter·Esc·Backspace·숫자·브러시 크기 키는 고정입니다."
+                    "Space·Enter·Esc·Backspace·숫자·F1~F12·브러시 크기 키는 고정입니다."
                 )
             if key in seen:
                 raise ValueError("같은 단축키를 두 작업에 지정할 수 없습니다.")
@@ -170,7 +171,7 @@ class AnnotationShortcuts(QObject):
                 + (self.bindings["previous"] or "—")
                 + " / "
                 + (self.bindings["next"] or "—")
-                + " 탐색"
+                + " 탐색\nF1~F12 클래스"
             )
 
     def eventFilter(self, watched, event):

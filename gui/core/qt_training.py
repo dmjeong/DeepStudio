@@ -9,7 +9,8 @@ class QtTrainingWorker(DesktopJob):
         from core.project import ProjectManager
         self.project = project
         payload = {"project": project_view(project), "project_digest": digest(ProjectManager.get_active_filepath(project)),
-                   "persist_project": False}
+                   "persist_project": False,
+                   "class_report": True}  # 데스크톱: 분할 학습 로그에 결함 클래스별 IoU·'전부 배경' 경고
         super().__init__("train", payload, parent)
         self.signals = TrainingSignals()
         self.event.connect(self._event)

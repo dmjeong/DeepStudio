@@ -84,7 +84,7 @@ def _container_model_spec(project):
     return None
 
 
-def _train_builtin_project(context, project, device):
+def _train_builtin_project(context, project, device, *, class_report=False):
     """Train a registered adapter with the selected weight source."""
     from core.project import ProjectManager, RunRecord
     from core.training_artifacts import publish_best, training_hyperparameters
@@ -160,6 +160,15 @@ def _train_builtin_project(context, project, device):
                          class_names=(list(data.class_names) if project.task == "segment" else None),
                          segmentation_loss=cfg.segmentation_loss,
                          class_weights=(cfg.class_weights if project.task == "segment" else "none"),
+                         # 데스크톱에서 켜는 분할 패치 학습 (프로젝트 설정 그대로 전달)
+                         patch_training=bool(getattr(cfg, "patch_training", False)) and project.task == "segment",
+                         patches_per_image=int(getattr(cfg, "patches_per_image", 0)),
+                         patch_scale=float(getattr(cfg, "patch_scale", 1.0)),
+                         # 데스크톱 요청만: 결함 클래스별 IoU와 '전부 배경' 경고를 로그에 (웹 로그는 그대로)
+                         class_report=bool(class_report) and project.task == "segment",
+                         # 데스크톱 요청만: 학습한 중앙 크롭을 체크포인트에 남겨 추론·내보내기가 같은 영역을 본다
+                         # (이전에는 크롭 데이터로 학습하고 원본 전체를 추론했다). 웹 동작은 그대로.
+                         center_crop=crop if class_report else None,
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
@@ -457,7 +466,7 @@ def train(context, payload):
         context.emit("log_message", ["GPU 합성곱과 역전파 검사 통과"])
     before = len(project.runs)
     config = {key: payload["project"][key] for key in ("task", "data", "model", "training")}
-    builtin_record = _train_builtin_project(context, project, device)
+    builtin_record = _train_builtin_project(context, project, device, class_report=bool(payload.get("class_report")))
     upstream_record = None if builtin_record is not None else _train_upstream_project(context, project, device)
     sam2_record = None if builtin_record is not None or upstream_record is not None else _train_sam2_project(context, project, device)
     if builtin_record is not None or upstream_record is not None or sam2_record is not None:
@@ -502,7 +511,9 @@ def infer(context, payload):
     device = get_device_manager().get_device(payload.get("device", "cpu"))
     engine = load_inference_engine(payload["weights"], device=device, gradcam=payload.get("gradcam", True),
                                    input_region=payload.get("input_region"), runtime=payload.get("runtime", "auto"),
-                                   threads=payload.get("threads", max(1, min(4, os.cpu_count() or 1))))
+                                   threads=payload.get("threads", max(1, min(4, os.cpu_count() or 1))),
+                                   # 데스크톱 추론만 보내는 분할 결함 분석·SAM2 자동 분할 설정. 웹 요청에는 없다.
+                                   segment_review=payload.get("segment_review"), sam2=payload.get("sam2"))
     from core.segmentation_evaluation import project_snapshot
     engine._evaluation_project = project_snapshot(payload.get("project"))
     if callable(getattr(engine, "prepare", None)):
@@ -719,6 +730,7 @@ def inspect_model(context, payload):
     engine = load_inference_engine(payload["weights"], device=device, gradcam=False)
     task = ("anomaly" if engine._patchcore_model is not None else
             engine._upstream_task if getattr(engine, "_upstream_model", None) is not None else
+            "segment" if getattr(engine, "_sam2_predictor", None) is not None else
             getattr(engine.model, "task", "classify"))
     return {"status": "completed", "output": {"class_names": list(engine.class_names or []),
         "input_size": engine._input_size, "task": task, "weights": payload["weights"],
@@ -726,6 +738,8 @@ def inspect_model(context, payload):
         "device": str(engine._infer_device), "anomaly_threshold": engine._anomaly_threshold,
         "patchcore": engine._patchcore_model.get_info() if engine._patchcore_model is not None else None,
         "upstream": getattr(engine, "_upstream_model", None) is not None,
+        "sam2": getattr(engine, "_sam2_model_id", None),
+        "tiling": getattr(engine, "_tiling", None),
         "weights_sha256": digest(payload["weights"])}}
 
 

@@ -336,6 +336,34 @@ def test_pyinstaller_native_runtime_argument_is_opt_in_and_filters_library_files
                     "--add-binary", f"{runtime / f'vision_runtime{suffix}'}{os.pathsep}."]
 
 
+def test_pyinstaller_checks_and_packages_the_same_asset_override(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import builtin_assets
+    builder = runpy.run_path(str(ROOT / "gui" / "build_exe.py"))["build"]
+    namespace = builder.__globals__
+    for name in ("check_pyinstaller", "check_runtime_dependencies", "check_training_accelerator"):
+        monkeypatch.setitem(namespace, name, lambda: True)
+    monkeypatch.setitem(namespace, "_native_runtime_arguments", lambda: [])
+    root = tmp_path / "custom weights"
+    monkeypatch.setenv("DVS_BUILTIN_ASSETS_DIR", str(root))
+    checked = []
+
+    def missing(*, bundle_only):
+        assert bundle_only and root.is_dir()
+        checked.append(builtin_assets.builtin_asset_root())
+        return []
+
+    def capture(command, **kwargs):
+        assert f"{root}{os.pathsep}builtin_assets" in command
+        assert kwargs["env"]["DVS_BUILTIN_ASSETS_DIR"] == str(root)
+        return SimpleNamespace(returncode=23)  # stop before looking for a built EXE
+
+    monkeypatch.setattr(builtin_assets, "missing_assets", missing)
+    monkeypatch.setattr(namespace["subprocess"], "run", capture)
+    assert builder() == 23
+    assert checked == [root]
+
+
 def test_payload_wrapper_scripts_collect_and_verify_exact_bytes(tmp_path):
     root = tmp_path / "payload"
     root.mkdir()

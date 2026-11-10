@@ -1,8 +1,41 @@
 """모델을 독립적으로 복원하기 위한 체크포인트 메타데이터."""
 
+# 패치 배율 s < 1로 판정 영역을 줄일 때의 이미지 보간 (학습·추론 공통, tiling 규칙에 기록).
+# 9.33 첫 구현은 전체 이미지 학습과 같은 INTER_LINEAR_EXACT였다. 이 보간은 줄일 때 주변 2×2 픽셀만 본다:
+# 25%면 픽셀 4개 중 2개만 쓰고 2개를 버려, 버려지는 자리에 놓인 1px 크랙이 영상에서 사라졌다(마스크에는 남음).
+# INTER_AREA는 모든 픽셀을 평균하므로 1px 크랙이 어느 위치에 있어도 1/4 대비의 선으로 남는다.
+PATCH_SCALE_INTERPOLATION = "INTER_AREA"
+
+
+def tiling_contract(patch_size, scale=1.0, region=None):
+    """패치 학습 모델의 추론 규칙: 원본 해상도에서 tile×tile 창을 overlap만큼 겹쳐 민다.
+
+    겹침은 타일의 1/4. 각 타일은 이미지 안쪽으로 난 가장자리 overlap/2 띠를 거의 믿지 않고(가중치 1e-4),
+    이웃 타일의 안쪽이 그 자리를 채운다 (blend = center_weighted_softmax). None이면 전체 이미지 리사이즈 모델.
+    """
+    if not patch_size:
+        return None
+    tile = int(patch_size)
+    if tile < 32:
+        raise ValueError("타일 크기는 32px 이상이어야 합니다")
+    scale = float(scale)
+    if not 0 < scale <= 1:
+        raise ValueError("패치 학습 배율은 0보다 크고 1 이하여야 합니다")
+    # scale: 추론 전에 판정 영역을 줄이는 배율 (학습 패치를 자르기 전에 줄인 것과 같다). 1 = 원본 해상도.
+    # interpolation: 그때 쓰는 보간. 이 키가 없는 규칙(9.33 첫 빌드)은 INTER_LINEAR_EXACT로 학습됐다.
+    contract = {"tile": tile, "overlap": tile // 4, "blend": "center_weighted_softmax", "scale": scale,
+                "interpolation": PATCH_SCALE_INTERPOLATION}
+    # region: 학습 영상의 (가로, 세로). C++ 배포는 이 크기의 판정 영역을 한 번에 넣는 고정 입력으로 내보낸다.
+    if region:
+        width, height = (int(v) for v in region)
+        if width < 1 or height < 1:
+            raise ValueError("판정 영역 크기가 올바르지 않습니다")
+        contract["region"] = [width, height]
+    return contract
+
 
 def make_checkpoint_metadata(task, num_classes, class_names, input_size,
-                             in_channels, model_config=None, center_crop=None):
+                             in_channels, model_config=None, center_crop=None, tiling=None):
     """기존 키를 유지하면서 모델 구조와 전처리 규칙을 함께 저장한다."""
     from center_crop import validate_center_crop
     center_crop = validate_center_crop(center_crop)
@@ -39,6 +72,11 @@ def make_checkpoint_metadata(task, num_classes, class_names, input_size,
             "value_scale": 255.0,
         },
     }
+    if tiling:
+        if task != "segment":
+            raise ValueError("타일 추론은 분할 모델만 지원합니다")
+        result["tiling"] = dict(tiling)
+        result["preprocessing"]["tiling"] = dict(tiling)
     if task == "anomaly":
         result.update(anomaly_threshold=None,
                       score_definition="reconstruction_mse_mean",

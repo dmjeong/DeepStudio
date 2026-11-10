@@ -52,7 +52,7 @@ class TrainingForm:
         try:
             from core.model_registry import registry_with_installed_packs
             registry, _ = registry_with_installed_packs()
-            for spec in registry.list():
+            for spec in registry.list(surface="desktop"):
                 self.model_id_combo.addItem(
                     spec.display_name,
                     spec.model_id)
@@ -387,6 +387,44 @@ class TrainingForm:
         )
         hp_layout.addRow("입력 크기:", self.input_size_spin)
         self.input_size_spin.valueChanged.connect(self._on_patchcore_settings_changed)
+
+        # ── 분할 패치 학습: 큰 이미지의 작은 결함을 줄이지 않고 원본 해상도로 학습 ──
+        self.patch_check = QCheckBox("패치 학습 (입력 크기 = 패치 크기, 끄면 전체 이미지 축소)")
+        self.patch_check.setToolTip(
+            "이미지를 입력 크기로 줄이지 않고, 원본(크롭 후) 해상도에서 입력 크기만큼 잘라 학습합니다.\n"
+            "패치의 절반은 결함 위치에서, 나머지는 임의 위치에서 자릅니다(epoch마다 새 위치).\n"
+            "추론은 겹치는 타일로 나눠 원본 해상도 마스크를 만듭니다. 3500×1504를 512로 줄이면\n"
+            "결함이 약 7배 작아져 1~2px 결함이 사라지는 문제를 피합니다.")
+        self.patch_count_spin = NoWheelSpinBox()
+        self.patch_count_spin.setRange(0, 256)
+        self.patch_count_spin.setSpecialValueText("자동 (이미지 면적 ÷ 패치 면적)")
+        self.patch_count_spin.setToolTip("한 epoch에 이미지마다 자르는 패치 수. 0 = 자동(최대 64).")
+        self.patch_info = QLabel()
+        self.patch_info.setWordWrap(True)
+        self.patch_check.toggled.connect(self._on_patchcore_settings_changed)
+        self.patch_count_spin.valueChanged.connect(self._on_patchcore_settings_changed)
+        self.patch_count_label = QLabel("이미지당 패치:")
+        # 패치 배율: 추론 속도와 작은 결함 크기의 교환. 계산량은 배율²에 비례한다.
+        self.patch_scale_combo = NoWheelComboBox()
+        for label, value in (("100% (원본 해상도)", 1.0), ("75%", .75), ("50%", .5), ("35%", .35), ("25%", .25)):
+            self.patch_scale_combo.addItem(label, value)
+        self.patch_scale_combo.setToolTip(
+            "판정 영역을 이 배율로 줄인 뒤 패치를 자릅니다. 추론도 같은 배율로 줄여 한 번에 계산합니다.\n"
+            "계산량(추론 시간)은 배율²에 비례합니다: 50% = 1/4, 25% = 1/16.\n"
+            "줄인 뒤 가장 가는 결함이 1.5~2px 이상 남는 배율을 고르세요(마스크는 작은 결함을 보존해 줄입니다).")
+        self.patch_scale_combo.currentIndexChanged.connect(self._on_patchcore_settings_changed)
+        self.patch_scale_label = QLabel("패치 배율:")
+        # 데이터에 맞게 자동 설정: 라벨된 결함 굵기로 패치·배율·모델을 고른다 (분할 전용)
+        self.advise_btn = QPushButton("데이터에 맞게 자동 설정…")
+        self.advise_btn.setToolTip(
+            "라벨된 결함의 굵기와 이미지 크기를 분석해, 가는 결함(미세 크랙 등)이 학습 해상도에서\n"
+            "사라지지 않는 패치·배율·모델·가중치를 추천합니다. 항목을 골라 적용합니다.")
+        self.advise_btn.clicked.connect(self._open_advisor)
+        hp_layout.addRow("", self.advise_btn)
+        hp_layout.addRow("", self.patch_check)
+        hp_layout.addRow(self.patch_scale_label, self.patch_scale_combo)
+        hp_layout.addRow(self.patch_count_label, self.patch_count_spin)
+        hp_layout.addRow(self.patch_info)
         hp_layout.addRow("", self.pc_crop_check)
         hp_layout.addRow("크롭 가로 (px):", self.pc_crop_width_spin)
         hp_layout.addRow("크롭 세로 (px):", self.pc_crop_height_spin)

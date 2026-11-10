@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 from core.annotation_tools import AnnotationDraftStore, fingerprint
+from core.class_management import is_background_name
 from PySide6.QtCore import QEvent, QObject, QRectF, QSignalBlocker, Qt, QTimer, Slot
 from PySide6.QtGui import QImage, QPixmap, QTransform
 from PySide6.QtWidgets import (
@@ -35,7 +36,8 @@ class SpacePan(QObject):
     Space는 캔버스에 포커스가 있을 때만 화면 이동이었다. 도구 버튼·체크박스·콤보를 한 번 누르면
     포커스가 그쪽으로 가서, Space가 그 버튼을 다시 누르거나 체크를 바꾸거나 목록을 열었다.
     글자를 입력하는 칸(클래스 이름, 숫자 칸, 단축키 입력)은 Space를 그대로 쓴다. 작업실 위에 뜬
-    다른 창(격자·단축키 설정)은 건드리지 않는다.
+    다른 창(격자·단축키 설정)은 건드리지 않는다. 작업실은 혼자 창이거나 작업실 창(AnnotationWindow) 안의
+    위젯이므로, '같은 창'이 아니라 '이 작업실 안의 위젯'인지로 판단한다.
     """
 
     def __init__(self, workspace):
@@ -54,8 +56,10 @@ class SpacePan(QObject):
         if event.key() != Qt.Key.Key_Space or not isinstance(watched, QWidget):
             return False
         view = getattr(self.workspace, "view", None)
-        if view is None or watched.window() is not self.workspace or self._text_entry(watched):
+        if view is None or self._text_entry(watched):
             return False
+        if watched is not self.workspace and not self.workspace.isAncestorOf(watched):
+            return False  # 다른 창(격자·단축키 설정, 데이터셋 화면)의 위젯
         if watched is view or view.isAncestorOf(watched):
             return False  # 캔버스는 원래 처리 (누르면 이동 커서, 떼면 해제)
         if event.type() == QEvent.Type.KeyPress:
@@ -207,6 +211,53 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         hand_off_navigation(self, result)  # 다음 이미지 창을 먼저 같은 자리에 띄운 뒤 숨는다
         super().done(result)
 
+    def adopt_view_state(self, previous):
+        """이전 이미지 작업실의 화면 배치를 이어받는다. 같은 창에서 이미지와 라벨만 바뀐 것처럼 보이게 한다.
+
+        도구 설정(모드·클래스·브러시)은 preferences로 이미 넘어온다. 여기서는 사용자가 바꾼 배치와 보기:
+        패널 폭, 오른쪽 패널 표시·탭, 썸네일 필터와 이웃 썸네일, 정답·이름 표시, 밝기·대비, AI 모델·장치.
+        """
+        if not isinstance(previous, AnnotationWorkspace) or previous.task != self.task:
+            return
+        self._compact = getattr(previous, "_compact", False)
+        self.inspector.setVisible(previous.inspector.isVisibleTo(previous))
+        self.editor_splitter.setSizes(previous.editor_splitter.sizes())
+        self.inspector.setCurrentIndex(previous.inspector.currentIndex())
+        self.annotation_visible.setChecked(previous.annotation_visible.isChecked())
+        if getattr(self, "box_labels", None) is not None and getattr(previous, "box_labels", None) is not None:
+            self.box_labels.setChecked(previous.box_labels.isChecked())
+        self.ai_model.setCurrentIndex(previous.ai_model.currentIndex())
+        self.ai_device.setCurrentIndex(previous.ai_device.currentIndex())
+        self.thumbnail_filter.setCurrentText(previous.thumbnail_filter.currentText())
+        # 이웃 썸네일은 이전 줄의 그림·상태를 먼저 쓴다 (읽기가 끝날 때 글자·그림이 다시 튀지 않게).
+        # 방금 떠난 이미지의 상태(예: 정답 있음)도 이전 줄에 이미 반영돼 있다.
+        current = self.navigation[0] if self.navigation else 0
+        for index, item in self._thumbnail_items.items():
+            old = previous._thumbnail_items.get(index)
+            if old is None or index == current:
+                continue
+            item.setIcon(old.icon())
+            state = old.data(int(Qt.ItemDataRole.UserRole) + 1)
+            if state:
+                self._set_thumbnail_state(index, state)
+        old = previous._thumbnail_items.get(current)
+        if old is not None and self._thumbnail_items.get(current) is not None:
+            self._thumbnail_items[current].setIcon(old.icon())
+        self._set_thumbnail_state(current, self._current_thumbnail_state)
+        if previous.brightness.value() or previous.contrast.value():
+            self.brightness.setValue(previous.brightness.value())
+            self.contrast.setValue(previous.contrast.value())
+            self._levels_timer.stop()
+            self._apply_levels()  # 첫 화면부터 같은 밝기·대비 (80ms 뒤에 바뀌며 깜빡이지 않게)
+
+    def center_current_thumbnail(self):
+        """썸네일 줄에서 지금 이미지를 가운데에 둔다 (창 크기와 관계없이 보이게)."""
+        from PySide6.QtWidgets import QAbstractItemView
+
+        item = self._thumbnail_items.get(self.navigation[0] if self.navigation else 0)
+        if item is not None:
+            self.thumbnails.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+
     def release_buffers(self):
         """곧 숨을 이 창의 원본 해상도 배열(4096²에서 약 160MB)을 다음 이미지 창을 만들기 전에 놓는다.
 
@@ -351,8 +402,10 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             self.selected = self.document.representative(shape["object_id"])
             self.selected_indices = {self.selected}
         self._changed(region)
-        # 방금 그린 객체의 자동 선택: 다음에 그릴 클래스를 골라도 이 객체의 클래스는 바꾸지 않는다.
-        self._auto_selected = True
+        if shape.get("operation") != "erase":
+            # 그린 직후 클래스를 고르면 이 객체에 적용된다 (그리고 → 클래스 고르기).
+            self.status.setText("그린 영역이 선택됐습니다 · 클래스를 고르면 이 영역에 적용 · "
+                                "다음 영역 클래스만 바꾸려면 Esc로 선택 해제 후 고르세요")
 
     def _edit(self, index, shape):
         self._edit_many({index: shape})
@@ -382,7 +435,6 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self._changed()
 
     def _select(self, index):
-        self._auto_selected = False  # 사용자가 고른 선택
         self.selected = index
         if index == -1:
             self.selected_indices = set()
@@ -403,7 +455,6 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self._select(index)
 
     def _select_many(self, indices):
-        self._auto_selected = False  # 사용자가 고른 선택
         self.selected_indices = set(indices)
         self.view.selected_set = set(indices)
         if self.selected not in indices:
@@ -488,13 +539,13 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         return -index - 2 if index < -1 else self._items()[index]["class_id"]
 
     def _class_picked(self, *_):
-        """클래스 목록·콤보·숫자키로 클래스를 고르면, 사용자가 직접 고른 객체가 있을 때 그 객체들에 적용한다.
+        """클래스 목록·콤보·숫자키로 클래스를 고르면 선택한 객체(방금 그린 객체 포함)에 적용한다.
 
         예전에는 활성(그리기) 클래스만 바뀌고 선택 객체는 그대로라 '선택에 적용'을 따로 눌러야 했다.
-        Shift로 여러 객체를 고른 뒤 클래스를 골라도 저장해 보면 바뀌지 않았다. 방금 그려 자동 선택된
-        객체는 바꾸지 않는다(다음에 그릴 클래스를 고르는 경우). 분할의 배경(0)은 적용하지 않는다(삭제로).
+        그래서 사각형 두 개를 그리고 클래스를 골라도 둘 다 처음 클래스로 남았다. 다음에 그릴 클래스만
+        바꾸려면 Esc로 선택을 해제한 뒤 고른다. 분할의 배경(0)은 적용하지 않는다(삭제로).
         """
-        if getattr(self, "_auto_selected", True) or not self.selected_indices:
+        if not self.selected_indices:
             return
         class_id = self._active_class_id()
         indices = {i for i in self.selected_indices if i in self._indices()}
@@ -507,8 +558,42 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         name = self.names[class_id] if 0 <= class_id < len(self.names) else str(class_id)
         self.status.setText(f"선택한 영역 {len(indices)}개를 '{name}'(으)로 바꿨습니다. Ctrl+Z로 되돌립니다.")
 
+    def _background_slot_blocked(self):
+        """분할 0번이 배경 이름이 아니면 True: 0번은 '그리지 않은 픽셀'이라 그 이름으로 칠해도 저장·학습되지 않는다."""
+        return self.task == "segment" and bool(self.names) and not is_background_name(self.names[0])
+
+    def _mark_background_slot(self, combo, label=False):
+        """배경 자리(0번)에 결함 이름이 있으면 콤보에서 고를 수 없게 막는다.
+
+            0: 시프트 더블 (배경 자리 · 그릴 수 없음)   ← 회색, 선택 불가
+            1: crack
+        label=True(메인 콤보)이면 항목 이름과 작업실 위 경고 줄도 바꾼다. 영역 표의 콤보는 이름을 그대로 둔다
+        (목록 비교로 다시 만들지 않게).
+        """
+        blocked = self._background_slot_blocked()
+        if label and hasattr(self, "background_warning"):
+            self.background_warning.setVisible(blocked)
+            if blocked:
+                self.background_warning.setText(
+                    f"0번 '{self.names[0]}'은(는) 배경 자리입니다. 이 클래스로 칠해도 '안 칠함'과 같아 저장·학습되지 않습니다. "
+                    "작업실을 닫고 데이터셋 화면의 '0번에 배경 추가'를 누르면 번호가 한 칸씩 올라가 그릴 수 있습니다.")
+        if not blocked:
+            return
+        item = combo.model().item(0) if hasattr(combo.model(), "item") else None
+        if item is None:
+            return
+        item.setEnabled(False)
+        item.setToolTip("분할의 0번은 '그리지 않은 픽셀 = 배경'입니다. 데이터셋 화면에서 '0번에 배경 추가'를 누르세요.")
+        if label:
+            item.setText(f"{self.names[0]} (0번 = 배경 자리 · 그릴 수 없음)")
+        if combo.currentIndex() == 0 and combo.count() > 1:
+            combo.setCurrentIndex(1)
+
     def _active_class(self, index):
         if not hasattr(self, "view"):
+            return
+        if self._background_slot_blocked() and self._active_class_id() == 0 and self.class_combo.count() > 1:
+            self.class_combo.setCurrentIndex(1)  # 0번(배경 자리)으로는 그리지 않는다 → 다시 불린다
             return
         if self.task == "segment":
             self.view.class_id = self._active_class_id()
@@ -602,7 +687,8 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             for key in keys:
                 self.object_meta.pop(key, None)
             for i in base:
-                mask = self.document.render(copy_pixels=False) == (-i - 2)
+                # 원본 층 픽셀만 지운다. 이전에는 '그 클래스 픽셀 전체'를 지워 같은 클래스로 새로 그린 객체도 사라졌다.
+                mask = self.document.base_layer_mask(-i - 2)
                 if mask.any():
                     self.document.shapes.append(
                         self.document.raster_shape(mask, 0, scope_class=-i - 2)
@@ -829,6 +915,7 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
                         combo.addItem(name, cid)
                     if self.task == "segment":
                         combo.addItem("학습 제외 (255)", 255)
+                    self._mark_background_slot(combo)
                 combo.setProperty("index", index)
                 combo.setCurrentIndex(combo.findData(self._class_id(index)))
                 combo.setToolTip(combo.currentText())
@@ -868,6 +955,11 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             for i, name in enumerate(self.names):
                 # 분할의 0번은 클래스가 아니라 배경 (선택 영역에 적용하지 않는다)
                 suffix = "  · 배경" if self.task == "segment" and i == 0 else ""
+                if i == 0 and self._background_slot_blocked():
+                    suffix = "  · 배경 자리 (그릴 수 없음)"
+                key = i if self.task == "segment" else i + 1   # 분할은 0번(배경)을 건너뛴다
+                if 1 <= key <= 12 and not (self.task == "segment" and i == 0):
+                    suffix += f"  [F{key}]"
                 self.class_list.addItem(f"{i}  {name}{suffix}")
                 if self.task == "segment" and i == 0:
                     self.class_list.item(i).setFlags(Qt.ItemFlag.NoItemFlags)
@@ -960,6 +1052,7 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
 
     def _class_list_selected(self, row):
         if self.task == "segment" and row == 0:
+            self.status.setText("0번은 배경 자리입니다. 결함 클래스를 선택하거나 지우개를 사용하세요.")
             return
         if 0 <= row < len(self.names):
             self.class_combo.setCurrentIndex(row)
@@ -996,6 +1089,7 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
                 self.class_combo.setItemText(0, self.names[0] + " · 배경(자동)")
                 self.class_combo.model().item(0).setEnabled(False)
                 self.class_combo.addItem("학습 제외 영역 (255)", 255)
+            self._mark_background_slot(self.class_combo, label=True)
             self._active_class(self.class_combo.currentIndex())
             if self.task == "segment":
                 self._baseline_state["document"].classes = len(self.names)

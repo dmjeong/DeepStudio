@@ -35,6 +35,7 @@ import torchvision.transforms as T
 import numpy as np
 from PIL import Image
 from opencv_preprocess import OpenCVResize, read_image, resize
+from checkpoint import PATCH_SCALE_INTERPOLATION
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -297,7 +298,7 @@ class ClassificationDataset(Dataset):
 def resize_label_mask(mask: np.ndarray, size: Tuple[int, int], *, keep_ratio: float = 0.5) -> np.ndarray:
     """클래스 번호 마스크를 (H, W)로 바꾼다. 축소해도 작은 결함이 정답에서 사라지지 않게 한다.
 
-    1. 픽셀 중심 nearest(INTER_NEAREST_EXACT): 이미지의 INTER_LINEAR_EXACT와 같은 격자.
+    1. 픽셀 중심 nearest(INTER_NEAREST_EXACT): 이미지의 INTER_LINEAR_EXACT·INTER_AREA(패치 배율)와 같은 격자.
        INTER_NEAREST(왼쪽 위 기준)는 4배 축소에서 정답을 평균 0.38 출력 px 밀어낸다.
     2. nearest는 블록마다 한 픽셀만 읽어서, 블록보다 얇은 결함은 통째로 사라지거나
        (4배 축소의 3×3 점 결함 약 43%) 점선으로 끊긴다(비스듬한 1px 흠집 94%, 2px 70%).
@@ -472,8 +473,10 @@ class SegmentationDataset(Dataset):
         # 리사이즈 (이미지: 픽셀 중심 기준 bilinear, 마스크: 픽셀 중심 기준 nearest
         # + 축소로 사라지는 작은 결함 보존). resize_label_mask 설명 참고.
         image = Image.fromarray(resize(np.asarray(image), self.input_size))
-        mask = Image.fromarray(mask_array)
+        return self._augment_to_tensors(image, Image.fromarray(mask_array), mask_path)
 
+    def _augment_to_tensors(self, image: Image.Image, mask: Image.Image, mask_path) -> Tuple[torch.Tensor, torch.Tensor]:
+        """학습 증강(이미지·마스크 동시) → 정규화 텐서와 클래스 인덱스 텐서. 전체 이미지·패치 학습이 같이 쓴다."""
         # 학습 시 동기화된 데이터 증강
         if self.is_train:
             # 수평 뒤집기 (이미지와 마스크 동시)
@@ -507,8 +510,215 @@ class SegmentationDataset(Dataset):
                            (self.num_classes is not None and valid.max() >= self.num_classes)):
             raise ValueError(f"정답 마스크 클래스 범위 오류: {mask_path}")
         mask = torch.from_numpy(mask_array)
-
         return image, mask
+
+
+def common_image_size(image_dir, limit: int = 200):
+    """폴더 영상들의 가장 흔한 (가로, 세로). 패치 학습 모델의 '판정 영역' 크기로 체크포인트에 남긴다.
+
+    헤더만 읽으므로 빠르다. 영상이 없으면 None.
+    """
+    from collections import Counter
+    from pathlib import Path
+    sizes = Counter()
+    root = Path(image_dir)
+    if not root.is_dir():
+        return None
+    for path in sorted(root.rglob("*")):
+        if path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"):
+            continue
+        try:
+            with Image.open(path) as image:
+                sizes[image.size] += 1
+        except OSError:
+            continue
+        if sum(sizes.values()) >= limit:
+            break
+    return list(sizes.most_common(1)[0][0]) if sizes else None
+
+
+def scaled_size(width: int, height: int, scale: float) -> Tuple[int, int]:
+    """패치 학습 배율을 적용한 (가로, 세로). 학습 데이터와 추론이 같은 크기를 쓰도록 한 곳에서 정한다."""
+    if not 0 < scale <= 1:
+        raise ValueError("패치 학습 배율은 0보다 크고 1 이하여야 합니다")
+    if scale == 1:
+        return int(width), int(height)
+    return max(1, int(round(width * scale))), max(1, int(round(height * scale)))
+
+
+# tiling 규칙에 적을 수 있는 보간 (OpenCV 플래그 이름). LINEAR_EXACT는 이 키가 없던 9.33 첫 빌드 모델용으로만 남긴다.
+SCALE_INTERPOLATIONS = ("INTER_AREA", "INTER_LINEAR_EXACT")
+
+
+def scale_image(image: np.ndarray, size: Tuple[int, int], interpolation: str = PATCH_SCALE_INTERPOLATION):
+    """패치 배율로 판정 영역을 (세로, 가로) 크기로 줄인다. 학습 데이터와 추론이 이 함수 하나를 쓴다.
+
+        1px 크랙, 25%로 축소 (크랙 위치 0~3 = 4픽셀 묶음 안 자리)
+            INTER_LINEAR_EXACT  남는 대비 0 · 50 · 50 · 0 %  → 절반 위치에서 사라짐 (점선이 됨)
+            INTER_AREA          남는 대비 25 · 25 · 25 · 25 % → 어디서나 옅은 선으로 남음
+    """
+    import cv2
+    if interpolation not in SCALE_INTERPOLATIONS:
+        raise ValueError(f"미지원 패치 배율 보간: {interpolation!r}")
+    height, width = size
+    return cv2.resize(np.asarray(image), (int(width), int(height)), interpolation=getattr(cv2, interpolation))
+
+
+def patch_origins(length: int, patch: int, stride: int) -> List[int]:
+    """한 축을 덮는 패치 시작 위치. 마지막 패치는 끝에 맞춰 이미지 밖으로 나가지 않는다 (짧으면 [0])."""
+    if length <= patch:
+        return [0]
+    origins = list(range(0, length - patch + 1, max(1, stride)))
+    if origins[-1] != length - patch:
+        origins.append(length - patch)
+    return origins
+
+
+class PatchSegmentationDataset(SegmentationDataset):
+    """원본 해상도에서 패치를 잘라 학습하는 분할 데이터셋 (큰 이미지 · 작은 결함 · 적은 장수용).
+
+    전체 이미지를 입력 크기로 줄이면 3500×1504 → 512에서 결함이 7배 작아져 1~2px 결함이 사라진다.
+    패치 학습은 줄이지 않고 잘라서 본다.
+
+        학습: 이미지마다 patches_per_image개 (epoch마다 새 위치)
+              ├─ defect_ratio 확률: 결함 픽셀 하나를 골라 그 픽셀이 패치 안 임의 위치에 오도록 자름
+              └─ 나머지: 이미지 안 아무 위치 (배경 · 결함 없는 이미지 → 오검출 억제)
+        검증: 이미지 전체를 겹치지 않게 덮는 고정 타일 (매 epoch 같은 점수)
+
+    패치가 이미지보다 크면 남는 부분은 이미지 0 / 마스크 255(학습 제외)로 채운다.
+    디코딩한 이미지·마스크는 작업자 프로세스마다 메모리 한도(기본 1.5GB) 안에서 재사용한다.
+    """
+
+    def __init__(self, img_dir: str, mask_dir: str, *, patch_size: int, patches_per_image: int = 0,
+                 defect_ratio: float = 0.5, cache_limit_mb: int = 1536, scale: float = 1.0,
+                 interpolation: str = PATCH_SCALE_INTERPOLATION, **kwargs):
+        if patch_size < 32:
+            raise ValueError("패치 크기는 32px 이상이어야 합니다")
+        scaled_size(1, 1, scale)  # 배율 범위 확인
+        kwargs["input_size"] = (patch_size, patch_size)
+        super().__init__(img_dir, mask_dir, **kwargs)
+        if not 0 <= defect_ratio <= 1:
+            raise ValueError("결함 중심 패치 비율은 0~1이어야 합니다")
+        self.patch_size = int(patch_size)
+        self.defect_ratio = float(defect_ratio)
+        # 배율 < 1: 이미지를 먼저 그만큼 줄인 뒤 패치를 자른다 (추론 계산량 ∝ 배율²).
+        # 이미지는 모든 픽셀을 평균하는 축소(scale_image), 마스크는 작은 결함을 보존하는 축소(resize_label_mask).
+        self.scale = float(scale)
+        if interpolation not in SCALE_INTERPOLATIONS:
+            raise ValueError(f"미지원 패치 배율 보간: {interpolation!r}")
+        self.interpolation = interpolation
+        self._native = OrderedDict()           # 경로 → (이미지, 마스크, 결함 픽셀 위치 표본)
+        self._native_bytes = 0
+        self._native_limit = int(cache_limit_mb) * 1024 * 1024
+        self._sizes = [scaled_size(*self._image_size(image), self.scale) for image, _mask in self.pairs]
+        if patches_per_image <= 0:
+            # 자동: 이미지 면적 ÷ 패치 면적 (3500×1504, 512 → 이미지당 20개 = 한 epoch에 이미지 전체를 한 번 본 셈)
+            area = max(w * h for w, h in self._sizes)
+            patches_per_image = max(1, min(64, int(np.ceil(area / (patch_size * patch_size)))))
+        self.patches_per_image = int(patches_per_image)
+        if not self.is_train:
+            # 검증은 겹치지 않는 고정 타일 (마지막 타일만 끝에 맞춰 조금 겹친다)
+            self.tiles = [(index, x, y) for index, (w, h) in enumerate(self._sizes)
+                          for y in patch_origins(h, patch_size, patch_size)
+                          for x in patch_origins(w, patch_size, patch_size)]
+        print(f"   패치 학습: {patch_size}×{patch_size}"
+              + (f", 배율 {self.scale:.0%}" if self.scale != 1 else ", 원본 해상도") + ", "
+              + (f"이미지당 {self.patches_per_image}개 (결함 중심 {self.defect_ratio:.0%})" if self.is_train
+                 else f"검증 타일 {len(self.tiles)}개"))
+
+    @staticmethod
+    def _image_size(path):
+        with Image.open(path) as image:
+            return image.size
+
+    def __len__(self) -> int:
+        return len(self.pairs) * self.patches_per_image if self.is_train else len(self.tiles)
+
+    def _load_native(self, index: int):
+        """원본 해상도 이미지·마스크(없으면 전부 배경)와 결함 픽셀 위치 표본(최대 2만 개)."""
+        img_path, mask_path = self.pairs[index]
+        cached = self._native.get(img_path)
+        if cached is not None:
+            self._native.move_to_end(img_path)
+            return cached
+        image = read_image(img_path, self.in_channels)
+        width, height = image.shape[1], image.shape[0]
+        if mask_path is None:
+            mask = np.zeros((height, width), np.uint8)
+        else:
+            with Image.open(mask_path) as source:
+                if source.mode not in ("P", "L", "I", "I;16"):
+                    raise ValueError(f"정답 마스크는 클래스 인덱스 이미지 필요 (팔레트/L/I): {mask_path}")
+                if source.size != (width, height):
+                    raise ValueError(f"이미지/마스크 원본 크기 불일치: {img_path} {(width, height)}, "
+                                     f"{mask_path} {source.size}")
+                mask = np.asarray(source)
+                mask = mask.astype(np.uint8) if mask.max(initial=0) <= 255 else mask.astype(np.uint16)
+        if self.scale != 1:
+            target_w, target_h = scaled_size(width, height, self.scale)
+            image = scale_image(image, (target_h, target_w), self.interpolation)  # 1px 크랙도 옅은 선으로 남는다
+            mask = resize_label_mask(mask, (target_h, target_w))  # 얇은 흠집·작은 점이 사라지지 않게
+        foreground = np.flatnonzero((mask > 0) & (mask != 255))
+        if foreground.size > 20000:
+            foreground = foreground[np.random.default_rng(index).choice(foreground.size, 20000, replace=False)]
+        entry = (image, mask, foreground.astype(np.int64))
+        size = image.nbytes + mask.nbytes + entry[2].nbytes
+        if size <= self._native_limit:
+            while self._native and self._native_bytes + size > self._native_limit:
+                _, dropped = self._native.popitem(last=False)
+                self._native_bytes -= sum(part.nbytes for part in dropped)
+            self._native[img_path] = entry
+            self._native_bytes += size
+        return entry
+
+    def _origin(self, width, height, foreground):
+        """학습 패치 왼쪽 위. 결함 중심이면 결함 픽셀이 패치 안 임의 위치에 오게 (항상 가운데면 위치를 외운다)."""
+        patch = self.patch_size
+        if foreground.size and random.random() < self.defect_ratio:
+            pixel = int(foreground[random.randrange(foreground.size)])
+            y, x = divmod(pixel, width)
+            left = x - random.randrange(patch)
+            top = y - random.randrange(patch)
+        else:
+            left = random.randrange(max(1, width - patch + 1))
+            top = random.randrange(max(1, height - patch + 1))
+        return (min(max(0, left), max(0, width - patch)), min(max(0, top), max(0, height - patch)))
+
+    def _crop(self, image, mask, left, top):
+        """패치 하나. 이미지보다 크면 이미지 0, 마스크 255(학습 제외)로 채운다."""
+        patch = self.patch_size
+        piece_image = image[top:top + patch, left:left + patch]
+        piece_mask = mask[top:top + patch, left:left + patch]
+        if piece_mask.shape != (patch, patch):
+            padded_image = np.zeros((patch, patch) + image.shape[2:], image.dtype)
+            padded_mask = np.full((patch, patch), 255, mask.dtype)
+            padded_image[:piece_image.shape[0], :piece_image.shape[1]] = piece_image
+            padded_mask[:piece_mask.shape[0], :piece_mask.shape[1]] = piece_mask
+            piece_image, piece_mask = padded_image, padded_mask
+        return np.ascontiguousarray(piece_image), np.ascontiguousarray(piece_mask)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.is_train:
+            index = idx // self.patches_per_image
+            image, mask, foreground = self._load_native(index)
+            left, top = self._origin(image.shape[1], image.shape[0], foreground)
+        else:
+            index, left, top = self.tiles[idx]
+            image, mask, _foreground = self._load_native(index)
+        piece_image, piece_mask = self._crop(image, mask, left, top)
+        return self._augment_to_tensors(Image.fromarray(piece_image), Image.fromarray(piece_mask),
+                                        self.pairs[index][1])
+
+    def class_pixel_counts(self, num_classes: int) -> List[int]:
+        """원본 해상도 마스크의 클래스별 픽셀 수 (패치 학습은 줄이지 않으므로 원본 기준)."""
+        counts = np.zeros(num_classes, dtype=np.int64)
+        for index in range(len(self.pairs)):
+            mask = self._load_native(index)[1]
+            values = np.bincount(mask[mask != 255].ravel().astype(np.int64), minlength=num_classes)
+            if values.size > num_classes:
+                raise ValueError(f"정답 마스크 클래스 범위 오류: {self.pairs[index][1]}")
+            counts += values
+        return counts.tolist()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -869,9 +1079,15 @@ def create_segmentation_loaders(
     color_jitter: float = 0.0,
     num_classes: Optional[int] = None,
     pin_memory: bool = False,
+    patch_size: int = 0,
+    patches_per_image: int = 0,
+    patch_scale: float = 1.0,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Segmentation 데이터 로더 생성
+
+    patch_size > 0이면 패치 학습(PatchSegmentationDataset). input_size는 무시하고 패치 크기를 쓴다.
+    patch_scale < 1이면 이미지를 그 배율로 줄인 뒤 자른다 (1 = 원본 해상도).
 
     필요 구조:
         data_root/images/train/, data_root/images/val/
@@ -883,24 +1099,31 @@ def create_segmentation_loaders(
     Returns:
         train_loader, val_loader
     """
-    train_dataset = SegmentationDataset(
+    if patch_size:
+        common = {"patch_size": int(patch_size), "patches_per_image": int(patches_per_image),
+                  "scale": float(patch_scale)}
+        dataset_type = PatchSegmentationDataset
+    else:
+        common = {"input_size": input_size}
+        dataset_type = SegmentationDataset
+    train_dataset = dataset_type(
         img_dir=os.path.join(data_root, "images", "train"),
         mask_dir=os.path.join(data_root, "masks", "train"),
-        input_size=input_size,
         in_channels=in_channels,
         is_train=True,
         flip_prob=flip_prob,
         rotation=rotation,
         color_jitter=color_jitter,
         num_classes=num_classes,
+        **common,
     )
-    val_dataset = SegmentationDataset(
+    val_dataset = dataset_type(
         img_dir=os.path.join(data_root, "images", "val"),
         mask_dir=os.path.join(data_root, "masks", "val"),
-        input_size=input_size,
         in_channels=in_channels,
         is_train=False,
         num_classes=num_classes,
+        **common,
     )
 
     loader_options = _loader_runtime_options(num_workers, pin_memory)

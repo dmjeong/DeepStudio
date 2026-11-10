@@ -27,7 +27,7 @@ from PySide6.QtGui import QFont, QTextCursor
 from core.paths import ensure_python_path
 ensure_python_path()
 
-from export_onnx import export_checkpoint
+from export_onnx import deployment_preview, export_checkpoint
 from core.project import ProjectData
 
 
@@ -40,18 +40,30 @@ class ExportWorker(QThread):
 
     def __init__(self, checkpoint_path, output_path, opset_version,
                  dynamic_batch, simplify, verify, parent=None, *, sam2_model_id="",
-                 validation_dir=None, allow_precision_fallback=False, encryption_key_path=None):
+                 validation_dir=None, allow_precision_fallback=False, encryption_key_path=None, overrides=None,
+                 merge_with=""):
         super().__init__(parent)
         self.checkpoint_path = checkpoint_path
         self.output_path = output_path
         self.options = dict(opset_version=opset_version, dynamic_batch=dynamic_batch,
                             simplify=simplify, verify=verify, validation_dir=validation_dir,
                             allow_precision_fallback=allow_precision_fallback,
-                            encryption_key_path=encryption_key_path)
+                            encryption_key_path=encryption_key_path, overrides=overrides)
         self.sam2_model_id = sam2_model_id
+        self.merge_with = merge_with  # 표면 결함 모델: 이 체크포인트(칩 상태)와 합쳐 ONNX 하나로
 
     def run(self):
         try:
+            if self.merge_with:
+                from merge_segmenters import export_merged
+                region = (self.options.get("overrides") or {}).get("region_size")
+                result = export_merged(self.checkpoint_path, self.merge_with, self.output_path, region=region,
+                                       opset_version=self.options["opset_version"], verify=self.options["verify"],
+                                       log=self.log.emit)
+                result.update(verification="passed" if self.options["verify"] else "skipped", cpp_supported=True,
+                              file_size_mb=os.path.getsize(result["output_path"]) / (1024 * 1024), merged=True)
+                self.completed.emit(result)
+                return
             result = export_checkpoint(self.checkpoint_path, self.output_path,
                                        log=self.log.emit, sam2_model_id=self.sam2_model_id,
                                        **self.options)
@@ -108,6 +120,57 @@ class ExportWidget(QWidget):
         out_browse.clicked.connect(self._browse_output)
         out_row.addWidget(out_browse)
         input_layout.addRow("출력 경로:", out_row)
+
+        # C++ 배포 안내: 패치 학습 모델의 판정 영역(고정 입력)과 함께 담길 판정 기준
+        self.region_row = QWidget()
+        region_layout = QHBoxLayout(self.region_row)
+        region_layout.setContentsMargins(0, 0, 0, 0)
+        self.region_w, self.region_h = QSpinBox(), QSpinBox()
+        for spin, name in ((self.region_w, "가로"), (self.region_h, "세로")):
+            spin.setRange(0, 65536)
+            spin.setSpecialValueText("입력 필요")  # 0 = 아직 정하지 않음 (예전 체크포인트)
+            spin.setSuffix(" px")
+            spin.setAccessibleName(f"판정 영역 {name}")
+        region_layout.addWidget(self.region_w)
+        region_layout.addWidget(QLabel("×"))
+        region_layout.addWidget(self.region_h)
+        region_layout.addStretch(1)
+        self.region_row.setToolTip("C++ SDK에 넣을 영상(판정 영역) 크기. 이 크기 전체를 한 번에 추론하는 고정 입력으로 내보냅니다.\n"
+                                   "기본값은 학습 영상 크기입니다. 설비에서 넘기는 영상 크기와 같아야 합니다.")
+        input_layout.addRow("판정 영역:", self.region_row)
+        # 두 분할 모델 합치기: 칩 상태(위 체크포인트) + 표면 결함(우선) → ONNX 하나, 설비는 Segment 한 번
+        self.merge_check = QCheckBox("표면 결함 모델과 합쳐 파일 하나로")
+        self.merge_check.setToolTip("위 체크포인트(예: 칩 상태 shift·double·flip)와 표면 결함 모델(crack·FM)을 ONNX 하나로 합칩니다.\n"
+                                    "표면 결함이 있는 픽셀은 표면 모델, 나머지는 위 모델의 판정을 씁니다. 두 모델의 판정 기준도 함께 담깁니다.\n"
+                                    "두 모델 모두 패치 학습(배율 100%·50%·25%) 모델이어야 합니다.")
+        merge_row = QWidget()
+        merge_layout = QHBoxLayout(merge_row)
+        merge_layout.setContentsMargins(0, 0, 0, 0)
+        self.merge_edit = QLineEdit()
+        self.merge_edit.setPlaceholderText("표면 결함 모델 체크포인트 (.pt) — 결함이 겹치면 이쪽이 우선")
+        self.merge_edit.setEnabled(False)
+        merge_browse = QPushButton("찾아보기...")
+        merge_browse.setEnabled(False)
+        merge_browse.clicked.connect(self._browse_merge)
+        self.merge_check.toggled.connect(self.merge_edit.setEnabled)
+        self.merge_check.toggled.connect(merge_browse.setEnabled)
+        merge_layout.addWidget(self.merge_check)
+        merge_layout.addWidget(self.merge_edit, 1)
+        merge_layout.addWidget(merge_browse)
+        input_layout.addRow("모델 합치기:", merge_row)
+        self.deploy_info = QLabel()
+        self.deploy_info.setWordWrap(True)
+        self.deploy_info.setStyleSheet("font-size: 11px;")
+        input_layout.addRow("C++ 배포:", self.deploy_info)
+        self._deploy_preview = {}
+        self._show_deploy_preview()
+        self.ckpt_edit.editingFinished.connect(self._refresh_deploy_preview)
+        self.ckpt_edit.textChanged.connect(lambda _text: self._preview_timer.start())
+        from PySide6.QtCore import QTimer
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(400)
+        self._preview_timer.timeout.connect(self._refresh_deploy_preview)
 
         layout.addWidget(input_group)
 
@@ -257,6 +320,47 @@ class ExportWidget(QWidget):
             os.path.join(export_dir, f"model_{project.task}" + (".dvsenc" if self.encrypt_check.isChecked() else ".onnx"))
         )
 
+    def _refresh_deploy_preview(self):
+        path = self.ckpt_edit.text().strip()
+        self._deploy_preview = deployment_preview(path) if path and os.path.isfile(path) else {}
+        self._show_deploy_preview()
+
+    def _show_deploy_preview(self):
+        """체크포인트를 고르면: 패치 학습 모델은 판정 영역 입력을 보이고, 함께 담길 판정 기준을 알린다."""
+        preview = self._deploy_preview
+        patch = bool(preview.get("patch")) and not preview.get("vit")
+        self.region_row.setVisible(patch)
+        lines = []
+        if patch:
+            region = preview.get("region") or [0, 0]
+            self.region_w.setValue(int(region[0]))
+            self.region_h.setValue(int(region[1]))
+            scale = preview.get("scale", 1.0)
+            lines.append("패치 학습 모델: 판정 영역 전체를 한 번에 넣는 고정 입력으로 내보냅니다"
+                         + ("" if scale == 1 else f" (배율 {scale:.0%})")
+                         + (". 학습 영상 크기를 기본으로 채웠습니다." if region[0] else
+                            ". <b>판정 영역 크기를 입력하세요</b> — 설비에서 넘기는 영상 크기"
+                            "(예전 체크포인트라 학습 영상 크기 기록이 없습니다)."))
+        elif preview.get("patch") and preview.get("vit"):
+            lines.append("ViT 패치 모델은 타일 추론이 필요해 C++ SDK에서는 쓸 수 없습니다(데스크톱 추론 전용).")
+        if preview.get("task") == "segment":
+            rules = preview.get("rules")
+            if preview.get("rules_error"):
+                lines.append(f"<b>판정 기준 오류</b>: {preview['rules_error']}")
+            elif rules:
+                parts = [f"기본 면적 ≥ {rules['min_area']}px · 점수 ≥ {rules['min_score']:.2f}"]
+                parts += [f"{c['class_name']} 면적 ≥ {c['min_area']}px · 점수 ≥ {c['min_score']:.2f}" for c in rules["classes"]]
+                lines.append("판정 기준 포함 → C++ SDK가 기준 미달 덩어리를 마스크에서 지웁니다: " + " | ".join(parts))
+            else:
+                lines.append("판정 기준 없음: 추론 화면에서 기준을 정하고 '모델에 저장'하면 함께 담깁니다.")
+        self.deploy_info.setText("<br>".join(lines) or "체크포인트를 고르면 C++ 배포 정보를 보여 줍니다.")
+        self.deploy_info.setVisible(bool(lines))
+
+    def _browse_merge(self):
+        filepath, _ = QFileDialog.getOpenFileName(self, "표면 결함 모델 선택", "", "PyTorch Checkpoint (*.pt *.pth)")
+        if filepath:
+            self.merge_edit.setText(filepath)
+
     def _browse_checkpoint(self):
         filepath, _ = QFileDialog.getOpenFileName(
             self, "체크포인트 선택", "",
@@ -338,6 +442,17 @@ class ExportWidget(QWidget):
         except ValueError as exc:
             QMessageBox.warning(self, "체크포인트 확인", str(exc))
             return
+        if not self.region_row.isHidden() and not (self.region_w.value() and self.region_h.value()):
+            QMessageBox.warning(self, "판정 영역", "판정 영역 크기(설비에서 넘기는 영상의 가로×세로 px)를 입력하세요.")
+            return
+        merge_with = self.merge_edit.text().strip() if self.merge_check.isChecked() else ""
+        if self.merge_check.isChecked():
+            if not merge_with or not os.path.isfile(merge_with):
+                QMessageBox.warning(self, "모델 합치기", "합칠 표면 결함 모델 체크포인트를 선택하세요.")
+                return
+            if encryption_key_path:
+                QMessageBox.warning(self, "모델 합치기", "합친 모델은 아직 암호화 내보내기를 지원하지 않습니다. 암호화를 끄세요.")
+                return
 
         validation_dir = None
         if self.dataset_verify_check.isChecked() and self.verify_check.isChecked():
@@ -360,6 +475,10 @@ class ExportWidget(QWidget):
             validation_dir=validation_dir,
             allow_precision_fallback=self.precision_check.isChecked(),
             encryption_key_path=encryption_key_path,
+            merge_with=merge_with,
+            overrides=({"region_size": [self.region_w.value(), self.region_h.value()]}
+                       if self.region_row.isVisible() or (self._deploy_preview.get("patch") and
+                                                          not self._deploy_preview.get("vit")) else None),
             sam2_model_id=(getattr(self.project.model, "model_id", "")
                            if self.project is not None and self.project.task == "segment" and
                            str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_") else ""),
@@ -416,6 +535,16 @@ class ExportWidget(QWidget):
 
     def _on_finished(self, result):
         status = "검증 통과" if result["verification"] == "passed" else "검증 건너뜀"
+        if result.get("merged"):
+            text = (f"두 모델 합치기 완료 ({status})\n\n모델: {result['output_path']}\n설정: {result['config_path']}\n"
+                    f"크기: {result['file_size_mb']:.1f} MB\n클래스: {', '.join(result['class_names'])}\n"
+                    f"입력: 판정 영역 {result['input_size'][1]}×{result['input_size'][0]} 한 번에\n"
+                    "설비는 지금처럼 Segment를 한 번 부르면 됩니다. 마스크의 클래스 번호는 위 순서입니다.")
+            if result.get("rules"):
+                text += "\n두 모델의 판정 기준이 함께 담겼습니다 (C++ SDK가 기준 미달 덩어리를 지움)."
+            self.log_text.append(text)
+            QMessageBox.information(self, "완료", text)
+            return
         text = (f"ONNX 내보내기 완료 ({status})\n\n"
                 f"모델: {result['output_path']}\n"
                 f"설정: {result.get('config_path') or '암호화 파일에 포함'}\n"

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -77,6 +77,12 @@ class AnnotationWorkspaceUI:
         restore.addWidget(discard)
         self.restore_bar.hide()
         layout.addWidget(self.restore_bar)
+        # 배경 없이 만든 분할 프로젝트: 0번 클래스는 '그리지 않은 픽셀'이라 칠해도 저장되지 않는다
+        self.background_warning = QLabel()
+        self.background_warning.setWordWrap(True)
+        self.background_warning.setStyleSheet("color: #E05555;")
+        self.background_warning.hide()
+        layout.addWidget(self.background_warning)
         properties = QGridLayout()
         properties.addWidget(QLabel("클래스"), 0, 0)
         self.class_combo = NoWheelComboBox()
@@ -90,6 +96,7 @@ class AnnotationWorkspaceUI:
             self.class_combo.addItem("학습 제외 영역 (255)", 255)
         if self.task == "segment" and len(self.names) > 1:
             self.class_combo.setCurrentIndex(1)
+        self._mark_background_slot(self.class_combo, label=True)
         properties.addWidget(self.class_combo, 0, 1)
         properties.setColumnStretch(1, 1)
         self.apply_class_button = QPushButton("선택에 적용")
@@ -236,6 +243,14 @@ class AnnotationWorkspaceUI:
         self.snap.toggled.connect(lambda v: setattr(self.view, "snap_enabled", v))
         self.view.selection_set_changed.connect(self._select_many)
         self.view.command.connect(self._command)
+        # F1~F12 = 그릴 수 있는 클래스 1~12번째 (숫자키 1~9와 같은 동작: 선택한 객체가 있으면 그 객체를 바꾸고,
+        # 없으면 다음에 그릴 클래스를 고른다). 분할은 0번(배경)을 건너뛰어 F1 = 1번 클래스.
+        self.class_key_shortcuts = []
+        for offset in range(12):
+            shortcut = QShortcut(QKeySequence(Qt.Key(Qt.Key.Key_F1.value + offset)), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(lambda offset=offset: self._command(f"class:{offset}"))
+            self.class_key_shortcuts.append(shortcut)
         self.view.zoom_requested.connect(self._zoom)
         self.class_combo.currentIndexChanged.connect(self._active_class)
         self.class_combo.activated.connect(self._class_picked)  # 사용자가 콤보에서 고를 때만
@@ -353,8 +368,9 @@ class AnnotationWorkspaceUI:
         self.annotation_visible.setChecked(True)
         self.annotation_visible.toggled.connect(self._set_annotation_visibility)
         display_layout.addWidget(self.annotation_visible)
+        self.box_labels = None
         if self.task == "detect":
-            labels = QCheckBox("박스 이름 표시 · 작은 박스는 선택 시")
+            self.box_labels = labels = QCheckBox("박스 이름 표시 · 작은 박스는 선택 시")
             labels.setChecked(True)
             labels.toggled.connect(self._set_label_visibility)
             display_layout.addWidget(labels)

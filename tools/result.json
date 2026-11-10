@@ -1,0 +1,742 @@
+{
+  "environment": {
+    "processor": "Intel(R) Xeon(R) w5-3425",
+    "logical_cpus": 24,
+    "threads": 8,
+    "platform": "Windows-11-10.0.26100-SP0",
+    "python": "3.14.7",
+    "packages": {
+      "onnxruntime": "1.29.0",
+      "numpy": "2.5.2",
+      "torch": "2.14.0+cu132"
+    },
+    "openvino_max_isa": "native"
+  },
+  "region": [
+    3100,
+    1500
+  ],
+  "accuracy_evaluated": false,
+  "records": [
+    {
+      "model": "unet_resnet18",
+      "head": "full",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 1298.52,
+      "runs_ms": [
+        1320.17,
+        1298.88,
+        1298.52,
+        1291.86,
+        1288.01
+      ]
+    },
+    {
+      "model": "unet_resnet18",
+      "head": "full",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 602.6,
+      "runs_ms": [
+        614.7,
+        612.75,
+        602.6,
+        566.49,
+        588.57
+      ]
+    },
+    {
+      "model": "unet_resnet18",
+      "head": "full",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 329.34,
+      "runs_ms": [
+        333.61,
+        327.06,
+        328.25,
+        329.34,
+        332.37
+      ]
+    },
+    {
+      "model": "unet_resnet18",
+      "head": "full",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 151.34,
+      "runs_ms": [
+        151.34,
+        151.06,
+        146.33,
+        156.46,
+        155.23
+      ]
+    },
+    {
+      "model": "unet_resnet18",
+      "head": "full",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 701.43,
+      "runs_ms": [
+        731.0,
+        701.43,
+        689.01,
+        712.28,
+        694.23
+      ]
+    },
+    {
+      "model": "unet_resnet18",
+      "head": "full",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 268.2,
+      "runs_ms": [
+        268.2,
+        269.7,
+        258.42,
+        269.05,
+        268.02
+      ]
+    },
+    {
+      "model": "unet_resnet18",
+      "head": "half",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 1188.86,
+      "runs_ms": [
+        1238.92,
+        1190.39,
+        1177.76,
+        1173.89,
+        1188.86
+      ]
+    },
+    {
+      "model": "unet_resnet18",
+      "head": "half",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 457.27,
+      "runs_ms": [
+        482.7,
+        430.34,
+        457.27,
+        461.03,
+        453.23
+      ]
+    },
+    {
+      "model": "unet_resnet18",
+      "head": "half",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 299.87,
+      "runs_ms": [
+        315.7,
+        299.87,
+        299.14,
+        297.57,
+        301.52
+      ]
+    },
+    {
+      "model": "unet_resnet18",
+      "head": "half",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 109.66,
+      "runs_ms": [
+        127.59,
+        105.25,
+        109.66,
+        104.7,
+        114.1
+      ]
+    },
+    {
+      "model": "unet_resnet18",
+      "head": "half",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 650.12,
+      "runs_ms": [
+        629.73,
+        650.12,
+        639.08,
+        689.26,
+        681.68
+      ]
+    },
+    {
+      "model": "unet_resnet18",
+      "head": "half",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 216.31,
+      "runs_ms": [
+        218.92,
+        186.02,
+        222.17,
+        216.31,
+        204.54
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "full",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 378.86,
+      "runs_ms": [
+        389.52,
+        368.6,
+        378.86,
+        378.48,
+        379.08
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "full",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 179.84,
+      "runs_ms": [
+        183.24,
+        181.04,
+        177.85,
+        179.84,
+        175.65
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "full",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 81.34,
+      "runs_ms": [
+        88.26,
+        82.82,
+        80.45,
+        81.12,
+        81.34
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "full",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 45.73,
+      "runs_ms": [
+        45.75,
+        41.11,
+        43.76,
+        46.03,
+        45.73
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "full",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 93.58,
+      "runs_ms": [
+        92.38,
+        97.3,
+        90.87,
+        93.58,
+        97.87
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "full",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 69.49,
+      "runs_ms": [
+        67.72,
+        66.58,
+        70.03,
+        69.49,
+        73.05
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "half",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 338.48,
+      "runs_ms": [
+        350.57,
+        331.93,
+        338.48,
+        340.43,
+        329.95
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "half",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 156.38,
+      "runs_ms": [
+        164.46,
+        155.8,
+        147.05,
+        156.38,
+        156.6
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "half",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 72.35,
+      "runs_ms": [
+        80.27,
+        73.5,
+        72.35,
+        70.9,
+        71.84
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "half",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 35.7,
+      "runs_ms": [
+        38.81,
+        35.42,
+        36.78,
+        35.7,
+        33.4
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "half",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 89.43,
+      "runs_ms": [
+        86.64,
+        87.32,
+        92.84,
+        89.43,
+        94.19
+      ]
+    },
+    {
+      "model": "unet_mobilenetv2",
+      "head": "half",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 60.15,
+      "runs_ms": [
+        59.66,
+        57.18,
+        62.45,
+        60.15,
+        65.5
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "full",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 152.79,
+      "runs_ms": [
+        158.48,
+        147.36,
+        153.71,
+        150.58,
+        152.79
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "full",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 135.35,
+      "runs_ms": [
+        140.04,
+        135.04,
+        133.17,
+        139.93,
+        135.35
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "full",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 38.26,
+      "runs_ms": [
+        46.37,
+        38.26,
+        39.98,
+        37.98,
+        37.13
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "full",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 34.76,
+      "runs_ms": [
+        36.48,
+        34.54,
+        34.33,
+        34.76,
+        35.01
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "full",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 54.28,
+      "runs_ms": [
+        52.47,
+        54.3,
+        54.28,
+        54.66,
+        51.91
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "full",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 48.56,
+      "runs_ms": [
+        48.56,
+        44.27,
+        47.37,
+        49.0,
+        48.67
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "half",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 116.48,
+      "runs_ms": [
+        122.21,
+        116.48,
+        116.28,
+        116.8,
+        116.22
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "half",
+      "case": "1x",
+      "input": [
+        3104,
+        1504
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 109.75,
+      "runs_ms": [
+        103.42,
+        109.76,
+        112.45,
+        109.75,
+        109.24
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "half",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 28.2,
+      "runs_ms": [
+        35.7,
+        28.25,
+        27.84,
+        28.2,
+        28.18
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "half",
+      "case": "0.5x",
+      "input": [
+        1568,
+        768
+      ],
+      "count": 1,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 25.89,
+      "runs_ms": [
+        27.17,
+        25.74,
+        25.51,
+        25.89,
+        26.73
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "half",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "fp32",
+      "runtime": "onnxruntime",
+      "median_ms": 48.91,
+      "runs_ms": [
+        46.78,
+        51.65,
+        48.88,
+        49.52,
+        48.91
+      ]
+    },
+    {
+      "model": "unet_lite",
+      "head": "half",
+      "case": "slots",
+      "input": [
+        192,
+        160
+      ],
+      "count": 96,
+      "precision": "int8",
+      "runtime": "onnxruntime",
+      "median_ms": 40.54,
+      "runs_ms": [
+        40.75,
+        39.89,
+        40.54,
+        40.6,
+        39.91
+      ]
+    }
+  ]
+}

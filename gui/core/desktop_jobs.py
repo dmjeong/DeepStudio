@@ -7,6 +7,39 @@ from PySide6.QtCore import QThread, Signal
 
 from core.job_manager import desktop_manager as desktop_manager
 
+FORCE_STOP_AFTER_SEC = 30.0  # 중지를 요청한 뒤 이 시간 안에 끝나지 않으면 멈춘 것으로 보고 강제로 끝낸다
+
+
+def force_stop(manager, job_id):
+    """멈춘 계산 프로세스(와 데이터 로더 자식 프로세스)를 끝내고 작업을 '취소'로 기록한다 (데스크톱 전용).
+
+    학습은 배치 사이에서 중지 요청을 확인한다. 그래도 끝나지 않으면 데이터 로더나 장치에서 멈춘 것이라
+    기다려도 끝나지 않는다. 결과 기록을 먼저 남겨 두면 작업 관리자가 '비정상 종료' 대신 '취소'로 정리한다.
+    """
+    import json
+    import psutil
+    process = getattr(manager, "process", None)
+    if process is None or process.poll() is not None:
+        return False
+    result = manager.directory(job_id) / "result.json"
+    if not result.exists():
+        result.write_text(json.dumps({"status": "cancelled", "error": "", "output": {},
+                                      "note": "중지 요청 후 응답이 없어 강제로 끝냈습니다"}, ensure_ascii=False),
+                          encoding="utf-8")
+    try:
+        parent = psutil.Process(process.pid)
+        tree = parent.children(recursive=True) + [parent]
+    except psutil.NoSuchProcess:
+        return False
+    for item in tree:
+        try:
+            item.kill()
+        except psutil.NoSuchProcess:
+            pass
+    psutil.wait_procs(tree, timeout=10)
+    return True
+
+
 class DesktopJob(QThread):
     event = Signal(str, object)
     failed = Signal(str)
@@ -17,6 +50,7 @@ class DesktopJob(QThread):
         self.kind, self.payload = kind, payload
         self.job_id = None
         self.cancelled = False
+        self.cancel_requested_at = None
         self.error = ""
         self.elapsed_sec = 0.0
 
@@ -32,9 +66,16 @@ class DesktopJob(QThread):
             job = manager.start(self.kind, self.payload)
             self.job_id = job["id"]
             offset = 0
+            import time
             while True:
                 if self.cancelled:
                     manager.cancel(self.job_id)
+                    if self.cancel_requested_at is None:
+                        self.cancel_requested_at = time.monotonic()
+                    elif time.monotonic() - self.cancel_requested_at > FORCE_STOP_AFTER_SEC:
+                        if force_stop(manager, self.job_id):
+                            self.event.emit("log_message", ["중지 요청 후 30초 동안 응답이 없어 학습 프로세스를 강제로 끝냈습니다."])
+                        self.cancel_requested_at = float("inf")   # 한 번만
                 view = manager.read(self.job_id, offset)
                 offset = view["offset"]
                 for item in view["events"]:

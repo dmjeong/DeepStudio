@@ -98,7 +98,7 @@ class SegmentationCanvas(DetectionCanvas):
             if key not in seen:
                 result.append(i)
                 seen.add(key)
-        for class_id in self.document.base_classes:
+        for class_id in self.document.base_classes_left():   # 지운 원본 층은 목록에서 빠진다
             if class_id != 0:
                 result.append(-int(class_id) - 2)
         return result

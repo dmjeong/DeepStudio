@@ -1,5 +1,5 @@
 """Review saved inference scores without changing model weights or raw results."""
-from dataclasses import asdict, replace
+from dataclasses import fields, replace
 from math import isfinite
 from pathlib import Path, PureWindowsPath
 
@@ -102,8 +102,12 @@ def review_filter_options(rows, *, project=None, class_names=()):
     return {"classes": classes, "decisions": decisions}
 
 
-def review_record(record, threshold=None):
-    """Return an effective display copy; status=ok means execution succeeded, not OK."""
+def review_record(record, threshold=None, segment_rules=None):
+    """Return an effective display copy; status=ok means execution succeeded, not OK.
+
+    Segmentation records that carry a defect list (desktop defect analysis) are judged OK/NG
+    by their saved rules or segment_rules = {"min_area", "min_score"} without re-running the model.
+    """
     if threshold is not None and not finite(threshold):
         raise ValueError("임계값은 유한한 숫자여야 합니다")
     row = dict(record)
@@ -131,6 +135,13 @@ def review_record(record, threshold=None):
         row["decision"] = "ERROR"
     elif row.get("task") == "classify":
         row["decision"] = classification_decision(row)
+    elif row.get("task") == "segment" and "defects" in (row.get("details") or {}):
+        from core.segment_defects import judge, summary_text
+        verdict = judge(row["details"], segment_rules)
+        row.update(decision=verdict["decision"], summary=summary_text(verdict),
+                   color="#E05555" if verdict["decision"] == "NG" else "#34C759",
+                   display_score=verdict["max_score"],
+                   score_description="판정 기준을 통과한 결함 중 가장 높은 점수(결함 픽셀의 평균 클래스 확률, 0~1)")
     elif row.get("task") == "anomaly" and finite(row.get("score")):
         value = threshold if threshold is not None else row.get("threshold")
         row["threshold"] = float(value) if finite(value) else None
@@ -145,10 +156,18 @@ def review_record(record, threshold=None):
     return row
 
 
-def effective_result(result, threshold=None):
-    if threshold is None:
+def result_record(result):
+    """결과 객체 → 기록 dict (얕은 복사). asdict는 결함 목록·혼동 행렬까지 깊은 복사해 배치에서 느리다.
+
+    review_record는 details를 바꾸지 않으므로 얕은 복사로 충분하다.
+    """
+    return {field.name: getattr(result, field.name) for field in fields(result)}
+
+
+def effective_result(result, threshold=None, segment_rules=None):
+    if threshold is None and segment_rules is None:
         return result
-    row = review_record(asdict(result), threshold)
+    row = review_record(result_record(result), threshold, segment_rules)
     changes = {key: row[key] for key in ("status", "summary", "color", "threshold")}
     return replace(result, **changes) if any(getattr(result, key) != value for key, value in changes.items()) else result
 

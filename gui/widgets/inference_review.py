@@ -1,13 +1,13 @@
 """Sortable inference records with stable image identity and review-only thresholds."""
-from dataclasses import asdict
 
-from PySide6.QtCore import Qt, Signal, QSortFilterProxyModel, QSignalBlocker
+from PySide6.QtCore import Qt, Signal, QSortFilterProxyModel, QSignalBlocker, QSettings, QTimer
 from PySide6.QtGui import QStandardItem, QStandardItemModel, QColor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QComboBox, QCheckBox, QPushButton, QDoubleSpinBox, QSlider, QTableView, QAbstractItemView, QHeaderView, QSizePolicy,
+    QComboBox, QCheckBox, QPushButton, QDoubleSpinBox, QSpinBox, QSlider, QTableView, QAbstractItemView, QHeaderView, QSizePolicy,
     QGroupBox, QTableWidget, QTableWidgetItem)
 from core.inference_review import (review_record, review_filter_options, source_class, finite,
-                                   normalized_patchcore, review_score)
+                                   normalized_patchcore, result_record)
+from core.segment_defects import batch_truth_summary, judge, load_model_rules, rules_of, save_model_rules
 from core.inference_timing import format_result_timing, format_runtime_stages
 
 
@@ -84,6 +84,65 @@ class InferenceReview(QWidget):
         slider_row.addWidget(self.threshold_note, 2)
         box.addLayout(slider_row)
         layout.addWidget(self.threshold_panel)
+        # ── 분할 판정 기준: 결함 목록을 다시 걸러 OK/NG를 정한다 (다시 추론하지 않음) ──
+        self.segment_panel = QWidget()
+        segment = QVBoxLayout(self.segment_panel)
+        segment.setContentsMargins(0, 0, 0, 0)
+        segment.setSpacing(3)
+        rules = QHBoxLayout()
+        rules.addWidget(QLabel("판정 기준  결함 면적 ≥"))
+        self.min_area = QSpinBox()
+        self.min_area.setRange(1, 100_000_000)
+        self.min_area.setSuffix(" px")
+        self.min_area.setKeyboardTracking(False)
+        self.min_area.setAccessibleName("분할 결함 최소 면적")
+        self.min_area.setToolTip("이 면적(원본 픽셀)보다 작은 예측 덩어리는 결함으로 세지 않습니다(노이즈 제거).")
+        rules.addWidget(self.min_area)
+        rules.addWidget(QLabel("점수 ≥"))
+        self.min_score = QDoubleSpinBox()
+        self.min_score.setRange(0, 1)
+        self.min_score.setDecimals(2)
+        self.min_score.setSingleStep(.05)
+        self.min_score.setKeyboardTracking(False)
+        self.min_score.setAccessibleName("분할 결함 최소 점수")
+        self.min_score.setToolTip("결함 점수 = 결함 픽셀에서 그 클래스 확률의 평균(0~1). 낮은 확신의 결함을 뺍니다.")
+        rules.addWidget(self.min_score)
+        self.class_rules_btn = QPushButton("클래스별…")
+        self.class_rules_btn.setToolTip("crack은 점수 0.85, fm은 0.80처럼 클래스마다 다른 기준을 씁니다.")
+        self.zero_alarm_btn = QPushButton("오검출 0 기준 찾기…")
+        self.zero_alarm_btn.setToolTip("정상 이미지 폴더를 추론한 뒤 누르세요. 정상에서는 결함이 하나도 남지 않는\n"
+                                       "클래스별 기준을 찾고, 라벨 결과가 있으면 검출률도 함께 보여 줍니다.")
+        self.save_rules_btn = QPushButton("모델에 저장")
+        self.save_rules_btn.setToolTip("지금 기준을 모델 옆(best.rules.json)에 저장합니다.\n"
+                                       "ONNX로 내보내면 함께 담기고, C++ SDK가 같은 기준으로 마스크를 정리합니다.")
+        rules.addWidget(self.class_rules_btn)
+        rules.addWidget(self.zero_alarm_btn)
+        rules.addWidget(self.save_rules_btn)
+        rules.addStretch(1)
+        segment.addLayout(rules)
+        self.rules_state = QLabel()
+        self.rules_state.setWordWrap(True)
+        self.rules_state.setStyleSheet("font-size: 11px;")
+        segment.addWidget(self.rules_state)
+        self.segment_summary = QLabel()
+        self.segment_summary.setWordWrap(True)
+        self.segment_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.segment_summary.setStyleSheet("font-size: 11px; color: #B7C9E2;")
+        segment.addWidget(self.segment_summary)
+        layout.addWidget(self.segment_panel)
+        self.segment_panel.hide()
+        settings = QSettings("DeepVisionStudio", "Inference")
+        self.per_class = {}       # 클래스별 판정 기준 {이름: {"min_area", "min_score"}}
+        self.model_path = None    # 판정 기준을 함께 저장할 분할 모델 (best.pt)
+        self._saved_rules = None  # 모델 옆에 저장된 기준 (없으면 None)
+        try:
+            self.min_area.setValue(int(settings.value("segment/min_area", 1)))
+            self.min_score.setValue(float(settings.value("segment/min_score", 0.0)))
+            import json
+            self.per_class = rules_of({}, {"per_class": json.loads(settings.value("segment/per_class", "{}") or "{}")}
+                                      ).get("per_class", {})
+        except (TypeError, ValueError):
+            pass
         filters = QHBoxLayout()
         self.class_filter = QComboBox()
         self.class_filter.addItem("전체 클래스", "")
@@ -154,7 +213,98 @@ class InferenceReview(QWidget):
         self.value.valueChanged.connect(self._threshold_changed)
         self.slider.valueChanged.connect(self._slider_changed)
         self.reset.clicked.connect(lambda: self.override.setChecked(False))
+        self.min_area.valueChanged.connect(self._segment_rules_changed)
+        self.min_score.valueChanged.connect(self._segment_rules_changed)
+        self.class_rules_btn.clicked.connect(self._edit_class_rules)
+        self.zero_alarm_btn.clicked.connect(self._find_zero_alarm_rules)
+        self.save_rules_btn.clicked.connect(self.save_rules_to_model)
+        # 배치 요약(OK/NG 수·정답 비교)은 결과가 연달아 들어올 때 한 번만 다시 계산한다 (이미지마다 전체를 다시 세지 않음).
+        self._segment_timer = QTimer(self)
+        self._segment_timer.setSingleShot(True)
+        self._segment_timer.setInterval(150)
+        self._segment_timer.timeout.connect(self._sync_segment)
         self.set_saved_threshold(None)
+
+    @property
+    def segment_rules(self):
+        """분할 결함 판정 기준. 다음 추론에도 같은 기준을 쓰고, 지난 결과는 이 기준으로 다시 판정한다."""
+        return rules_of({}, {"min_area": self.min_area.value(), "min_score": round(self.min_score.value(), 4),
+                             "per_class": self.per_class})
+
+    def _segment_rules_changed(self, *_):
+        import json
+        settings = QSettings("DeepVisionStudio", "Inference")
+        settings.setValue("segment/min_area", self.min_area.value())
+        settings.setValue("segment/min_score", self.min_score.value())
+        settings.setValue("segment/per_class", json.dumps(self.per_class, ensure_ascii=False))
+        self._show_rules_state()
+        self._threshold_changed()
+
+    def set_rules(self, rules):
+        """기준 전체(기본 + 클래스별)를 한 번에 바꾸고 결과를 한 번만 다시 판정한다."""
+        rules = rules_of({}, rules)
+        with QSignalBlocker(self.min_area), QSignalBlocker(self.min_score):
+            self.min_area.setValue(rules["min_area"])
+            self.min_score.setValue(rules["min_score"])
+        self.per_class = dict(rules.get("per_class") or {})
+        self._segment_rules_changed()
+
+    def set_model_path(self, path):
+        """분할 모델을 불러오면: 모델 옆에 저장된 기준이 있으면 그것으로 시작한다(내보내기·C++과 같은 기준)."""
+        self.model_path = path or None
+        self._saved_rules = load_model_rules(path) if path else None
+        if self._saved_rules is not None:
+            self.set_rules(self._saved_rules)
+        self._show_rules_state()
+
+    def save_rules_to_model(self):
+        if not self.model_path:
+            return None
+        target = save_model_rules(self.model_path, self.segment_rules)
+        self._saved_rules = self.segment_rules
+        self._show_rules_state()
+        return target
+
+    def _show_rules_state(self):
+        per_class = " · ".join(f"{name} 면적≥{rule['min_area']} 점수≥{rule['min_score']:.2f}"
+                               for name, rule in sorted(self.per_class.items()))
+        text = f"클래스별: {per_class}" if per_class else "모든 클래스에 같은 기준"
+        if self.model_path:
+            same = self._saved_rules == self.segment_rules
+            text += (" — 모델에 저장됨 (내보내기에 포함)" if same else
+                     " — <b>모델에 저장 안 됨</b>: 내보내기·C++에는 저장된 기준이 들어갑니다" if self._saved_rules else
+                     " — 모델에 저장 안 됨: 내보내기에는 판정 기준 없이 들어갑니다")
+            self.save_rules_btn.setEnabled(not same)
+        else:
+            self.save_rules_btn.setEnabled(False)
+        self.rules_state.setText(text)
+
+    def _segment_details(self):
+        return [r.details for r in self.raw.values() if r.task == "segment" and "defects" in (r.details or {})]
+
+    def _edit_class_rules(self):
+        from widgets.judgement_rules_dialog import ClassRulesDialog
+        details = self._segment_details()
+        names = (details[0].get("class_names") if details else None) or self.class_names
+        dialog = ClassRulesDialog(names, self.segment_rules, self)
+        if dialog.exec() == 1:  # 확인
+            self.set_rules(dialog.result_rules())
+
+    def _find_zero_alarm_rules(self):
+        from PySide6.QtWidgets import QMessageBox
+        from widgets.judgement_rules_dialog import ZeroAlarmDialog
+        details = self._segment_details()
+        if not details:
+            QMessageBox.information(self, "오검출 0 기준 찾기",
+                                    "먼저 정상 이미지 폴더를 분할 모델로 추론하세요(라벨 필요 없음).\n"
+                                    "라벨 있는 검증 데이터도 평가해 두면 기준을 올릴 때 놓치는 결함 수를 함께 봅니다.")
+            return
+        dialog = ZeroAlarmDialog(details, self.segment_rules, can_save=bool(self.model_path), parent=self)
+        code = dialog.exec()
+        if code in (1, ZeroAlarmDialog.SAVE):  # 적용 / 적용하고 저장
+            self.set_rules(dialog.result_rules())
+            if code == ZeroAlarmDialog.SAVE:
+                self.save_rules_to_model()
 
     @property
     def threshold(self):
@@ -180,6 +330,7 @@ class InferenceReview(QWidget):
                 self._add_path(path)
         self._update_filters()
         self._sync_threshold()
+        self._sync_segment()
         self._filter()
         self._update_segmentation()
 
@@ -188,6 +339,7 @@ class InferenceReview(QWidget):
         self._update_filters()
         self._sync_threshold()
         self._update_segmentation()
+        self._sync_segment()
 
     def _add_path(self, path):
         if path in self.rows:
@@ -210,9 +362,9 @@ class InferenceReview(QWidget):
         try:
             self._add_path(result.image_path)
             row = self.rows[result.image_path]
-            record = review_record(asdict(result), self.threshold)
+            record = review_record(result_record(result), self.threshold, self.segment_rules)
             values = {2: record["source_class"] or source_class(result.image_path, self.project) or "—",
-                      4: record["decision"], 5: review_score(asdict(result)),
+                      4: record["decision"], 5: record["display_score"],
                       6: round(result.inference_sec * 1000, 3) if finite(result.inference_sec) else None}
             evaluation = (result.details or {}).get("segmentation_evaluation") or {}
             evaluated = evaluation.get("status") == "ok"
@@ -283,6 +435,28 @@ class InferenceReview(QWidget):
                     item.setToolTip("정답 픽셀 없음 — 평균에서 제외")
                 self.segmentation_table.setItem(index, col, item)
 
+
+    def _sync_segment(self):
+        """분할 결과가 있으면 판정 기준과 배치 요약(OK/NG 수, 정답 비교)을 보여준다."""
+        results = [r for r in self.raw.values() if r.task == "segment" and "defects" in (r.details or {})]
+        self.segment_panel.setVisible(bool(results) or getattr(self.project, "task", "") == "segment")
+        if not results:
+            self.segment_summary.setText("추론하면 결함마다 클래스 · 위치 · 면적 · 점수를 보고 OK/NG를 판정합니다.")
+            return
+        decisions = [judge(r.details, self.segment_rules)["decision"] for r in results]
+        text = f"NG {decisions.count('NG')}장 · OK {decisions.count('OK')}장"
+        names = (results[0].details or {}).get("class_names") or self.class_names
+        summary = batch_truth_summary([r.details for r in results], self.segment_rules, names)
+        if summary:
+            classes = " · ".join(f"{row['class_name']} {row['iou']:.2f}" for row in summary["per_class"])
+            miou = "—" if summary["miou"] is None else f"{summary['miou']:.3f}"
+            text += (f"\n정답 비교 {summary['images']}장: mIoU {miou} ({classes or '결함 없음'})"
+                     f"\n결함 검출 {summary['found']}/{summary['truth_defects']} · 놓침 {summary['missed']}"
+                     f" · 오검출 {summary['false_positives']} · OK/NG 판정 일치 {summary['decision_accuracy']:.0%}")
+        else:
+            text += "\n정답 비교: 데이터셋 이미지(정답 마스크가 있는 이미지)를 추론하면 IoU와 놓침·오검출을 계산합니다."
+        self.segment_summary.setText(text)
+
     def _update_filters(self):
         rows = []
         for path in self.paths:
@@ -308,7 +482,7 @@ class InferenceReview(QWidget):
     def _sync_threshold(self):
         results = [r for r in self.raw.values() if r.task == "anomaly"]
         scored = [r for r in results if r.status != "error" and finite(r.score)]
-        normalized = self.score_normalized or (bool(scored) and all(normalized_patchcore(asdict(r)) for r in scored))
+        normalized = self.score_normalized or (bool(scored) and all(normalized_patchcore(result_record(r)) for r in scored))
         with QSignalBlocker(self.value):
             self.value.setRange(0, 1) if normalized else self.value.setRange(-1e12, 1e12)
         self.threshold_panel.setVisible(bool(results) or getattr(self.project, "task", "") == "anomaly" or self.saved_threshold is not None)
@@ -340,6 +514,7 @@ class InferenceReview(QWidget):
         self._update_filters()
         self._sync_threshold()
         self._count()
+        self._sync_segment()
         self.threshold_changed.emit()
 
     def _slider_changed(self, value):

@@ -12,7 +12,8 @@ from PySide6.QtGui import QTextCursor
 from core.project import ProjectData, ProjectManager
 from core.qt_training import TrainWorker, PatchCoreWorker
 from core.training_modes import (training_engine_name, training_capabilities, MODE_LABELS,
-                                 BUILTIN_ADAPTER_IDS, UPSTREAM_ADAPTER_IDS, SAM2_ADAPTER_IDS)
+                                 BUILTIN_ADAPTER_IDS, BUILTIN_SCRATCH_ONLY_IDS, UPSTREAM_ADAPTER_IDS,
+                                 SAM2_ADAPTER_IDS)
 from core.training_progress import remaining_seconds, run_description
 from core.training_time import format_hms
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
@@ -103,8 +104,13 @@ class TrainingWidget(TrainingForm, QWidget):
         """Only offer initialization paths that belong to the selected model."""
         model_id = self.model_id_combo.currentData() or ""
         name = self.model_id_combo.currentText()
-        if model_id in BUILTIN_ADAPTER_IDS:
-            source = "LVD-142M" if model_id == "dinov2_vits14" else "ImageNet"
+        if model_id in BUILTIN_SCRATCH_ONLY_IDS:
+            # 사전학습 가중치가 없는 모델: 고를 수 없는 '사전학습으로 시작'은 보여 주지 않는다
+            choices = [("builtin_scratch", f"{name} 처음부터 학습"),
+                       ("builtin_transfer", f"{name} 이전 학습 결과(.pt)로 이어서")]
+            self.mode_desc.setText(f"선택 모델: {name}\n사전학습 가중치 없음 — 라이선스 걱정 없이 내 데이터로만 학습합니다.")
+        elif model_id in BUILTIN_ADAPTER_IDS:
+            source = "LVD-142M" if model_id.startswith("dinov2_") else "ImageNet"  # DINOv2는 자기지도 사전학습
             choices = [("builtin_finetune", f"{name} {source} 가중치로 시작"),
                        ("builtin_transfer", f"{name} 로컬 가중치로 시작"),
                        ("builtin_scratch", f"{name} 처음부터 학습")]
@@ -152,7 +158,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self.model_id_combo.blockSignals(True)
         try:
             self.model_id_combo.clear()
-            for spec in registry.list(project.task):
+            for spec in registry.list(project.task, surface="desktop"):
                 self.model_id_combo.addItem(
                     spec.display_name, spec.model_id)
             if model_id and self.model_id_combo.findData(model_id) < 0:
@@ -408,6 +414,24 @@ class TrainingWidget(TrainingForm, QWidget):
                                      self.mode_combo.currentData(), self.anomaly_method_combo.currentData(),
                                      model_id=self.model_id_combo.currentData() or "")
 
+    def _desktop_augmentation(self, capabilities):
+        """데스크톱 학습이 실제로 적용하는 증강 항목 (이 항목만 화면에서 바꿀 수 있다).
+
+        공용 capabilities(웹 서버도 씀)는 분류에만 증강을 열어 두지만, 데스크톱 분할 학습(core/trainer.py)은
+        좌우반전·회전·색상을 모두 적용한다. 그래서 분할에서는 칸이 잠긴 채 기본값(0.5 · 15° · 0.2)이
+        학습에 들어가 바꿀 방법이 없었다. 회전 자체가 불량인 클래스(시프트)에서는 15°가 학습을 망친다.
+
+            분류            좌우반전 · 회전 · 색상  (그대로)
+            분할(SAM2 제외)  좌우반전 · 회전 · 색상  ← 데스크톱에서만 연다
+            SAM2            없음 (자체 학습 경로)
+        """
+        keys = list(capabilities.get("augmentation", []))
+        mode = str(self.mode_combo.currentData() or "")
+        if self.project is not None and self.project.task == "segment" and mode in MODE_LABELS \
+                and not mode.startswith("sam2"):
+            keys = ["horizontal_flip", "rotation", "color_jitter"]
+        return keys
+
     def _reset_unsupported_augmentation(self):
         if self.project:
             self.project.training.augmentation.vertical_flip = 0.0
@@ -475,6 +499,38 @@ class TrainingWidget(TrainingForm, QWidget):
         self.segmentation_loss_combo.setEnabled(not resume and not sam2)
         if self.project and self.project.task == "segment" and sam2:
             self.class_weight_combo.setEnabled(False)
+        # 패치 학습: 분할(SAM2 제외)만. SAM2는 1024 고정 입력의 자체 학습을 쓴다.
+        segment = self.project is not None and self.project.task == "segment"
+        self.advise_btn.setVisible(segment)
+        self.advise_btn.setEnabled(segment and not resume and getattr(self, "_advice_scan", None) is None)
+        self.patch_check.setVisible(segment)
+        self.patch_check.setEnabled(segment and not sam2 and not resume)
+        patch = segment and not sam2 and self.patch_check.isChecked()
+        for control in (self.patch_count_label, self.patch_count_spin, self.patch_info,
+                        self.patch_scale_label, self.patch_scale_combo):
+            control.setVisible(segment and self.patch_check.isChecked())
+        self.patch_count_spin.setEnabled(patch and not resume)
+        self.patch_scale_combo.setEnabled(patch and not resume)
+        if patch:
+            size = self.input_size_spin.value()
+            scale = float(self.patch_scale_combo.currentData() or 1.0)
+            area, small = "원본" + (f" × {scale:.0%}" if scale != 1 else ""), False
+            if self.pc_crop_check.isChecked():
+                width = max(1, round(self.pc_crop_width_spin.value() * scale))
+                height = max(1, round(self.pc_crop_height_spin.value() * scale))
+                area, small = f"{width}×{height} px", size > min(width, height)
+            # 두 줄 이내 (폼 레이아웃은 긴 줄바꿈 라벨의 높이를 덜 잡아 겹친다)
+            self.patch_info.setText(
+                f"{area}에서 {size}px 패치로 학습 · 추론은 같은 배율로 한 번에(계산량 원본의 {scale * scale:.0%})"
+                + (f"\n⚠ 패치가 줄인 영역보다 큽니다. 입력 크기를 {min(width, height) // 32 * 32 or 32} 이하로 줄이세요."
+                   if small else ""))
+            self.patch_info.setStyleSheet("color: #E5A832;" if small else "")
+            if self.pc_crop_check.isChecked():  # 크롭 설명의 '→ 모델 입력 N×N'은 전체 축소일 때만 맞다
+                self.pc_crop_info.setText(
+                    f"중앙 {self.pc_crop_width_spin.value()}×{self.pc_crop_height_spin.value()} px를 자른 뒤 "
+                    "패치 학습합니다(위 설정). 박스와 마스크도 함께 자르고, 저장한 모델의 추론에도 같은 크롭을 적용합니다.")
+        elif segment and sam2:
+            self.patch_info.setText("SAM2는 패치 학습을 쓰지 않습니다.")
         self.selection_combo.setEnabled(not is_pc and not resume)
         self._selection_changed()
         capabilities = self._training_capabilities()
@@ -482,9 +538,10 @@ class TrainingWidget(TrainingForm, QWidget):
             control.setEnabled(capabilities["layer_debug"])
         self.debug_info.setText("선택한 초기 배치만 관찰한 뒤 전체 학습을 계속합니다. Gradient는 AMP 배율을 제거합니다."
                                 if capabilities["layer_debug"] else capabilities["layer_debug_reason"])
+        applied = self._desktop_augmentation(capabilities)
         for key, control in (("horizontal_flip", self.hflip_spin), ("rotation", self.rotation_spin),
                              ("color_jitter", self.color_jitter_spin)):
-            control.setEnabled(not resume and key in capabilities["augmentation"])
+            control.setEnabled(not resume and key in applied)
         self.amp_check.setEnabled(not is_pc and not resume and self._device_manager.cuda_available)
         self.tl_group.setVisible(not is_pc and self._selected_container_spec()[0] is None and
                                  (is_anomaly or self.mode_combo.currentData() == "custom"))
@@ -587,6 +644,13 @@ class TrainingWidget(TrainingForm, QWidget):
                 break
         loss_index = self.segmentation_loss_combo.findData(getattr(cfg, "segmentation_loss", "ce_dice"))
         self.segmentation_loss_combo.setCurrentIndex(max(loss_index, 0))
+        self.patch_check.setChecked(bool(getattr(cfg, "patch_training", False)))
+        self.patch_count_spin.setValue(int(getattr(cfg, "patches_per_image", 0)))
+        scale_index = self.patch_scale_combo.findData(float(getattr(cfg, "patch_scale", 1.0)))
+        if scale_index < 0:  # 목록에 없는 값(직접 편집한 프로젝트)도 그대로 보여 준다
+            self.patch_scale_combo.addItem(f"{float(cfg.patch_scale):.0%}", float(cfg.patch_scale))
+            scale_index = self.patch_scale_combo.count() - 1
+        self.patch_scale_combo.setCurrentIndex(scale_index)
 
         # 데이터 증강 설정 복원
         aug = cfg.augmentation
@@ -782,6 +846,10 @@ class TrainingWidget(TrainingForm, QWidget):
         cfg.class_weights = (self.class_weight_combo.currentData()
                              if self.project.task in ("classify", "segment") else "none")
         cfg.segmentation_loss = self.segmentation_loss_combo.currentData() or "ce_dice"
+        sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
+        cfg.patch_training = (self.project.task == "segment" and not sam2 and self.patch_check.isChecked())
+        cfg.patches_per_image = self.patch_count_spin.value()
+        cfg.patch_scale = float(self.patch_scale_combo.currentData() or 1.0)
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
         cfg.augmentation.rotation = self.rotation_spin.value()
         cfg.augmentation.color_jitter = self.color_jitter_spin.value()
@@ -805,6 +873,138 @@ class TrainingWidget(TrainingForm, QWidget):
         cfg.patchcore_crop_enabled = self.pc_crop_check.isChecked()
         cfg.patchcore_crop_width = self.pc_crop_width_spin.value()
         cfg.patchcore_crop_height = self.pc_crop_height_spin.value()
+
+    # ── 데이터에 맞게 자동 설정 ─────────────────────
+    def _known_dataset_index(self):
+        """데이터셋 화면이 이미 스캔한 결과(같은 프로젝트일 때). 없으면 None."""
+        page = getattr(self.window(), "dataset_page", None)
+        if page is None or getattr(page, "project", None) is not self.project:
+            return None
+        return getattr(page, "_dataset_index", None)
+
+    def _open_advisor(self):
+        if self.project is None or self.project.task != "segment":
+            return
+        self._sync_config()
+        index = self._known_dataset_index()
+        if index is not None:
+            self._show_advice(index)
+            return
+        from widgets.training_advice_dialog import AdviceScan
+        self._advice_scan = AdviceScan(self.project, self)
+        self._advice_scan.done.connect(self._advice_scanned)
+        self.advise_btn.setEnabled(False)
+        self.advise_btn.setText("데이터 분석 중…")
+        self._advice_scan.start()
+
+    def _advice_scanned(self, index, error):
+        scan, self._advice_scan = self._advice_scan, None
+        if scan is not None:
+            scan.wait()
+            scan.deleteLater()
+        self.advise_btn.setText("데이터에 맞게 자동 설정…")
+        self._on_patchcore_settings_changed()
+        if error:
+            QMessageBox.warning(self, "자동 설정", f"데이터를 분석하지 못했습니다: {error}")
+            return
+        self._show_advice(index)
+
+    def _combo_labels(self):
+        """추천 창에 보일 이름. 학습 방식 콤보 이름은 지금 모델 이름을 달고 있어('DeepLab V3+ … ImageNet 가중치로
+        시작') 모델을 바꾸는 추천에서 틀린 이름이 되므로, 기본 모델 방식은 모델 없는 이름을 쓴다."""
+        def labels(combo):
+            return {combo.itemData(i): combo.itemText(i) for i in range(combo.count())}
+        modes = {**labels(self.mode_combo), "builtin_finetune": "사전학습 가중치로 시작",
+                 "builtin_transfer": "로컬 가중치로 시작", "builtin_scratch": "처음부터 학습"}
+        return {"model_id": {"": "Custom CSP", **labels(self.model_id_combo)}, "training_mode": modes,
+                "segmentation_loss": labels(self.segmentation_loss_combo),
+                "class_weights": labels(self.class_weight_combo)}
+
+    def _show_advice(self, index):
+        from core.training_advisor import advise
+        from widgets.training_advice_dialog import TrainingAdviceDialog
+        advice = advise(self.project, index)
+        if not advice["ok"]:
+            QMessageBox.information(self, "자동 설정", advice["message"])
+            return False
+        dialog = TrainingAdviceDialog(advice, self._combo_labels(), self)
+        if not dialog.exec():  # 닫기 = 0, 적용 = 1
+            return False
+        self._apply_advice(dialog.selected_settings())
+        return True
+
+    def _apply_advice(self, settings):
+        """추천 값을 화면 컨트롤에 넣는다 (모델 → 학습 방식 순서: 방식 목록이 모델에 따라 바뀐다)."""
+        def choose(combo, value):
+            index = combo.findData(value)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+        if "model_id" in settings:
+            choose(self.model_id_combo, settings["model_id"])
+        if "training_mode" in settings:
+            choose(self.mode_combo, settings["training_mode"])
+        if "input_size" in settings:
+            self.input_size_spin.setValue(int(settings["input_size"]))
+        if "patch_training" in settings:
+            self.patch_check.setChecked(bool(settings["patch_training"]))
+        if "patch_scale" in settings:
+            choose(self.patch_scale_combo, float(settings["patch_scale"]))
+        if "segmentation_loss" in settings:
+            choose(self.segmentation_loss_combo, settings["segmentation_loss"])
+        if "class_weights" in settings:
+            choose(self.class_weight_combo, settings["class_weights"])
+        self._on_patchcore_settings_changed()
+        self._sync_config()
+        if settings:
+            self.status_label.setText(f"자동 설정 적용: {len(settings)}개 항목")
+
+    def _thin_defects_ok(self):
+        """지금 설정에서 사라지는 가는 결함이 있으면 묻는다. 데이터셋 스캔 결과가 없으면 묻지 않는다."""
+        index = self._known_dataset_index()
+        if not index:
+            return True
+        from core.dataset_regions import training_resolution_label
+        from core.training_advisor import thin_risk
+        risk = thin_risk(self.project, index)
+        if not risk["lost"]:
+            return True
+        box = QMessageBox(QMessageBox.Icon.Warning, "가는 결함이 학습에서 사라집니다",
+                          f"라벨된 결함 {risk['regions']}개 중 {risk['lost']}개가 지금 학습 해상도"
+                          f"({training_resolution_label(self.project)})에서 1px보다 가늘어집니다.\n"
+                          f"가는 쪽 결함 굵기는 원본에서 {risk['thin_px']:.1f}px입니다. 이대로 학습하면 이런 결함"
+                          "(미세 크랙 등)은 거의 검출되지 않습니다.", parent=self)
+        advise_button = box.addButton("자동 설정 보기", QMessageBox.ButtonRole.ActionRole)
+        keep_button = box.addButton("그대로 학습", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is advise_button:
+            self._show_advice(index)  # 적용 후 사용자가 다시 '학습 시작'을 누른다
+            return False
+        return box.clickedButton() is keep_button
+
+    def _background_slot_ok(self):
+        """분할 0번이 배경이 아니면 학습 전에 묻는다. 이대로 학습하면 칠하지 않은 픽셀(배경)이 0번 이름으로 학습되고
+        0번 클래스 자체는 한 번도 학습되지 않는다 (추론에서 배경 전체가 그 이름으로 보인다)."""
+        from core.class_management import ClassManager
+        if not ClassManager.needs_background(self.project):
+            return True
+        first = self.project.data.class_names[0]
+        box = QMessageBox(QMessageBox.Icon.Warning, "0번 클래스가 배경이 아닙니다",
+                          f"분할에서 0번은 '칠하지 않은 픽셀 = 배경'입니다. 지금 0번은 '{first}'입니다.\n\n"
+                          f"이대로 학습하면 배경 전체가 '{first}'(으)로 학습되고, 실제 '{first}' 결함은 학습되지 않습니다.\n\n"
+                          "'배경 추가'를 누르면 0번에 background를 넣고 그려 둔 정답 번호를 한 칸씩 올립니다(원본 백업). "
+                          "끝나면 학습 시작을 다시 누르세요.", parent=self)
+        dataset_page = getattr(self.window(), "dataset_page", None)
+        fix_button = (box.addButton("배경 추가", QMessageBox.ButtonRole.ActionRole)
+                      if hasattr(dataset_page, "_insert_background") else None)
+        keep_button = box.addButton("그대로 학습", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(fix_button or keep_button)
+        box.exec()
+        if fix_button is not None and box.clickedButton() is fix_button:
+            dataset_page._insert_background()  # 데이터셋 화면의 확인·진행 표시를 그대로 쓴다 (비동기)
+            return False
+        return box.clickedButton() is keep_button
 
     def _start_training(self):
         """
@@ -848,7 +1048,7 @@ class TrainingWidget(TrainingForm, QWidget):
 
         # 사전학습 가중치가 설치본에 없으면 학습을 시작한 뒤가 아니라 지금 알리고 받는 방법을 안내한다
         cfg = self.project.training
-        from builtin_assets import builtin_asset_path, missing_asset_help, required_pretrained_asset
+        from builtin_assets import builtin_asset_path, required_pretrained_asset, missing_asset_help
         asset = required_pretrained_asset(
             self.project.task, cfg.training_mode,
             cfg.efficientnet_model if cfg.training_mode.startswith("efficientnet") else getattr(self.project.model, "model_id", ""),
@@ -856,11 +1056,22 @@ class TrainingWidget(TrainingForm, QWidget):
             patchcore_source=cfg.patchcore_weight_source, patchcore_backbone=cfg.patchcore_backbone)
         if asset:
             try:
+                # 손상·다른 파일도 지금 거른다 (해시는 파일마다 한 번만 계산)
                 builtin_asset_path(asset)
-            except (OSError, RuntimeError, ValueError) as exc:
-                title = "사전학습 가중치 없음" if isinstance(exc, FileNotFoundError) else "사전학습 가중치 확인 실패"
-                QMessageBox.warning(self, title, f"{exc}\n\n{missing_asset_help(asset)}")
-                return
+            except (RuntimeError, ValueError, OSError) as exc:
+                if not isinstance(exc, FileNotFoundError):
+                    QMessageBox.warning(self, "사전학습 가중치 확인 실패", f"{exc}\n\n{missing_asset_help(asset)}")
+                    return
+                # 받는 주소·넣는 곳을 알리고 그 자리에서 가져오게 한다. 가져오면 그대로 학습을 시작한다.
+                from widgets.pretrained_weights import offer_weight_import
+                if not offer_weight_import(self, asset):
+                    return
+        # 0번이 배경이 아니면(배경 없이 만든 프로젝트) 시작 전에 고칠 수 있게 묻는다
+        if self.project.task == "segment" and not self._background_slot_ok():
+            return
+        # 가는 결함이 학습 해상도에서 1px보다 가늘어지면(사라지면) 시작 전에 알린다
+        if self.project.task == "segment" and not self._thin_defects_ok():
+            return
 
         # ── 모드별 유효성 검사 ──
         mode = self.project.training.training_mode

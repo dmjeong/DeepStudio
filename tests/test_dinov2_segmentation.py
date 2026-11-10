@@ -80,6 +80,7 @@ def test_builtin_preparation_pin_and_offline_registration(tmp_path, monkeypatch)
     payload = b'official fixture'
     digest = hashlib.sha256(payload).hexdigest()
     monkeypatch.setattr(dino, 'DINOV2_SHA256', digest)
+    monkeypatch.setitem(assets.PINNED_SHA256, 'dinov2_vits14_pretrain.pth', digest)
     calls = []
     def download(url, destination, expected_sha256):
         calls.append((url, expected_sha256))
