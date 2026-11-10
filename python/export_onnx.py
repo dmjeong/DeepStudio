@@ -1015,7 +1015,16 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
         diagnostic_path = None
     def report(message):
         events.append(str(message))
-        log(message)
+        try:
+            log(message)
+        except UnicodeEncodeError:
+            if log is not print:
+                raise  # Application callbacks must retain their original error contract.
+            import sys
+            encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+            # Legacy Windows redirected consoles may be CP1252/CP949. Keep the
+            # original Unicode in diagnostics; escape only unsupported console text.
+            print(str(message).encode(encoding, errors="backslashreplace").decode(encoding))
     report("체크포인트 및 ONNX 의존성 로드")
     try:
         if any(_paths_alias(output_path, path) for path in sources):

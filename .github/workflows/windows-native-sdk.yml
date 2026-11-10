@@ -75,6 +75,10 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
 jobs:
   cpp-example-windows:
     # The public example must not wait for the 40+ minute vcpkg/full GUI build.

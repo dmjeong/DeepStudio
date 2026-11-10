@@ -48,3 +48,7 @@ SAM2는 프롬프트 encoder/decoder 전용 SDK를 사용한다. 이 예제의 �
 ## 푸시 후 CI 보완 (11.58)
 
 통합 커밋 `b579631`은 main에 푸시했다. 원격 CI에서 기존 웹 의존성의 보안 검사 실패가 확인되어 Vite 8.3.7/source-map-js 1.2.2로 갱신했다. 로컬 audit 취약점 0건, 웹 테스트 14개와 프로덕션 빌드 통과. Windows payload 계약과 C# SDK job은 원격 통과했으며 native Windows 실행 검사는 아직 진행 중이다.
+
+## Windows 콘솔 인코딩 보완 (11.59)
+
+Windows C++ 예제 job은 C++ 빌드 이전, fixture export의 한글 로그를 CP1252로 출력하면서 실패했다. 기본 콘솔 로그의 출력 불가 문자만 이스케이프하도록 수정하고 CP1252/CP949에서 실제 ONNX·JSON 생성이 완료되는지 확인했다. Windows CI의 Python 로그는 UTF-8로 명시했다. 사용자 지정 로그 콜백의 예외는 삼키지 않는다. 이 수정 전 Windows job 실패를 모델 수치 검증 실패로 분류하지 않는다.
