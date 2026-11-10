@@ -253,4 +253,12 @@ if(BUILD_TESTING)
     target_link_libraries(c_api_contracts PRIVATE vision_runtime ${OpenCV_LIBS})
     add_test(NAME c_api_contracts COMMAND c_api_contracts "${CMAKE_BINARY_DIR}/test-models")
     set_tests_properties(c_api_contracts PROPERTIES FIXTURES_REQUIRED deployment_models)
+    # 영상 평가 예제(image_eval/): 태스크마다 작은 모델과 영상 폴더로 끝까지 돌려 본다
+    add_executable(image_eval image_eval/image_eval.cpp)
+    target_link_libraries(image_eval PRIVATE vision_inference)
+    foreach(eval_model segment anomaly patchcore detect classify)
+        add_test(NAME image_eval_${eval_model} COMMAND image_eval "${CMAKE_BINARY_DIR}/test-models/${eval_model}.json"
+                 "${CMAKE_BINARY_DIR}/test-models/eval-images" --output "${CMAKE_BINARY_DIR}/image-eval/${eval_model}")
+        set_tests_properties(image_eval_${eval_model} PROPERTIES FIXTURES_REQUIRED deployment_models TIMEOUT 30)
+    endforeach()
 endif()

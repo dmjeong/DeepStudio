@@ -1085,6 +1085,17 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
     return result
 
 
+def _region_size(text):
+    """'3100x1500' → [가로, 세로]."""
+    try:
+        width, height = (int(value) for value in text.lower().split("x"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"판정 영역은 가로x세로 로 씁니다 (예: 3100x1500): {text}") from None
+    if min(width, height) < 1:
+        raise argparse.ArgumentTypeError(f"판정 영역은 양수여야 합니다: {text}")
+    return [width, height]
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="체크포인트 ONNX 내보내기")
     parser.add_argument("--checkpoint", required=True)
@@ -1093,6 +1104,8 @@ def parse_args(argv=None):
     parser.add_argument("--num_classes", type=int)
     parser.add_argument("--in_channels", type=int)
     parser.add_argument("--input_size", type=int)
+    parser.add_argument("--region", type=_region_size,
+                        help="패치 학습 분할 모델의 판정 영역 가로x세로 (예: 3100x1500). 없으면 학습 때 기록한 크기")
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--dynamic_batch", action="store_true")
     parser.add_argument("--simplify", action="store_true")
@@ -1108,7 +1121,8 @@ def main():
     args = parse_args()
     export_checkpoint(args.checkpoint, args.output, args.opset, args.dynamic_batch,
                       args.simplify, args.verify,
-                      {key: getattr(args, key) for key in ("task", "num_classes", "in_channels", "input_size")},
+                      {**{key: getattr(args, key) for key in ("task", "num_classes", "in_channels", "input_size")},
+                       "region_size": args.region},
                       bundle_output=args.bundle, validation_dir=args.validation_dir,
                       allow_precision_fallback=args.allow_precision_fallback,
                       encryption_key_path=args.encryption_key)

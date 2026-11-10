@@ -142,7 +142,7 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
         os.replace(staged, output)
     config = {
         "schema_version": 5, "backend": "patchcore", "task": "anomaly",
-        "model_path": output.name, "output_name": "anomaly_score",
+        "model_path": output.name, "input_name": "input_image", "output_name": "anomaly_score",
         "output_names": ["anomaly_score", "anomaly_map"], "input_channels": 3,
         "input_height": size, "input_width": size, "num_classes": 1,
         "normalize_mean": [0.485, 0.456, 0.406], "normalize_std": [0.229, 0.224, 0.225],

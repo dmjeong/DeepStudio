@@ -32,6 +32,9 @@
 - 경량 사전학습 백본 분할 모델 `unet_mobilenetv2`(데스크톱): ImageNet MobileNetV2 인코더 + U-Net Lite 폭 디코더. U-Net ResNet18처럼 1/32까지 넓게 보면서(Lite의 작은 조각 판정 방지) 3504×1504 CPU 4스레드 약 0.6초(ResNet18 U-Net 약 2.5초, Lite 약 0.4초, ONNX Runtime 기준). MobileNetV3가 아니라 V2인 이유: V3의 SE 블록은 입력 전체를 평균해서, 패치로 학습하고 판정 영역 전체로 추론하면 다른 함수가 된다. 학습 화면에서 사전학습·처음부터 학습 모두 가능하고, 판정 영역 고정 입력 ONNX와 C++ 판정 기준이 데스크톱과 같다. 가중치는 설정 · 사전학습 가중치에서 가져올 수 있다(`mobilenet_v2-b0353104.pth`). 웹 화면 모델 목록은 그대로 둔다.
 - (실험) 분할 모델 INT8 변환 `python/quantize_onnx.py` + C++ 테스트 솔루션 `cpp/int8_test`: 내보낸 FP32 ONNX를 보정 영상으로 INT8(QDQ, 가중치 int8 채널별 · 활성값 uint8)로 바꾼다. 전체 입력 보정은 메모리가 15GB를 넘어, 업샘플을 배율 방식으로 바꾼 같은 그래프를 768 타일 단위로 보정한다(전역 연산이 없어 범위가 같다). C++ SDK 수정 없이 `InitializeFromJson`으로 그대로 실행된다. 합성 트레이 ResNet18 U-Net: C++ 2656 → 1400 ms(1.90배), 마스크 픽셀 일치 0.99999, 최소 면적 20 기준 결함 36개 모두 일치. `int8_compare.exe`가 설비 PC에서 FP32/INT8 속도와 결함 짝을 비교한다.
 - 분할 모델 CPU 속도 측정 `tools/segment_cpu_benchmark.py`: 학습 전에 설비 PC에서 U-Net ResNet18 · MobileNetV2 · Lite의 모델 시간을 입력 배율, FP32/INT8, ONNX Runtime/OpenVINO, 원본·1/2 해상도 출력, 고정 슬롯 조각별로 잰다. 가중치가 무작위라 속도만 나온다. ONNX는 한 번 만들면 torch 없는 PC에서 폴더만 복사해 쓴다. 사용법과 참고 측정은 `docs/SEGMENT_CPU_BENCHMARK.ko.md`.
+- C++ 영상 평가 예제 `cpp/image_eval`: 내보낸 모델 JSON과 영상(파일·폴더)을 받아 C++ SDK로 추론하고 영상별 판정·시간, 하위 폴더(ok/ng) 묶음별 판정 수, 결과 그림(분할 결함 상자, 이상 탐지 히트맵), `eval.csv`를 낸다. 분할·이상 탐지(PatchCore)·검출·분류가 같은 프로그램으로 돌고, `--roi x,y,w,h`로 판정 영역만 잘라 넣는다. 인자 없이 실행하면 소스 맨 위의 경로 두 개를 쓴다. 한글 경로의 영상도 읽는다. 사용법은 `cpp/image_eval/README.ko.md`.
+- PatchCore ONNX 내보내기가 JSON에 `input_name`을 쓰지 않아 C++ SDK가 모델을 열지 못했다(`key 'input_name' not found`). 내보내기가 `input_name`을 기록한다. 이전에 내보낸 모델은 다시 내보내거나 JSON에 `"input_name": "input_image"`를 넣는다.
+- `python/export_onnx.py --region 가로x세로`: 패치 학습 분할 모델의 판정 영역 크기를 명령으로 준다.
 - 검증 범위와 실험 조건은 `docs/RELEASE_9.33.md`에 기록한다.
 
 **9.23 — Detection·Segmentation 공통 라벨링 작업실**

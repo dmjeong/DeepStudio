@@ -355,3 +355,18 @@ malformed_package("duplicate-root-field", b'{"format":"invalid",' + compact_head
 malformed_package("duplicate-config-field", compact_header.replace(b'"config":{', b'"config":{"num_classes":999,', 1))
 malformed_package("duplicate-model-field", compact_header.replace(b'"models":[{', b'"models":[{"size":1,', 1))
 (root / "encrypted-invalid-tests.json").write_text(json.dumps(invalid_names), encoding="utf-8")
+
+# 영상 평가 예제(image_eval)용 영상 폴더: 하위 폴더 = 묶음. 외부 패키지 없이 24비트 BMP를 직접 쓴다.
+def write_bmp(path, rows):
+    """rows: 위에서 아래로, 행마다 (B, G, R) 픽셀 목록."""
+    height, width = len(rows), len(rows[0])
+    padding = b"\0" * (-width * 3 % 4)                       # 행은 4바이트 배수로 맞춘다
+    pixels = b"".join(bytes(value for pixel in row for value in pixel) + padding for row in reversed(rows))
+    header = struct.pack("<2sIHHIIiiHHIIiiII", b"BM", 54 + len(pixels), 0, 0, 54, 40, width, height, 1, 24, 0,
+                         len(pixels), 2835, 2835, 0, 0)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(header + pixels)
+
+
+write_bmp(root / "eval-images" / "ok" / "flat.bmp", [[(120, 120, 120)] * 3] * 2)
+write_bmp(root / "eval-images" / "ng" / "bright.bmp", [[(30, 30, 30), (240, 240, 240), (30, 30, 30)]] * 2)
