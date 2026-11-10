@@ -13,6 +13,43 @@ auto result = model.Segment(image);  // image: OpenCV BGR 또는 흑백, JSON과
 // result.valid_mask: 실제 검사한 영역. 중앙 크롭 바깥은 0.
 ```
 
+## Release에서 구간별 속도 확인 (11.82 이상)
+
+SDK와 호출 프로젝트 모두 **Release / x64로 다시 빌드**하세요. `SegmentResult`에 새 필드가 추가되어 이전 LIB/DLL과 새 헤더만 섞으면 안 됩니다. 모델 재학습·재내보내기는 필요 없습니다.
+
+Windows GUI/MFC 프로그램에서는 다음처럼 호출합니다. Visual Studio에서 **Release / x64 → F5**로 실행하고 **출력 창(Ctrl+Alt+O) → 디버그**를 선택하면 로그가 보입니다. `TRACE`는 Release에서 사라질 수 있으므로 여기서는 `OutputDebugStringA`를 씁니다. 디버거 없이 EXE를 실행하면 이 로그를 표시할 창이 없으므로 콘솔 또는 파일 로그로 바꾸세요.
+
+```cpp
+#include <cstdio>
+#include <windows.h>
+
+// 초기화 뒤 최초 1회만, 실제 입력 크기로 예열합니다.
+// model.Segment(first_image);
+
+const auto r = model.Segment(image);
+char message[512];
+std::snprintf(message, sizeof(message),
+    "[SEG ms] pre=%.2f model=%.2f validate=%.2f decode=%.2f "
+    "rules=%.2f render=%.2f total=%.2f\n",
+    r.preprocess_ms, r.model_ms, r.validation_ms, r.decode_ms,
+    r.rules_ms, r.render_ms, r.inference_ms);
+OutputDebugStringA(message); // 측정이 끝난 다음 출력
+```
+
+| 표시 | 포함 범위 |
+|---|---|
+| pre | 크롭 영역 선택 + 색 변환 + 리사이즈 + 정규화 + 입력 텐서 준비 |
+| model | ONNX Runtime `Session::Run` |
+| validate | 출력 크기·형식·NaN/Inf 검사 |
+| decode | 픽셀별 클래스 선택·확률 계산 |
+| rules | 연결된 덩어리 계산·면적/점수 기준 판정·좌표 변환 |
+| render | 마스크 리사이즈·복사·색상 이미지 생성·픽셀 집계 |
+| total | 위 6개 구간 합계 |
+
+`postprocess_ms`는 validate+decode+rules+render 소계입니다. 전체에 다시 더하지 마세요. `total`은 파일 읽기·화면 표시·파일 저장을 포함하지 않습니다. 함수 반환 시 내부 버퍼 해제나 호출자 결과 대입도 제외하므로 전체 호출의 벽시계 시간과 소폭 차이가 날 수 있습니다.
+
+이 평가 예제를 실행하면 콘솔에 구간별 시간이 자동 출력됩니다. `report.json`의 이미지별 `timing_samples_ms`는 워밍업을 제외한 매 반복의 기록입니다. `timing_sample_ms`는 전체 호출 중앙값에 가장 가까운 실제 1회의 구간이며, 각 구간의 독립적인 중앙값을 조합한 값이 아닙니다. `sdk_total_ms`는 위 `total`, `call_total_ms`는 함수 반환·기존 결과 해제/대입까지 포함한 호출부 시간입니다. 최종 성능은 워밍업 뒤 20회 이상 반복하고 중앙값과 p95로 비교하세요.
+
 ## Windows에서 실행
 
 1. 앱에서 학습한 모델을 ONNX로 내보냅니다. 함께 생성된 `.json`과 `.onnx`를 모두 가져옵니다. 패치 학습 모델은 실제 판정 영역 크기로 export합니다.

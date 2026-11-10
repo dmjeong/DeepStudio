@@ -84,6 +84,9 @@ def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pyto
             model = load_upstream_checkpoint(path, device=str(device))
             state.update(_upstream_model=model, class_names=class_names, _input_size=(size, size),
                          _normalization=None, _upstream_task=task)
+            from core.upstream_gradcam import LibreYOLOGradCAM, supports_upstream_gradcam
+            if gradcam and supports_upstream_gradcam(model, task):
+                state["_gradcam"] = LibreYOLOGradCAM(model)
         else:
             if runtime not in ("auto", "pytorch") and not (runtime == "onnx" and checkpoint.get("engine") == "efficientnet"):
                 raise ValueError("이 ONNX 경로는 EfficientNet 체크포인트를 지원합니다")

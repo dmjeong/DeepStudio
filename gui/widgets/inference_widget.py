@@ -685,14 +685,17 @@ class InferenceWidget(QWidget, InferenceOperations):
         compare_layout = QHBoxLayout(compare_box)
         compare_layout.setContentsMargins(0, 0, 0, 0)
         self.original_label = ResultImageLabel("원본")
+        self.original_label.setMinimumSize(240, 180)
+        self.original_label.setStyleSheet(self.image_label.styleSheet())
         self.original_label.hide()
-        compare_layout.addWidget(self.original_label)
-        compare_layout.addWidget(self.image_label)
+        compare_layout.addWidget(self.original_label, 1)
+        compare_layout.addWidget(self.image_label, 1)
         self.image_label.view_changed.connect(self.original_label.set_view)
         self.original_label.view_changed.connect(self.image_label.set_view)
         self._view_stack.addWidget(compare_box)
         self.compare_check = QCheckBox("원본 비교")
-        self.compare_check.toggled.connect(self.original_label.setVisible)
+        self.compare_check.toggled.connect(self._on_compare_toggled)
+        self.compare_check.setToolTip("선택한 이미지의 원본(왼쪽)과 결과(오른쪽)를 나란히 표시합니다.")
         gradcam_row.addWidget(self.compare_check)
         self.image_label.setToolTip("휠: 확대 / 드래그: 이동 / 더블 클릭: 화면 맞춤 / 마우스 위치: 원본 픽셀\n" + self.image_label_hint)
 
@@ -1008,7 +1011,8 @@ class InferenceWidget(QWidget, InferenceOperations):
             control.setVisible(self._shows_heatmap())
 
     def _gradcam_requested(self):
-        return self.gradcam_checkbox.isChecked() and self._shows_heatmap()
+        return (self.gradcam_checkbox.isEnabled() and self.gradcam_checkbox.isChecked()
+                and self._shows_heatmap())
 
     def _segment_rules(self):
         """분할 결과가 있으면 지금 판정 기준으로 다시 판정한다. 다른 태스크는 None(기존 동작)."""
@@ -1102,11 +1106,12 @@ class InferenceWidget(QWidget, InferenceOperations):
                                           patchcore_info.get("center_crop")),
                              score_normalized=patchcore_info is not None)
         self.sam2_row.setVisible(bool(result.get("sam2")))
-        self.gradcam_checkbox.setEnabled(patchcore_info is None and not upstream)
-        if patchcore_info is None and not upstream:
+        supported = result.get("gradcam_supported", patchcore_info is None and not upstream)
+        self.gradcam_checkbox.setEnabled(bool(supported))
+        if supported:
             self.gradcam_checkbox.setToolTip("추론 프로세스에서 지원하는 모델의 Grad-CAM을 계산합니다.")
         elif upstream:
-            self.gradcam_checkbox.setToolTip("LibreYOLO native .pt 추론의 Grad-CAM은 현재 지원하지 않습니다.")
+            self.gradcam_checkbox.setToolTip("이 LibreYOLO 모델의 Grad-CAM은 지원하지 않습니다. 탐지 모델은 박스를 표시합니다.")
 
     def _model_inspection_failed(self, message):
         active = f"\n기존 모델 유지: {self._active_checkpoint}" if self._active_checkpoint else ""
@@ -1310,11 +1315,14 @@ class InferenceWidget(QWidget, InferenceOperations):
     def _show_image(self, filepath: str):
         """이미지 표시"""
         self._current_preview_rgb = None
+        self._original_preview_rgb = None
         self.image_label.set_regions([])
         pixmap = QPixmap(filepath)
         if not pixmap.isNull():
             self.image_label.setPixmap(pixmap)
             self.original_label.setPixmap(pixmap)
+            self.original_label.set_result("원본", "#8A92A4")
+            self.original_label.set_view(self.image_label._zoom, self.image_label._pan)
             from PIL import Image
             with Image.open(filepath) as source:
                 pixels = np.array(source)
@@ -1322,6 +1330,9 @@ class InferenceWidget(QWidget, InferenceOperations):
             self.original_label.set_pixel_source(pixels)
         else:
             self.image_label.setText("이미지 표시 불가")
+            self.original_label.setText("원본 이미지 표시 불가")
+            self.original_label.set_pixel_source(None)
+            self.image_label.set_pixel_source(None)
         result = self._current_result
         if result is not None and result.image_path == filepath:
             self.image_label.set_result(result.summary, result.color)
@@ -1816,9 +1827,17 @@ class InferenceWidget(QWidget, InferenceOperations):
             cell.thumb_label.set_regions_visible(self.region_names_check.isChecked()
                                                 and not getattr(cell, "_showing_heatmap", False))
 
+    def _on_compare_toggled(self, checked):
+        self.original_label.setVisible(checked)
+        if checked:
+            self._switch_view_mode("single")
+            self.original_label.set_view(self.image_label._zoom, self.image_label._pan)
+
     def _display_original(self, original):
+        self._original_preview_rgb = original
         if original is None:
             self.original_label.setText("저장된 원본 없음")
+            self.original_label.set_pixel_source(None)
             self.image_label.set_pixel_source(None)
             return
         from core.image_display import display_rgb
@@ -1826,6 +1845,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         h, w = original.shape[:2]
         image = QImage(original.data, w, h, original.strides[0], QImage.Format.Format_RGB888).copy()
         self.original_label.setPixmap(QPixmap.fromImage(image))
+        self.original_label.set_result("원본", "#8A92A4")
         self.original_label.set_pixel_source(original)
         self.image_label.set_pixel_source(original)
 
@@ -1904,6 +1924,7 @@ class InferenceWidget(QWidget, InferenceOperations):
             self.original_label.setPixmap(QPixmap.fromImage(qimage))
             self.image_label.set_pixel_source(original)
             self.original_label.set_pixel_source(original)
+        self.original_label.set_view(self.image_label._zoom, self.image_label._pan)
 
     def _run_batch_inference(self):
         """

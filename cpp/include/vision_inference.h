@@ -158,6 +158,14 @@ struct SegmentResult
     struct Defect { int class_id = 0; cv::Rect box; int area = 0; float score = 0.0f; };
     std::vector<Defect> defects;
     int removed_defects = 0;       ///< 기준 미달이라 마스크에서 지운 덩어리 수
+    // Adjacent steady_clock intervals in ms. Rebuild SDK AND callers together.
+    double preprocess_ms = 0.0;    ///< ROI, conversion, resize, normalization, input tensor setup
+    double model_ms = 0.0;         ///< ONNX Runtime Session::Run
+    double validation_ms = 0.0;    ///< Output shape/type and all-element NaN/Inf checks
+    double decode_ms = 0.0;        ///< Per-pixel argmax and (when needed) softmax
+    double rules_ms = 0.0;         ///< Connected components, defect thresholds, coordinates
+    double render_ms = 0.0;        ///< Resize/copy masks, color mask, pixel counts
+    double postprocess_ms = 0.0;   ///< validation + decode + rules + render (not an extra stage)
 };
 
 struct Detection

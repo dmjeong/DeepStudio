@@ -62,6 +62,16 @@ def test_export_load_and_evaluate_real_architectures(tmp_path, model_id):
     assert report["evaluated_pixels"] == int(valid.sum())
     assert 0 < report["p50_ms"] <= report["p95_ms"]
     assert len(report["images"][0]["times_ms"]) == 2
+    row = report["images"][0]
+    assert len(row["timing_samples_ms"]) == 2  # warmup excluded
+    assert row["timing_sample_ms"] == row["timing_samples_ms"][row["timing_sample_index"]]
+    stages = ("preprocess_ms", "model_ms", "validation_ms", "decode_ms", "rules_ms", "render_ms")
+    for index, timing in enumerate(row["timing_samples_ms"]):
+        assert all(np.isfinite(timing[key]) and timing[key] >= 0 for key in stages)
+        assert sum(timing[key] for key in stages) == pytest.approx(timing["sdk_total_ms"], abs=1e-6)
+        assert sum(timing[key] for key in stages[2:]) == pytest.approx(timing["postprocess_ms"], abs=1e-6)
+        assert timing["call_total_ms"] == row["times_ms"][index]
+        assert timing["call_total_ms"] >= timing["sdk_total_ms"]
     assert (tmp_path/"results/classes.csv").read_bytes().startswith(b"\xef\xbb\xbf")
     overlay = np.array(Image.open(tmp_path/"results/overlays/영상.png"))
     assert np.array_equal(overlay[prediction == 0], pixels[prediction == 0])

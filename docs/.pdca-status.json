@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-11-10T06:08:56.161071+00:00",
+  "lastUpdated": "2026-11-10T07:31:14.501902+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -14,9 +14,12 @@
     "claude-main-seg-evaluation",
     "patchcore-augmentation",
     "patchcore-feature-aggregation",
-    "cpp-output-validation-latency"
+    "cpp-output-validation-latency",
+    "segmentation-stage-timing",
+    "segmentation-thread-scaling-review",
+    "libreyolo-gradcam-comparison"
   ],
-  "primaryFeature": "cpp-output-validation-latency",
+  "primaryFeature": "libreyolo-gradcam-comparison",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -501,6 +504,39 @@
       "userBuild": "Debug (confirmed); target performance must be measured with Release/x64",
       "windowsValidation": "not run",
       "completedAt": "2026-11-10T06:08:56.161071+00:00"
+    },
+    "segmentation-stage-timing": {
+      "phase": "completed",
+      "documents": {
+        "design": "docs/02-design/features/segmentation-stage-timing.design.md",
+        "report": "docs/RELEASE_11.82.md"
+      },
+      "validation": "macOS Release SDK/evaluator build; CTest 7/7; pytest 7 passed (5 unrelated model cases deselected)",
+      "windowsValidation": "not run; user 1.2-second bottleneck pending target stage measurements",
+      "completedAt": "2026-11-10T06:21:45.692008+00:00"
+    },
+    "segmentation-thread-scaling-review": {
+      "phase": "completed",
+      "documents": {
+        "analysis": "docs/03-analysis/segmentation-thread-scaling-20261110.md"
+      },
+      "validation": "FP32 C++ Release thread sweep 1/2/4/8 on two trained synthetic models; postprocessing candidate parity on two models and 12 fixed-output cases; final-layer order experiment logit/argmax/deployment comparison",
+      "implementation": "scratch prototypes only; previous 11.82 timing changes preserved",
+      "targetWindowsInt8": "not measured; no user checkpoint transferred",
+      "completedAt": "2026-11-10T06:48:51.577647+00:00"
+    },
+    "libreyolo-gradcam-comparison": {
+      "phase": "completed",
+      "documents": {
+        "design": "docs/02-design/features/libreyolo-gradcam-comparison.design.md",
+        "report": "docs/RELEASE_11.83.md"
+      },
+      "verification": {
+        "tests_passed": 130,
+        "runtime": "macOS CPU, pinned LibreYOLO 1.5.0, Qt offscreen",
+        "windows_verified": false,
+        "actual_button_and_worker_process_test": true
+      }
     }
   },
   "pipeline": {

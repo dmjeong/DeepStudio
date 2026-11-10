@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -107,10 +108,16 @@ int main() {
             // Prepare once for each input shape before recording any timed calls.
             for (int i=0; i<warmup; ++i) engine.Segment(image);
             SegmentResult result; std::vector<double> times;
+            json stage_samples = json::array();
             for (int i=0; i<repeat; ++i) {
                 auto begin = std::chrono::steady_clock::now();
                 result = engine.Segment(image);
                 times.push_back(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count());
+                stage_samples.push_back({{"preprocess_ms", result.preprocess_ms}, {"model_ms", result.model_ms},
+                    {"validation_ms", result.validation_ms}, {"decode_ms", result.decode_ms},
+                    {"rules_ms", result.rules_ms}, {"render_ms", result.render_ms},
+                    {"postprocess_ms", result.postprocess_ms}, {"sdk_total_ms", result.inference_ms},
+                    {"call_total_ms", times.back()}});
             }
             SegmentationMetrics sample(model.num_classes);
             sample.Add(truth, result.mask, result.valid_mask);
@@ -119,6 +126,14 @@ int main() {
             if (row["evaluated_pixels"].get<uint64_t>() == 0) throw std::runtime_error("No evaluable pixels: " + relative.u8string());
             row["image"] = path.lexically_relative(images).generic_u8string();
             row["p50_ms"] = Percentile(times, .5); row["p95_ms"] = Percentile(times, .95); row["times_ms"] = times;
+            row["timing_samples_ms"] = stage_samples;
+            const double median = row["p50_ms"].get<double>();
+            size_t representative = 0;
+            for (size_t i = 1; i < times.size(); ++i)
+                if (std::abs(times[i] - median) < std::abs(times[representative] - median)) representative = i;
+            // Keep all stages from one real call; independent per-stage medians do not add up.
+            row["timing_sample_index"] = representative;
+            row["timing_sample_ms"] = stage_samples[representative];
             per_image.push_back(row); all_times.insert(all_times.end(), times.begin(), times.end());
             WriteImage(output/"predictions"/relative, result.mask);
             // Original background remains visible; only predicted foreground is tinted.
@@ -132,6 +147,12 @@ int main() {
                 WriteImage(output/"overlays"/relative, preview);
             }
             std::cout << row["image"] << " : " << row["p50_ms"] << " ms\n";
+            const auto& timing = row["timing_sample_ms"];
+            std::cout << "  sample " << representative + 1 << " (ms): preprocess=" << timing["preprocess_ms"]
+                      << " model=" << timing["model_ms"] << " validate=" << timing["validation_ms"]
+                      << " decode=" << timing["decode_ms"] << " rules=" << timing["rules_ms"]
+                      << " render=" << timing["render_ms"] << " SDK total=" << timing["sdk_total_ms"]
+                      << " call total=" << timing["call_total_ms"] << '\n';
         }
         auto report = aggregate.Report(model.class_names);
         report["images"] = per_image; report["model_json"] = model_path.u8string();
@@ -139,6 +160,11 @@ int main() {
         report["p50_ms"] = Percentile(all_times,.5); report["p95_ms"] = Percentile(all_times,.95);
         report["mask_policy"] = "deployment mask after exported defect_rules; only valid_mask pixels; ignore GT 255";
         report["timing_scope"] = "Segment call: preprocessing + ONNX + postprocessing; excludes decode, load, warmup, metrics and output writes";
+        report["stage_timing_scope"] = "SDK intervals: preprocessing includes ROI and input setup; model=Session::Run; "
+            "validation=shape/type/finite checks; decode=argmax/softmax; rules=defect judgement; "
+            "render=mask resize/copy/color/count. postprocess is validation+decode+rules+render. "
+            "SDK total excludes return cleanup/caller assignment; call total includes those. "
+            "Representative stages are from the real call nearest call p50. File decoding is excluded.";
         std::ofstream csv(output/"classes.csv", std::ios::binary); csv << "\xEF\xBB\xBF" "class_id,name,iou,dice,tp,fp,fn,gt_pixels,predicted_pixels\r\n";
         for (const auto& row : report["per_class"]) {
             std::string name = row["name"].get<std::string>(), escaped;

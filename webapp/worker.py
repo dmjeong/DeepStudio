@@ -732,12 +732,16 @@ def inspect_model(context, payload):
             engine._upstream_task if getattr(engine, "_upstream_model", None) is not None else
             "segment" if getattr(engine, "_sam2_predictor", None) is not None else
             getattr(engine.model, "task", "classify"))
+    from core.upstream_gradcam import supports_upstream_gradcam
+    gradcam_supported = (supports_upstream_gradcam(engine._upstream_model, task)
+                         if engine._upstream_model is not None else engine.model is not None)
     return {"status": "completed", "output": {"class_names": list(engine.class_names or []),
         "input_size": engine._input_size, "task": task, "weights": payload["weights"],
         "center_crop": engine._center_crop,
         "device": str(engine._infer_device), "anomaly_threshold": engine._anomaly_threshold,
         "patchcore": engine._patchcore_model.get_info() if engine._patchcore_model is not None else None,
         "upstream": getattr(engine, "_upstream_model", None) is not None,
+        "gradcam_supported": gradcam_supported,
         "sam2": getattr(engine, "_sam2_model_id", None),
         "tiling": getattr(engine, "_tiling", None),
         "weights_sha256": digest(payload["weights"])}}

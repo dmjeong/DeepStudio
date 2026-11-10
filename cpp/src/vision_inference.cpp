@@ -1023,14 +1023,18 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
     const char* input_names[] = { m_config.input_name.c_str() };
     const char* output_names[] = { m_config.output_name.c_str() };
 
+    const auto model_start = std::chrono::steady_clock::now();
     auto output_tensors = m_session->Run(
         Ort::RunOptions{nullptr},
         input_names, &input_ort, 1,
         output_names, 1
     );
 
+    const auto model_end = std::chrono::steady_clock::now();
+
     // ── 4. 후처리 ────────────────────────────────────
     ValidateOutput(output_tensors[0], m_config, 4);
+    const auto validation_end = std::chrono::steady_clock::now();
     float* output_data = output_tensors[0].GetTensorMutableData<float>();
     auto output_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
 
@@ -1042,13 +1046,13 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
     // Argmax 마스크 생성 (판정 영역 한 번에 모델: 0으로 채운 오른쪽·아래는 잘라 낸다)
     const int valid_height = whole ? std::min(m_config.scaled_height, out_height) : out_height;
     const int valid_width = whole ? std::min(m_config.scaled_width, out_width) : out_width;
-    cv::Mat seg_mask;
+    cv::Mat seg_mask, scores;
     if (!whole && m_config.defect_rules.empty()) {
         seg_mask = ArgmaxMask(output_data, out_classes, out_height, out_width);
     } else {
         // 판정 기준에는 픽셀마다 이긴 클래스의 softmax 확률이 필요하다
         seg_mask.create(valid_height, valid_width, CV_8UC1);
-        cv::Mat scores(valid_height, valid_width, CV_32F);
+        scores.create(valid_height, valid_width, CV_32F);
         const size_t plane = static_cast<size_t>(out_height) * out_width;
         for (int h = 0; h < valid_height; ++h) {
             uchar* label = seg_mask.ptr<uchar>(h);
@@ -1066,14 +1070,17 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
                 probability[w] = static_cast<float>(1.0 / sum);
             }
         }
-        if (!m_config.defect_rules.empty()) {
-            ApplyDefectRules(seg_mask, scores, roi.size(), result);
-            for (auto& defect : result.defects) {  // 크롭 좌표 → 원본 좌표 (데스크톱 결함 목록과 같은 기준)
-                defect.box.x += roi.x;
-                defect.box.y += roi.y;
-            }
+    }
+    const auto decode_end = std::chrono::steady_clock::now();
+    if (!m_config.defect_rules.empty()) {
+        ApplyDefectRules(seg_mask, scores, roi.size(), result);
+        for (auto& defect : result.defects) {  // 크롭 좌표 → 원본 좌표 (데스크톱 결함 목록과 같은 기준)
+            defect.box.x += roi.x;
+            defect.box.y += roi.y;
         }
     }
+    scores.release();  // Retain the original lifetime: release probability storage before rendering.
+    const auto rules_end = std::chrono::steady_clock::now();
 
     // 원본 이미지 크기로 리사이즈
     if (seg_mask.size() != roi.size())
@@ -1111,9 +1118,17 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
 
     // 소요 시간
     auto end = std::chrono::steady_clock::now();
-    result.inference_ms = std::chrono::duration<double, std::milli>(
-        end - start
-    ).count();
+    const auto milliseconds = [](auto from, auto to) {
+        return std::chrono::duration<double, std::milli>(to - from).count();
+    };
+    result.preprocess_ms = milliseconds(start, model_start);
+    result.model_ms = milliseconds(model_start, model_end);
+    result.validation_ms = milliseconds(model_end, validation_end);
+    result.decode_ms = milliseconds(validation_end, decode_end);
+    result.rules_ms = milliseconds(decode_end, rules_end);
+    result.render_ms = milliseconds(rules_end, end);
+    result.postprocess_ms = milliseconds(model_end, end);
+    result.inference_ms = milliseconds(start, end);
 
     return result;
 }

@@ -53,6 +53,9 @@ class Label:
     def set_regions(self, regions, image_size=None):
         self.regions = list(regions)
 
+    def set_pixel_source(self, pixels):
+        self.pixels = pixels
+
     def text(self):
         return self.value
 
@@ -128,7 +131,7 @@ class InferenceContractTests(unittest.TestCase):
                 widget._batch_images = ["gray.png"]
                 widget._input_region_request = lambda: {"mode": "model"}
                 widget._clear_results = lambda: None
-                widget.gradcam_checkbox = SimpleNamespace(isChecked=lambda: checked)
+                widget.gradcam_checkbox = SimpleNamespace(isChecked=lambda: checked, isEnabled=lambda: True)
                 widget._preview_cache = object()
                 widget.findChildren = lambda _: []
                 for name in ("infer_device_combo", "ckpt_edit", "crop_mode_combo", "crop_json_edit",
@@ -240,11 +243,16 @@ class InferenceContractTests(unittest.TestCase):
         self.ns["QPixmap"] = lambda _: SimpleNamespace(isNull=lambda: True)
         widget = self.methods("_show_image")()
         widget.image_label = Label()
+        widget.original_label = Label()
+        widget.original_label.set_pixel_source("previous pixels")
         widget._current_result = None
         widget.image_label.setText("previous image")
         widget.image_path_label = Label()
         widget._show_image("missing.png")
         self.assertEqual(widget.image_label.text(), "이미지 표시 불가")
+        self.assertEqual(widget.original_label.text(), "원본 이미지 표시 불가")
+        self.assertIsNone(widget.original_label.pixels)
+        self.assertIsNone(widget.image_label.pixels)
         self.assertEqual(widget.image_path_label.text(), "missing.png")
 
     def test_patchcore_classmethod_return_and_selected_device_are_used(self):

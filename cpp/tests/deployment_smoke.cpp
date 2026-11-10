@@ -184,6 +184,20 @@ int main(int argc, char** argv)
 
         require(engine.InitializeFromJson((root / "segment.json").u8string()), "Segmentation load failed.");
         const auto segmented = engine.Segment(bgra);
+        auto check_segment_timing = [](const SegmentResult& value) {
+            const double stages[] = {value.preprocess_ms, value.model_ms, value.validation_ms,
+                value.decode_ms, value.rules_ms, value.render_ms};
+            double total = 0.0;
+            for (const double ms : stages) {
+                require(std::isfinite(ms) && ms >= 0.0, "Invalid segmentation stage time.");
+                total += ms;
+            }
+            require(value.inference_ms > 0.0 && std::abs(total - value.inference_ms) < 1e-6,
+                    "Segmentation stage times do not sum to total.");
+            require(std::abs(value.validation_ms + value.decode_ms + value.rules_ms + value.render_ms -
+                             value.postprocess_ms) < 1e-6, "Segmentation postprocessing total mismatch.");
+        };
+        check_segment_timing(segmented);
         require(segmented.mask.rows == 2 && segmented.mask.cols == 3, "Segmentation shape mismatch.");
         require(segmented.mask.at<uchar>(0, 0) == 1 && segmented.mask.at<uchar>(0, 1) == 0 &&
                 segmented.mask.at<uchar>(0, 2) == 0, "Wrong segmentation labels.");
@@ -197,10 +211,19 @@ int main(int argc, char** argv)
         cv::Mat larger(7, 10, CV_8UC4, cv::Scalar(50,50,50,255));
         bgra.copyTo(larger(cv::Rect(3,2,3,2)));
         const auto roi_result = engine.Segment(larger);
+        check_segment_timing(roi_result);
         require(cv::countNonZero(roi_result.valid_mask) == 6, "Wrong inspected ROI area.");
         require(cv::countNonZero(roi_result.mask(cv::Rect(3,2,3,2)) != segmented.mask) == 0,
                 "Cropped segmentation differs from explicit ROI.");
         require(roi_result.pixel_counts == segmented.pixel_counts, "Pixels outside ROI counted as background.");
+        cropped.defect_rules.resize(2);
+        cropped.defect_rules[1].min_area = 1;
+        cropped.defect_rules[1].min_score = 0.0f;
+        require(engine.Initialize(cropped), "Segmentation rule timing fixture load failed.");
+        const auto ruled = engine.Segment(larger);
+        check_segment_timing(ruled);
+        require(!ruled.defects.empty(), "Segmentation timing must exercise the defect-rules path.");
+        require(cv::norm(ruled.mask, roi_result.mask, cv::NORM_INF) == 0, "Timing changed segmentation output.");
         require(engine.InitializeFromJson((root / "detect.json").u8string()), "Detection load failed.");
         const auto detected = engine.Detect(gray);
         require(detected.detections.size() == 1, "Detection NMS/count mismatch.");

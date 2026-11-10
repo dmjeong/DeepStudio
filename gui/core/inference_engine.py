@@ -44,6 +44,7 @@ class InferenceOperations:
             result = result[0]
         with Image.open(image_path) as source:
             original = display_rgb(np.asarray(source.convert("RGB")))
+        self._original_preview_rgb = original
         if task == "classify":
             probs = as_numpy(result.probs.data).reshape(-1).astype(np.float64)
             if not len(probs) or not np.isfinite(probs).all():
@@ -77,7 +78,17 @@ class InferenceOperations:
         else:
             raise ValueError(f"LibreYOLO 태스크 미지원: {task}")
         self._heatmap_cache = None
-        self.info = "LibreYOLO native PyTorch 추론 | Grad-CAM 미지원"
+        self.info = "LibreYOLO native PyTorch 추론"
+        if task == "classify" and self.gradcam_enabled and self._gradcam is not None:
+            try:
+                with self._measure_inference_stage("gradcam"):
+                    activation, valid = self._gradcam.generate_image(image_path, self._input_size[0], top)
+                self._set_heatmap_preview(
+                    image_path, original, activation, "Grad-CAM",
+                    f"LibreYOLO | 타겟: blocks | 클래스: {names[top]}", valid_mask=valid)
+            except Exception as exc:
+                self._clear_heatmap_preview()
+                self.info += f" | Grad-CAM 실패: {exc}"
         return prediction
 
     def _run_custom_inference(self, image_path: str):
