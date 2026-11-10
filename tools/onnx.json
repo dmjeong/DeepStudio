@@ -1,0 +1,112 @@
+{
+  "schema_version": 5,
+  "backend": "builtin",
+  "model_path": "model_segment.onnx",
+  "task": "segment",
+  "num_classes": 5,
+  "input_channels": 3,
+  "input_height": 1504,
+  "input_width": 3520,
+  "input_name": "input_image",
+  "output_name": "seg_mask",
+  "output_names": [
+    "seg_mask"
+  ],
+  "normalize_mean": [
+    0.485,
+    0.456,
+    0.406
+  ],
+  "normalize_std": [
+    0.229,
+    0.224,
+    0.225
+  ],
+  "class_names": [
+    "background",
+    "Shift",
+    "FM",
+    "Crack",
+    "Flip"
+  ],
+  "preprocessing": {
+    "input_size": [
+      640,
+      640
+    ],
+    "in_channels": 3,
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ],
+    "resize": "bilinear",
+    "resize_implementation": "opencv_linear_exact_v1",
+    "interpolation": "INTER_LINEAR_EXACT",
+    "antialias": false,
+    "layout": "NCHW",
+    "value_scale": 255.0,
+    "color_order": "RGB",
+    "tiling": {
+      "tile": 640,
+      "overlap": 160,
+      "blend": "center_weighted_softmax",
+      "scale": 1.0,
+      "interpolation": "INTER_AREA",
+      "region": [
+        3500,
+        1500
+      ]
+    },
+    "center_crop": {
+      "width": 3500,
+      "height": 1500
+    },
+    "normalize_mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "normalize_std": [
+      0.229,
+      0.224,
+      0.225
+    ],
+    "whole_image": {
+      "region": [
+        3500,
+        1500
+      ],
+      "scaled": [
+        3500,
+        1500
+      ],
+      "interpolation": "INTER_AREA",
+      "pad": "zero_after_normalize",
+      "input": [
+        1504,
+        3520
+      ]
+    }
+  },
+  "verification": "passed",
+  "cpp_supported": true,
+  "architecture": "unet_resnet18",
+  "model_config": {
+    "model_id": "unet_resnet18"
+  },
+  "export": {
+    "opset": 17,
+    "precision": "float32",
+    "dynamic_batch": false,
+    "verification_tolerance": {
+      "atol": 0.001,
+      "rtol": 0.001
+    }
+  }
+}
