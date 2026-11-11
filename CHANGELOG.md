@@ -1,3 +1,10 @@
+# 14.86 — SEG 정답 기반 가상 불량 생성 (+1.0)
+
+- Train/Val의 실제 SEG 정답에서 crack·foreign material·shift·double·flip 참조 추출과 원본 해상도 합성.
+- 원본/결과/참조 비교, 클래스 마스크 수정·승인, 승인본을 포함한 독립 학습 프로젝트 생성.
+- 분할 격리·해시 검증·취소·검수 충돌 보호. 추가 가중치나 GPU 없이 CPU에서 실행.
+- [사용법](docs/SEGMENTATION_SYNTHESIS.md) / [14.86 릴리스](docs/RELEASE_14.86.md).
+
 # 13.85 — 2026-11-11
 
 ## 13.86 — 원본 비교·복수 앱 CPU 추론 수정 (+0.01)

@@ -1,5 +1,7 @@
 # Deep Vision Studio
 
+14.86: [SEG 정답으로 가상 불량 생성](docs/SEGMENTATION_SYNTHESIS.md) — crack·이물·shift·double·flip, 원본 크기 이미지와 정답 마스크, 검수 후 새 학습 프로젝트 저장.
+
 로컬 환경에서 이미지 데이터 편집, 학습, 추론과 결과 검토를 수행하는 도구입니다.
 이 저장소의 루트가 애플리케이션 소스 루트입니다.
 

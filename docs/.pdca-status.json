@@ -22,9 +22,10 @@
     "native-patch-training",
     "segmentation-model-candidates",
     "segmentation-pretrained-completion",
-    "inference-compare-concurrency"
+    "inference-compare-concurrency",
+    "segmentation-reference-synthesis"
   ],
-  "primaryFeature": "inference-compare-concurrency",
+  "primaryFeature": "segmentation-reference-synthesis",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -630,6 +631,24 @@
         "windows_cuda": "not locally executed"
       },
       "completedAt": "2026-11-11T04:54:30.757125+00:00"
+    },
+    "segmentation-reference-synthesis": {
+      "phase": "completed",
+      "version": "14.86",
+      "documents": {
+        "design": "docs/02-design/features/segmentation-reference-synthesis.design.md",
+        "analysis": "docs/03-analysis/segmentation-reference-synthesis.md",
+        "report": "docs/RELEASE_14.86.md"
+      },
+      "matchRate": 100,
+      "validation": {
+        "regression": "129 passed, no skips, exit 0",
+        "desktop": "real subprocess analyze/generate/review/publish/restore; two annotation saves",
+        "training_export": "published dataset U-Net Lite 1 epoch patch training and ONNX Runtime CPU passed",
+        "native_resolution": "3504x1504, five classes generated, visual QA passed",
+        "windows": "packaging contracts passed; EXE not locally executed"
+      },
+      "completedAt": "2026-11-11T07:03:36.994133+00:00"
     }
   },
   "pipeline": {
