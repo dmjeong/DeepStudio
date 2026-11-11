@@ -133,11 +133,17 @@ def _upstream_spec(checkpoint, region=None):
         scaled = [max(1, int(round(value * tiling["scale"]))) for value in region]
         width, height = (-(-value // WHOLE_IMAGE_MULTIPLE) * WHOLE_IMAGE_MULTIPLE for value in scaled)
         tiling = {**tiling, "region": region, "scaled": scaled}
+    # 입력 정규화는 LibreYOLO가 그 모델에 실제로 쓰는 것과 같아야 한다 (SDK는 이 값으로 (v/255 - mean) / std 를 계산한다).
+    #   MobileNetV4 분류        ImageNet 평균 · 표준편차
+    #   LibreYOLO9 · RT-DETR v4  0~1 그대로 (v/255) — ImageNet 정규화를 넣으면 검출이 수만 개 쏟아진다
+    if task == "classify":
+        mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+    else:
+        mean, std = [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]
     return {"family": family, "task": task, "num_classes": num_classes,
             "class_names": class_names, "input_height": height, "input_width": width,
             "in_channels": 3, "tiling": tiling,
-            "preprocessing": {"normalize_mean": [0.485, 0.456, 0.406],
-                                "normalize_std": [0.229, 0.224, 0.225],
+            "preprocessing": {"normalize_mean": mean, "normalize_std": std,
                                 "input_size": [height, width], "in_channels": 3,
                                 "color_order": "RGB"}}
 
@@ -165,6 +171,25 @@ def _upstream_reference_outputs(model, family, dummy):
     return [value]
 
 
+# LibreYOLO9 출력의 상자 좌표(픽셀) 허용 오차. 좌표 = 기준점 ± 거리 × 보폭(최대 32)이라, 합성곱의 FP32 반올림 차이가
+# 보폭만큼 커져 0.01~0.06 px 차이가 난다(640·1600×960·3520×1504에서 실측, 확률은 1e-5 수준으로 일치).
+# 원소 크기에 비례하는 허용 오차(rtol)는 0 근처 좌표에서 0.001 px이 되어 정상 모델을 실패로 판정했다.
+YOLO9_BOX_ATOL_PX = 0.25
+
+
+def validate_yolo9_output(expected, actual, *, atol, rtol):
+    """LibreYOLO9 출력 (1, 4 + 클래스 수, 후보 수): 앞 4행 = 픽셀 좌표 상자, 나머지 = 클래스 확률.
+
+        확률   ─▶ 일반 검증 기준 (atol · rtol) 그대로
+        상자   ─▶ 0.25 px 이내 (검출 결과에 영향이 없는 크기, 실측 오차의 4배 이상 여유)
+    """
+    expected, actual = np.asarray(expected), np.asarray(actual)
+    if expected.shape != actual.shape or expected.ndim != 3 or expected.shape[1] < 5:
+        raise ValueError(f"ONNX 출력 형태 불일치: {expected.shape} != {actual.shape}")
+    validate_outputs(expected[:, 4:], actual[:, 4:], atol=atol, rtol=rtol)
+    validate_outputs(expected[:, :4], actual[:, :4], atol=YOLO9_BOX_ATOL_PX, rtol=rtol)
+
+
 def verify_upstream_onnx(onnx_path, model, spec, dummy):
     """Compare every raw exported tensor with the public native checkpoint."""
     import onnxruntime as ort
@@ -183,7 +208,10 @@ def verify_upstream_onnx(onnx_path, model, spec, dummy):
             validate_classification_outputs(reference, converted, **tolerances)
         else:
             try:
-                validate_outputs(reference, converted, **tolerances)
+                if spec["family"] == "yolo9":
+                    validate_yolo9_output(reference, converted, **tolerances)
+                else:
+                    validate_outputs(reference, converted, **tolerances)
             except ValueError as exc:
                 raise ValueError(f"LibreYOLO ONNX 출력 {index} 검증 실패: {exc}") from exc
     return True
@@ -685,6 +713,7 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
             # C++ SDK는 넘겨받은 영상을 이 입력 크기로 맞춘다. 학습과 같은 물체 크기가 되려면 판정 영역을 넘겨야 한다.
             manifest["export"]["tiling"] = spec["tiling"]
         if family == "yolo9":
+            manifest["export"]["verification_tolerance"]["box_atol_px"] = YOLO9_BOX_ATOL_PX
             manifest["postprocessing"] = {
                 "box_format": "pixel_xyxy", "objectness": "none",
                 "class_scores": "probabilities", "confidence": "class_score",

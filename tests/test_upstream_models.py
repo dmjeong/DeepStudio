@@ -271,3 +271,39 @@ def test_patch_trained_detector_exports_at_the_judgement_region_size(tmp_path):
     assert preview["patch"] is True and preview["region"] == [3500, 1500] and preview["scale"] == 0.5
     torch.save(checkpoint, path)
     assert export_onnx.deployment_preview(path)["patch"] is False
+
+
+def test_yolo9_export_check_allows_subpixel_box_noise_but_not_score_changes():
+    """상자 좌표의 0.05 px 차이는 정상 내보내기다(0 근처 좌표 포함). 확률이 달라지거나 상자가 0.5 px 어긋나면 실패."""
+    np = pytest.importorskip("numpy")
+    import export_onnx
+    reference = np.zeros((1, 6, 4), np.float32)
+    reference[0, :4] = [[0.8, 300.0, 900.0, 1600.0]] * 4      # 0 근처부터 영상 끝까지의 좌표
+    reference[0, 4:] = [[0.9, 0.1, 0.5, 0.0], [0.1, 0.9, 0.5, 0.0]]
+    tolerances = export_onnx.verification_tolerances("detect")
+
+    noisy = reference.copy()
+    noisy[0, :4] += 0.05
+    export_onnx.validate_yolo9_output(reference, noisy, **tolerances)
+
+    shifted = reference.copy()
+    shifted[0, 1, 0] += 0.5
+    with pytest.raises(ValueError, match="검증 실패"):
+        export_onnx.validate_yolo9_output(reference, shifted, **tolerances)
+
+    rescored = reference.copy()
+    rescored[0, 4, 3] += 0.01
+    with pytest.raises(ValueError, match="검증 실패"):
+        export_onnx.validate_yolo9_output(reference, rescored, **tolerances)
+
+
+def test_upstream_export_declares_the_normalization_each_family_really_uses():
+    """LibreYOLO 검출 모델은 0~1 입력을 받는다. ImageNet 정규화로 내보내면 C++ 검출이 쓸 수 없는 결과가 된다."""
+    import export_onnx
+    detect = {"task": "detect", "nc": 1, "names": {0: "a"}, "imgsz": 640}
+    for family in ("yolo9", "rtdetrv4"):
+        preprocessing = export_onnx._upstream_spec({**detect, "model_family": family})["preprocessing"]
+        assert (preprocessing["normalize_mean"], preprocessing["normalize_std"]) == ([0.0, 0.0, 0.0], [1.0, 1.0, 1.0])
+    classify = export_onnx._upstream_spec({"model_family": "mobilenetv4", "task": "classify", "nc": 2,
+                                           "names": {0: "a", 1: "b"}, "imgsz": 224})["preprocessing"]
+    assert classify["normalize_mean"] == [0.485, 0.456, 0.406] and classify["normalize_std"] == [0.229, 0.224, 0.225]
