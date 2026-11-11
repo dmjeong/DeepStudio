@@ -45,9 +45,11 @@ class DesktopJob(QThread):
     failed = Signal(str)
     completed = Signal(object)
 
-    def __init__(self, kind, payload, parent=None):
+    def __init__(self, kind, payload, parent=None, *, manager=None):
         super().__init__(parent)
         self.kind, self.payload = kind, payload
+        # 작업을 돌릴 줄. 기본은 주 작업 줄, 학습 중 CPU 추론은 CPU 추론 줄(core.job_manager.inference_manager)
+        self.manager = manager or desktop_manager()
         self.job_id = None
         self.cancelled = False
         self.cancel_requested_at = None
@@ -57,12 +59,12 @@ class DesktopJob(QThread):
     def stop(self):
         self.cancelled = True
         if self.job_id:
-            desktop_manager().cancel(self.job_id)
+            self.manager.cancel(self.job_id)
 
     def run(self):
         from webapp.jobs import TERMINAL
         try:
-            manager = desktop_manager()
+            manager = self.manager
             job = manager.start(self.kind, self.payload)
             self.job_id = job["id"]
             offset = 0
@@ -144,8 +146,8 @@ class DesktopInferenceJob(DesktopJob):
     result_ready = Signal(object)
     progress = Signal(int, int)
 
-    def __init__(self, payload, cache, parent=None):
-        super().__init__("infer", payload, parent)
+    def __init__(self, payload, cache, parent=None, *, manager=None):
+        super().__init__("infer", payload, parent, manager=manager)
         self.paths = tuple(payload["images"])
         self.cache = cache
         self.event.connect(self._event)
@@ -153,7 +155,7 @@ class DesktopInferenceJob(DesktopJob):
     def _event(self, name, args):
         if name == "inference_result":
             row = args[0]
-            self.cache.root = desktop_manager().directory(self.job_id) / "results"
+            self.cache.root = self.manager.directory(self.job_id) / "results"
             self.cache.entries[row["image_path"]] = row
             self.result_ready.emit(inference_result(row))
         elif name == "progress_updated":

@@ -1025,19 +1025,22 @@ class InferenceWidget(QWidget, InferenceOperations):
 
     def _start_model_inspection(self, checkpoint_path=None):
         """모델 검사와 초기 로드를 별도 프로세스에서 수행한다."""
-        from core.desktop_jobs import DesktopJob, desktop_manager
+        from core.desktop_jobs import DesktopJob
+        from core.job_manager import inference_manager
         path = checkpoint_path if isinstance(checkpoint_path, str) else self.ckpt_edit.text().strip()
         if self._model_inspection is not None or self._inference_worker is not None:
             return
         try:
-            desktop_manager().require_idle()
+            # 학습 중이어도 추론 장치가 CPU면 CPU 추론 줄에서 검사한다
+            manager = inference_manager(self.infer_device_combo.currentData())
             if not os.path.isfile(path):
                 raise ValueError("가중치 파일 선택 필요")
         except (RuntimeError, ValueError) as exc:
             QMessageBox.warning(self, "모델 확인", str(exc))
             return
         self.model_info.setText("모델 검사 중...")
-        worker = DesktopJob("inspect_model", {"weights": path, "device": self.infer_device_combo.currentData()}, self)
+        worker = DesktopJob("inspect_model", {"weights": path, "device": self.infer_device_combo.currentData()}, self,
+                            manager=manager)
         self._model_inspection = worker
         self.infer_btn.setEnabled(False)
         worker.failed.connect(self._model_inspection_failed)
@@ -1392,12 +1395,14 @@ class InferenceWidget(QWidget, InferenceOperations):
         """시작 버튼은 계산 워커를 실행하고 즉시 이벤트 루프로 복귀한다."""
         if self._inference_worker is not None:
             return
-        from core.desktop_jobs import desktop_manager
+        from core.job_manager import clear_finished_cpu_inference, desktop_manager, inference_manager
         try:
-            desktop_manager().require_idle()
+            # 주 작업 줄이 차 있어도(학습 중) 추론 장치가 CPU면 CPU 추론 줄에서 함께 돈다
+            manager = inference_manager(self.infer_device_combo.currentData())
         except RuntimeError as exc:
             QMessageBox.warning(self, "작업 진행 중", str(exc))
             return
+        alongside = manager is not desktop_manager()
         if not self._process_model and not any(model is not None for model in (self.model, self._patchcore_model)):
             QMessageBox.warning(self, "알림", "모델 미로드")
             return
@@ -1411,6 +1416,8 @@ class InferenceWidget(QWidget, InferenceOperations):
             QMessageBox.warning(self, "추론 입력 영역", str(exc))
             return
         self._clear_results()
+        if alongside:
+            clear_finished_cpu_inference()     # 이 줄의 지난 결과는 작업 기록에 없으므로 여기서 지운다
         if self._process_model:
             from core.desktop_jobs import DesktopInferenceJob, PersistentInferenceCache
             from webapp.storage import project_view
@@ -1419,7 +1426,8 @@ class InferenceWidget(QWidget, InferenceOperations):
                 "input_region": region,
                 "device": str(self.infer_device_combo.currentData()), "gradcam": self._gradcam_requested(),
                 "segment_review": self._segment_review(), "sam2": self._sam2_settings(),
-                "project": project_view(self.project) if self.project else {}}, self._preview_cache, self)
+                "project": project_view(self.project) if self.project else {}}, self._preview_cache, self,
+                manager=manager)
         else:
             state = {name: getattr(self, name, None) for name in InferenceEngine.STATE_FIELDS}
             from core.inference_worker import InferenceWorker
@@ -1437,6 +1445,11 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.cancel_infer_btn.setEnabled(True)
         self.inference_progress.setRange(0, len(paths))
         self.inference_progress.setValue(0)
+        # 학습과 함께 도는 CPU 추론임을 진행 문구에 알린다 (CPU를 나눠 써 둘 다 느려질 수 있다)
+        self._alongside_note = " · 실행 중인 다른 작업(학습 등)과 함께 CPU로 추론" if alongside else ""
+        if alongside:
+            self.batch_time_label.setText(f"추론 0/{len(paths)}장" + self._alongside_note)
+            self.batch_time_label.show()
         worker.result_ready.connect(self._on_async_result)
         worker.progress.connect(self._on_inference_progress)
         worker.failed.connect(self._on_inference_failed)
@@ -1459,7 +1472,7 @@ class InferenceWidget(QWidget, InferenceOperations):
 
     def _on_inference_progress(self, completed, total):
         self.inference_progress.setValue(completed)
-        self.batch_time_label.setText(f"추론 {completed}/{total}장")
+        self.batch_time_label.setText(f"추론 {completed}/{total}장" + getattr(self, "_alongside_note", ""))
         self.batch_time_label.setToolTip(self.batch_time_label.text())
         self.batch_time_label.show()
 
