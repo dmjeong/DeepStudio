@@ -3,12 +3,18 @@
 #include <opencv2/imgcodecs.hpp>
 #include <iomanip>
 #include <iostream>
+#include <filesystem>
 
 int main(int argc, char** argv) {
-    if (argc != 3) return 2;
+    if (argc != 3 && argc != 4) return 2;
     try {
         VisionInference engine;
-        if (!engine.InitializeFromJson(argv[1], "", 1)) return 3;
+        if (argc == 4) {
+            auto key = dvs_crypto::ReadKey(std::filesystem::u8path(argv[3]));
+            dvs_crypto::Package package(std::filesystem::u8path(argv[1]), key);
+            dvs_crypto::Wipe(key.data(), key.size());
+            if (!engine.InitializeFromPackage(package, "onnxruntime", 1)) return 3;
+        } else if (!engine.InitializeFromJson(argv[1], "", 1)) return 3;
         const auto image = cv::imread(argv[2], cv::IMREAD_UNCHANGED);
         if (image.empty()) return 4;
         const auto result = engine.Classify(image);

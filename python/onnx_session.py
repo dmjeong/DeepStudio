@@ -5,6 +5,9 @@ GRAPH_OPTIMIZATION_LEVELS = ("all", "basic", "disabled")
 
 def cpu_session_options(*, graph_optimization_level="all", num_threads=0):
     import onnxruntime as ort
+    # Local inspection does not need runtime telemetry. In particular, ORT's
+    # macOS telemetry HTTP callback can race shutdown of its event mutex.
+    ort.disable_telemetry_events()
     if graph_optimization_level not in GRAPH_OPTIMIZATION_LEVELS:
         raise ValueError("ONNX Runtime graph_optimization_level must be all, basic or disabled")
     if type(num_threads) is not int or not 0 <= num_threads <= 2147483647:

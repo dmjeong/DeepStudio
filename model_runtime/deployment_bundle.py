@@ -46,8 +46,8 @@ def _read_config(path: Path) -> dict[str, Any]:
         raise DeploymentBundleError(f"cannot read deployment config: {path}") from exc
     if not isinstance(value, dict):
         raise DeploymentBundleError("deployment config must be a JSON object")
-    if type(value.get("schema_version")) is not int or value["schema_version"] not in (5, 6):
-        raise DeploymentBundleError("deployment config schema_version 5 or 6 is required")
+    if type(value.get("schema_version")) is not int or value["schema_version"] not in (5, 6, 7):
+        raise DeploymentBundleError("deployment config schema_version 5, 6 or 7 is required")
     if value["schema_version"] == 6:
         settings = value.get("onnxruntime")
         if (not isinstance(settings, dict) or

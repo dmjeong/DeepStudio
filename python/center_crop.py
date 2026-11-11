@@ -41,7 +41,7 @@ def checkpoint_center_crop(checkpoint):
     if not isinstance(checkpoint, dict):
         return None
     # LibreYOLO stores a state_dict in model, not a module with ROI attributes.
-    if checkpoint.get("model_family") == "mobilenetv4" and "center_crop" in checkpoint:
+    if checkpoint.get("model_family") in {"mobilenetv4", "yolo9", "rtdetrv4", "dfine"} and "center_crop" in checkpoint:
         return validate_center_crop(checkpoint["center_crop"])
     if "train_args" in checkpoint or checkpoint.get("model") is not None:
         model = checkpoint.get("ema")

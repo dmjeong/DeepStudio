@@ -1,3 +1,13 @@
+# 12.84 — 2026-11-11
+
+- Feature (+1.0): native 탐지와 LibreYOLO 분류에 패치 학습·추론 추가. 탐지는 박스 동시 자르기/원본 좌표 복원/NMS, 분류는 원본 이미지 라벨을 유지하는 MIL 최대 logit 집계. GUI·웹에서 설정하며 체크포인트/CSV에 적용 값 기록.
+- Fix: native 학습에서 UI 증강 값이 무시되던 경로 수정. 반전·회전·색상 변화를 실제 이미지/박스에 적용하고 숨은 엔진 증강 제거. 탐지 검증·앱·ONNX/C++ 전처리와 query/class 선택 규칙 통일.
+- Models: D-FINE Nano COCO-only와 LibreYOLO MobileNetV4 Medium을 기본 모델/사전학습 다운로드에 추가. 라이선스와 원본 고지 동봉. pycocotools 평가 의존성과 Python용 개별 준비 배치 파일 추가.
+- Export: schema 7에 패치 계약 저장. 최신 공통 C++/C# SDK에서 평문·암호화 패치 모델 실행. 무인자 C++ 준비 추론 예제 추가. 기존 단독 Evision classifier.h는 schema 7을 지원하지 않음.
+- Fix: C++에서 보조 출력의 ONNX Runtime TypeInfo보다 빌린 tensor descriptor가 오래 살아 로드가 불안정해지던 수명 문제 수정.
+- Stability: 로컬 검사에서 발견한 ORT telemetry 종료 스레드의 mutex 크래시 대응. Python CPU 세션/native exporter와 C++ SDK의 진단 정보 전송을 끄고 정상 종료 재검증.
+- Validation: 실제 native 5종 scratch 및 새 2종 pretrained 학습/복원/내보내기, C++ 결과 비교/암호화, Qt 설정 저장, 기존 회귀 검사. 자세한 범위와 Windows/GPU 미측정 사항은 docs/native-patch-training.md 참고.
+
 # 11.84 — 2026-11-10
 
 - Fix: LibreYOLO MobileNetV4 분류의 숨은 중앙 자르기와 학습의 무작위 자르기 제거. 전체 입력 영역을 OpenCV로 224×224에 맞추고 학습·검증·추론·Grad-CAM·ONNX/C++ 전처리를 통일.

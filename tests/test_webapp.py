@@ -214,7 +214,7 @@ class WebAppTests(unittest.TestCase):
         response = self.client.get("/api/models?task=detect")
         self.assertEqual(response.status_code, 200, response.text)
         models = {item["model_id"]: item for item in response.json()["models"]}
-        self.assertEqual({"re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large", "libreyolo_detect_9t"}, set(models))
+        self.assertEqual({"re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large", "libreyolo_detect_9t", "libreyolo_detect_dfine_nano"}, set(models))
         self.assertTrue(all(item["release_status"] != "release_ready" for item in models.values()))
 
     def test_builtin_segmentation_worker_publishes_miou_metric(self):

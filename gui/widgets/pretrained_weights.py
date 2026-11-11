@@ -35,6 +35,8 @@ USED_BY = {
     "dinov2_vits14": "DINOv2 ViT-S/14 분류·분할",
     "dinov2_vitb14": "DINOv2 ViT-B/14 분류·분할",
     "libreyolo_classify_mobilenetv4_small": "MobileNetV4 분류",
+    "libreyolo_classify_mobilenetv4_medium": "MobileNetV4 Medium 분류",
+    "libreyolo_detect_dfine_nano": "D-FINE Nano 탐지 (COCO)",
     "libreyolo_detect_9t": "LibreYOLO9 탐지",
     "re_detr_v4_small": "RT-DETRv4 S 탐지",
     "re_detr_v4_medium": "RT-DETRv4 M 탐지",

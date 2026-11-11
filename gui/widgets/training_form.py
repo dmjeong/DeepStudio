@@ -413,9 +413,8 @@ class TrainingForm:
         for label, value in (("100% (원본 해상도)", 1.0), ("75%", .75), ("50%", .5), ("35%", .35), ("25%", .25)):
             self.patch_scale_combo.addItem(label, value)
         self.patch_scale_combo.setToolTip(
-            "판정 영역을 이 배율로 줄인 뒤 패치를 자릅니다. 추론도 같은 배율로 줄여 한 번에 계산합니다.\n"
-            "계산량(추론 시간)은 배율²에 비례합니다: 50% = 1/4, 25% = 1/16.\n"
-            "줄인 뒤 가장 가는 결함이 1.5~2px 이상 남는 배율을 고르세요(마스크는 작은 결함을 보존해 줄입니다).")
+            "판정 영역을 이 배율로 줄인 뒤 패치를 자릅니다. 추론에도 저장한 배율을 사용합니다.\n"
+            "배율을 줄이면 세부 결함이 작아집니다. 미세 결함은 100%부터 확인하세요.")
         self.patch_scale_combo.currentIndexChanged.connect(self._on_patchcore_settings_changed)
         self.patch_scale_label = QLabel("패치 배율:")
         # 데이터에 맞게 자동 설정: 라벨된 결함 굵기로 패치·배율·모델을 고른다 (분할 전용)

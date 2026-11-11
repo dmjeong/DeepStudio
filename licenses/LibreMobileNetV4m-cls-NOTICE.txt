@@ -1,0 +1,10 @@
+LibreMobileNetV4 weights
+------------------------
+
+This product contains weights derived from timm (PyTorch Image Models)
+(https://github.com/huggingface/pytorch-image-models).
+Copyright (c) Ross Wightman.
+Licensed under the Apache License, Version 2.0.
+
+Weights: mobilenetv4_conv_medium.e500_r224_in1k (ImageNet-1k, trained by Ross Wightman in timm;
+no distillation, no extra data). Learned parameters are unchanged.

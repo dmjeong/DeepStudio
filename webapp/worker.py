@@ -297,7 +297,9 @@ def _train_upstream_project(context, project, device):
         device=str(device), weights=source, pretrained=mode == "upstream_finetune", resume=mode == "upstream_resume",
         use_amp=cfg.use_amp, patience=cfg.early_stop_patience,
         val_split=data.val_split, seed=0, emit=progress,
-        center_crop=configured_center_crop(cfg) if spec.task == "classify" else None)
+        center_crop=configured_center_crop(cfg),
+        augmentation={key: getattr(cfg.augmentation, key) for key in ("horizontal_flip", "rotation", "color_jitter")},
+        patch_training=cfg.patch_training, patch_scale=cfg.patch_scale, patches_per_image=cfg.patches_per_image)
     checkpoint = result.get("best_checkpoint") or result.get("last_checkpoint")
     if not checkpoint or not Path(checkpoint).is_file():
         raise RuntimeError("upstream 학습이 best.pt 또는 last.pt를 만들지 않았습니다")
@@ -325,7 +327,11 @@ def _train_upstream_project(context, project, device):
                        "input_size": spec.input_size, "use_amp": cfg.use_amp},
             applied={"pretrained": mode == "upstream_finetune",
                      "resume": mode == "upstream_resume", "val_split": data.val_split,
-                     "seed": 0},
+                     "seed": 0, "augmentation": result.get("applied_augmentation", {}),
+                     "patch_training": cfg.patch_training, "patch_scale": cfg.patch_scale,
+                     "patches_per_image": 0 if spec.task == "classify" else cfg.patches_per_image,
+                     "image_batch": 1 if cfg.patch_training and spec.task == "classify" else cfg.batch_size,
+                     "evaluation_unit": "patch" if cfg.patch_training and spec.task == "detect" else "image"},
         ))
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status="completed",

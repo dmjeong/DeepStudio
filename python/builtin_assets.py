@@ -36,6 +36,8 @@ ASSET_FILES = {
     "dinov2_vits14": "dinov2/dinov2_vits14_pretrain.pth",
     "dinov2_vitb14": "dinov2/dinov2_vitb14_pretrain.pth",
     "libreyolo_classify_mobilenetv4_small": "libreyolo/LibreMobileNetV4s-cls.pt",
+    "libreyolo_classify_mobilenetv4_medium": "libreyolo/LibreMobileNetV4m-cls.pt",
+    "libreyolo_detect_dfine_nano": "libreyolo/LibreDFINEn.pt",
     "libreyolo_detect_9t": "libreyolo/LibreYOLO9t.pt",
     "re_detr_v4_small": "libreyolo/LibreRTDETRv4s.pt",
     "re_detr_v4_medium": "libreyolo/LibreRTDETRv4m.pt",
@@ -66,6 +68,9 @@ SOURCE_URLS = {
     "dinov2_vitb14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth",
     "libreyolo_classify_mobilenetv4_small":
         "https://huggingface.co/LibreYOLO/LibreMobileNetV4s-cls/resolve/main/LibreMobileNetV4s-cls.pt",
+    "libreyolo_classify_mobilenetv4_medium":
+        "https://huggingface.co/LibreYOLO/LibreMobileNetV4m-cls/resolve/main/LibreMobileNetV4m-cls.pt",
+    "libreyolo_detect_dfine_nano": "https://huggingface.co/LibreYOLO/LibreDFINEn/resolve/main/LibreDFINEn.pt",
     "libreyolo_detect_9t": "https://huggingface.co/LibreYOLO/LibreYOLO9t/resolve/main/LibreYOLO9t.pt",
     "re_detr_v4_small": "https://huggingface.co/LibreYOLO/LibreRTDETRv4s/resolve/main/LibreRTDETRv4s.pt",
     "re_detr_v4_medium": "https://huggingface.co/LibreYOLO/LibreRTDETRv4m/resolve/main/LibreRTDETRv4m.pt",

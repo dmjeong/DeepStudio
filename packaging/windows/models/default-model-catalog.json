@@ -961,6 +961,62 @@
           }
         }
       }
+    },
+    {
+      "model_id": "libreyolo_classify_mobilenetv4_medium",
+      "family": "LibreYOLO",
+      "variant": "MobileNetV4 Medium",
+      "task": "classify",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "Apache-2.0 사전학습 가중치; 상세 출처는 licenses/native-models-12.84.md",
+      "metadata": {}
+    },
+    {
+      "model_id": "libreyolo_detect_dfine_nano",
+      "family": "LibreYOLO",
+      "variant": "D-FINE Nano",
+      "task": "detect",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "Apache-2.0 사전학습 가중치; 상세 출처는 licenses/native-models-12.84.md",
+      "metadata": {}
     }
   ]
 }

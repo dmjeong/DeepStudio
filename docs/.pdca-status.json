@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-11-10T07:54:51.811351+00:00",
+  "lastUpdated": "2026-11-11T01:32:56.496613+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -18,9 +18,10 @@
     "segmentation-stage-timing",
     "segmentation-thread-scaling-review",
     "libreyolo-gradcam-comparison",
-    "libreyolo-full-frame"
+    "libreyolo-full-frame",
+    "native-patch-training"
   ],
-  "primaryFeature": "libreyolo-full-frame",
+  "primaryFeature": "native-patch-training",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -554,6 +555,23 @@
         "actual_button_and_worker_process_test": true,
         "actual_training_resume_export_cpp": true
       }
+    },
+    "native-patch-training": {
+      "phase": "completed",
+      "version": "12.84",
+      "documents": {
+        "plan": "docs/native-patch-training-design.md",
+        "design": "docs/native-patch-training-design.md",
+        "report": "docs/native-patch-training.md"
+      },
+      "validation": {
+        "regression": "312 passed, 2 skipped",
+        "native_final": "57 passed; process exit 0 (native patches, upstream, ONNX runtime/settings/export); 16 native cases include official pretrained models",
+        "cpp": "Release build; CTest 7/7",
+        "web": "production build; 14 tests passed",
+        "windows_gpu": "not locally measured; CI tests configured"
+      },
+      "completedAt": "2026-11-11T01:32:56.496613+00:00"
     }
   },
   "pipeline": {

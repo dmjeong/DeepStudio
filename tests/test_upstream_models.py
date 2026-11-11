@@ -17,6 +17,7 @@ from upstream_models import (
 def test_shipped_upstream_ids_are_explicit_and_use_real_family_sizes():
     assert upstream_model_ids() == {
         "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",
+        "libreyolo_classify_mobilenetv4_medium", "libreyolo_detect_dfine_nano",
         "re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large",
     }
     assert get_upstream_spec("re_detr_v4_small").size == "s"
@@ -113,7 +114,7 @@ def test_libreyolo_classification_trains_with_prepared_dataset(tmp_path, monkeyp
         ("val", "double"): 1, ("val", "single"): 1,
     }
     assert not observed["root"].exists()
-    assert events[0]["event"] == "dataset_prepared"
+    assert any(event["event"] == "dataset_prepared" for event in events)
 
 
 def test_upstream_callback_records_real_validation_loss_instead_of_training_loss():

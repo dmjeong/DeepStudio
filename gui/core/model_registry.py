@@ -199,6 +199,8 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         ModelSpec("resnet50", "ResNet", "50", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", pretrained_asset="ResNet50_Weights.IMAGENET1K_V2", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
         ModelSpec("convnext_v1_tiny", "ConvNeXt V1", "Tiny", "classify", ("windows_native", "onnx"), common, (224, 224), (3,), "export_verified", pretrained_asset="ConvNeXt_Tiny_Weights.IMAGENET1K_V1", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
         ModelSpec("libreyolo_classify_mobilenetv4_small", "LibreYOLO", "MobileNetV4 Small", "classify", ("windows_native", "onnx"), common, (224, 224), (3,)),
+        ModelSpec("libreyolo_classify_mobilenetv4_medium", "LibreYOLO", "MobileNetV4 Medium", "classify", ("windows_native", "onnx"), common, (224, 224), (3,), notes="Small보다 표현 용량이 큰 분류 후보. Apache-2.0 ImageNet-1k 가중치; 속도와 검사 정확도는 데이터별 비교 필요"),
+        ModelSpec("libreyolo_detect_dfine_nano", "D-FINE", "Nano (COCO)", "detect", ("windows_native", "onnx"), common, (640, 640), (3,), notes="ICLR 2025 경량 DETR 후보. Apache-2.0 COCO 전용 가중치; Objects365 사전학습 없음"),
         ModelSpec("patchcore_wide_resnet50_2", "PatchCore", "Wide-ResNet50-2", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
         ModelSpec("patchcore_resnet18", "PatchCore", "ResNet18", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
     ]

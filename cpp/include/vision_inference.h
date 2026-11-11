@@ -95,6 +95,9 @@ struct InferenceConfig
     int model_implementation_version = 0; ///< 0: 구형 JSON 또는 직접 설정으로 내부 구조 미상
     int stem_in_channels = 0;
     std::string input_adapter = "unspecified";
+    int patch_size = 0; // schema 7; 0 means full-frame
+    int patch_overlap = 0;
+    double patch_scale = 1.0;
     std::string resize_mode = "stretch";
     std::vector<int> resize_size; ///< Native classification Resize argument: [short] or [H,W]
     std::string classification_output = "logits"; ///< logits or probabilities
@@ -104,6 +107,7 @@ struct InferenceConfig
     float detection_confidence_threshold = 0.25f;
     float detection_iou_threshold = 0.5f;
     int detection_max_detections = 300;
+    bool detection_query_class_topk = false;
     float anomaly_threshold = 0.0f;
     std::string input_value_range = "uint8_0_255"; ///< uint8 or full-range uint8/uint16 input contract
 
@@ -314,12 +318,15 @@ private:
      * 5. HWC → CHW 레이아웃 변환 (ONNX 표준)
      * 6. 배치 차원 추가 (BCHW)
      */
-    std::vector<float> Preprocess(const cv::Mat& image);
+    ClassifyResult ClassifySingle(const cv::Mat& image, bool apply_crop, std::vector<float>* raw_logits = nullptr);
+    DetectResult DetectSingle(const cv::Mat& image, bool apply_crop);
+    cv::Mat PatchRegion(const cv::Mat& image, cv::Rect& roi) const;
+    std::vector<float> Preprocess(const cv::Mat& image, bool apply_crop = true);
     std::vector<float> PreprocessWholeRegion(const cv::Mat& region);
     void ApplyDefectRules(cv::Mat& mask, const cv::Mat& scores, const cv::Size& output_size,
                           SegmentResult& result) const;
     void PreprocessInto(const cv::Mat& image, float* data, size_t count,
-                        cv::Mat& converted, cv::Mat& resized);
+                        cv::Mat& converted, cv::Mat& resized, bool apply_crop = true);
 
     /**
      * @brief Softmax 계산 (Classification 후처리)

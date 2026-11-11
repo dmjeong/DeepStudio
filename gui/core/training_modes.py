@@ -46,6 +46,7 @@ BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite"})
 
 UPSTREAM_ADAPTER_IDS = frozenset({
     "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",
+    "libreyolo_classify_mobilenetv4_medium", "libreyolo_detect_dfine_nano",
     "re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large",
 })
 
@@ -90,10 +91,11 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
     separate_adapter = model_id in BUILTIN_ADAPTER_IDS | UPSTREAM_ADAPTER_IDS | SAM2_ADAPTER_IDS
     return {
         "engine": engine,
+        "patch_training": (task == "segment" and engine != "sam2") or (engine == "upstream" and task in {"classify", "detect"}),
         "models": ["efficientnet_b0", "efficientnet_b1"] if engine == "efficientnet" else [],
         "resume": mode.endswith("_resume") and task != "anomaly",
-        "input_channels": [3] if engine == "sam2" else [1, 3],
-        "augmentation": ["horizontal_flip", "rotation", "color_jitter"] if patchcore or task == "classify" else [],
+        "input_channels": [3] if engine in {"sam2", "upstream"} else [1, 3],
+        "augmentation": ["horizontal_flip", "rotation", "color_jitter"] if patchcore or task == "classify" or (task == "detect" and engine == "upstream") else [],
         "layer_debug": not patchcore and not separate_adapter,
         "layer_debug_reason": "레이어 관찰은 현재 EfficientNet과 Custom CSP에서 지원합니다. 선택한 모델의 학습 경로에는 연결되어 있지 않습니다.",
         "default_layer_patterns": "features.0,features.1.*,classifier.1" if engine == "efficientnet" else "backbone.stem,backbone.stage1,backbone.stage4",
@@ -171,6 +173,15 @@ def validate_training_options(project, *, require_runnable=True):
                     raise ValueError("설치된 모델 팩 manifest.json을 읽을 수 없습니다.") from exc
                 if not isinstance(manifest, dict) or manifest.get("model_id") != model_id:
                     raise ValueError("프로젝트 모델 ID와 설치된 모델 팩이 일치하지 않습니다.")
+    if getattr(cfg, "patch_training", False):
+        if not capabilities.get("patch_training", False):
+            raise ValueError("이 모델의 학습 경로는 패치 학습을 지원하지 않습니다")
+        if capabilities["engine"] == "upstream":
+            from native_patches import patch_contract
+            from upstream_models import get_upstream_spec
+            patch_contract(project.task, get_upstream_spec(model_id).input_size, cfg.patch_scale, cfg.batch_size)
+    if type(getattr(cfg, "patches_per_image", 0)) is not int or not 0 <= cfg.patches_per_image <= 256:
+        raise ValueError("이미지당 학습 패치는 0~256 정수 필요")
     if type(cfg.efficientnet_no_decay) is not bool:
         raise ValueError("EfficientNet weight decay 제외 옵션은 boolean 필요")
     if capabilities["engine"] == "efficientnet" and cfg.efficientnet_model not in capabilities["models"]:

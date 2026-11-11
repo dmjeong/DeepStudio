@@ -36,15 +36,20 @@ class InferenceOperations:
         with self._measure_inference_stage("inference"):
             with Image.open(image_path) as source:
                 original = display_rgb(np.asarray(source.convert("RGB")))
-            source_image = image_path
-            crop = self._center_crop if task == "classify" else None
-            if task == "classify":
-                box = center_crop_box((original.shape[1], original.shape[0]), crop)
-                source_image = Image.fromarray(original[box[1]:box[3], box[0]:box[2]])
-            result = model.predict(source_image, imgsz=int(self._input_size[0]),
-                                   conf=float(getattr(self, "detection_confidence", .25)),
-                                   iou=float(getattr(self, "detection_iou", .5)),
-                                   device=str(self._infer_device))
+            crop = self._center_crop
+            box = center_crop_box((original.shape[1], original.shape[0]), crop)
+            source_image = Image.fromarray(original[box[1]:box[3], box[0]:box[2]])
+            patches = getattr(model, "studio_patches", None)
+            if patches:
+                from native_patch_inference import predict_patches
+                result = predict_patches(model, source_image, patches,
+                    conf=float(getattr(self, "detection_confidence", .25)),
+                    iou=float(getattr(self, "detection_iou", .5)))
+            else:
+                result = model.predict(source_image, imgsz=int(self._input_size[0]),
+                                       conf=float(getattr(self, "detection_confidence", .25)),
+                                       iou=float(getattr(self, "detection_iou", .5)),
+                                       device=str(self._infer_device))
         if isinstance(result, (list, tuple)):
             if len(result) != 1:
                 raise ValueError("LibreYOLO 단일 이미지 추론 결과 형식 오류")
@@ -79,6 +84,7 @@ class InferenceOperations:
             detections = [{"class_id": int(cls), "confidence": float(score),
                            "bbox": np.clip(box, 0, 1).astype(float).tolist()}
                           for box, score, cls in zip(boxes, scores, classes)]
+            detections = restore_detections(detections, (original.shape[1], original.shape[0]), crop)
             prediction = InferenceResult(image_path, "ok", task, f"{len(detections)}개 탐지",
                                          details={"num_detections": len(detections), "detections": detections,
                                                   "class_names": list(self.class_names),
@@ -86,6 +92,8 @@ class InferenceOperations:
             self._current_preview_rgb = draw_detection_boxes(original, detections)
         else:
             raise ValueError(f"LibreYOLO 태스크 미지원: {task}")
+        if patches:
+            prediction.details["patches"] = {**patches, "tiles": result.studio_tiles}
         self._heatmap_cache = None
         self.info = "LibreYOLO native PyTorch 추론"
         preprocessing_info = ""
@@ -97,7 +105,19 @@ class InferenceOperations:
         if task == "classify" and self.gradcam_enabled and self._gradcam is not None:
             try:
                 with self._measure_inference_stage("gradcam"):
-                    activation, valid = self._gradcam.generate_image(source_image, self._input_size[0], top)
+                    if patches:
+                        import cv2
+                        x, y, pw, ph = result.studio_winner
+                        tile = np.full((patches["size"], patches["size"], 3), 114, np.uint8)
+                        tile[:ph, :pw] = result.studio_scaled[y:y+ph, x:x+pw]
+                        local, _ = self._gradcam.generate_image(Image.fromarray(tile), self._input_size[0], top)
+                        activation = np.zeros(result.studio_scaled.shape[:2], np.float32)
+                        activation[y:y+ph, x:x+pw] = local[:ph, :pw]
+                        activation = cv2.resize(activation, source_image.size, interpolation=cv2.INTER_LINEAR)
+                        valid = np.ones(activation.shape, bool)
+                        preprocessing_info += " | 최대 로짓에 기여한 패치의 Grad-CAM"
+                    else:
+                        activation, valid = self._gradcam.generate_image(source_image, self._input_size[0], top)
                     if crop:
                         from core.heatmap import reproject_center_crop
                         activation, valid = reproject_center_crop(activation, original.shape[:2], crop)

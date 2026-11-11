@@ -470,7 +470,7 @@ class TrainingWidget(TrainingForm, QWidget):
             return
         is_anomaly = self.project is not None and self.project.task == "anomaly"
         is_pc = is_anomaly and self.anomaly_method_combo.currentData() == "patchcore"
-        resume = not is_anomaly and self.mode_combo.currentData() in {"efficientnet_resume"}
+        resume = not is_anomaly and str(self.mode_combo.currentData()).endswith("_resume")
         source = self.pc_source_combo.currentData()
         self.pc_backbone_combo.setEnabled(is_pc and source != "patchcore")
         self.pc_weights_edit.setEnabled(is_pc and source != "imagenet")
@@ -505,17 +505,31 @@ class TrainingWidget(TrainingForm, QWidget):
         self.segmentation_loss_combo.setEnabled(not resume and not sam2)
         if self.project and self.project.task == "segment" and sam2:
             self.class_weight_combo.setEnabled(False)
-        # 패치 학습: 분할(SAM2 제외)만. SAM2는 1024 고정 입력의 자체 학습을 쓴다.
+        # 분할(SAM2 제외), native 탐지와 분류의 패치 계약을 구분한다.
         segment = self.project is not None and self.project.task == "segment"
         self.advise_btn.setVisible(segment)
         self.advise_btn.setEnabled(segment and not resume and getattr(self, "_advice_scan", None) is None)
-        self.patch_check.setVisible(segment)
-        self.patch_check.setEnabled(segment and not sam2 and not resume)
-        patch = segment and not sam2 and self.patch_check.isChecked()
+        native = self.project is not None and self.project.task in {"classify", "detect"} and str(self.mode_combo.currentData()).startswith("upstream")
+        available = (segment and not sam2) or native
+        self.patch_check.setVisible(segment or native)
+        self.patch_check.setEnabled(available and not resume)
+        patch = available and self.patch_check.isChecked()
+        if native:
+            from upstream_models import get_upstream_spec
+            size = get_upstream_spec(self.project.model.model_id).input_size
+            self.input_size_spin.setValue(size)
+            self.input_size_spin.setEnabled(False)
         for control in (self.patch_count_label, self.patch_count_spin, self.patch_info,
                         self.patch_scale_label, self.patch_scale_combo):
-            control.setVisible(segment and self.patch_check.isChecked())
-        self.patch_count_spin.setEnabled(patch and not resume)
+            control.setVisible(patch)
+        self.patch_count_spin.setSpecialValueText("전체 패치" if native else "자동 (이미지 면적 ÷ 패치 면적)")
+        self.patch_count_spin.setToolTip("0=모든 격자 패치. 양수는 원본별 고정 표본 수. 검증은 항상 모든 패치." if native
+                                        else "한 epoch에 이미지마다 자르는 패치 수. 0=자동(최대 64).")
+        if native:
+            self.patch_check.setToolTip("25% 겹침 격자로 전체 영역을 자릅니다. 학습한 배율·패치 규칙을 추론과 배포에도 적용합니다.")
+        else:
+            self.patch_check.setToolTip("분할 학습: 결함 위치와 임의 위치에서 자릅니다. 추론은 모델에 저장한 영역 처리 방식을 따릅니다.")
+        self.patch_count_spin.setEnabled(patch and not resume and not (native and self.project.task == "classify"))
         self.patch_scale_combo.setEnabled(patch and not resume)
         if patch:
             size = self.input_size_spin.value()
@@ -535,6 +549,12 @@ class TrainingWidget(TrainingForm, QWidget):
                 self.pc_crop_info.setText(
                     f"중앙 {self.pc_crop_width_spin.value()}×{self.pc_crop_height_spin.value()} px를 자른 뒤 "
                     "패치 학습합니다(위 설정). 박스와 마스크도 함께 자르고, 저장한 모델의 추론에도 같은 크롭을 적용합니다.")
+            if native:
+                self.patch_info.setStyleSheet("")
+                self.patch_info.setText(
+                    f"{size}px · 배율 {scale:g} · 겹침 25% · " +
+                    ("모든 패치를 합쳐 원본 한 장의 클래스 학습/판정 (배치=패치 묶음)"
+                     if self.project.task == "classify" else "박스도 함께 자름 · 추론 시 원본 좌표로 합침 · 검증 mAP는 패치 단위"))
         elif segment and sam2:
             self.patch_info.setText("SAM2는 패치 학습을 쓰지 않습니다.")
         self.selection_combo.setEnabled(not is_pc and not resume)
@@ -854,8 +874,9 @@ class TrainingWidget(TrainingForm, QWidget):
                              if self.project.task in ("classify", "segment") else "none")
         cfg.segmentation_loss = self.segmentation_loss_combo.currentData() or "ce_dice"
         sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
-        cfg.patch_training = (self.project.task == "segment" and not sam2 and self.patch_check.isChecked())
-        cfg.patches_per_image = self.patch_count_spin.value()
+        native = self.project.task in {"classify", "detect"} and str(self.mode_combo.currentData()).startswith("upstream")
+        cfg.patch_training = ((self.project.task == "segment" and not sam2 or native) and self.patch_check.isChecked())
+        cfg.patches_per_image = 0 if native and self.project.task == "classify" else self.patch_count_spin.value()
         cfg.patch_scale = float(self.patch_scale_combo.currentData() or 1.0)
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
         cfg.augmentation.rotation = self.rotation_spin.value()

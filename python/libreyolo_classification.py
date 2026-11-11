@@ -24,11 +24,13 @@ def preprocessing_contract(size, saved=None):
 
 class FullFrameTransform:
     """Pickle-safe train/val transform. No hidden crop or edge removal."""
-    def __init__(self, size, augment=False):
+    def __init__(self, size, augment=False, augmentation=None):
         self.size = int(size)
         if self.size < 1:
             raise ValueError("양의 입력 크기가 필요합니다")
         self.augment = bool(augment)
+        from studio_augmentation import augmentation_contract
+        self.augmentation = augmentation_contract(augmentation)
 
     def __call__(self, image):
         if hasattr(image, "convert"):
@@ -37,8 +39,9 @@ class FullFrameTransform:
         if pixels.ndim != 3 or pixels.shape[2] != 3 or pixels.dtype != np.uint8:
             raise ValueError("LibreYOLO 분류 입력은 RGB uint8 영상이어야 합니다")
         pixels = resize(pixels, (self.size, self.size))
-        if self.augment and torch.rand(()).item() < .5:
-            pixels = pixels[:, ::-1]
+        if self.augment:
+            from studio_augmentation import augment_rgb
+            pixels, _ = augment_rgb(pixels, self.augmentation)
         chw = pixels.transpose(2, 0, 1).astype(np.float32) / np.float32(255)
         chw = (chw - np.asarray(MEAN, np.float32)[:, None, None]) / np.asarray(STD, np.float32)[:, None, None]
         return torch.from_numpy(np.ascontiguousarray(chw))

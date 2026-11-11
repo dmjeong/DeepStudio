@@ -3,6 +3,12 @@ export const builtinAdapters = new Set([
 ]);
 
 export function modelModes(task: string, modelId: string, name: string): [string, string][] {
+  if ((modelId.startsWith("libreyolo_") || modelId.startsWith("re_detr_v4_")) && ["classify", "detect"].includes(task)) return [
+    ["upstream_finetune", `${name} 사전학습 가중치로 시작`],
+    ["upstream_transfer", `${name} 로컬 가중치로 추가 학습`],
+    ["upstream_resume", `${name} 중단 재개`],
+    ["upstream_scratch", `${name} 처음부터 학습`],
+  ];
   if (builtinAdapters.has(modelId)) return [
     ["builtin_finetune", `${name} ImageNet 가중치로 시작`],
     ["builtin_transfer", `${name} 로컬 가중치로 시작`],

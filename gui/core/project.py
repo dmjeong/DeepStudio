@@ -151,8 +151,8 @@ class TrainingConfig:
     # 분할 손실: "ce_dice"(CE + 전경 Dice, 기본) | "ce"(픽셀 CE만, 9.23까지의 동작)
     # 배경이 대부분인 결함 마스크에서 CE만 쓰면 작은 결함을 놓치기 쉽다 (docs/RELEASE_9.33.md 실험).
     segmentation_loss: str = "ce_dice"
-    # 분할 패치 학습: 이미지를 줄이지 않고 원본 해상도에서 입력 크기(= 패치 크기)만큼 잘라 학습하고,
-    # 추론은 겹치는 타일로 나눠 합친다. patches_per_image 0 = 자동(이미지 면적 ÷ 패치 면적).
+    # 분할/기본 탐지/LibreYOLO 분류 패치 학습. 입력 크기만큼 잘라 학습한다.
+    # count=0: 분할은 자동 개수, native 탐지는 전체 격자, native 분류는 원본별 모든 패치 묶음.
     patch_training: bool = False
     patches_per_image: int = 0
     # 패치 학습 배율: 1.0 = 원본 해상도. 0.5면 이미지를 절반으로 줄인 뒤 자른다 (추론 계산량 1/4).

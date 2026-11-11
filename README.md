@@ -7,9 +7,9 @@
 
 | 태스크 | 학습·추론 엔진 | 데이터 |
 |---|---|---|
-| 분류 | EfficientNet B0/B1, ResNet 18/50, ConvNeXt V1 Tiny, LibreYOLO MobileNetV4 Small, Custom CSP | 클래스별 이미지 폴더 |
+| 분류 | EfficientNet B0/B1, ResNet 18/50, ConvNeXt V1 Tiny, LibreYOLO MobileNetV4 Small/Medium, Custom CSP | 클래스별 이미지 폴더 |
 | 시맨틱 분할 | SAM2 Hiera Tiny/Small/Base+/Large, DeepLab V3+ ResNet34, U-Net ResNet18, DINOv2 ViT-S/14 + Detail, Custom CSP | 이미지와 클래스 인덱스 마스크 |
-| 박스 탐지 | Re-DETR v4 Small/Medium/Large, LibreYOLO9 Tiny, Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
+| 박스 탐지 | Re-DETR v4 Small/Medium/Large, LibreYOLO9 Tiny, D-FINE Nano (COCO), Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
 | 이상 탐지 | PatchCore 또는 Custom CSP 재구성 | 정상 이미지, 선택적 평가용 불량 이미지 |
 | 회전 박스 | 데이터 편집·크롭만 지원 | 클래스와 네 꼭짓점의 정규화 좌표 |
 
@@ -17,6 +17,14 @@
 실행을 거부하며, 현재 엔진을 명시적으로 선택해야 합니다.
 
 ## 실행
+
+### 탐지·LibreYOLO 분류 패치 학습 (12.84)
+
+학습 화면의 **패치 학습**을 체크하고 **데이터 증강**에서 반전·회전·색상 변화를 편집한다.
+탐지는 박스도 함께 자르며, 분류는 모든 패치를 합쳐 원본 한 장의 라벨로 학습한다.
+새 기본 모델 D-FINE Nano / MobileNetV4 Medium과 C++ 패치 추론도 지원한다.
+Python 실행자는 `gui/update_native_models.bat`으로 새 가중치를 준비할 수 있다.
+[사용법·모델 선택·검증 범위](docs/native-patch-training.md)를 먼저 확인한다.
 
 ### LibreYOLO 분류의 전체 이미지 입력 (11.84)
 
