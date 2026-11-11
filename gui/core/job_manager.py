@@ -1,15 +1,16 @@
 """Qt에 의존하지 않는 데스크톱 계산 작업 관리자.
 
-    작업 줄은 둘이다. 한 줄에는 한 번에 하나만 돈다.
+    작업 관리자 하나는 한 번에 작업 하나만 돌린다. 이 앱에는 둘을 둔다 (작업 폴더와 작업 기록은 함께 쓴다).
 
-        주 작업 줄      학습 · 내보내기 · 데이터 생성 · 추론        (작업 기록에 남는다)
-        CPU 추론 줄     주 작업 줄이 차 있을 때의 CPU 추론 · 모델 검사   (학습과 나란히 돈다)
+        주 작업 줄      학습 · 내보내기 · 데이터 생성 · 추론
+        CPU 추론 줄     주 작업 줄이 차 있을 때의 CPU 모델 검사 · 추론   (학습과 나란히 돈다)
 
-    GPU 추론은 CPU 추론 줄로 보내지 않는다: 학습과 GPU 메모리를 나눠 쓰면 학습이 메모리 부족으로 중단될 수 있다.
+    다른 앱이 학습 중일 때의 CPU 추론은 webapp.locking.parallel_cpu_job 규칙으로 이미 허용된다.
+    여기서는 같은 앱 안에서도 같은 규칙이 통하게 한다. GPU 추론은 CPU 추론 줄로 보내지 않는다:
+    학습과 GPU 메모리를 나눠 쓰면 학습이 메모리 부족으로 중단될 수 있다.
 """
 import os
 from pathlib import Path
-import shutil
 
 _manager = None
 _cpu_manager = None
@@ -28,50 +29,34 @@ def desktop_manager():
 
 
 def desktop_cpu_manager():
-    """CPU 추론 줄. 자기 폴더와 자기 잠금(compute.lock)을 써서 주 작업 줄과 서로 막지 않는다.
+    """CPU 추론 줄: 같은 작업 폴더를 쓰는 두 번째 관리자 (다른 앱 하나가 더 떠 있는 것과 같은 관계).
 
-    이 줄의 작업은 작업 기록 화면에 나오지 않으므로, 앱을 새로 켤 때 지난 실행의 결과를 지운다.
+    작업 기록 화면에는 두 줄의 작업이 함께 나온다. 서로의 실행 중 작업은 건드리지 않는다.
     """
     global _cpu_manager
     if _cpu_manager is None:
         from webapp.jobs import JobManager
-        root = _state_dir() / "cpu-inference"
-        shutil.rmtree(root / "jobs", ignore_errors=True)
-        _cpu_manager = JobManager(root)
+        _cpu_manager = JobManager(_state_dir())
     return _cpu_manager
 
 
-def is_cpu_device(device):
-    return str(device or "cpu").lower().startswith("cpu")
+def inference_manager(kind, device):
+    """모델 검사("inspect_model") · 추론("infer")을 돌릴 작업 줄을 고른다. 돌릴 수 없으면 RuntimeError.
 
-
-def inference_manager(device):
-    """추론 · 모델 검사를 돌릴 작업 줄을 고른다. 돌릴 수 없으면 RuntimeError (메시지를 그대로 보여 준다).
-
-        주 작업 줄이 비어 있다             ─▶ 주 작업 줄 (이전과 같은 동작 · 작업 기록에 남는다)
-        차 있다(학습 중 등) + 장치가 CPU   ─▶ CPU 추론 줄
-        차 있다 + 장치가 GPU               ─▶ 오류: 추론 장치를 CPU로 바꾸라고 안내
+        주 작업 줄이 비어 있다               ─▶ 주 작업 줄 (이전과 같은 동작)
+        차 있다(이 앱이 학습 중) + CPU 장치  ─▶ CPU 추론 줄
+        차 있다 + GPU 장치                   ─▶ 오류: 추론 장치를 CPU로 바꾸라고 안내
     """
+    from webapp.locking import parallel_cpu_job
+    payload = {"device": device}
     main = desktop_manager()
-    try:
-        main.require_idle()
+    if main.active_id is None:
+        main.require_idle(kind, payload)
         return main
-    except RuntimeError:
-        if not is_cpu_device(device):
-            raise RuntimeError("학습 등 다른 작업이 실행 중입니다. 추론 장치를 CPU로 바꾸면 그 작업과 함께 추론할 수 있습니다. "
-                               "(GPU 추론은 학습과 GPU 메모리를 나눠 써 학습이 중단될 수 있어 막아 둡니다.)") from None
+    if not parallel_cpu_job(kind, payload):
+        raise RuntimeError("학습 등 다른 작업이 실행 중입니다. 추론 장치를 CPU로 바꾸면 그 작업과 함께 추론할 수 있습니다. "
+                           "(GPU 추론은 학습과 GPU 메모리를 나눠 써 학습이 중단될 수 있어 막아 둡니다.)")
     lane = desktop_cpu_manager()
-    try:
-        lane.require_idle()
-    except RuntimeError:
-        raise RuntimeError("CPU 추론이 이미 실행 중입니다. 끝난 뒤 다시 시도하세요.") from None
+    if lane.active_id is not None:
+        raise RuntimeError("CPU 추론이 이미 실행 중입니다. 끝난 뒤 다시 시도하세요.")
     return lane
-
-
-def clear_finished_cpu_inference():
-    """CPU 추론 줄의 끝난 추론 결과를 지운다 (새 추론이 화면의 결과를 바꾸기 직전에 부른다)."""
-    lane = desktop_cpu_manager()
-    finished = [job["id"] for job in lane.list(limit=10000)
-                if job["kind"] == "infer" and job["id"] != lane.active_id]
-    if finished:
-        lane.delete(finished)

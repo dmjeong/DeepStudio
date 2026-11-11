@@ -25,12 +25,12 @@ def test_registry_lists_dinov2_on_the_desktop_only():
     assert shared <= desktop  # 다른 모델은 그대로
     assert {item["model_id"] for item in registry.as_dict()} == shared  # 웹 화면 카탈로그
     assert [s.model_id for s in registry.list("segment", surface="desktop") if s.family == "DINOv2"] == \
-        ["dinov2_vits14_seg", "dinov2_vitb14_seg"]
+        ["dinov2_vits14", "dinov2_vits14_seg", "dinov2_vitb14_seg"]
     assert registry.get("dinov2_vits14_cls").display_name == "DINOv2 ViT-S/14"
     assert set(DINO_IDS) <= BUILTIN_ADAPTER_IDS
-    # main의 DINOv2 분할 모델 ID(dinov2_vits14)는 이 브랜치에서 쓰지 않는다: 체크포인트가 서로 섞이지 않게
+    # Keep the existing main model ID distinct from the new decoder/checkpoint layout.
     from builtin_models import BUILTIN_MODEL_SPECS
-    assert "dinov2_vits14" not in BUILTIN_MODEL_SPECS and "dinov2_vits14" not in desktop
+    assert "dinov2_vits14" in BUILTIN_MODEL_SPECS and "dinov2_vits14" in desktop
     assert training_capabilities("segment", "builtin_finetune", model_id="dinov2_vits14_seg")["engine"] == "builtin"
 
 

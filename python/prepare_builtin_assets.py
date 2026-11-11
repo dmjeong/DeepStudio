@@ -1,41 +1,39 @@
 """Fetch every basic-model pretrained checkpoint during the Windows build.
 
-This command is intentionally a build-time operation.  It writes one checked
-manifest which is included in the EXE; the GUI never calls these download APIs.
-A weight that cannot be fetched (blocked network, proxy) is reported with its
-manual download URL and does not stop the build.
+This command is intentionally a build-time operation.  Each verified file is
+published in the manifest immediately; the GUI never calls these download APIs.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
+import os
 from pathlib import Path
 import sys
+import tempfile
 
-from builtin_assets import ASSET_FILES
-from efficientnet import VARIANTS
+from builtin_assets import (ASSET_FILES, PINNED_SHA256, SOURCE_URLS, SEGMENTATION_ASSET_IDS, _manifest, builtin_asset_root,
+                            file_sha256, official_torchvision_url, verify_local_asset)
 from model_download import cached_imagenet_weights, enable_requests_native_ca
 from sam2_assets import download_sam2_pretrained
 
 
-_TORCHVISION_URLS = {
-    "resnet18": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
-    "resnet34": "https://download.pytorch.org/models/resnet34-b627a593.pth",
-    "resnet50": "https://download.pytorch.org/models/resnet50-0676ba61.pth",
-    "wide_resnet50_2": "https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth",
-    "convnext_v1_tiny": "https://download.pytorch.org/models/convnext_tiny-983f1562.pth",
-    "mobilenet_v2": "https://download.pytorch.org/models/mobilenet_v2-b0353104.pth",
-}
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def _write_manifest(root: Path, files: dict) -> None:
+    """Publish each completed entry atomically; an interrupted write keeps the old JSON."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=root,
+                                         prefix=".manifest-", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump({"schema_version": 1, "files": files}, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, root / "manifest.json")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _download_upstream(model_id: str, destination: Path) -> None:
@@ -53,87 +51,112 @@ def _download_upstream(model_id: str, destination: Path) -> None:
         raise RuntimeError(f"{model_id} 기본 가중치 다운로드가 완료되지 않았습니다")
 
 
-def _fetch(model_id: str, target: Path) -> None:
-    """가중치 하나를 받는다. 실패하면 예외 (호출한 쪽이 모아서 알린다)."""
-    if model_id.startswith("sam2_"):
-        downloaded = download_sam2_pretrained(model_id, target.parent)
-        if downloaded.resolve() != target.resolve():
-            raise RuntimeError(f"SAM2 가중치 경로가 예상과 다릅니다: {downloaded}")
-    elif model_id.startswith("efficientnet_"):
-        cached_imagenet_weights(VARIANTS[model_id].url, target.parent)
-    elif model_id in _TORCHVISION_URLS:
-        cached_imagenet_weights(_TORCHVISION_URLS[model_id], target.parent)
-    elif model_id.startswith("dinov2_"):
-        from builtin_assets import PINNED_SHA256, SOURCE_URLS
-        cached_imagenet_weights(SOURCE_URLS[model_id], target.parent, sha256=PINNED_SHA256[target.name])
-    elif model_id.startswith(("libreyolo_", "re_detr_")):
-        _download_upstream(model_id, target)
-    else:
-        raise AssertionError(model_id)
-    if not target.is_file() or target.stat().st_size == 0:
-        raise RuntimeError(f"기본 가중치 다운로드가 완료되지 않았습니다: {model_id}")
+def prepare(output: str | Path, only=None, *, register_existing: bool = False, strict: bool = True) -> Path:
+    """선택 모델마다 검증한 SHA-256을 기존 manifest에 원자적으로 합친다.
 
-
-def prepare(output: str | Path, only=None, *, strict: bool = False) -> Path:
-    """가중치를 받고 SHA-256 manifest를 쓴다.
-
-    한 모델이 실패해도(회사망 차단, Hugging Face 접속 불가 등) 나머지는 계속 받는다.
-    받은 파일만 manifest에 기록하고, 실패한 모델은 마지막에 수동으로 받는 방법을 알린다.
-    빌드는 멈추지 않는다 — 빠진 가중치는 앱의 Settings · 모델 관리에서 나중에 가져온다.
-    strict=True면 하나라도 실패할 때 예외(이전 동작). only가 있으면 그 모델들만 받는다.
+    개별 다운로드 실패에도 다음 모델을 시도하며 마지막에 실패 목록을 보고한다.
+    빌드(build.bat)는 전부, only는 필요한 모델만, register_existing은 오프라인 등록만 한다.
     """
-    from builtin_assets import SOURCE_URLS, user_asset_root
     root = Path(output).expanduser().resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    selected = list(ASSET_FILES) if not only else list(only)
+    selected = list(ASSET_FILES) if not only else list(dict.fromkeys(only))
     unknown = [model_id for model_id in selected if model_id not in ASSET_FILES]
     if unknown:
         raise SystemExit(f"알 수 없는 가중치 ID: {unknown}. 가능한 값: {', '.join(ASSET_FILES)}")
-    failed = {}
-    for model_id in selected:
-        target = root / ASSET_FILES[model_id]
-        try:
-            _fetch(model_id, target)
-        except Exception as exc:  # 네트워크·인증서·저장소 오류 모두: 기록하고 다음 모델로
-            failed[model_id] = f"{type(exc).__name__}: {exc}"
-            print(f"[failed] {model_id}: {failed[model_id]}")
-            continue
-        print(f"[ready] {model_id}: {target}")
-    # 기존 manifest의 항목 중 파일이 남아 있는 것은 유지하고, 이번에 받은 것을 덧붙인다.
-    files = {}
-    try:
-        previous = json.loads((root / "manifest.json").read_text(encoding="utf-8")).get("files", {})
-        files = {key: value for key, value in previous.items() if (root / key).is_file()}
-    except (OSError, ValueError, AttributeError):
-        files = {}
-    for model_id in selected:
+    files = dict(_manifest(root)["files"]) if (root / "manifest.json").exists() else {}
+    root.mkdir(parents=True, exist_ok=True)
+    failures = []
+    for index, model_id in enumerate(selected, 1):
         relative = ASSET_FILES[model_id]
-        if model_id not in failed:
-            files[relative] = {"sha256": _sha256(root / relative), "bytes": (root / relative).stat().st_size}
-    (root / "manifest.json").write_text(json.dumps({"schema_version": 1, "files": files}, indent=2) + "\n",
-                                           encoding="utf-8")
-    print(f"[ready] manifest: {root / 'manifest.json'} ({len(files)}/{len(ASSET_FILES)}개)")
-    if failed:
-        print("")
-        print(f"[warning] 사전학습 가중치 {len(failed)}개를 받지 못했습니다. 빌드는 계속합니다.")
-        print("          그 모델을 쓸 때만 필요합니다. 브라우저로 받아 앱의 Settings · 모델 관리 →")
-        print(f"          '가중치 가져오기'로 넣거나 이 폴더에 넣으세요: {user_asset_root()}")
-        for model_id in failed:
-            print(f"   - {model_id}: {SOURCE_URLS[model_id]}")
-        if strict:
-            raise RuntimeError(f"가중치 다운로드 실패: {', '.join(failed)}")
+        target = root / relative
+        print(f"[prepare {index}/{len(selected)}] {model_id}: {target}", flush=True)
+        try:
+            if register_existing or (relative in files and target.is_file()):
+                entry = verify_local_asset(model_id, root, files)
+            else:
+                url = official_torchvision_url(model_id)
+                if url:
+                    # This also verifies manual files without creating a network connection.
+                    downloaded = cached_imagenet_weights(url, target.parent)
+                    if downloaded.resolve() != target.resolve():
+                        raise RuntimeError(f"공식 가중치 경로가 예상과 다릅니다: {downloaded}")
+                elif model_id.startswith("sam2_"):
+                    downloaded = download_sam2_pretrained(model_id, target.parent)
+                    if downloaded.resolve() != target.resolve():
+                        raise RuntimeError(f"SAM2 가중치 경로가 예상과 다릅니다: {downloaded}")
+                elif target.name in PINNED_SHA256:
+                    from model_download import cached_https_weights
+                    cached_https_weights(SOURCE_URLS[model_id], target,
+                                         expected_sha256=PINNED_SHA256[target.name])
+                elif model_id.startswith(("libreyolo_", "re_detr_")):
+                    _download_upstream(model_id, target)
+                else:
+                    raise AssertionError(model_id)
+                if not target.is_file() or target.stat().st_size == 0:
+                    raise RuntimeError(f"기본 가중치 다운로드가 완료되지 않았습니다: {model_id}")
+                entry = {"sha256": file_sha256(target), "bytes": target.stat().st_size}
+        except Exception as exc:
+            failures.append((model_id, str(exc)))
+            print(f"[failed] {model_id}: {exc}", flush=True)
+            continue
+        files[relative] = entry
+        _write_manifest(root, files)  # Storage failures stop immediately, before reporting success.
+        print(f"[ready] {model_id}: {target}", flush=True)
+    if failures:
+        details = "\n".join(f"  {model_id}: {error}" for model_id, error in failures)
+        retry = ",".join(model_id for model_id, _error in failures)
+        message = (
+            f"가중치 준비 실패 {len(failures)}개. 성공한 모델의 파일과 manifest 항목은 유지됩니다.\n"
+            f"{details}\n원인 해결 후 --only {retry} 로 실패한 모델만 재시도하세요.")
+        if strict or register_existing:
+            raise RuntimeError(message)
+        print(f"[warning] {message}\n빌드는 계속합니다.")
+        for model_id, _error in failures:
+            print(SOURCE_URLS[model_id])
+    print(f"[ready] manifest: {root / 'manifest.json'}")
     return root
 
 
 def main(argv=None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Download packaged Deep Vision Studio basic-model weights")
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--only", default="",
+    parser.add_argument("--output", type=Path, default=None,
+                        help="생략하면 앱이 사용하는 기본 가중치 폴더 (DVS_BUILTIN_ASSETS_DIR 포함)")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--only", default="",
                         help="쉼표로 구분한 가중치 ID만 받는다 (예: resnet18,resnet34). 생략하면 전부")
-    parser.add_argument("--strict", action="store_true",
-                        help="하나라도 받지 못하면 실패로 끝낸다 (기본: 경고만 하고 계속)")
+    selection.add_argument("--group", choices=["segment"], help="세그멘테이션 기본 가중치 전체")
+    parser.add_argument("--strict", action="store_true", help="다운로드 실패 시 중단")
+    parser.add_argument("--allow-partial", action="store_true", help="다운로드 실패를 경고로 표시하고 계속")
+    parser.add_argument("--check", action="store_true", help="다운로드/파일 변경 없이 가중치 상태 검사")
+    parser.add_argument("--register-existing", action="store_true",
+                        help="다운로드 없이 검증된 로컬 파일만 manifest에 등록")
     args = parser.parse_args(argv)
-    prepare(args.output, [v.strip() for v in args.only.split(",") if v.strip()] or None, strict=args.strict)
+    root = (args.output or builtin_asset_root()).expanduser().resolve()
+    selected = (list(SEGMENTATION_ASSET_IDS) if args.group == "segment" else
+                [v.strip() for v in args.only.split(",") if v.strip()] or list(ASSET_FILES))
+    unknown = [model_id for model_id in selected if model_id not in ASSET_FILES]
+    if unknown:
+        parser.error(f"알 수 없는 가중치 ID: {unknown}")
+    print(f"[assets] {root}", flush=True)
+    if args.check:
+        failed = 0
+        for model_id in selected:
+            try:
+                verify_local_asset(model_id, root)
+                print(f"[ready] {model_id}: {root / ASSET_FILES[model_id]}", flush=True)
+            except (OSError, ValueError, RuntimeError) as exc:
+                failed += 1
+                print(f"[failed] {model_id}: {exc}", flush=True)
+        print(f"[check] {len(selected) - failed}/{len(selected)} ready", flush=True)
+        return 1 if failed else 0
+    try:
+        prepare(root, selected,
+                register_existing=args.register_existing, strict=args.strict or not args.allow_partial)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

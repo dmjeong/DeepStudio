@@ -199,6 +199,8 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         ModelSpec("resnet50", "ResNet", "50", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", pretrained_asset="ResNet50_Weights.IMAGENET1K_V2", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
         ModelSpec("convnext_v1_tiny", "ConvNeXt V1", "Tiny", "classify", ("windows_native", "onnx"), common, (224, 224), (3,), "export_verified", pretrained_asset="ConvNeXt_Tiny_Weights.IMAGENET1K_V1", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
         ModelSpec("libreyolo_classify_mobilenetv4_small", "LibreYOLO", "MobileNetV4 Small", "classify", ("windows_native", "onnx"), common, (224, 224), (3,)),
+        ModelSpec("libreyolo_classify_mobilenetv4_medium", "LibreYOLO", "MobileNetV4 Medium", "classify", ("windows_native", "onnx"), common, (224, 224), (3,), notes="Small보다 표현 용량이 큰 분류 후보. Apache-2.0 ImageNet-1k 가중치; 속도와 검사 정확도는 데이터별 비교 필요"),
+        ModelSpec("libreyolo_detect_dfine_nano", "D-FINE", "Nano (COCO)", "detect", ("windows_native", "onnx"), common, (640, 640), (3,), notes="ICLR 2025 경량 DETR 후보. Apache-2.0 COCO 전용 가중치; Objects365 사전학습 없음"),
         ModelSpec("patchcore_wide_resnet50_2", "PatchCore", "Wide-ResNet50-2", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
         ModelSpec("patchcore_resnet18", "PatchCore", "ResNet18", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
     ]
@@ -217,6 +219,7 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         ModelSpec("libreyolo_detect_9t", "LibreYOLO", "9 Tiny", "detect", ("windows_native", "onnx"), common, (640, 640), (3,)),
         ModelSpec("deeplabv3plus_resnet34", "DeepLab V3+", "ResNet34", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", pretrained_asset="ResNet34_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
         ModelSpec("unet_resnet18", "U-Net", "ResNet18", "segment", ("windows_native", "onnx"), common, (512, 512), (1, 3), "export_verified", pretrained_asset="ResNet18_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
+        ModelSpec("dinov2_vits14", "DINOv2", "ViT-S/14 + Detail", "segment", ("windows_native", "onnx"), common, (392, 392), (1, 3), "export_verified", pretrained_asset="Meta DINOv2 ViT-S/14 LVD-142M", notes="Apache-2.0 사전학습 백본 + 원본 해상도 세부 경로; 분할 헤드는 새로 학습. CPU 속도는 장비별 측정 필요"),
     ])
     # DINOv2: 데스크톱 앱에만 보인다(surfaces). 웹 화면의 모델 목록은 바꾸지 않는다.
     desktop = {"surfaces": ["desktop"]}
@@ -239,21 +242,21 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         "export_verified", pretrained_asset="MobileNet_V2_Weights.IMAGENET1K_V1", metadata=desktop,
         notes="경량 사전학습 백본 U-Net(ImageNet MobileNetV2 + 얇은 디코더); ResNet18 U-Net처럼 넓게 보고 "
               "3504×1504 CPU 약 0.7초(ResNet18 U-Net 약 2.5초). 패치 학습 = 전체 추론 (전역 연산 없음)"))
-    # LibreYOLO 상위 변형: 기존 Tiny/Small과 같은 학습·추론·내보내기 경로를 쓴다 (데스크톱 전용 목록)
-    specs.extend([
-        ModelSpec("libreyolo_detect_9s", "LibreYOLO", "9 Small", "detect", ("windows_native", "onnx"), common,
-                  (640, 640), (3,), metadata=desktop, notes="9 Tiny보다 정확(연산 약 3배). 작은 결함은 패치 학습과 함께"),
-        ModelSpec("libreyolo_detect_9m", "LibreYOLO", "9 Medium", "detect", ("windows_native", "onnx"), common,
-                  (640, 640), (3,), metadata=desktop, notes="9 Small보다 정확(연산 약 3배). GPU 학습 권장"),
-        ModelSpec("libreyolo_detect_9c", "LibreYOLO", "9 Compact", "detect", ("windows_native", "onnx"), common,
-                  (640, 640), (3,), metadata=desktop, notes="LibreYOLO9 중 가장 정확하고 가장 무겁다. GPU 학습 권장"),
-        ModelSpec("libreyolo_classify_mobilenetv4_medium", "LibreYOLO", "MobileNetV4 Medium", "classify",
-                  ("windows_native", "onnx"), common, (224, 224), (3,), metadata=desktop,
-                  notes="MobileNetV4 Small보다 정확(연산 약 4배)"),
-        ModelSpec("libreyolo_classify_mobilenetv4_large", "LibreYOLO", "MobileNetV4 Large", "classify",
-                  ("windows_native", "onnx"), common, (256, 256), (3,), metadata=desktop,
-                  notes="MobileNetV4 중 가장 정확. 기본 입력 256"),
-    ])
+    for model_id, family, variant, asset, notes in (
+        ("unet_mobilenetv4_small", "U-Net", "MobileNetV4 Conv-S", "timm MobileNetV4 Conv-S ImageNet",
+         "ImageNet 사전학습 백본 + 얇은 디코더. 원본 ROI 해상도 유지; 속도와 정확도는 검사 데이터로 비교하세요."),
+        ("unet_shufflenetv2", "U-Net", "ShuffleNetV2 x1.0", "ShuffleNet_V2_X1_0_Weights.IMAGENET1K_V1",
+         "ImageNet 사전학습 백본 + 얇은 디코더. INT8 가속 효과는 CPU에 따라 다릅니다."),
+        ("unet_efficientnet_b1", "U-Net", "EfficientNet-B1", "timm EfficientNet-B1 RA4 ImageNet",
+         "ImageNet 사전학습 백본 + 얇은 디코더. SE 전역 문맥을 사용하므로 실제 판정 ROI로 품질을 평가하세요."),
+        ("bisenetv2", "BiSeNetV2", "Standard", "CoinCheung backbone_v2 ImageNet",
+         "ImageNet 사전학습 세부/의미/융합 백본 + 새 분할 헤드. 보조 손실은 학습에만 적용."),
+        ("stdc1", "STDC", "STDC1", "STDCNet813M_73.91 ImageNet",
+         "공식 ImageNet 사전학습 STDCNet813 + 새 분할 헤드. 보조 분할/경계 손실은 학습에만 적용."),
+    ):
+        specs.append(ModelSpec(model_id, family, variant, "segment", ("windows_native", "onnx"),
+                               common, (640, 640), (1, 3), "export_verified",
+                               pretrained_asset=asset, metadata=desktop, notes=notes))
     sam2_contract = {"contracts": {"graphs": {
         "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},
                     "outputs": ["image_embeddings", "image_features_0", "image_features_1"]},

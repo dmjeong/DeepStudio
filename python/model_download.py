@@ -106,8 +106,17 @@ def cached_imagenet_weights(url, cache, *, sha256=None):
         raise ValueError("HTTPS와 SHA256(이름 접미사 또는 고정값)이 있는 공식 가중치 URL 필요")
     cache = Path(cache)
     destination = cache / filename
+    return cached_https_weights(url, destination, expected)
+
+
+def cached_https_weights(url, destination, expected_sha256):
+    """Download a pinned official file atomically, preserving TLS/hash checks."""
+    if urlparse(url).scheme != "https" or not re.fullmatch(r"[a-f0-9]{8,64}", expected_sha256):
+        raise ValueError("HTTPS URL과 고정 SHA256 필요")
+    destination = Path(destination)
+    cache = destination.parent
     if destination.is_file():
-        _verify_hash(destination, expected)
+        _verify_hash(destination, expected_sha256)
         return destination  # Cached/offline use does not need an SSL context.
     context = download_context()
     opener = build_opener(HTTPSHandler(context=context), _HTTPSRedirect())
@@ -118,11 +127,17 @@ def cached_imagenet_weights(url, cache, *, sha256=None):
         with opener.open(request, timeout=60) as response:
             with tempfile.NamedTemporaryFile(dir=cache, prefix=".weights-", suffix=".part", delete=False) as stream:
                 temporary = Path(stream.name)
+                received = 0
+                next_progress = 64 * 1024 * 1024
                 while block := response.read(1024 * 1024):
                     stream.write(block)
+                    received += len(block)
+                    if received >= next_progress:
+                        print(f"[download] {destination.name}: {received // (1024 * 1024)} MiB", flush=True)
+                        next_progress += 64 * 1024 * 1024
                 stream.flush()
                 os.fsync(stream.fileno())
-        _verify_hash(temporary, expected)
+        _verify_hash(temporary, expected_sha256)
         os.replace(temporary, destination)
         return destination
     finally:

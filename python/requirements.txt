@@ -12,6 +12,7 @@
 # ── 핵심 프레임워크 ──
 torch>=2.0.0
 torchvision>=0.15.0
+timm==1.0.31
 truststore==0.10.4
 certifi>=2024.2.2
 

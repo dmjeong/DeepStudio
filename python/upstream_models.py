@@ -36,22 +36,13 @@ UPSTREAM_MODELS: dict[str, UpstreamModelSpec] = {
     "libreyolo_classify_mobilenetv4_small": UpstreamModelSpec(
         "libreyolo_classify_mobilenetv4_small", "mobilenetv4", "classify", "s", 224,
         "LibreMobileNetV4s-cls.pt"),
-    # MobileNetV4 Medium/Large: Small보다 깊고 넓다(정확도 ↑, 시간 ↑). Large의 기본 입력은 256
     "libreyolo_classify_mobilenetv4_medium": UpstreamModelSpec(
         "libreyolo_classify_mobilenetv4_medium", "mobilenetv4", "classify", "m", 224,
         "LibreMobileNetV4m-cls.pt"),
-    "libreyolo_classify_mobilenetv4_large": UpstreamModelSpec(
-        "libreyolo_classify_mobilenetv4_large", "mobilenetv4", "classify", "l", 256,
-        "LibreMobileNetV4l-cls.pt"),
+    "libreyolo_detect_dfine_nano": UpstreamModelSpec(
+        "libreyolo_detect_dfine_nano", "dfine", "detect", "n", 640, "LibreDFINEn.pt"),
     "libreyolo_detect_9t": UpstreamModelSpec(
         "libreyolo_detect_9t", "yolo9", "detect", "t", 640, "LibreYOLO9t.pt"),
-    # LibreYOLO9 S/M/C: Tiny와 같은 구조의 큰 변형 (같은 학습·내보내기·C++ 경로)
-    "libreyolo_detect_9s": UpstreamModelSpec(
-        "libreyolo_detect_9s", "yolo9", "detect", "s", 640, "LibreYOLO9s.pt"),
-    "libreyolo_detect_9m": UpstreamModelSpec(
-        "libreyolo_detect_9m", "yolo9", "detect", "m", 640, "LibreYOLO9m.pt"),
-    "libreyolo_detect_9c": UpstreamModelSpec(
-        "libreyolo_detect_9c", "yolo9", "detect", "c", 640, "LibreYOLO9c.pt"),
     "re_detr_v4_small": UpstreamModelSpec(
         "re_detr_v4_small", "rtdetrv4", "detect", "s", 640, "LibreRTDETRv4s.pt"),
     "re_detr_v4_medium": UpstreamModelSpec(
@@ -75,7 +66,7 @@ def upstream_model_ids() -> frozenset[str]:
 def is_upstream_checkpoint(checkpoint: object) -> bool:
     """Return whether a trusted checkpoint uses one of the shipped APIs."""
     return (isinstance(checkpoint, dict) and
-            checkpoint.get("model_family") in {"mobilenetv4", "yolo9", "rtdetrv4"} and
+            checkpoint.get("model_family") in {"mobilenetv4", "yolo9", "rtdetrv4", "dfine"} and
             checkpoint.get("task") in {"classify", "detect"})
 
 
@@ -90,8 +81,18 @@ def load_upstream_checkpoint(path: str | Path, *, device: str):
         ) from exc
     model = LibreYOLO(str(path), device=device)
     family = str(getattr(model, "FAMILY", getattr(model, "family", ""))).lower()
-    if family not in {"mobilenetv4", "yolo9", "rtdetrv4"}:
+    if family not in {"mobilenetv4", "yolo9", "rtdetrv4", "dfine"}:
         raise ValueError(f"Deep Vision Studio 기본 LibreYOLO 모델이 아닙니다: {family or 'unknown'}")
+    if family == "mobilenetv4":
+        from libreyolo_classification import configure_classifier
+        configure_classifier(model)
+    else:
+        from native_detection import configure_detector
+        configure_detector(model)
+    import torch
+    from native_patches import validate_patches
+    saved = torch.load(path, map_location="cpu", weights_only=False)
+    model.studio_patches = validate_patches(saved.get("studio_patches"), saved.get("task"))
     return model
 
 
@@ -124,15 +125,25 @@ def build_upstream_model(model_id: str, *, num_classes: int, device: str,
     if num_classes < 1:
         raise ValueError("num_classes must be positive")
     LibreMobileNetV4, LibreYOLO9, LibreRTDETRv4 = _api()
+    def construct(cls, **kwargs):
+        if weights is None and hasattr(cls, "_from_scratch"):
+            model = cls._from_scratch(size=spec.size, nb_classes=num_classes, device=device, **kwargs)
+        else:
+            model = cls(model_path=weights, size=spec.size, nb_classes=num_classes, device=device, **kwargs)
+        if spec.task == "detect":
+            from native_detection import configure_detector
+            model = configure_detector(model)
+        return model
     if spec.family == "mobilenetv4":
-        return LibreMobileNetV4(model_path=weights, size=spec.size,
-                                nb_classes=num_classes, device=device)
+        from libreyolo_classification import configure_classifier
+        return configure_classifier(construct(LibreMobileNetV4))
     if spec.family == "yolo9":
-        return LibreYOLO9(model_path=weights, size=spec.size,
-                          nb_classes=num_classes, device=device, task="detect")
+        return construct(LibreYOLO9, task="detect")
+    if spec.family == "dfine":
+        from libreyolo import LibreDFINE
+        return construct(LibreDFINE, task="detect")
     if spec.family == "rtdetrv4":
-        return LibreRTDETRv4(model_path=weights, size=spec.size,
-                              nb_classes=num_classes, device=device, task="detect")
+        return construct(LibreRTDETRv4, task="detect")
     raise AssertionError(f"unhandled upstream family: {spec.family}")
 
 
@@ -305,166 +316,54 @@ class _ProgressCallback:
         self.emit({"event": "training_exception", "message": str(event.exception_message)})
 
 
-TILING_KEY = "dvs_tiling"   # 패치 학습한 검출 체크포인트에 덧붙이는 타일 규칙 (LibreYOLO는 모르는 키를 그대로 둔다)
-PATCH_TRAINING_FAMILIES = frozenset({"yolo9"})
-
-
-def checkpoint_tiling(checkpoint) -> dict | None:
-    """패치 학습한 검출 체크포인트의 타일 규칙. 전체 축소로 학습한 모델이면 None.
-
-    {"tile": 640, "overlap": 128, "scale": 1.0, "interpolation": "INTER_AREA", "region": [가로, 세로] 또는 None}
-    """
-    value = checkpoint.get(TILING_KEY) if isinstance(checkpoint, dict) else None
-    if value is None:
-        return None
-    try:
-        tile, overlap, scale = int(value["tile"]), int(value["overlap"]), float(value["scale"])
-        region = value.get("region")
-        region = None if region is None else [int(region[0]), int(region[1])]
-    except (KeyError, TypeError, ValueError, IndexError) as exc:
-        raise ValueError("체크포인트의 타일 규칙(dvs_tiling) 형식 오류") from exc
-    if tile < 32 or not 0 <= overlap < tile or not 0 < scale <= 1 or (region and min(region) < 1):
-        raise ValueError("체크포인트의 타일 규칙(dvs_tiling) 값 범위 오류")
-    return {"tile": tile, "overlap": overlap, "scale": scale,
-            "interpolation": str(value.get("interpolation", "INTER_AREA")), "region": region}
-
-
-def stamp_tiling(path: str | Path, contract: dict) -> None:
-    """학습이 끝난 체크포인트에 타일 규칙을 기록한다 (추론 · 내보내기가 같은 배율과 타일 크기를 쓰도록)."""
-    import torch
-    path = Path(path)
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-    checkpoint[TILING_KEY] = dict(contract)
-    temporary = path.with_name(path.name + ".tmp")
-    torch.save(checkpoint, temporary)
-    os.replace(temporary, path)          # 쓰다 만 파일이 체크포인트를 대신하지 않게
-
-
-def detection_augmentation_arguments(augmentation: dict | None) -> dict:
-    """화면의 증강 설정 → LibreYOLO 검출 학습 인자. None이면 빈 dict(모델 기본 증강을 그대로 쓴다).
-
-        수평 뒤집기 확률 ─▶ flip_prob
-        회전 각도        ─▶ degrees      (LibreYOLO는 모자이크로 합친 영상에만 회전을 건다)
-        색상 변화        ─▶ hsv_prob     (0이면 끔, 0보다 크면 켬 — LibreYOLO의 세기는 고정)
-        모자이크         ─▶ mosaic_prob  (켬 = 1.0, 끔 = 0.0)
-    """
-    if augmentation is None:
-        return {}
-    flip = float(augmentation.get("horizontal_flip", 0.5))
-    rotation = float(augmentation.get("rotation", 0.0))
-    color = float(augmentation.get("color_jitter", 0.0))
-    if not 0 <= flip <= 1 or not 0 <= rotation <= 180 or not 0 <= color <= 1:
-        raise ValueError("증강 설정 범위 오류: 뒤집기·색상은 0~1, 회전은 0~180")
-    return {"flip_prob": flip, "degrees": rotation, "hsv_prob": 1.0 if color > 0 else 0.0,
-            "mosaic_prob": 1.0 if augmentation.get("mosaic") else 0.0}
-
-
-@contextmanager
-def classification_augmentation(augmentation: dict | None):
-    """LibreYOLO 분류 학습의 고정 증강을 화면 설정으로 바꾼다. None이면 아무것도 바꾸지 않는다.
-
-        LibreYOLO 기본   RandomResizedCrop(면적 50~100%) + 좌우반전 0.5   ← 인자로 바꿀 수 없다
-        직접 설정        검증과 같은 구도(Resize + CenterCrop) + 화면의 뒤집기 · 회전 · 색상
-
-    무작위 잘라내기는 가장자리 결함을 영상 밖으로 밀어낼 수 있어 직접 설정에서는 쓰지 않는다.
-    고정된 libreyolo 버전의 변환 생성 함수 하나를 학습 동안만 바꿔 끼우고, 끝나면 되돌린다.
-    """
-    if augmentation is None:
-        yield
-        return
-    flip = float(augmentation.get("horizontal_flip", 0.5))
-    rotation = float(augmentation.get("rotation", 0.0))
-    color = float(augmentation.get("color_jitter", 0.0))
-    if not 0 <= flip <= 1 or not 0 <= rotation <= 180 or not 0 <= color <= 1:
-        raise ValueError("증강 설정 범위 오류: 뒤집기·색상은 0~1, 회전은 0~180")
-    import libreyolo.data.classify_dataset as module
-    from torchvision import transforms
-    original = module.build_classify_transforms
-
-    def build(imgsz, augment, **options):
-        if not augment:
-            return original(imgsz, augment, **options)
-        # 검증 변환(Resize → CenterCrop → ToTensor → Normalize)을 바탕으로 텐서 변환 앞에 증강을 끼운다
-        base = {key: value for key, value in options.items() if key not in ("auto_augment", "erasing")}
-        steps = list(original(imgsz, False, **base).transforms)
-        position = next(index for index, step in enumerate(steps) if isinstance(step, transforms.ToTensor))
-        added = []
-        if flip > 0:
-            added.append(transforms.RandomHorizontalFlip(flip))
-        if rotation > 0:
-            added.append(transforms.RandomRotation(rotation))
-        if color > 0:
-            added.append(transforms.ColorJitter(brightness=color, contrast=color))
-        return transforms.Compose(steps[:position] + added + steps[position:])
-
-    module.build_classify_transforms = build
-    try:
-        yield
-    finally:
-        module.build_classify_transforms = original
-
-
 def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: list[str],
                          output_dir: str | Path, epochs: int, batch_size: int,
                          learning_rate: float, device: str, weights: str | None, pretrained: bool = False,
                          resume: bool, use_amp: bool, patience: int,
-                         val_split: float = 0.2, seed: int = 0, augmentation: dict | None = None,
-                         tiling: dict | None = None,
+                         val_split: float = 0.2, seed: int = 0, center_crop=None,
+                         augmentation=None, patch_training=False, patch_scale=1., patches_per_image=0,
                          emit: Callable[[dict], None]) -> dict:
-    """Run an upstream native trainer and return its documented result map.
-
-    augmentation: None이면 모델 기본 증강. dict면 화면 설정(horizontal_flip · rotation · color_jitter · mosaic)을 적용한다.
-    tiling: 검출 패치 학습. None이면 영상 전체를 입력 크기로 줄여 학습한다.
-            {"scale": 배율, "max_tiles": 영상당 타일 상한(0 = 제한 없음)} 이면 타일로 잘라 학습하고,
-            결과 체크포인트에 타일 규칙을 기록한다 (LibreYOLO9만: 판정 영역 크기 그대로 C++로 내보낼 수 있는 구조).
-    """
+    """Run an upstream native trainer and return its documented result map."""
     spec = get_upstream_spec(model_id)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     if resume and not weights:
         raise ValueError("학습 재개에는 같은 모델의 last.pt 또는 best.pt가 필요합니다")
-    if tiling is not None and (spec.task != "detect" or spec.family not in PATCH_TRAINING_FAMILIES):
-        raise ValueError("검출 패치 학습은 LibreYOLO9 모델만 지원합니다. RT-DETR는 입력 크기가 고정된 구조라 "
-                         "판정 영역 전체를 한 번에 추론하는 C++ 배포를 만들 수 없습니다.")
+    from native_patches import patch_contract
+    from studio_augmentation import augmentation_contract
+    augmentation = augmentation_contract(augmentation)
+    patches = patch_contract(spec.task, spec.input_size, patch_scale, batch_size) if patch_training else None
+    if center_crop is not None:
+        from crop_dataset import prepare_crop_dataset
+        data_root = prepare_crop_dataset(data_root, output.parent / "generated", spec.task,
+                                         center_crop, num_classes=len(class_names))
+    common = {"epochs": int(epochs), "batch": int(batch_size), "imgsz": spec.input_size,
+                  "lr0": float(learning_rate), "device": device, "project": str(output.parent), "name": output.name,
+                  "exist_ok": True, "amp": bool(use_amp), "patience": int(patience),
+                  "callbacks": _ProgressCallback(emit), "val_loss": True, "eval_interval": 1, "seed": int(seed)}
+    emit({"event": "preprocessing_configured", "policy": "native_patches_v1" if patches else ("libreyolo_full_frame_v1" if spec.task == "classify" else "studio_detector_v1"),
+          "message": f"증강 적용: {augmentation} | " +
+          (f"{spec.input_size}px 패치 / 배율 {patch_scale:g} / " +
+           ("원본 한 장 단위 분류" if spec.task == "classify" else "검증 mAP는 패치 단위")
+           if patches else "전체 입력 영역 사용")})
     if spec.task == "detect":
-        def run(dataset_root):
-            source = str(write_detection_dataset_yaml(dataset_root, class_names, output / "dataset.yaml"))
+        from native_detection_training import train_detector
+        with tempfile.TemporaryDirectory(prefix="studio-detect-", dir=output.parent) as temp:
+            if patches:
+                from detection_patch_dataset import prepare_detection_patches
+                data_root = prepare_detection_patches(data_root, Path(temp) / "patches", patches,
+                    num_classes=len(class_names), patches_per_image=patches_per_image, seed=seed)
+            source = str(write_detection_dataset_yaml(data_root, class_names, output / "dataset.yaml"))
             model = build_upstream_model(model_id, num_classes=len(class_names), device=device,
                                          weights=weights, pretrained=pretrained)
-            callback = _ProgressCallback(emit)
-            return model.train(data=source, epochs=int(epochs), batch=int(batch_size), imgsz=spec.input_size,
-                               lr0=float(learning_rate), device=device, project=str(output.parent),
-                               name=output.name, exist_ok=True, resume=bool(resume), amp=bool(use_amp),
-                               patience=int(patience), callbacks=callback, val_loss=True,
-                               eval_interval=1, **detection_augmentation_arguments(augmentation))
-
-        if tiling is None:
-            return run(data_root)
-        from detection_tiles import prepare_tiled_detection_dataset
-        # 타일은 학습 동안만 쓰는 임시 데이터다 (원본은 바꾸지 않는다). 시드가 같으면 재개 때도 같은 타일이 나온다.
-        with tempfile.TemporaryDirectory(dir=str(output.parent), prefix=".libreyolo-tiles-") as temporary:
-            summary = prepare_tiled_detection_dataset(
-                data_root, temporary, tile=spec.input_size, scale=float(tiling.get("scale", 1.0)),
-                max_tiles=int(tiling.get("max_tiles", 0)), seed=seed)
-            emit({"event": "tiles_prepared", **summary})
-            result = run(temporary)
-        contract = {key: summary[key] for key in ("tile", "overlap", "scale", "interpolation", "region")}
-        for key in ("best_checkpoint", "last_checkpoint"):
-            if result.get(key) and Path(result[key]).is_file():
-                stamp_tiling(result[key], contract)
-        result["tiling"] = contract
-        return result
-
+            return train_detector(model, data=source, resume=resume, center_crop=center_crop,
+                                  augmentation=augmentation, patches=patches, **common)
     with prepare_classification_dataset(
         data_root, class_names, output.parent, val_split=val_split, seed=seed,
     ) as (prepared_root, summary):
         emit({"event": "dataset_prepared", **summary})
         model = build_upstream_model(model_id, num_classes=len(class_names), device=device,
                                      weights=weights, pretrained=pretrained)
-        callback = _ProgressCallback(emit)
-        with classification_augmentation(augmentation):
-            return model.train(data=str(prepared_root), epochs=int(epochs), batch=int(batch_size),
-                               imgsz=spec.input_size, lr0=float(learning_rate), device=device,
-                               project=str(output.parent), name=output.name, exist_ok=True,
-                               resume=bool(resume), amp=bool(use_amp), patience=int(patience),
-                               callbacks=callback, val_loss=True, eval_interval=1)
+        from libreyolo_training import train_classifier
+        return train_classifier(model, data=str(prepared_root), resume=resume,
+                                center_crop=center_crop, augmentation=augmentation, patches=patches, **common)

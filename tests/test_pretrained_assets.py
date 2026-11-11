@@ -95,12 +95,17 @@ def test_training_page_stops_before_starting_when_weights_are_missing(tmp_path, 
 
 # ── 수동으로 받은 가중치 (manifest 없이) ──────────────────────────────
 
-def _zip_weights(path):
+def _zip_weights(path, monkeypatch):
     """PyTorch 저장 형식(zip)인 작은 파일."""
     import zipfile
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("archive/data.pkl", b"weights")
+    import hashlib
+    import sam2_assets
+    for model_id, relative in ASSET_FILES.items():
+        if model_id.startswith("sam2_") and Path(relative).name == path.name:
+            monkeypatch.setitem(sam2_assets.SAM2_SHA256, model_id, hashlib.sha256(path.read_bytes()).hexdigest())
     return path
 
 
@@ -108,10 +113,10 @@ def test_manual_file_without_manifest_or_entry_is_accepted(tmp_path, monkeypatch
     """사용자가 겪은 문제: 수동으로 넣은 파일이 manifest에 없다고 거부됐다."""
     bundle = tmp_path / "bundle"
     monkeypatch.setenv("DVS_BUILTIN_ASSETS_DIR", str(bundle))
-    target = _zip_weights(bundle / ASSET_FILES["sam2_hiera_tiny"])
+    target = _zip_weights(bundle / ASSET_FILES["sam2_hiera_tiny"], monkeypatch)
     assert builtin_asset_path("sam2_hiera_tiny") == target.resolve()           # manifest 파일 자체가 없음
     (bundle / "manifest.json").write_text(json.dumps({"schema_version": 1, "files": {}}), encoding="utf-8")
-    other = _zip_weights(bundle / ASSET_FILES["libreyolo_detect_9t"])
+    other = _zip_weights(bundle / ASSET_FILES["libreyolo_detect_9t"], monkeypatch)
     assert builtin_asset_path("libreyolo_detect_9t") == other.resolve()        # manifest에 항목이 없음
     html = bundle / ASSET_FILES["re_detr_v4_small"]
     html.write_text("<html>download page</html>", encoding="utf-8")
@@ -139,9 +144,9 @@ def test_torchvision_file_is_checked_by_the_hash_in_its_official_name(tmp_path, 
 def test_user_folder_accepts_flat_files_and_import_records_the_hash(tmp_path, monkeypatch):
     import builtin_assets
     monkeypatch.setenv("DVS_BUILTIN_ASSETS_DIR", str(tmp_path / "bundle"))
-    flat = _zip_weights(user_asset_root() / "sam2.1_hiera_small.pt")         # 하위 폴더 없이 넣어도 된다
+    flat = _zip_weights(user_asset_root() / "sam2.1_hiera_small.pt", monkeypatch)         # 하위 폴더 없이 넣어도 된다
     assert builtin_asset_path("sam2_hiera_small") == flat.resolve()
-    downloaded = _zip_weights(tmp_path / "Downloads" / "LibreYOLO9t (1).pt")  # 브라우저가 이름을 바꿔도 된다
+    downloaded = _zip_weights(tmp_path / "Downloads" / "LibreYOLO9t (1).pt", monkeypatch)  # 브라우저가 이름을 바꿔도 된다
     target = builtin_assets.import_asset("libreyolo_detect_9t", downloaded)
     assert target == (user_asset_root() / ASSET_FILES["libreyolo_detect_9t"]).resolve()
     manifest = json.loads((user_asset_root() / "manifest.json").read_text(encoding="utf-8"))
@@ -166,7 +171,7 @@ def test_build_keeps_going_when_one_weight_cannot_be_downloaded(tmp_path, capsys
         return path
 
     with patch.object(prepare, "cached_imagenet_weights", side_effect=fake_download):
-        prepare.prepare(tmp_path, ["resnet18", "resnet34"])
+        prepare.prepare(tmp_path, ["resnet18", "resnet34"], strict=False)
         output = capsys.readouterr().out
         assert "[failed] resnet34" in output and "resnet34-b627a593.pth" in output and "빌드는 계속" in output
         files = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))["files"]
@@ -190,7 +195,7 @@ def test_settings_page_lists_weights_and_imports_the_selected_one(tmp_path, monk
     assert set(rows) == set(ASSET_FILES) and set(rows.values()) == {"없음"}
     row = list(ASSET_FILES).index("sam2_hiera_tiny")
     group.table.selectRow(row)
-    downloaded = _zip_weights(tmp_path / "sam2.1_hiera_tiny.pt")
+    downloaded = _zip_weights(tmp_path / "sam2.1_hiera_tiny.pt", monkeypatch)
     with patch.object(QFileDialog, "getOpenFileName", return_value=(str(downloaded), "")), \
             patch.object(QMessageBox, "information"):
         group._import_selected()

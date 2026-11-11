@@ -20,6 +20,9 @@ release-specific SBOM.
 | Meta DINOv2 ViT-S/14, ViT-B/14 | Adapted backbone (`python/dinov2.py`) and official LVD-142M pretrained weights; classification and segmentation heads are trained locally | Apache-2.0; https://github.com/facebookresearch/dinov2/blob/main/LICENSE; bundled text: `licenses/DINOv2-APACHE-2.0.txt` |
 | cryptography | Python AES-GCM model containers and model-pack signatures | Apache-2.0 OR BSD-3-Clause; https://github.com/pyca/cryptography/blob/main/LICENSE |
 | OpenSSL 3 | Native encrypted-model loader on non-Windows builds | Apache-2.0; https://github.com/openssl/openssl/blob/openssl-3.0/LICENSE.txt |
+| timm 1.0.31 | MobileNetV4 Conv-S / EfficientNet-B1 segmentation encoders | Apache-2.0; bundled text: `licenses/timm-LICENSE.txt`; exact weight revisions and notices: `licenses/segmentation-candidates.md` |
+| CoinCheung BiSeNetV2 | Adapted CPU/ONNX-compatible segmentation implementation and maintainer-published ImageNet backbone | MIT repository; bundled text: `licenses/bisenet-LICENSE.txt`; exact weight source/hash and provenance: `licenses/segmentation-candidates.md` |
+| MichaelFan01 STDC-Seg | Adapted STDC1 segmentation and boundary training with authors' ImageNet backbone | MIT repository; bundled text: `licenses/stdc-LICENSE.txt`; changes, source hashes and weight provenance: `licenses/segmentation-candidates.md` |
 
 The Windows native encrypted-model loader uses the OS-provided BCrypt API and
 does not ship an OpenSSL DLL. Python cryptography wheels can contain OpenSSL;
@@ -38,6 +41,16 @@ before redistribution.
 
 ## DINOv2 adaptation
 
+Copyright (c) Meta Platforms, Inc. and affiliates. `python/dinov2_segmentation.py`
+adapts the non-register ViT-S/14 backbone to standard PyTorch operations. Changes:
+removed xformers/training-only machinery and remote loading; added a semantic
+segmentation decoder, native-resolution detail path, padding and BW8 normalization
+adapter. The official backbone state dictionary is loaded strictly.
+Reference source verified at revision `7764ea0f912e53c92e82eb78a2a1631e92725fc8`.
+The fixed official weight is
+https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth,
+SHA256 `b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9`.
+This applies to the basic DINOv2 model, not the separately licensed XRay-DINO or
 Copyright (c) Meta Platforms, Inc. and affiliates. `python/dinov2.py` re-implements
 the non-register ViT-S/14 and ViT-B/14 backbones of facebookresearch/dinov2 with
 standard PyTorch operations and the same parameter names, so the official state

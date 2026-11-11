@@ -32,15 +32,17 @@ USED_BY = {
     "wide_resnet50_2": "PatchCore 이상 탐지 (ImageNet 백본)",
     "convnext_v1_tiny": "ConvNeXt Tiny 분류",
     "mobilenet_v2": "U-Net MobileNetV2 분할 (경량)",
+    "shufflenet_v2_x1_0": "U-Net ShuffleNetV2 x1.0 분할",
+    "mobilenetv4_small_encoder": "U-Net MobileNetV4 Conv-S 분할",
+    "efficientnet_b1_encoder": "U-Net EfficientNet-B1 분할",
+    "bisenetv2_backbone": "BiSeNetV2 분할 (ImageNet 백본)",
+    "stdc1_backbone": "STDC1 분할 (ImageNet 백본)",
     "dinov2_vits14": "DINOv2 ViT-S/14 분류·분할",
     "dinov2_vitb14": "DINOv2 ViT-B/14 분류·분할",
     "libreyolo_classify_mobilenetv4_small": "MobileNetV4 분류",
     "libreyolo_classify_mobilenetv4_medium": "MobileNetV4 Medium 분류",
-    "libreyolo_classify_mobilenetv4_large": "MobileNetV4 Large 분류",
+    "libreyolo_detect_dfine_nano": "D-FINE Nano 탐지 (COCO)",
     "libreyolo_detect_9t": "LibreYOLO9 탐지",
-    "libreyolo_detect_9s": "LibreYOLO9 Small 탐지",
-    "libreyolo_detect_9m": "LibreYOLO9 Medium 탐지",
-    "libreyolo_detect_9c": "LibreYOLO9 Compact 탐지",
     "re_detr_v4_small": "RT-DETRv4 S 탐지",
     "re_detr_v4_medium": "RT-DETRv4 M 탐지",
     "re_detr_v4_large": "RT-DETRv4 L 탐지",
@@ -57,7 +59,7 @@ def choose_and_import(parent, asset_id: str) -> bool:
     from pathlib import Path
     expected = Path(ASSET_FILES[asset_id]).name
     path, _ = QFileDialog.getOpenFileName(
-        parent, f"{asset_id} 가중치 파일 선택 ({expected})", "", "PyTorch 가중치 (*.pth *.pt);;모든 파일 (*)")
+        parent, f"{asset_id} 가중치 파일 선택 ({expected})", "", "PyTorch 가중치 (*.pth *.pt *.tar);;모든 파일 (*)")
     if not path:
         return False
     try:

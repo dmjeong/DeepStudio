@@ -1,7 +1,7 @@
 """Official SAM2.1 pretrained-asset discovery, download, and model loading.
 
 The Studio keeps the large checkpoint files out of source control.  The release
-builder obtains them from Meta's official Hugging Face repositories, verifies
+builder obtains them from Meta's official download servers or Hugging Face mirror, verifies
 them in the bundled asset manifest, and the application loads them through the
 official SAM-2 package. This mapping is shared by native inference, fine-tuning
 and ONNX export.
@@ -9,9 +9,9 @@ and ONNX export.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -22,12 +22,25 @@ class Sam2Asset:
     filename: str
     config_name: str
 
+    @property
+    def sha256(self) -> str:
+        return SAM2_SHA256[self.model_id]
+
 
 SAM2_ASSETS: dict[str, Sam2Asset] = {
     "sam2_hiera_tiny": Sam2Asset("sam2_hiera_tiny", "Hiera Tiny", "facebook/sam2.1-hiera-tiny", "sam2.1_hiera_tiny.pt", "configs/sam2.1/sam2.1_hiera_t.yaml"),
     "sam2_hiera_small": Sam2Asset("sam2_hiera_small", "Hiera Small", "facebook/sam2.1-hiera-small", "sam2.1_hiera_small.pt", "configs/sam2.1/sam2.1_hiera_s.yaml"),
     "sam2_hiera_base_plus": Sam2Asset("sam2_hiera_base_plus", "Hiera Base+", "facebook/sam2.1-hiera-base-plus", "sam2.1_hiera_base_plus.pt", "configs/sam2.1/sam2.1_hiera_b+.yaml"),
     "sam2_hiera_large": Sam2Asset("sam2_hiera_large", "Hiera Large", "facebook/sam2.1-hiera-large", "sam2.1_hiera_large.pt", "configs/sam2.1/sam2.1_hiera_l.yaml"),
+}
+
+# Publisher LFS SHA256 (not the Xet hash), verified on 2026-10-29 at
+# https://huggingface.co/facebook/sam2.1-hiera-{variant}/blob/main/{filename}
+SAM2_SHA256 = {
+    "sam2_hiera_tiny": "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69",
+    "sam2_hiera_small": "6d1aa6f30de5c92224f8172114de081d104bbd23dd9dc5c58996f0cad5dc4d38",
+    "sam2_hiera_base_plus": "a2345aede8715ab1d5d31b4a509fb160c5a4af1970f199d9054ccfb746c004c5",
+    "sam2_hiera_large": "2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318",
 }
 
 
@@ -39,26 +52,28 @@ def get_sam2_asset(model_id: str) -> Sam2Asset:
 
 
 def download_sam2_pretrained(model_id: str, cache_dir: str | Path | None = None) -> Path:
-    """Download exactly one official checkpoint through Hugging Face Hub."""
+    """Fetch a pinned official file using the same native CA support as ResNet."""
+    from model_download import cached_https_weights
+    from urllib.error import URLError
+
     asset = get_sam2_asset(model_id)
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as exc:
-        raise RuntimeError("SAM2 사전학습 가중치 다운로드 구성요소가 없습니다. Deep Vision Studio 설치본을 다시 빌드하세요.") from exc
-    kwargs: dict[str, Any] = {"repo_id": asset.hub_model_id, "filename": asset.filename}
-    if cache_dir is not None:
-        target = Path(cache_dir).expanduser()
-        if not target.is_absolute():
-            raise ValueError("SAM2 가중치 저장 위치는 절대 경로여야 합니다.")
-        target.mkdir(parents=True, exist_ok=True)
-        kwargs["local_dir"] = str(target)
-    try:
-        path = Path(hf_hub_download(**kwargs))
-    except Exception as exc:
-        raise RuntimeError(f"SAM2.1 {asset.variant} 공식 가중치 다운로드 실패: {exc}") from exc
-    if not path.is_file() or path.stat().st_size == 0:
-        raise RuntimeError("SAM2.1 가중치 다운로드가 완료되지 않았습니다.")
-    return path.resolve()
+    target = (Path(cache_dir).expanduser() if cache_dir is not None else
+              Path.home() / ".cache" / "deepvisionstudio" / "sam2")
+    if not target.is_absolute():
+        raise ValueError("SAM2 가중치 저장 위치는 절대 경로여야 합니다.")
+    # Both are publisher-owned sources of the exact same checkpoint. A failed
+    # network connection may try the mirror; a hash mismatch must remain fatal.
+    urls = (
+        f"https://dl.fbaipublicfiles.com/segment_anything_2/092824/{asset.filename}",
+        f"https://huggingface.co/{asset.hub_model_id}/resolve/main/{asset.filename}",
+    )
+    errors = []
+    for url in urls:
+        try:
+            return cached_https_weights(url, target / asset.filename, asset.sha256).resolve()
+        except (URLError, OSError) as exc:
+            errors.append(f"{url}: {exc}")
+    raise RuntimeError(f"SAM2.1 {asset.variant} 공식 가중치 다운로드 실패:\n" + "\n".join(errors))
 
 
 def load_sam2_pretrained(model_id: str, *, device: str = "cpu", checkpoint_path: str | Path | None = None):
@@ -76,9 +91,57 @@ def load_sam2_pretrained(model_id: str, *, device: str = "cpu", checkpoint_path:
     except ImportError as exc:
         raise RuntimeError("SAM2 공식 런타임이 없습니다. build.bat으로 설치본을 다시 빌드하세요.") from exc
     try:
-        return build_sam2(asset.config_name, ckpt_path=str(path), device=device, mode="eval")
+        model = build_sam2(asset.config_name, ckpt_path=str(path), device=device, mode="eval")
     except Exception as exc:
         raise RuntimeError(f"SAM2.1 {asset.variant} 로드 실패: {exc}") from exc
+
+    if hasattr(model, 'state_dict'):
+        model.dvs_base_checkpoint = {'model_id': model_id, 'path': str(path.resolve()),
+                                     'sha256': _file_sha256(path)}
+    return model
+
+
+def _file_sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _delta_base(model_id, payload, checkpoint_path, device):
+    provenance = payload.get("base_checkpoint")
+    if provenance is None:
+        return load_sam2_pretrained(model_id, device=device)
+    if not isinstance(provenance, dict):
+        raise ValueError("SAM2 기반 가중치 provenance 형식 오류")  # noqa: TRY004 - invalid checkpoint metadata
+    digest = provenance.get("sha256")
+    if (
+        provenance.get("model_id") != model_id
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(c not in "0123456789abcdef" for c in digest)
+    ):
+        raise ValueError("SAM2 기반 가중치 model_id 또는 SHA256 오류")
+    candidates = []
+    from builtin_assets import builtin_asset_path
+
+    try:
+        candidates.append(builtin_asset_path(model_id))
+    except (FileNotFoundError, RuntimeError):
+        # A selected local source remains valid without a separate bundled copy.
+        candidates = []
+    hint = provenance.get("path")
+    if isinstance(hint, str) and hint:
+        candidates.append((checkpoint_path.parent / hint).resolve())
+    for candidate in candidates:
+        if candidate.is_file() and _file_sha256(candidate) == digest:
+            return load_sam2_pretrained(
+                model_id, device=device, checkpoint_path=candidate
+            )
+    raise ValueError(
+        "SAM2 학습 당시와 SHA256이 같은 기반 가중치를 찾을 수 없습니다. 원본 파일 또는 기본 가중치 설치를 확인하세요."
+    )
 
 
 def _fine_tune_payload(path: Path):
@@ -120,11 +183,14 @@ def load_sam2_checkpoint(model_id: str, *, device: str = "cpu",
     state = payload.get("model_state_dict")
     if not isinstance(state, dict) or not state:
         raise ValueError("SAM2 미세조정 체크포인트에 model_state_dict가 없습니다.")
-    model = load_sam2_pretrained(model_id, device=device)
+    model = _delta_base(model_id, payload, path, device)
     try:
         _missing, unexpected = model.load_state_dict(state, strict=False)
     except (RuntimeError, TypeError) as exc:
         raise ValueError("SAM2 미세조정 체크포인트의 모델 구조가 맞지 않습니다.") from exc
-    if unexpected:
+    if unexpected or any(name.startswith(("sam_prompt_encoder.", "sam_mask_decoder.")) for name in _missing):
         raise ValueError("SAM2 미세조정 체크포인트의 모델 구조가 선택한 Hiera 변형과 다릅니다.")
+    model.dvs_multimask_output = False
+    if hasattr(model, 'sam_mask_decoder'):
+        model.sam_mask_decoder.dynamic_multimask_via_stability = False
     return model

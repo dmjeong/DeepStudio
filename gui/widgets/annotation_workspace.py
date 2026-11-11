@@ -961,6 +961,8 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
                 if 1 <= key <= 12 and not (self.task == "segment" and i == 0):
                     suffix += f"  [F{key}]"
                 self.class_list.addItem(f"{i}  {name}{suffix}")
+                if self.task == "segment" and i == 0:
+                    self.class_list.item(i).setFlags(Qt.ItemFlag.NoItemFlags)
         self._filter_classes(self.class_search.text())
         self.history.clear()
         for label, _ in reversed(self.undo_stack):
@@ -1049,9 +1051,8 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             )
 
     def _class_list_selected(self, row):
-        if row == 0 and self._background_slot_blocked():
-            self.status.setText(f"0번 '{self.names[0]}'은(는) 배경 자리라 그릴 수 없습니다. "
-                                "데이터셋 화면에서 '0번에 배경 추가'를 누르세요.")
+        if self.task == "segment" and row == 0:
+            self.status.setText("0번은 배경 자리입니다. 결함 클래스를 선택하거나 지우개를 사용하세요.")
             return
         if 0 <= row < len(self.names):
             self.class_combo.setCurrentIndex(row)
@@ -1069,7 +1070,7 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             self,
             "클래스 추가",
             "클래스 이름"
-            + (" (첫 클래스는 배경)" if self.task == "segment" else "")
+            + (" (배경은 자동 등록됨)" if self.task == "segment" else "")
             + ":",
         )
         if not accepted or not name.strip():
@@ -1085,6 +1086,8 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
             for i in range(len(self.names)):
                 self.class_combo.setItemData(i, i)
             if self.task == "segment":
+                self.class_combo.setItemText(0, self.names[0] + " · 배경(자동)")
+                self.class_combo.model().item(0).setEnabled(False)
                 self.class_combo.addItem("학습 제외 영역 (255)", 255)
             self._mark_background_slot(self.class_combo, label=True)
             self._active_class(self.class_combo.currentIndex())

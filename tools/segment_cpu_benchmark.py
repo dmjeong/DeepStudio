@@ -6,9 +6,14 @@
         모델 × 출력 방식 ─▶ FP32.onnx ─▶ INT8.onnx  ──▶  배율 · 슬롯 크기별로 같은 파일을 크기만 바꿔 실행
         (입력 크기와 무관한 그래프라 파일은 조합마다 하나)      └▶ 표 + JSON
 
+    모델
+        U-Net 계열    unet_resnet18 · unet_mobilenetv2 · unet_lite · unet_mobilenetv4_small · unet_shufflenetv2
+                      · unet_efficientnet_b1   (1/2 해상도까지 디코더로 되돌린다)
+        실시간 분할망  bisenetv2 · stdc1         (1/8 해상도에서 판정하고 한 번에 확대한다 → 빠르지만 작은 결함에 불리)
     출력 방식
         full : 원본 해상도 로짓 (지금 내보내기와 같은 모양)
         half : 1/2 해상도 로짓 (head를 확대보다 먼저, 마지막 확대 없음 → argmax는 C++에서 1/2 해상도로)
+               U-Net 계열만. bisenetv2 · stdc1은 내부 해상도가 1/8이라 이 방식이 없다
     배율
         판정 영역을 줄여 넣는 비율 (패치 학습 배율과 같은 뜻). 줄인 뒤 32의 배수로 채운다 = C++ 계약과 같은 크기.
     슬롯
@@ -42,9 +47,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
-MODELS = ("unet_resnet18", "unet_mobilenetv2", "unet_lite")
+MODELS = ("unet_resnet18", "unet_mobilenetv2", "unet_lite",
+          "unet_mobilenetv4_small", "unet_shufflenetv2", "unet_efficientnet_b1", "bisenetv2", "stdc1")
 HEADS = ("full", "half")
-LAST_DECODER = {"unet_resnet18": "dec1", "unet_mobilenetv2": "dec1", "unet_lite": "d1"}  # 1/2 해상도 특징을 내는 블록
+# half 출력을 꺼내는 자리: (모듈 이름, 그 출력에 head를 적용해야 하는가)
+#   마지막 디코더 블록(1/2 해상도 특징) → head를 직접 적용 / 이미 1/2 해상도 로짓을 내는 head → 그대로
+HALF_OUTPUT = {"unet_resnet18": ("dec1", True), "unet_mobilenetv2": ("dec1", True), "unet_lite": ("d1", True),
+               "unet_mobilenetv4_small": ("head", False), "unet_shufflenetv2": ("head", False),
+               "unet_efficientnet_b1": ("head", False)}
 MULTIPLE = 32                 # 분할 백본의 최대 보폭 (export_onnx.WHOLE_IMAGE_MULTIPLE 과 같은 값)
 EXPORT_SIZE = (64, 96)        # 내보낼 때 쓰는 작은 입력 (세로, 가로). 그래프는 크기와 무관하게 바뀐다
 CALIBRATION_TILE = (256, 384)
@@ -95,18 +105,23 @@ def build_export_model(model, head):
     if head == "full":
         return net
 
+    if model not in HALF_OUTPUT:
+        raise ValueError(f"{model}은(는) half 출력을 지원하지 않습니다 (내부 해상도가 1/2이 아닙니다)")
+    module_name, apply_head = HALF_OUTPUT[model]
+
     class HalfHead(torch.nn.Module):
         def __init__(self):
             super().__init__()
             self.net, self.feature = net, None
-            getattr(net, LAST_DECODER[model]).register_forward_hook(self._keep)
+            getattr(net, module_name).register_forward_hook(self._keep)
 
         def _keep(self, module, inputs, output):
             self.feature = output
 
         def forward(self, x):
-            self.net(x)                          # 훅이 1/2 해상도 특징을 잡는다 (그 뒤 확대는 그래프에서 빠진다)
-            return self.net.head(self.feature)   # 1×1 합성곱과 선형 확대는 순서를 바꿔도 값이 같다
+            self.net(x)                          # 훅이 1/2 해상도 출력을 잡는다 (그 뒤 확대는 그래프에서 빠진다)
+            # 1×1 합성곱과 선형 확대는 순서를 바꿔도 값이 같다
+            return self.net.head(self.feature) if apply_head else self.feature
 
     return HalfHead().eval()
 
@@ -123,10 +138,19 @@ def export_fp32(model, head, path):
     if "external_data" in inspect.signature(torch.onnx.export).parameters:
         exporter_options["external_data"] = False
     fixed = path.with_suffix(".fixed.onnx")
+    network = build_export_model(model, head)
+    # ShuffleNetV2의 채널 섞기(Reshape)는 공간 크기를 상수로 굳힌다 → 제품 내보내기(export_onnx)처럼
+    # 세로 · 가로를 가변 축으로 내보내 Shape 계산을 그래프에 남긴다 (그래야 다른 입력 크기에서도 돈다).
+    dynamic = getattr(getattr(network, "net", network), "export_dynamic_spatial", False)
+    axes = {name: {2: "height", 3: "width"} for name in (INPUT_NAME, "logits")} if dynamic else None
     with torch.no_grad():
-        torch.onnx.export(build_export_model(model, head), torch.zeros(1, 3, *EXPORT_SIZE), str(fixed),
-                          input_names=[INPUT_NAME], output_names=["logits"], opset_version=17, **exporter_options)
-    onnx.save(_set_hw(size_free_graph(onnx.load(str(fixed))), "height", "width"), str(path))
+        torch.onnx.export(network, torch.zeros(1, 3, *EXPORT_SIZE), str(fixed),
+                          input_names=[INPUT_NAME], output_names=["logits"], opset_version=17,
+                          dynamic_axes=axes, **exporter_options)
+    graph = onnx.load(str(fixed))
+    if dynamic:
+        graph = _set_hw(graph, *EXPORT_SIZE)       # 업샘플 배율을 재려면 입력 크기가 숫자여야 한다
+    onnx.save(_set_hw(size_free_graph(graph), "height", "width"), str(path))
     fixed.unlink()
 
 
@@ -165,6 +189,8 @@ def prepare(work, models, heads, int8, log=print):
     work.mkdir(parents=True, exist_ok=True)
     for model in models:
         for head in heads:
+            if head == "half" and model not in HALF_OUTPUT:
+                continue
             fp32 = model_path(work, model, head, "fp32")
             quantized = model_path(work, model, head, "int8")
             if fp32.exists() and (quantized.exists() or not int8):
@@ -259,6 +285,8 @@ def measure(work, models, heads, cases, precisions, runtimes, threads, runs, log
     records = []
     for model in models:
         for head in heads:
+            if head == "half" and model not in HALF_OUTPUT:
+                continue
             for label, (height, width), count in cases:
                 for precision in precisions:
                     for runtime in runtimes:

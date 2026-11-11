@@ -228,7 +228,7 @@ class TrainingForm:
         pc_layout.addRow("", self.pc_append_check)
 
         self.pc_sampling_spin = NoWheelDoubleSpinBox()
-        self.pc_sampling_spin.setRange(0.001, 0.5)
+        self.pc_sampling_spin.setRange(0.001, 1.0)
         self.pc_sampling_spin.setDecimals(3)
         self.pc_sampling_spin.setSingleStep(0.005)
         self.pc_sampling_spin.setValue(0.01)
@@ -244,10 +244,9 @@ class TrainingForm:
         self.pc_neighbors_spin.setRange(1, 50)
         self.pc_neighbors_spin.setValue(9)
         self.pc_neighbors_spin.setToolTip(
-            "kNN 이웃 수: 이상 스코어 계산에 사용할 최근접 패치 수\n"
-            "  9 — 기본값, 안정적인 거리 추정\n"
-            "  1~3 — 민감한 감지 (노이즈에 취약)\n"
-            "  20+ — 안정적이지만 미세 이상 놓칠 수 있음"
+            "현재 점수 방식: 패치 지도는 가장 가까운 정상 특징 1개로 계산합니다.\n"
+            "이 값은 이미지 이상 점수 재가중에 쓰는 이웃 수입니다.\n"
+            "값을 바꾼 후에는 판정 기준을 다시 보정하세요."
         )
         pc_layout.addRow("kNN 이웃 수:", self.pc_neighbors_spin)
 
@@ -258,6 +257,10 @@ class TrainingForm:
         self.pc_bank_spin = NoWheelSpinBox()
         self.pc_bank_spin.setRange(1, 100000)
         self.pc_bank_spin.setValue(4096)
+        self.pc_bank_spin.setToolTip(
+            "최종 대표 특징 수의 상한입니다. 비율을 올려도 이 한도에 걸리면 개수가 늘지 않습니다.\n"
+            "현재 C++ ONNX 내보내기는 대표 특징 4096개 이하를 지원합니다."
+        )
         pc_layout.addRow("메모리 뱅크 한도:", self.pc_bank_spin)
         self.pc_seed_spin = NoWheelSpinBox()
         self.pc_seed_spin.setRange(0, 2147483647)
@@ -278,8 +281,9 @@ class TrainingForm:
         self.pc_crop_height_spin.valueChanged.connect(self._on_patchcore_settings_changed)
         self.pc_info_label = QLabel(
             "사전학습 백본을 고정하고 정상 이미지 특징을 저장합니다. "
-            "에폭, 학습률, 옵티마이저, 증강은 사용하지 않습니다. "
-            "ImageNet은 최초 실행 시 다운로드하며, 오프라인에서는 로컬 가중치를 선택하세요. "
+            "에폭, 학습률, 옵티마이저는 사용하지 않습니다. "
+            "고급 설정의 데이터 증강에서 원본당 추가 증강 수와 변형을 설정할 수 있습니다. "
+            "ImageNet은 준비된 기본 가중치를 사용합니다. "
             "후보/뱅크 한도에 도달하면 특징을 샘플링하므로 성능을 검증하세요."
         )
         self.pc_info_label.setWordWrap(True)
@@ -409,9 +413,8 @@ class TrainingForm:
         for label, value in (("100% (원본 해상도)", 1.0), ("75%", .75), ("50%", .5), ("35%", .35), ("25%", .25)):
             self.patch_scale_combo.addItem(label, value)
         self.patch_scale_combo.setToolTip(
-            "판정 영역을 이 배율로 줄인 뒤 패치를 자릅니다. 추론도 같은 배율로 줄여 한 번에 계산합니다.\n"
-            "계산량(추론 시간)은 배율²에 비례합니다: 50% = 1/4, 25% = 1/16.\n"
-            "줄인 뒤 가장 가는 결함이 1.5~2px 이상 남는 배율을 고르세요(마스크는 작은 결함을 보존해 줄입니다).")
+            "판정 영역을 이 배율로 줄인 뒤 패치를 자릅니다. 추론에도 저장한 배율을 사용합니다.\n"
+            "배율을 줄이면 세부 결함이 작아집니다. 미세 결함은 100%부터 확인하세요.")
         self.patch_scale_combo.currentIndexChanged.connect(self._on_patchcore_settings_changed)
         self.patch_scale_label = QLabel("패치 배율:")
         # 데이터에 맞게 자동 설정: 라벨된 결함 굵기로 패치·배율·모델을 고른다 (분할 전용)
@@ -494,19 +497,16 @@ class TrainingForm:
         aug_group = QGroupBox("데이터 증강")
         aug_layout = QFormLayout(aug_group)
 
-        # LibreYOLO 모델(검출 · MobileNetV4 분류): 모델 기본 증강을 쓸지, 아래 값을 적용할지 고른다
-        self.aug_custom_check = QCheckBox("직접 설정 (끄면 모델 기본 증강)")
-        self.aug_custom_check.setToolTip(
-            "끄면 모델에 내장된 증강을 그대로 씁니다.\n"
-            "  LibreYOLO9: 모자이크 · 수평 뒤집기 0.5 · 색상 변화\n"
-            "  RT-DETR v4: 수평 뒤집기 0.5\n"
-            "  MobileNetV4 분류: 무작위 잘라내기(면적 50~100%) · 수평 뒤집기 0.5\n"
-            "켜면 아래 값만 적용합니다. 분류는 무작위 잘라내기를 쓰지 않아 가장자리 결함이 잘려 나가지 않습니다.")
-        self.aug_custom_check.toggled.connect(self._on_patchcore_settings_changed)
-        aug_layout.addRow(self.aug_custom_check)
-        self.aug_info = QLabel()
-        self.aug_info.setWordWrap(True)
-        aug_layout.addRow(self.aug_info)
+        self.pc_aug_views_label = QLabel("원본당 추가 증강 수:")
+        self.pc_aug_views_spin = NoWheelSpinBox()
+        self.pc_aug_views_spin.setRange(0, 10)
+        self.pc_aug_views_spin.setValue(0)
+        self.pc_aug_views_spin.setToolTip("0 = 증강 끔. 2 = 원본 1장 + 증강 2장으로 정상 특징 수집. 검증·추론에는 적용하지 않습니다.")
+        self.pc_aug_views_spin.valueChanged.connect(self._on_patchcore_settings_changed)
+        aug_layout.addRow(self.pc_aug_views_label, self.pc_aug_views_spin)
+        self.pc_aug_info = QLabel()
+        self.pc_aug_info.setWordWrap(True)
+        aug_layout.addRow(self.pc_aug_info)
 
         self.hflip_spin = NoWheelDoubleSpinBox()
         self.hflip_spin.setRange(0, 1)
@@ -528,12 +528,6 @@ class TrainingForm:
         self.color_jitter_spin.setSingleStep(0.05)
         self.color_jitter_spin.setValue(0.2)
         aug_layout.addRow("색상 변화:", self.color_jitter_spin)
-
-        self.mosaic_check = QCheckBox("모자이크 (영상 4장을 한 장으로 합쳐 학습)")
-        self.mosaic_check.setToolTip(
-            "검출 전용. 작은 물체와 다양한 배치를 학습하는 데 도움이 됩니다.\n"
-            "회전 각도는 모자이크로 합친 영상에만 적용됩니다. 물체의 위치·방향이 고정된 검사에서는 끄는 편이 낫습니다.")
-        aug_layout.addRow("", self.mosaic_check)
 
         self.advanced_check = QCheckBox("고급 설정: 최적화 상세와 데이터 증강")
         self.advanced_check.setChecked(False)

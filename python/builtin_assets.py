@@ -29,19 +29,21 @@ ASSET_FILES = {
     "efficientnet_b1": "torchvision/efficientnet_b1-c27df63c.pth",
     "resnet18": "torchvision/resnet18-f37072fd.pth",
     "resnet34": "torchvision/resnet34-b627a593.pth",
-    "resnet50": "torchvision/resnet50-0676ba61.pth",
+    "resnet50": "torchvision/resnet50-11ad3fa6.pth",
     "wide_resnet50_2": "torchvision/wide_resnet50_2-95faca4d.pth",
     "convnext_v1_tiny": "torchvision/convnext_tiny-983f1562.pth",
     "mobilenet_v2": "torchvision/mobilenet_v2-b0353104.pth",
+    "shufflenet_v2_x1_0": "torchvision/shufflenetv2_x1-5666bf0f80.pth",
+    "mobilenetv4_small_encoder": "timm/mobilenetv4_conv_small.pth",
+    "efficientnet_b1_encoder": "timm/efficientnet_b1_ra4.pth",
+    "bisenetv2_backbone": "bisenetv2/backbone_v2.pth",
+    "stdc1_backbone": "stdc/STDCNet813M_73.91.tar",
     "dinov2_vits14": "dinov2/dinov2_vits14_pretrain.pth",
     "dinov2_vitb14": "dinov2/dinov2_vitb14_pretrain.pth",
     "libreyolo_classify_mobilenetv4_small": "libreyolo/LibreMobileNetV4s-cls.pt",
     "libreyolo_classify_mobilenetv4_medium": "libreyolo/LibreMobileNetV4m-cls.pt",
-    "libreyolo_classify_mobilenetv4_large": "libreyolo/LibreMobileNetV4l-cls.pt",
+    "libreyolo_detect_dfine_nano": "libreyolo/LibreDFINEn.pt",
     "libreyolo_detect_9t": "libreyolo/LibreYOLO9t.pt",
-    "libreyolo_detect_9s": "libreyolo/LibreYOLO9s.pt",
-    "libreyolo_detect_9m": "libreyolo/LibreYOLO9m.pt",
-    "libreyolo_detect_9c": "libreyolo/LibreYOLO9c.pt",
     "re_detr_v4_small": "libreyolo/LibreRTDETRv4s.pt",
     "re_detr_v4_medium": "libreyolo/LibreRTDETRv4m.pt",
     "re_detr_v4_large": "libreyolo/LibreRTDETRv4l.pt",
@@ -51,6 +53,13 @@ ASSET_FILES = {
     "sam2_hiera_large": "sam2/sam2.1_hiera_large.pt",
 }
 
+SEGMENTATION_ASSET_IDS = (
+    "bisenetv2_backbone", "stdc1_backbone",
+    "shufflenet_v2_x1_0", "mobilenetv4_small_encoder", "efficientnet_b1_encoder",
+    "resnet18", "resnet34", "mobilenet_v2", "dinov2_vits14", "dinov2_vitb14", "sam2_hiera_tiny", "sam2_hiera_small",
+    "sam2_hiera_base_plus", "sam2_hiera_large",
+)
+
 
 # 수동 다운로드 주소 (build.bat의 prepare_builtin_assets.py가 받는 것과 같은 공식 파일)
 SOURCE_URLS = {
@@ -58,22 +67,23 @@ SOURCE_URLS = {
     "efficientnet_b1": "https://download.pytorch.org/models/efficientnet_b1-c27df63c.pth",
     "resnet18": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
     "resnet34": "https://download.pytorch.org/models/resnet34-b627a593.pth",
-    "resnet50": "https://download.pytorch.org/models/resnet50-0676ba61.pth",
+    "resnet50": "https://download.pytorch.org/models/resnet50-11ad3fa6.pth",
     "wide_resnet50_2": "https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth",
     "convnext_v1_tiny": "https://download.pytorch.org/models/convnext_tiny-983f1562.pth",
     "mobilenet_v2": "https://download.pytorch.org/models/mobilenet_v2-b0353104.pth",
+    "shufflenet_v2_x1_0": "https://download.pytorch.org/models/shufflenetv2_x1-5666bf0f80.pth",
+    "mobilenetv4_small_encoder": "https://huggingface.co/timm/mobilenetv4_conv_small.e2400_r224_in1k/resolve/331fb803779522b685cf942e15f914fb6741c1eb/pytorch_model.bin",
+    "efficientnet_b1_encoder": "https://huggingface.co/timm/efficientnet_b1.ra4_e3600_r240_in1k/resolve/4e4a9c08eee4bdb118d69d27f87ace8fdf3fc743/pytorch_model.bin",
+    "bisenetv2_backbone": "https://github.com/CoinCheung/BiSeNet/releases/download/0.0.0/backbone_v2.pth",
+    "stdc1_backbone": "https://drive.usercontent.google.com/download?id=1DFoXcV42zy-apUcMh5P8WhsXMRJofgl8&export=download&confirm=t",
     "dinov2_vits14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth",
     "dinov2_vitb14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth",
     "libreyolo_classify_mobilenetv4_small":
         "https://huggingface.co/LibreYOLO/LibreMobileNetV4s-cls/resolve/main/LibreMobileNetV4s-cls.pt",
     "libreyolo_classify_mobilenetv4_medium":
         "https://huggingface.co/LibreYOLO/LibreMobileNetV4m-cls/resolve/main/LibreMobileNetV4m-cls.pt",
-    "libreyolo_classify_mobilenetv4_large":
-        "https://huggingface.co/LibreYOLO/LibreMobileNetV4l-cls/resolve/main/LibreMobileNetV4l-cls.pt",
+    "libreyolo_detect_dfine_nano": "https://huggingface.co/LibreYOLO/LibreDFINEn/resolve/main/LibreDFINEn.pt",
     "libreyolo_detect_9t": "https://huggingface.co/LibreYOLO/LibreYOLO9t/resolve/main/LibreYOLO9t.pt",
-    "libreyolo_detect_9s": "https://huggingface.co/LibreYOLO/LibreYOLO9s/resolve/main/LibreYOLO9s.pt",
-    "libreyolo_detect_9m": "https://huggingface.co/LibreYOLO/LibreYOLO9m/resolve/main/LibreYOLO9m.pt",
-    "libreyolo_detect_9c": "https://huggingface.co/LibreYOLO/LibreYOLO9c/resolve/main/LibreYOLO9c.pt",
     "re_detr_v4_small": "https://huggingface.co/LibreYOLO/LibreRTDETRv4s/resolve/main/LibreRTDETRv4s.pt",
     "re_detr_v4_medium": "https://huggingface.co/LibreYOLO/LibreRTDETRv4m/resolve/main/LibreRTDETRv4m.pt",
     "re_detr_v4_large": "https://huggingface.co/LibreYOLO/LibreRTDETRv4l/resolve/main/LibreRTDETRv4l.pt",
@@ -88,6 +98,10 @@ SOURCE_URLS = {
 # 공식 파일 이름에 해시가 없는 가중치의 전체 SHA-256 (공식 주소에서 받은 파일, 2026-10 확인).
 # manifest가 없어도(직접 받은 파일) 이 값과 같아야 쓴다.
 PINNED_SHA256 = {
+    "backbone_v2.pth": "c63b0eb92c8503232238c29c5b5e5091752860592ab1287d444612c4fe5d3d60",
+    "STDCNet813M_73.91.tar": "5354c20179bfca3bd7c5f62b39fdeaecae90e913fd2ff0fa08a927fe3a3393b0",
+    "mobilenetv4_conv_small.pth": "28f2109728e2b5b4296397f0ea2aa8fd1896c8dca1e7f5ff217ae5ec22049e39",
+    "efficientnet_b1_ra4.pth": "aaf5438e2525c3f5a467e1c515ee6d19041cf5bd0ab77b9467370c6c506bdaa1",
     "dinov2_vits14_pretrain.pth": "b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9",
     "dinov2_vitb14_pretrain.pth": "0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73",
 }
@@ -97,7 +111,14 @@ def builtin_asset_root() -> Path:
     """Return the immutable bundle path in both development and frozen mode."""
     override = os.environ.get("DVS_BUILTIN_ASSETS_DIR", "").strip()
     if override:
-        return Path(override).expanduser().resolve()
+        path = Path(override).expanduser()
+        if not path.is_absolute():
+            # Batch files cd to gui/, while python gui/main.py may run at the
+            # repository root. An override must not change meaning with cwd.
+            base = (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
+                    else Path(__file__).resolve().parents[1])
+            path = base / path
+        return path.resolve()
     if getattr(sys, "frozen", False):
         return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)) / "builtin_assets"
     return Path(__file__).resolve().parents[1] / "gui" / "builtin_assets"
@@ -136,13 +157,12 @@ def _candidates(model_id: str):
 
 def _manifest_entry(root: Path, relative: str):
     """manifest 항목(없으면 None). manifest는 빌드·가져오기 때 기록한 해시이며 없어도 된다."""
-    try:
-        value = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    if not (root / "manifest.json").exists():
         return None
-    files = value.get("files") if isinstance(value, dict) else None
-    entry = files.get(relative) if isinstance(files, dict) else None
-    return entry if isinstance(entry, dict) and isinstance(entry.get("sha256"), str) else None
+    entry = _manifest(root)["files"].get(relative)
+    if entry is not None and (not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str)):
+        raise RuntimeError(f"기본 모델 가중치 manifest 항목 형식 오류: {relative}")
+    return entry
 
 
 def _sha256(path: Path) -> str:
@@ -164,15 +184,19 @@ def _check_file(path: Path, expected_name: str) -> None:
     그 밖(LibreYOLO·SAM2)은 PyTorch 저장 형식(zip)인지 본다. 구조는 불러올 때 strict로 다시 검사한다.
     """
     pinned = PINNED_SHA256.get(expected_name)
+    sam_id = next((k for k, v in ASSET_FILES.items() if k.startswith("sam2_") and Path(v).name == expected_name), None)
+    if sam_id:
+        from sam2_assets import get_sam2_asset
+        pinned = get_sam2_asset(sam_id).sha256
     if pinned is not None:
         if _sha256(path) != pinned:
-            raise RuntimeError(f"{path.name}은(는) 공식 {expected_name}과 다른 파일입니다(해시 불일치). "
+            raise RuntimeError(f"{path.name}은(는) 공식 {expected_name}과 다른 파일입니다(해시 불일치 / SHA256 불일치): {path}. "
                                "다운로드가 끊겼거나 다른 모델 파일입니다. 다시 받아 주세요.")
         return
     match = re.search(r"-([0-9a-f]{8,})\.pth$", expected_name)
     if match:
         if not _sha256(path).startswith(match.group(1)):
-            raise RuntimeError(f"{path.name}은(는) {expected_name}과 다른 파일입니다(해시 불일치). "
+            raise RuntimeError(f"{path.name}은(는) {expected_name}과 다른 파일입니다(해시 불일치 / SHA256 불일치): {path}. "
                                "다운로드가 끊겼거나 다른 모델 파일입니다. 다시 받아 주세요.")
         return
     with path.open("rb") as source:
@@ -184,16 +208,71 @@ def _check_file(path: Path, expected_name: str) -> None:
 def _verify(path: Path, root: Path, relative: str, expected_name: str) -> None:
     """manifest 항목이 있으면 SHA-256이 같아야 하고(빌드한 묶음·가져온 파일), 없으면 파일 자체를 확인한다."""
     stat = path.stat()
-    key = (str(path), stat.st_size, stat.st_mtime_ns)
+    entry = _manifest_entry(root, relative)
+    key = (str(path), stat.st_size, stat.st_mtime_ns, json.dumps(entry, sort_keys=True))
     if key in _VERIFIED:
         return
     entry = _manifest_entry(root, relative)
     if entry is not None:
-        if _sha256(path) != entry["sha256"]:
+        if _sha256(path) != entry["sha256"] or entry.get("bytes", stat.st_size) != stat.st_size:
             raise RuntimeError(f"기본 모델 가중치 무결성 검증 실패: {relative}. 파일을 다시 받아 주세요.")
     else:
         _check_file(path, expected_name)
     _VERIFIED[key] = True
+
+
+def official_torchvision_url(model_id: str) -> str | None:
+    """Pinned official file, shared by the builder and offline file verification."""
+    relative = ASSET_FILES[model_id]
+    if relative.startswith("torchvision/"):
+        return "https://download.pytorch.org/models/" + Path(relative).name
+    return None
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def verify_local_asset(model_id: str, root: Path, files: dict | None = None) -> dict:
+    """Verify without network or writes; never bypass an existing manifest entry.
+
+    Missing entries for pinned torchvision/SAM2 files use the publisher's SHA256
+    (the same check as the official downloader). Arbitrary PT files and malformed
+    manifests cannot use that fallback.
+    """
+    relative = ASSET_FILES[model_id]
+    path = root / relative
+    if not path.is_file() or path.stat().st_size <= 0:
+        raise FileNotFoundError(f"기본 제공 {model_id} 가중치가 없습니다: {path}")
+    if files is None:
+        files = _manifest(root)["files"] if (root / "manifest.json").exists() else {}
+    digest = file_sha256(path)
+    size = path.stat().st_size
+    if relative in files:
+        entry = files[relative]
+        if not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str):
+            raise RuntimeError(f"기본 모델 가중치 manifest 항목 형식 오류: {relative}")
+        if digest != entry["sha256"] or ("bytes" in entry and size != entry["bytes"]):
+            raise RuntimeError(f"기본 모델 가중치 무결성 검증 실패: {relative}. 파일을 확인하세요.")
+    else:
+        match = re.search(r"-([a-f0-9]{8,64})\.pth$", relative)
+        if model_id.startswith("sam2_"):
+            from sam2_assets import get_sam2_asset
+            expected_hash = get_sam2_asset(model_id).sha256
+        elif model_id.startswith("dinov2_"):
+            expected_hash = PINNED_SHA256[Path(relative).name]
+        elif official_torchvision_url(model_id) and match:
+            expected_hash = match[1]
+        else:
+            raise RuntimeError(f"기본 모델 가중치 manifest 항목이 없습니다: {relative}. "
+                               "이 모델은 공식 다운로드 도구로 준비하세요.")
+        if not digest.startswith(expected_hash):
+            raise RuntimeError(f"공식 가중치 SHA256 불일치: {path}. 파일 손상·버전을 확인하세요.")
+    return {"sha256": digest, "bytes": size}
 
 
 def builtin_asset_path(model_id: str, *, verify: bool = True) -> Path:
@@ -263,14 +342,20 @@ def import_asset(model_id: str, source: str | Path) -> Path:
     return target.resolve()
 
 
-# 기본 모델 → ImageNet 백본 가중치 (builtin_models._torchvision_base 와 같은 대응)
+# 기본 모델 → 설치본 사전학습 백본 가중치 (모델 생성기와 같은 대응)
 BUILTIN_BACKBONE_ASSETS = {
     "resnet18": "resnet18",
     "resnet50": "resnet50",
     "convnext_v1_tiny": "convnext_v1_tiny",
     "unet_resnet18": "resnet18",
+    "dinov2_vits14": "dinov2_vits14",
     "deeplabv3plus_resnet34": "resnet34",
     "unet_mobilenetv2": "mobilenet_v2",
+    "unet_mobilenetv4_small": "mobilenetv4_small_encoder",
+    "unet_shufflenetv2": "shufflenet_v2_x1_0",
+    "unet_efficientnet_b1": "efficientnet_b1_encoder",
+    "bisenetv2": "bisenetv2_backbone",
+    "stdc1": "stdc1_backbone",
     # 모델 ID(…_cls 분류, …_seg 분할)는 main의 DINOv2 분할(dinov2_vits14)과 겹치지 않게, 가중치 ID는 같은 공식 파일이라 공유
     "dinov2_vits14_cls": "dinov2_vits14", "dinov2_vits14_seg": "dinov2_vits14",
     "dinov2_vitb14_cls": "dinov2_vitb14", "dinov2_vitb14_seg": "dinov2_vitb14",
@@ -310,7 +395,9 @@ def missing_asset_help(asset_id: str) -> str:
         "manifest는 필요 없습니다. 앱이 확인한 뒤 바로 사용합니다.\n"
         "소스에서 실행 중이면 이 모델만 자동으로 받을 수도 있습니다:\n"
         f"   python python/prepare_builtin_assets.py --output gui/builtin_assets --only {asset_id}\n\n"
-        "또는 학습 모드를 '무작위 초기화로 시작'으로 바꾸면 가중치 없이 학습합니다(보통 정확도가 낮고 더 오래 걸립니다)."
+        "gui/prepare_model_weights.bat으로도 준비할 수 있습니다.\n"
+        + ("SAM2는 무작위 초기화 모드는 지원하지 않습니다." if asset_id.startswith("sam2_") else
+           "또는 학습 모드를 '무작위 초기화로 시작'으로 바꾸면 가중치 없이 학습합니다.")
     )
 
 
@@ -334,4 +421,22 @@ def missing_assets(*, bundle_only: bool = False) -> list[str]:
 
 
 def builtin_assets_ready() -> bool:
-    return not missing_assets()
+    try:
+        root = builtin_asset_root()
+        files = _manifest(root)["files"]
+        return all(relative in files and verify_local_asset(model_id, root, files)
+                   for model_id, relative in ASSET_FILES.items())
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _manifest(root: Path) -> dict:
+    path = root / "manifest.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"기본 모델 가중치 manifest를 읽을 수 없습니다: {path}. "
+                           "가중치 준비 도구로 확인하세요.") from exc
+    if not isinstance(value, dict) or value.get("schema_version") != 1 or not isinstance(value.get("files"), dict):
+        raise RuntimeError("기본 모델 가중치 묶음 manifest 형식이 올바르지 않습니다. build.bat을 다시 실행하세요.")
+    return value

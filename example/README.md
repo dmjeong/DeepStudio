@@ -1,5 +1,7 @@
 # C++17 / C# ONNX 로딩·추론 예제
 
+**세그멘테이션 ONNX 평가:** [C++ 평가 예제](cpp/segmentation_eval/README.ko.md). EXE 옆 `evaluation.json`에 모델·영상·정답 마스크 폴더를 지정하면 클래스별 IoU/Dice, 혼동행렬, 추론 시간, 원본 위 결함 표시를 저장합니다. 명령행 인자는 필요 없습니다.
+
 **암호화 내보내기 사용법과 전 태스크 예제:** [ENCRYPTED_MODELS.md](ENCRYPTED_MODELS.md).
 모델·설정을 `.dvsenc`로 읽고 초기화 때 한 번만 복호화한다.
 

@@ -1,0 +1,12 @@
+LibreDFINE weights
+------------------
+
+This product contains weights derived from D-FINE
+(https://github.com/Peterande/D-FINE).
+Copyright (c) 2024 The D-FINE Authors.
+Licensed under the Apache License, Version 2.0.
+
+This product also contains a HGNetV2 backbone derived from PaddleClas
+(https://github.com/PaddlePaddle/PaddleClas).
+Copyright (c) 2024 PaddlePaddle Authors.
+Licensed under the Apache License, Version 2.0.

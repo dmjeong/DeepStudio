@@ -39,7 +39,7 @@ def class_rgb(class_id):
 
 def _file_key(path):
     stat = Path(path).stat()
-    return str(path), stat.st_mtime_ns, stat.st_size
+    return str(Path(path).resolve()), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino
 
 
 def _overlay_size(width, height, limit=OVERLAY_SIZE):

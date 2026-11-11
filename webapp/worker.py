@@ -13,7 +13,7 @@ import traceback
 from datetime import datetime
 
 from webapp.storage import digest, json_value, read_json, restore_project, write_json
-from webapp.locking import exclusive_file
+from webapp.locking import exclusive_file, parallel_cpu_job
 
 
 class JobContext:
@@ -266,12 +266,8 @@ def _train_upstream_project(context, project, device):
                 )
             ])
             return
-        if event.get("event") == "tiles_prepared":
-            train, val = event["splits"].get("train", {}), event["splits"].get("val", {})
-            context.emit("log_message", [
-                "  패치 학습: {}px 타일 · 배율 {:.0%} · 겹침 {}px | train {}장 → 타일 {}개(물체 있음 {}) | val {}장 → 타일 {}개".format(
-                    event["tile"], event["scale"], event["overlap"], train.get("images", 0), train.get("tiles", 0),
-                    train.get("object_tiles", 0), val.get("images", 0), val.get("tiles", 0))])
+        if event.get("event") == "preprocessing_configured":
+            context.emit("log_message", [event["message"]])
             return
         if event.get("event") != "epoch_finished":
             return
@@ -294,25 +290,16 @@ def _train_upstream_project(context, project, device):
     mode = str(cfg.training_mode)
     source = project.model.pretrained_weights or None
     context.emit("log_message", [f"기본 native 모델 학습: {spec.family}/{spec.size}"])
-    # 증강: '직접 설정'을 켠 프로젝트만 화면 값을 넘긴다. 끄면 모델 기본 증강(이전과 같은 동작)
-    aug = cfg.augmentation
-    augmentation = ({"horizontal_flip": aug.horizontal_flip, "rotation": aug.rotation,
-                     "color_jitter": aug.color_jitter, "mosaic": bool(aug.mosaic)}
-                    if getattr(aug, "custom", False) else None)
-    # 검출 패치 학습: 영상을 줄이지 않고 모델 입력 크기의 타일로 잘라 학습한다
-    tiling = ({"scale": float(getattr(cfg, "patch_scale", 1.0)), "max_tiles": 0}
-              if project.task == "detect" and getattr(cfg, "patch_training", False) else None)
-    if augmentation is None:
-        context.emit("log_message", ["  증강: 모델 기본값"])
-    else:
-        context.emit("log_message", ["  증강(직접 설정): 수평 뒤집기 {horizontal_flip:g} · 회전 {rotation:g}° · 색상 {color_jitter:g}".format(
-            **augmentation) + (f" · 모자이크 {'켬' if augmentation['mosaic'] else '끔'}" if spec.task == "detect" else "")])
+    from center_crop import configured_center_crop
     result = train_upstream_model(
         model_id, data_root=data.root, class_names=list(data.class_names), output_dir=run_dir,
         epochs=cfg.epochs, batch_size=cfg.batch_size, learning_rate=cfg.learning_rate,
         device=str(device), weights=source, pretrained=mode == "upstream_finetune", resume=mode == "upstream_resume",
         use_amp=cfg.use_amp, patience=cfg.early_stop_patience,
-        val_split=data.val_split, seed=0, augmentation=augmentation, tiling=tiling, emit=progress)
+        val_split=data.val_split, seed=0, emit=progress,
+        center_crop=configured_center_crop(cfg),
+        augmentation={key: getattr(cfg.augmentation, key) for key in ("horizontal_flip", "rotation", "color_jitter")},
+        patch_training=cfg.patch_training, patch_scale=cfg.patch_scale, patches_per_image=cfg.patches_per_image)
     checkpoint = result.get("best_checkpoint") or result.get("last_checkpoint")
     if not checkpoint or not Path(checkpoint).is_file():
         raise RuntimeError("upstream 학습이 best.pt 또는 last.pt를 만들지 않았습니다")
@@ -340,8 +327,11 @@ def _train_upstream_project(context, project, device):
                        "input_size": spec.input_size, "use_amp": cfg.use_amp},
             applied={"pretrained": mode == "upstream_finetune",
                      "resume": mode == "upstream_resume", "val_split": data.val_split,
-                     "seed": 0, "augmentation": augmentation or "model_default",
-                     "tiling": result.get("tiling")},
+                     "seed": 0, "augmentation": result.get("applied_augmentation", {}),
+                     "patch_training": cfg.patch_training, "patch_scale": cfg.patch_scale,
+                     "patches_per_image": 0 if spec.task == "classify" else cfg.patches_per_image,
+                     "image_batch": 1 if cfg.patch_training and spec.task == "classify" else cfg.batch_size,
+                     "evaluation_unit": "patch" if cfg.patch_training and spec.task == "detect" else "image"},
         ))
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status="completed",
@@ -535,6 +525,8 @@ def infer(context, payload):
                                    threads=payload.get("threads", max(1, min(4, os.cpu_count() or 1))),
                                    # 데스크톱 추론만 보내는 분할 결함 분석·SAM2 자동 분할 설정. 웹 요청에는 없다.
                                    segment_review=payload.get("segment_review"), sam2=payload.get("sam2"))
+    from core.segmentation_evaluation import project_snapshot
+    engine._evaluation_project = project_snapshot(payload.get("project"))
     if callable(getattr(engine, "prepare", None)):
         engine.prepare()
     if getattr(engine, "runtime_warning", ""):
@@ -558,12 +550,17 @@ def infer(context, payload):
             if engine._current_preview_rgb is not None:
                 arrays["preview"] = engine._current_preview_rgb
             if result.status != "error" and (engine._heatmap_cache is None or engine._heatmap_cache.get("original") is None):
-                from PIL import Image
-                from core.image_display import display_rgb
-                with Image.open(path) as source:
-                    arrays["original"] = display_rgb(np.array(source.convert("RGB") if source.mode == "P" else source))
+                original = getattr(engine, "_original_preview_rgb", None)
+                if original is None:
+                    from PIL import Image
+                    from core.image_display import display_rgb
+                    with Image.open(path) as source:
+                        original = display_rgb(np.array(source.convert("RGB") if source.mode == "P" else source))
+                arrays["original"] = original
             cache = engine._heatmap_cache
             if cache is not None:
+                if cache.get("image_path", path) != path:
+                    raise ValueError("원본/반응 맵과 추론 결과의 이미지 경로가 다릅니다")
                 for key in ("original", "activation", "base_image", "valid_mask"):
                     if cache.get(key) is not None:
                         arrays[key] = cache[key]
@@ -751,12 +748,18 @@ def inspect_model(context, payload):
             engine._upstream_task if getattr(engine, "_upstream_model", None) is not None else
             "segment" if getattr(engine, "_sam2_predictor", None) is not None else
             getattr(engine.model, "task", "classify"))
+    from core.upstream_gradcam import supports_upstream_gradcam
+    gradcam_supported = (supports_upstream_gradcam(engine._upstream_model, task)
+                         if engine._upstream_model is not None else engine.model is not None)
     return {"status": "completed", "output": {"class_names": list(engine.class_names or []),
         "input_size": engine._input_size, "task": task, "weights": payload["weights"],
         "center_crop": engine._center_crop,
         "device": str(engine._infer_device), "anomaly_threshold": engine._anomaly_threshold,
         "patchcore": engine._patchcore_model.get_info() if engine._patchcore_model is not None else None,
         "upstream": getattr(engine, "_upstream_model", None) is not None,
+        "gradcam_supported": gradcam_supported,
+        "preprocessing_policy": getattr(engine._upstream_model, "studio_input_policy", None),
+        "preprocessing_migrated": bool(getattr(engine._upstream_model, "studio_legacy_preprocessing", False)),
         "sam2": getattr(engine, "_sam2_model_id", None),
         "tiling": getattr(engine, "_tiling", None),
         "weights_sha256": digest(payload["weights"])}}
@@ -788,7 +791,28 @@ def datagen_generate(context, payload):
 
 
 
-OPERATIONS = {"datagen_train": datagen_train, "datagen_generate": datagen_generate,
+def seg_synthesis(context, payload):
+    from core.segmentation_synthesis_store import SynthesisStore, SynthesisAnalysisError
+    import cv2
+    cv2.setNumThreads(2)
+    store = SynthesisStore(restore_project(payload["project"]))
+    values = {k: v for k, v in payload.items() if k not in {"project", "operation", "threads"}}
+    operation = payload["operation"]
+    if operation not in {"analyze", "generate", "publish"}:
+        raise ValueError("SEG 합성 작업 종류 오류")
+    try:
+        result = getattr(store, operation)(context=context, **values)
+        if "analysis" in result:
+            write_json(context.directory / "segmentation-analysis.json", result["analysis"])
+        return {"status": "completed", "output": result}
+    except SynthesisAnalysisError as exc:
+        write_json(context.directory / "segmentation-analysis.json", exc.report)
+        return {"status": "failed", "error": str(exc), "output": {"analysis": exc.report}}
+    except InterruptedError:
+        return {"status": "cancelled", "output": {}}
+
+
+OPERATIONS = {"seg_synthesis": seg_synthesis, "datagen_train": datagen_train, "datagen_generate": datagen_generate,
               "train": train, "infer": infer, "export": export,
               "pack_train": pack_train, "pack_infer": pack_infer, "pack_export": pack_export,
               "defects": defects, "defect_publish": defect_publish, "delete_class": delete_class,
@@ -801,6 +825,8 @@ def run_job(request_path, monitor_parent=True):
     started = time.perf_counter()
     try:
         request = read_json(request_path)
+        import psutil
+        write_json(request_path.parent / "worker.json", {"pid": os.getpid(), "started": psutil.Process().create_time()})
         context = JobContext(request_path.parent, monitor_parent=monitor_parent,
                              parent_pid=request.get("parent_pid"), parent_started=request.get("parent_started"))
         # 작업 프로세스에서만 모델 라이브러리를 가져오고 CPU 자원을 제한한다.
@@ -809,7 +835,9 @@ def run_job(request_path, monitor_parent=True):
         if request["kind"] in {"train", "infer", "export"}:
             import torch
             torch.set_num_threads(threads)
-        with exclusive_file(request_path.parent.parent / "compute.lock"):
+        lock = (request_path.parent / "compute.lock" if parallel_cpu_job(request["kind"], request["payload"])
+                else request_path.parent.parent / "compute.lock")
+        with exclusive_file(lock):
             result = OPERATIONS[request["kind"]](context, request["payload"])
     except Exception as exc:
         traceback.print_exc()

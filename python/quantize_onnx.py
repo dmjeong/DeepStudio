@@ -193,7 +193,8 @@ def quantize_segment(config_path, calibration_dir, *, count=16, reduce_range=Fal
     """FP32 분할 모델 → INT8(QDQ) 모델 + JSON. 만든 JSON 경로를 돌려준다.
 
         전체 입력(예: 1504×3520)으로 보정하면 층마다 중간값을 모두 잡아 15GB 넘게 든다
-        → 모델에 전역 연산이 없으므로 tile×tile 조각으로 재도 층별 값 범위가 같다.
+        → tile×tile 조각으로 보정한다. 경계/전역 문맥의 차이가 있으므로 실제 ROI에서
+          FP32/INT8 비교가 필요하며 정확도가 보존된 것으로 자동 승인하지 않는다.
 
         FP32 ─size_free_graph─▶ 가변 입력 그래프 ─타일 보정·양자화─▶ INT8(가변) ─입력 고정─▶ 모델_int8.onnx
     """

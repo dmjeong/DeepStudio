@@ -87,6 +87,38 @@ redetr_softmax_config = json.loads(json.dumps(redetr_config))
 redetr_softmax_config["postprocessing"]["class_scores"] = "softmax"
 (root / "redetr_softmax.json").write_text(json.dumps(redetr_softmax_config, ensure_ascii=False), encoding="utf-8")
 
+# Output validation must still inspect every element after caching the tensor
+# length. Exercise real runtime outputs, including the last element/last class.
+for bad_name, bad_value in (("nan", float("nan")), ("posinf", float("inf")), ("neginf", -float("inf"))):
+    for position in (0, 6, 11):
+        name = f"segment_{bad_name}_{position}"
+        values = [0.25] * 12
+        values[position] = bad_value
+        output = helper.make_tensor_value_info("seg_mask", TensorProto.FLOAT, [1, 2, 2, 3])
+        node = helper.make_node("Constant", [], ["seg_mask"], value=helper.make_tensor(
+            "bad_output", TensorProto.FLOAT, [1, 2, 2, 3], values))
+        model = helper.make_model(helper.make_graph([node], name, inputs, [output]),
+                                  opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
+        onnx.checker.check_model(model)
+        onnx.save(model, root / f"{name}.onnx")
+        config = json.loads((root / "segment.json").read_text(encoding="utf-8"))
+        config["model_path"] = f"{name}.onnx"
+        (root / f"{name}.json").write_text(json.dumps(config), encoding="utf-8")
+    for field in ("boxes", "scores"):
+        name = f"redetr_{field}_{bad_name}"
+        boxes, scores = [0.5, 0.5, 0.5, 0.5], [10.0, -10.0]
+        (boxes if field == "boxes" else scores)[-1] = bad_value
+        nodes = [helper.make_node("Constant", [], ["pred_boxes"], value=helper.make_tensor(
+            "boxes", TensorProto.FLOAT, [1, 1, 4], boxes)),
+            helper.make_node("Constant", [], ["pred_logits"], value=helper.make_tensor(
+                "scores", TensorProto.FLOAT, [1, 1, 2], scores))]
+        model = helper.make_model(helper.make_graph(nodes, name, inputs, redetr_outputs),
+                                  opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
+        onnx.checker.check_model(model)
+        onnx.save(model, root / f"{name}.onnx")
+        config = dict(redetr_config, model_path=f"{name}.onnx")
+        (root / f"{name}.json").write_text(json.dumps(config), encoding="utf-8")
+
 # Minimal SAM2-style encoder/decoder graphs. They keep both high-resolution
 # feature outputs and every prompt input in the graph contract while returning
 # deterministic masks/scores, so the C++/C ABI path is exercised without weights.
@@ -356,9 +388,11 @@ malformed_package("duplicate-config-field", compact_header.replace(b'"config":{'
 malformed_package("duplicate-model-field", compact_header.replace(b'"models":[{', b'"models":[{"size":1,', 1))
 (root / "encrypted-invalid-tests.json").write_text(json.dumps(invalid_names), encoding="utf-8")
 
+
 # 영상 평가 예제(image_eval)용 영상 폴더: 하위 폴더 = 묶음. 외부 패키지 없이 24비트 BMP를 직접 쓴다.
 def write_bmp(path, rows):
     """rows: 위에서 아래로, 행마다 (B, G, R) 픽셀 목록."""
+    import struct
     height, width = len(rows), len(rows[0])
     padding = b"\0" * (-width * 3 % 4)                       # 행은 4바이트 배수로 맞춘다
     pixels = b"".join(bytes(value for pixel in row for value in pixel) + padding for row in reversed(rows))

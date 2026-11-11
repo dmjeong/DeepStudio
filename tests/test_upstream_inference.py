@@ -30,10 +30,12 @@ def _engine(model, task):
 def test_upstream_classification_pt_result_uses_native_probabilities(tmp_path):
     image = tmp_path / "image.png"
     Image.new("RGB", (12, 8)).save(image)
-    result = _engine(_Classifier(), "classify").infer(str(image))
+    engine = _engine(_Classifier(), "classify")
+    result = engine.infer(str(image))
     assert result.status == "ok"
     assert result.summary == "NG 90.0%"
     assert result.details["runtime"] == "libreyolo-pytorch"
+    np.testing.assert_array_equal(engine._original_preview_rgb, np.asarray(Image.open(image)))
 
 
 def test_upstream_detection_pt_result_converts_normalized_boxes_for_existing_preview(tmp_path):
@@ -47,6 +49,7 @@ def test_upstream_detection_pt_result_converts_normalized_boxes_for_existing_pre
     assert detection["confidence"] == .75
     np.testing.assert_allclose(detection["bbox"], [.1, .2, .6, .8])
     assert engine._current_preview_rgb.shape == (8, 12, 3)
+    np.testing.assert_array_equal(engine._original_preview_rgb, np.asarray(Image.open(image)))
 
 
 def test_upstream_pt_checkpoint_uses_public_libreyolo_factory(tmp_path, monkeypatch):

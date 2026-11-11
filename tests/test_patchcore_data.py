@@ -91,6 +91,8 @@ class PatchCoreDataTests(unittest.TestCase):
         project.training.patchcore_weight_source = "backbone"
         project.training.patchcore_backbone = "resnet18"
         project.training.patchcore_max_candidates = 321
+        project.training.patchcore_augmentation_views = 3
+        project.training.augmentation.rotation = 4.0
         project.training.patchcore_crop_enabled = True
         project.training.patchcore_crop_width, project.training.patchcore_crop_height = 1024, 768
         filename = Path(ProjectManager.save(project))
@@ -102,6 +104,8 @@ class PatchCoreDataTests(unittest.TestCase):
         self.assertEqual(Path(loaded.training.patchcore_weights), moved / "weights/resnet.pth")
         self.assertEqual(loaded.training.patchcore_backbone, "resnet18")
         self.assertEqual(loaded.training.patchcore_max_candidates, 321)
+        self.assertEqual(loaded.training.patchcore_augmentation_views, 3)
+        self.assertEqual(loaded.training.augmentation.rotation, 4.0)
         self.assertTrue(loaded.training.patchcore_crop_enabled)
         self.assertEqual(loaded.training.patchcore_crop_width, 1024)
         self.assertEqual(loaded.training.patchcore_crop_height, 768)

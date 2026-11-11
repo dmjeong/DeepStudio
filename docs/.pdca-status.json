@@ -1,13 +1,31 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-10-22T02:06:03.049248+00:00",
+  "lastUpdated": "2026-11-11T04:54:30.757125+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
     "model-packs-windows-distribution",
-    "annotation-workspace"
+    "annotation-workspace",
+    "segmentation-background-contract",
+    "dataset-first-class-visibility",
+    "pretrained-manifest-recovery",
+    "segmentation-weight-preparation",
+    "dinov2-segmentation",
+    "claude-main-seg-evaluation",
+    "patchcore-augmentation",
+    "patchcore-feature-aggregation",
+    "cpp-output-validation-latency",
+    "segmentation-stage-timing",
+    "segmentation-thread-scaling-review",
+    "libreyolo-gradcam-comparison",
+    "libreyolo-full-frame",
+    "native-patch-training",
+    "segmentation-model-candidates",
+    "segmentation-pretrained-completion",
+    "inference-compare-concurrency",
+    "segmentation-reference-synthesis"
   ],
-  "primaryFeature": "annotation-workspace",
+  "primaryFeature": "segmentation-synthesis-duplicates",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -248,6 +266,424 @@
           "same-operator annotation time/quality comparison"
         ]
       }
+    },
+    "segmentation-background-contract": {
+      "phase": "completed",
+      "documents": {
+        "plan": "docs/01-plan/features/segmentation-background-contract.plan.md",
+        "design": "docs/02-design/features/segmentation-background-contract.design.md",
+        "analysis": "docs/03-analysis/segmentation-background-contract.analysis.md",
+        "report": "docs/04-report/features/segmentation-background-contract.report.md"
+      },
+      "branchBase": "2bfa569",
+      "validation": {
+        "targeted": "277 passed, 2 skipped",
+        "runtime": "U-Net, DeepLab, official SAM2 Tiny train/export passed",
+        "windows_cuda": "not run",
+        "full_suite": "1187 passed / 12 skipped / 1 release-document failure corrected; both version-policy tests passed on rerun",
+        "additional_regressions": "28 passed including post-review class-scoped erase restoration",
+        "lint": "passed",
+        "release": "9.43"
+      },
+      "timestamps": {
+        "lastUpdated": "2026-10-29T02:59:41.630187+00:00"
+      },
+      "completedAt": "2026-10-29T03:05:18.327189+00:00"
+    },
+    "dataset-first-class-visibility": {
+      "phase": "completed",
+      "documents": {
+        "design": "docs/02-design/features/dataset-first-class-visibility.design.md",
+        "analysis": "docs/03-analysis/dataset-first-class-visibility.analysis.md",
+        "report": "docs/04-report/features/dataset-first-class-visibility.report.md"
+      },
+      "version": "9.44",
+      "validation": {
+        "regressions": "7 passed (6 reproduced failures before fix)",
+        "actual_qt": "async scan, legacy repair, screenshots passed",
+        "full_suite": "1196 passed, 12 skipped; 155.11 seconds; process exit 0",
+        "windows": "not run",
+        "lint": "Ruff E/F/W and git diff --check passed",
+        "cleanup": "Initial Qt teardown exit 139 corrected by draining deferred deletion in new fixture; full rerun passed"
+      },
+      "timestamps": {
+        "lastUpdated": "2026-10-29T03:24:33.964554+00:00"
+      },
+      "completedAt": "2026-10-29T03:24:33.964554+00:00"
+    },
+    "pretrained-manifest-recovery": {
+      "phase": "completed",
+      "version": "9.45",
+      "documents": {
+        "plan": "docs/01-plan/features/pretrained-manifest-recovery.plan.md",
+        "design": "docs/02-design/features/pretrained-manifest-recovery.design.md",
+        "analysis": "docs/03-analysis/pretrained-manifest-recovery.analysis.md",
+        "report": "docs/04-report/features/pretrained-manifest-recovery.report.md"
+      },
+      "validation": {
+        "targeted": "78 passed",
+        "runtime": "Official ResNet18/34/50 download, no-manifest offline load, ResNet/U-Net/DeepLab forward passed",
+        "windows_cmd_exe": "not run",
+        "full_suite": "1214 passed, 12 skipped; 154.82 seconds; process exit 0",
+        "lint": "Ruff E/F/W and git diff --check passed",
+        "qt_cleanup": "Global post-fixture DeferredDelete handling added after atexit QObject/QPushButton crash; full rerun exit 0"
+      },
+      "timestamps": {
+        "lastUpdated": "2026-10-29T03:42:28.239669+00:00"
+      },
+      "completedAt": "2026-10-29T03:42:28.239669+00:00"
+    },
+    "segmentation-inference-metrics": {
+      "phase": "completed",
+      "status": "completed",
+      "documents": {
+        "plan": "docs/01-plan/features/segmentation-inference-metrics.plan.md",
+        "design": "docs/02-design/features/segmentation-inference-metrics.design.md",
+        "analysis": "docs/03-analysis/segmentation-inference-metrics.analysis.md",
+        "report": "docs/04-report/segmentation-inference-metrics.report.md"
+      },
+      "version": "9.55",
+      "validation": {
+        "targeted": "71 passed",
+        "repair": "31 passed",
+        "full": "1233 passed, 12 skipped, exit 0",
+        "windows": "not run"
+      }
+    },
+    "segmentation-result-display": {
+      "phase": "completed",
+      "status": "completed",
+      "documents": {
+        "plan": "docs/01-plan/features/segmentation-result-display.plan.md",
+        "design": "docs/02-design/features/segmentation-result-display.design.md",
+        "analysis": "docs/03-analysis/segmentation-result-display.analysis.md",
+        "report": "docs/04-report/segmentation-result-display.report.md"
+      },
+      "version": "9.56",
+      "validation": {
+        "targeted": "110 passed",
+        "full": "1244 passed, 12 skipped, exit 0",
+        "ui": "actual Qt screenshot on synthetic image",
+        "windows": "not run"
+      }
+    },
+    "segmentation-model-readiness-audit": {
+      "phase": "analysis",
+      "status": "in_progress",
+      "findings": [
+        "SAM2 generic inference loader rejects the checkpoint",
+        "SAM2 prompt binary mask contract differs from automatic semantic classes",
+        "U-Net 1ch/3ch pretrained train-save-reload-infer-Qt smoke passed on synthetic data"
+      ],
+      "open": [
+        "SAM2 prompt/semantic inference integration",
+        "User Windows asset preparation confirmation"
+      ],
+      "artifact": "docs/03-analysis/artifacts/segmentation-model-audit.json",
+      "latest_user_report": "All models other than DeepLab report missing weights; Windows Python execution"
+    },
+    "segmentation-weight-preparation": {
+      "phase": "completed",
+      "status": "completed",
+      "documents": {
+        "plan": "docs/01-plan/features/segmentation-weight-preparation.plan.md",
+        "design": "docs/02-design/features/segmentation-weight-preparation.design.md",
+        "analysis": "docs/03-analysis/segmentation-weight-preparation.analysis.md",
+        "report": "docs/04-report/segmentation-weight-preparation.report.md"
+      },
+      "validation": {
+        "targeted": "69 passed; exit 0",
+        "official_sam2": "4/4 download, SHA256, manifest-free load and image encoder forward; macOS CPU",
+        "windows": "not executed",
+        "full": "1258 passed, 12 skipped; exit 0",
+        "final_path_changes": "46 passed; exit 0",
+        "user_windows_confirmation": "pending; not a SAM2 semantic inference completion claim"
+      },
+      "timestamps": {
+        "lastUpdated": "2026-10-29T05:08:42.267289+00:00"
+      },
+      "completedAt": "2026-10-29T05:08:42.267289+00:00"
+    },
+    "dinov2-segmentation": {
+      "phase": "report",
+      "status": "completed",
+      "plan": "docs/01-plan/features/dinov2-segmentation.plan.md",
+      "design": "docs/02-design/features/dinov2-segmentation.design.md",
+      "matchRate": 100,
+      "report": "docs/04-report/dinov2-segmentation.report.md",
+      "analysis": "docs/03-analysis/dinov2-segmentation.analysis.md",
+      "verification": {
+        "pytest_passed": 1273,
+        "pytest_skipped": 12,
+        "native_real_weight": "passed",
+        "windows_cuda_managed_csharp": "not_run"
+      },
+      "completedAt": "2026-10-29"
+    },
+    "claude-main-seg-evaluation": {
+      "phase": "completed",
+      "matchRate": 100,
+      "iterationCount": 1,
+      "documents": {
+        "plan": "docs/01-plan/features/claude-main-seg-evaluation.plan.md",
+        "design": "docs/02-design/features/claude-main-seg-evaluation.design.md",
+        "analysis": "docs/03-analysis/claude-main-seg-evaluation.analysis.md",
+        "report": "docs/04-report/claude-main-seg-evaluation.report.md"
+      },
+      "taskChain": [
+        {
+          "phase": "plan",
+          "status": "completed",
+          "createdAt": "2026-11-09T23:45:02.882Z",
+          "completedAt": "2026-11-09T23:45:02.891Z"
+        },
+        {
+          "phase": "design",
+          "status": "completed",
+          "createdAt": "2026-11-09T23:45:02.882Z",
+          "completedAt": "2026-11-09T23:45:02.904Z"
+        },
+        {
+          "phase": "do",
+          "status": "completed",
+          "createdAt": "2026-11-09T23:45:02.882Z",
+          "completedAt": "2026-11-09T23:55:58.317Z"
+        },
+        {
+          "phase": "check",
+          "status": "completed",
+          "createdAt": "2026-11-09T23:45:02.882Z",
+          "completedAt": "2026-11-10T00:00:04.023Z"
+        },
+        {
+          "phase": "report",
+          "status": "completed",
+          "createdAt": "2026-11-09T23:45:02.882Z",
+          "completedAt": "2026-11-10T00:00:19.275Z"
+        }
+      ],
+      "timestamps": {
+        "started": "2026-11-09T23:45:02.882Z",
+        "lastUpdated": "2026-11-10T00:00:19.275Z"
+      },
+      "validation": {
+        "full": "1415 passed, 14 skipped; 2 packaging source checks corrected and covered by 47 passing targeted tests",
+        "native": "6 SDK CTests + 1 evaluator metrics CTest; 12 Python/native integration tests passed",
+        "trained_synthetic_trays": "10 evaluated; confusion matrix matched Python",
+        "windows": "VS2017 Release/Debug CI added; local Windows execution not performed"
+      },
+      "completedAt": "2026-11-10T00:00:19.275Z"
+    },
+    "patchcore-augmentation": {
+      "phase": "completed",
+      "matchRate": 100,
+      "documents": {
+        "plan": "docs/01-plan/features/patchcore-augmentation.plan.md",
+        "design": "docs/02-design/features/patchcore-augmentation.design.md",
+        "report": "docs/04-report/patchcore-augmentation.report.md"
+      },
+      "validation": "116 targeted Python/Qt/C++ tests passed; pretrained ResNet18 augmented fit/save/load/ONNX smoke passed; Windows not executed locally",
+      "completedAt": "2026-11-10T02:50:53.142853+00:00"
+    },
+    "patchcore-feature-aggregation": {
+      "phase": "completed",
+      "documents": {
+        "design": "docs/02-design/features/patchcore-feature-aggregation.design.md",
+        "report": "docs/04-report/patchcore-feature-aggregation.report.md"
+      },
+      "completedAt": "2026-11-10T03:15:41.961088+00:00",
+      "validation": "136 passed; pretrained 336-patch research parity; 14-patch PyTorch/ORT/native parity on macOS",
+      "acceptance": {
+        "implementation": "verified locally; not pushed",
+        "production_quality": "unverified; synthetic 23/33 detected with 0/1087 false positives, 10 misses remain",
+        "windows": "not run"
+      }
+    },
+    "cpp-output-validation-latency": {
+      "phase": "completed",
+      "documents": {
+        "design": "docs/02-design/features/output-validation-latency.design.md",
+        "report": "docs/RELEASE_11.72.md"
+      },
+      "validation": "C++ CTest 7/7; Python preprocessing/segmentation 8/8; bitwise normalization parity; all NaN/Inf cases rejected",
+      "measurements": "Apple M4 Release: validation 99.150 -> 6.116 ms; preprocessing 8.908 -> 6.075 ms",
+      "userBuild": "Debug (confirmed); target performance must be measured with Release/x64",
+      "windowsValidation": "not run",
+      "completedAt": "2026-11-10T06:08:56.161071+00:00"
+    },
+    "segmentation-stage-timing": {
+      "phase": "completed",
+      "documents": {
+        "design": "docs/02-design/features/segmentation-stage-timing.design.md",
+        "report": "docs/RELEASE_11.82.md"
+      },
+      "validation": "macOS Release SDK/evaluator build; CTest 7/7; pytest 7 passed (5 unrelated model cases deselected)",
+      "windowsValidation": "not run; user 1.2-second bottleneck pending target stage measurements",
+      "completedAt": "2026-11-10T06:21:45.692008+00:00"
+    },
+    "segmentation-thread-scaling-review": {
+      "phase": "completed",
+      "documents": {
+        "analysis": "docs/03-analysis/segmentation-thread-scaling-20261110.md"
+      },
+      "validation": "FP32 C++ Release thread sweep 1/2/4/8 on two trained synthetic models; postprocessing candidate parity on two models and 12 fixed-output cases; final-layer order experiment logit/argmax/deployment comparison",
+      "implementation": "scratch prototypes only; previous 11.82 timing changes preserved",
+      "targetWindowsInt8": "not measured; no user checkpoint transferred",
+      "completedAt": "2026-11-10T06:48:51.577647+00:00"
+    },
+    "libreyolo-gradcam-comparison": {
+      "phase": "completed",
+      "documents": {
+        "design": "docs/02-design/features/libreyolo-gradcam-comparison.design.md",
+        "report": "docs/RELEASE_11.83.md"
+      },
+      "verification": {
+        "tests_passed": 130,
+        "runtime": "macOS CPU, pinned LibreYOLO 1.5.0, Qt offscreen",
+        "windows_verified": false,
+        "actual_button_and_worker_process_test": true
+      }
+    },
+    "libreyolo-full-frame": {
+      "phase": "completed",
+      "documents": {
+        "design": "docs/02-design/features/libreyolo-full-frame.design.md",
+        "report": "docs/RELEASE_11.84.md"
+      },
+      "verification": {
+        "tests_passed": 226,
+        "tests_skipped": 2,
+        "native_full_frame_tests_passed": 7,
+        "runtime": "macOS CPU, LibreYOLO 1.5.0, C++ Release ORT 1.29",
+        "windows_verified": false,
+        "actual_button_and_worker_process_test": true,
+        "actual_training_resume_export_cpp": true
+      }
+    },
+    "native-patch-training": {
+      "phase": "completed",
+      "version": "12.84",
+      "documents": {
+        "plan": "docs/native-patch-training-design.md",
+        "design": "docs/native-patch-training-design.md",
+        "report": "docs/native-patch-training.md"
+      },
+      "validation": {
+        "regression": "312 passed, 2 skipped",
+        "native_final": "57 passed; process exit 0 (native patches, upstream, ONNX runtime/settings/export); 16 native cases include official pretrained models",
+        "cpp": "Release build; CTest 7/7",
+        "web": "production build; 14 tests passed",
+        "windows_gpu": "not locally measured; CI tests configured"
+      },
+      "completedAt": "2026-11-11T01:32:56.496613+00:00"
+    },
+    "segmentation-model-candidates": {
+      "phase": "completed",
+      "version": "13.84",
+      "documents": {
+        "plan": "docs/02-design/features/segmentation-model-candidates.design.md",
+        "design": "docs/02-design/features/segmentation-model-candidates.design.md",
+        "report": "docs/RELEASE_13.84.md",
+        "analysis": "docs/03-analysis/segmentation-model-candidates.md"
+      },
+      "matchRate": 100,
+      "validation": {
+        "python_regression": "199 passed / 1 skipped, exit 0",
+        "final_related": "89 passed, exit 0",
+        "cpp": "7/7 passed",
+        "640_training_export": "5/5 passed",
+        "official_pretrained_training_export": "3/3 passed",
+        "windows_cuda": "not locally executed; CI configured"
+      },
+      "completedAt": "2026-11-11T03:22:11.884492+00:00"
+    },
+    "segmentation-pretrained-completion": {
+      "phase": "completed",
+      "version": "13.85",
+      "documents": {
+        "design": "docs/02-design/features/segmentation-pretrained-completion.design.md",
+        "analysis": "docs/03-analysis/segmentation-pretrained-completion.md",
+        "report": "docs/RELEASE_13.85.md"
+      },
+      "matchRate": 100,
+      "validation": {
+        "regression": "239 passed, 1 skipped, exit 0",
+        "pretrained_integration": "18 passed with official weights and Release C++ probe",
+        "size640": "5/5 training and FP32 ONNX output checks passed",
+        "windows_cuda": "not locally executed; CI configured"
+      },
+      "completedAt": "2026-11-11T04:45:26.397552+00:00"
+    },
+    "inference-compare-concurrency": {
+      "phase": "completed",
+      "version": "13.86",
+      "documents": {
+        "design": "docs/02-design/features/inference-compare-concurrency.design.md",
+        "analysis": "docs/03-analysis/inference-compare-concurrency.md",
+        "report": "docs/RELEASE_13.86.md"
+      },
+      "matchRate": 100,
+      "validation": {
+        "regression": "178 passed, exit 0",
+        "preview_extended": "48 passed, 12 optional LibreYOLO skips, exit 0",
+        "final_jobs": "16 passed, exit 0",
+        "two_main_windows": "two separate processes simultaneously ready, exit 0",
+        "windows_cuda": "not locally executed"
+      },
+      "completedAt": "2026-11-11T04:54:30.757125+00:00"
+    },
+    "segmentation-reference-synthesis": {
+      "phase": "completed",
+      "version": "14.86",
+      "documents": {
+        "design": "docs/02-design/features/segmentation-reference-synthesis.design.md",
+        "analysis": "docs/03-analysis/segmentation-reference-synthesis.md",
+        "report": "docs/RELEASE_14.86.md"
+      },
+      "matchRate": 100,
+      "validation": {
+        "regression": "129 passed, no skips, exit 0",
+        "desktop": "real subprocess analyze/generate/review/publish/restore; two annotation saves",
+        "training_export": "published dataset U-Net Lite 1 epoch patch training and ONNX Runtime CPU passed",
+        "native_resolution": "3504x1504, five classes generated, visual QA passed",
+        "windows": "packaging contracts passed; EXE not locally executed"
+      },
+      "completedAt": "2026-11-11T07:03:36.994133+00:00"
+    },
+    "segmentation-synthesis-empty-analysis": {
+      "phase": "completed",
+      "version": "14.87",
+      "documents": {
+        "design": "docs/02-design/features/segmentation-synthesis-empty-analysis.design.md",
+        "analysis": "docs/03-analysis/segmentation-synthesis-empty-analysis.md",
+        "report": "docs/RELEASE_14.87.md"
+      },
+      "matchRate": 100,
+      "validation": {
+        "regression": "138 passed, no skips, exit 0",
+        "ui": "real clicks, analysis failure/recovery/generation, copy diagnostics, Val switch",
+        "locks": "read-lock contention waits and cancellation verified",
+        "windows": "EXE and user dataset not locally verified"
+      },
+      "completedAt": "2026-11-11T07:39:07.159889+00:00"
+    },
+    "segmentation-synthesis-duplicates": {
+      "phase": "completed",
+      "version": "14.88",
+      "documents": {
+        "design": "docs/02-design/features/segmentation-synthesis-duplicates.design.md",
+        "analysis": "docs/03-analysis/segmentation-synthesis-duplicates.md",
+        "report": "docs/RELEASE_14.88.md"
+      },
+      "matchRate": 100,
+      "validation": {
+        "regression": "139 passed, no skips, exit 0",
+        "duplicates": "same/cross split, different masks, nested names, publication verified",
+        "ui": "real analysis and preview clicks; no duplicate warning dialog",
+        "windows": "EXE and user dataset not locally verified"
+      },
+      "checkedAt": "2026-11-11T08:25:55.291145+00:00",
+      "completedAt": "2026-11-11T08:26:03.361679+00:00"
     }
   },
   "pipeline": {
@@ -258,7 +694,7 @@
   "session": {
     "startedAt": "2026-09-17T12:14:10.629Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-10-22T02:06:03.049248+00:00"
+    "lastActivity": "2026-11-10T00:00:19.275Z"
   },
   "history": [
     {
@@ -584,6 +1020,84 @@
       "version": "9.23",
       "tests": "174 passed; 125/150/200% 10 each; web 14",
       "windows_acceptance": "pending"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "plan",
+      "to": "design",
+      "timestamp": "2026-11-09T23:45:02.889Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "plan",
+      "nextPhase": "design",
+      "timestamp": "2026-11-09T23:45:02.890Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "design",
+      "to": "design",
+      "timestamp": "2026-11-09T23:45:02.897Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "design",
+      "to": "do",
+      "timestamp": "2026-11-09T23:45:02.904Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "design",
+      "nextPhase": "do",
+      "timestamp": "2026-11-09T23:45:02.904Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "do",
+      "to": "check",
+      "timestamp": "2026-11-09T23:55:58.315Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "do",
+      "nextPhase": "check",
+      "timestamp": "2026-11-09T23:55:58.317Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "check",
+      "to": "act",
+      "timestamp": "2026-11-10T00:00:04.021Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "check",
+      "nextPhase": "act",
+      "timestamp": "2026-11-10T00:00:04.022Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "from": "act",
+      "to": "report",
+      "timestamp": "2026-11-10T00:00:19.270Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "act",
+      "nextPhase": "report",
+      "timestamp": "2026-11-10T00:00:19.270Z"
+    },
+    {
+      "feature": "claude-main-seg-evaluation",
+      "action": "phase_complete",
+      "phase": "report",
+      "nextPhase": "completed",
+      "timestamp": "2026-11-10T00:00:19.275Z"
     }
   ]
 }

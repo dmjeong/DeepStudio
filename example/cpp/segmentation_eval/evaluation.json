@@ -1,0 +1,9 @@
+{
+  "model_json": "model/model.json",
+  "images": "images",
+  "masks": "masks",
+  "output": "evaluation_output",
+  "threads": 4,
+  "warmup": 3,
+  "repeat": 5
+}

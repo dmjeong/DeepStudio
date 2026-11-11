@@ -95,14 +95,6 @@ def test_patch_model_without_a_region_asks_for_it(tmp_path):
     assert json.loads((tmp_path / "m.json").read_text())["preprocessing"]["whole_image"]["region"] == [70, 45]
 
 
-def test_export_command_line_takes_the_region():
-    from export_onnx import parse_args
-    assert parse_args(["--checkpoint", "best.pt", "--region", "3100x1500"]).region == [3100, 1500]
-    assert parse_args(["--checkpoint", "best.pt"]).region is None       # 없으면 학습 때 기록한 크기를 쓴다
-    with pytest.raises(SystemExit):
-        parse_args(["--checkpoint", "best.pt", "--region", "3100"])
-
-
 @pytest.mark.skipif(not PROBE, reason="SEGMENT_PROBE(C++ segment_probe 경로)가 없습니다")
 # 50%는 정수배(90×62 → 45×31)로 둔다: 정수배가 아닌 INTER_AREA는 OpenCV 판마다 반올림이 1px 다를 수 있다
 # (Python opencv 5.0 ↔ C++ 4.6에서 61→30 축소의 한 픽셀). 3504×1504 → 1752×752 같은 실제 판정 영역은 정수배다.
@@ -142,10 +134,11 @@ def test_cpp_segment_matches_the_desktop_judgement(tmp_path, scale, region):
 
 def test_export_page_shows_the_region_and_the_rules_that_go_into_the_model(tmp_path):
     pytest.importorskip("PySide6")
+    from PySide6.QtCore import QCoreApplication, QEvent
     from PySide6.QtWidgets import QApplication
     from core.segment_defects import save_model_rules
     from widgets.export_widget import ExportWidget
-    QApplication.instance() or QApplication([])
+    app = QApplication.instance() or QApplication([])
     checkpoint = _checkpoint(tmp_path, 1.0, (70, 45))
     widget = ExportWidget()
     widget.ckpt_edit.setText(str(checkpoint))
@@ -156,3 +149,5 @@ def test_export_page_shows_the_region_and_the_rules_that_go_into_the_model(tmp_p
     widget._refresh_deploy_preview()
     assert "crack 면적 ≥ 3px · 점수 ≥ 0.85" in widget.deploy_info.text()
     widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()

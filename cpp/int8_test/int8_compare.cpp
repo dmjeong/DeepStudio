@@ -102,7 +102,7 @@ int main(int argc, char** argv)
         const cv::Mat image = cv::imread(path.string(), cv::IMREAD_UNCHANGED);
         if (image.empty()) {
             std::printf("%-28s 읽기 실패\n", path.filename().string().c_str());
-            continue;
+            return 2;
         }
         double ms_a = 0, ms_b = 0;
         SegmentResult a, b;
@@ -111,7 +111,10 @@ int main(int argc, char** argv)
             b = Run(int8, image, repeat, ms_b);
         } catch (const std::exception& error) {
             std::printf("%-28s 오류: %s\n", path.filename().string().c_str(), error.what());
-            continue;
+            return 2;
+        }
+        if (a.mask.empty() || b.mask.empty() || a.mask.size() != b.mask.size()) {
+            std::cerr << "Incompatible or empty output masks\n"; return 2;
         }
         sum_fp32 += ms_a;
         sum_int8 += ms_b;
@@ -153,6 +156,6 @@ int main(int argc, char** argv)
     if (rules_seen == 0)
         std::printf("※ 결함 목록이 비어 있습니다: 모델 JSON에 판정 기준(defect_rules)이 없으면 마스크 일치율만 비교됩니다.\n");
     std::printf("결함: 짝 맞음 %d개 · 한쪽에만 %d개 → %s\n", matched_total, only_total,
-                only_total == 0 ? "통과 (INT8 사용 가능)" : "확인 필요 (위 목록의 결함을 영상에서 보세요)");
+                only_total == 0 ? "비교 완료 (정답 기반 정확도 검증 별도 필요)" : "확인 필요 (위 목록의 결함을 영상에서 보세요)");
     return only_total == 0 ? 0 : 1;
 }

@@ -82,10 +82,15 @@ def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pyto
                 raise ValueError("LibreYOLO 체크포인트의 입력 크기(imgsz) 누락")
             require_saved_input_shape(input_size, (size, size))
             model = load_upstream_checkpoint(path, device=str(device))
-            from upstream_models import checkpoint_tiling
+            if task == "classify":
+                from libreyolo_classification import preprocessing_contract
+                preprocessing_contract(size, checkpoint.get("studio_preprocessing"))
+                model.studio_legacy_preprocessing = checkpoint.get("studio_preprocessing") is None
             state.update(_upstream_model=model, class_names=class_names, _input_size=(size, size),
-                         _normalization=None, _upstream_task=task,
-                         _detect_tiling=checkpoint_tiling(checkpoint) if task == "detect" else None)
+                         _normalization=None, _upstream_task=task)
+            from core.upstream_gradcam import LibreYOLOGradCAM, supports_upstream_gradcam
+            if gradcam and supports_upstream_gradcam(model, task):
+                state["_gradcam"] = LibreYOLOGradCAM(model)
         else:
             if runtime not in ("auto", "pytorch") and not (runtime == "onnx" and checkpoint.get("engine") == "efficientnet"):
                 raise ValueError("이 ONNX 경로는 EfficientNet 체크포인트를 지원합니다")

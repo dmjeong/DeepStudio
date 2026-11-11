@@ -43,11 +43,9 @@ def segmentation_labels(mask, width, height):
     return upsample_labels(mask, width, height)
 
 
-def segmentation_preview(mask, original, num_classes, labels=None, tint_background=True):
-    """클래스 색을 원본에 45% 섞은 미리보기와 클래스별 픽셀 수.
-
-    tint_background=False면 배경(0) 픽셀은 원본 그대로 두고 결함 클래스만 칠한다(결함 판정 화면).
-    """
+def segmentation_preview(mask, original, num_classes, *, class_names=(), details_out=None, labels=None, tint_background=False):
+    """Paint predicted foreground only; labels are a separate, zoom-aware UI layer."""
+    import cv2
     mask = np.asarray(mask)
     if mask.ndim != 2 or mask.dtype.kind not in 'iu' or not mask.size:
         raise ValueError('분할 결과는 정수 2차원 마스크 필요')
@@ -56,15 +54,39 @@ def segmentation_preview(mask, original, num_classes, labels=None, tint_backgrou
     height, width = original.shape[:2]
     if labels is None:
         labels = segmentation_labels(mask, width, height)
-    palette = np.asarray([class_color(index) for index in range(num_classes)], dtype=np.float32)
-    if tint_background:
-        overlay = (.55 * np.asarray(original, dtype=np.float32) + .45 * palette[labels]).clip(0, 255).astype(np.uint8)
-    else:
-        overlay = _tint_defects(original, labels, palette)
-    from core.segment_defects import _histogram
-    histogram = _histogram(labels)  # np.unique는 전체 정렬이라 대형 이미지에서 느리다
-    counts = {int(i): int(histogram[i]) for i in np.flatnonzero(histogram)}
-    return np.ascontiguousarray(overlay), counts
+    overlay = np.asarray(original, dtype=np.uint8).copy()
+    ids, counts = np.unique(labels, return_counts=True)
+    regions, region_counts = [], {}
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    for class_id in ids:
+        class_id = int(class_id)
+        if class_id == 0:  # Reserved background is not a found object.
+            continue
+        selected = (labels == class_id).astype(np.uint8)
+        foreground = selected.astype(bool)
+        color = np.asarray(class_color(class_id), dtype=np.float32)
+        overlay[foreground] = (.75 * overlay[foreground] + .25 * color).astype(np.uint8)
+        inner = cv2.erode(selected, kernel, borderType=cv2.BORDER_CONSTANT, borderValue=0)
+        edge = (selected != 0) & (inner == 0)
+        overlay[edge] = color.astype(np.uint8)
+        if details_out is not None:
+            count, _, stats, _ = cv2.connectedComponentsWithStats(selected, connectivity=8)
+            region_counts[class_id] = int(count - 1)
+            # Limit annotation metadata, never the segmentation mask or pixel counts.
+            order = np.argsort(-stats[1:, cv2.CC_STAT_AREA], kind="stable")[:256] + 1
+            for index in order:
+                x, y, w, h, area = map(int, stats[index])
+                regions.append({"class_id": class_id,
+                    "name": class_names[class_id] if class_id < len(class_names) else f"클래스 {class_id}",
+                    "index": int(index), "bbox": [x, y, x + w, y + h], "area_px": area,
+                    "color": "#%02x%02x%02x" % tuple(map(int, color))})
+    if details_out is not None:
+        regions.sort(key=lambda item: (-item["area_px"], item["class_id"], item["index"]))
+        total = sum(region_counts.values())
+        details_out.update(segmentation_regions=regions[:256], region_counts=region_counts,
+                           region_count=total, region_labels_truncated=total > 256,
+                           segmentation_display="foreground_v1")
+    return np.ascontiguousarray(overlay), dict(zip(ids.tolist(), counts.tolist()))
 
 
 def _tint_defects(original, labels, palette):

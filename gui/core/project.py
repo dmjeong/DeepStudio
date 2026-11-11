@@ -16,6 +16,7 @@ Deep Vision Studio — 프로젝트 관리
 """
 
 import json
+import hashlib
 import ntpath
 import os
 import re
@@ -23,6 +24,23 @@ import tempfile
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import List, Dict, Any
+
+
+SEGMENTATION_BACKGROUND_NAMES = frozenset({"background", "bg", "배경", "good", "normal", "정상"})
+
+
+def segmentation_class_names(names):
+    """Reserve pixel zero for background when creating a NEW class vocabulary.
+
+    Never call this on an existing populated project's vocabulary: that would
+    silently change the meaning of every stored foreground pixel.
+    """
+    names = list(names)
+    if not names or names[0].casefold() not in SEGMENTATION_BACKGROUND_NAMES:
+        names.insert(0, "background")
+    if len(names) > 255:
+        raise ValueError("분할 클래스는 배경 포함 255개까지입니다. 255는 학습 제외 픽셀입니다.")
+    return names
 
 
 # ── 지원 태스크 ────────────────────────────────────
@@ -112,8 +130,6 @@ class AugmentationConfig:
     )
     mixup_alpha: float = 0.0          # Mixup 알파
     mosaic: bool = False              # 모자이크 증강 (detection용)
-    # LibreYOLO 모델(검출 · MobileNetV4 분류): False면 모델 기본 증강, True면 위 값(뒤집기 · 회전 · 색상 · 모자이크)을 적용
-    custom: bool = False
 
 
 @dataclass
@@ -136,8 +152,8 @@ class TrainingConfig:
     # 분할 손실: "ce_dice"(CE + 전경 Dice, 기본) | "ce"(픽셀 CE만, 9.23까지의 동작)
     # 배경이 대부분인 결함 마스크에서 CE만 쓰면 작은 결함을 놓치기 쉽다 (docs/RELEASE_9.33.md 실험).
     segmentation_loss: str = "ce_dice"
-    # 분할 패치 학습: 이미지를 줄이지 않고 원본 해상도에서 입력 크기(= 패치 크기)만큼 잘라 학습하고,
-    # 추론은 겹치는 타일로 나눠 합친다. patches_per_image 0 = 자동(이미지 면적 ÷ 패치 면적).
+    # 분할/기본 탐지/LibreYOLO 분류 패치 학습. 입력 크기만큼 잘라 학습한다.
+    # count=0: 분할은 자동 개수, native 탐지는 전체 격자, native 분류는 원본별 모든 패치 묶음.
     patch_training: bool = False
     patches_per_image: int = 0
     # 패치 학습 배율: 1.0 = 원본 해상도. 0.5면 이미지를 절반으로 줄인 뒤 자른다 (추론 계산량 1/4).
@@ -170,6 +186,7 @@ class TrainingConfig:
     patchcore_max_candidates: int = 20000
     patchcore_max_memory_bank: int = 4096
     patchcore_seed: int = 0
+    patchcore_augmentation_views: int = 0  # 원본 + 이 개수의 정상 증강 영상으로 특징 수집
     # Shared by every task; retain legacy key names for saved project compatibility.
     patchcore_crop_enabled: bool = False
     patchcore_crop_width: int = 1024
@@ -339,7 +356,8 @@ class ProjectManager:
         info = SUPPORTED_TASKS[task]
         if class_names is None:
             class_names = []
-        class_names = list(class_names)
+        class_names = (segmentation_class_names(class_names) if task == "segment"
+                       else list(class_names))
         for cls_name in class_names:
             ProjectManager.validate_name(cls_name, "클래스")
         if len({c.casefold() for c in class_names}) != len(class_names):
@@ -449,20 +467,45 @@ class ProjectManager:
         # 원본을 열기 전에 직렬화 완료. 실패시 이전 파일과 메모리 상태 보존.
         payload = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False)
         temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=base,
-                                             prefix=".project-", suffix=".tmp", delete=False) as stream:
-                temporary = stream.name
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, filepath)
-        finally:
-            if temporary and os.path.exists(temporary):
-                os.unlink(temporary)
+        from webapp.locking import exclusive_file
+        # Two apps may read a project for inference. Never let a stale window
+        # overwrite another app's new training results when it closes/saves.
+        with exclusive_file(filepath + ".save.lock", "다른 앱에서 프로젝트를 저장 중입니다. 다시 저장해 주세요."):
+            current = None
+            if os.path.isfile(filepath):
+                with open(filepath, "rb") as stream:
+                    current = stream.read()
+            expected = (getattr(project, "_saved_digest", None)
+                        if getattr(project, "_saved_path", None) == os.path.realpath(filepath) else None)
+            if expected is not None and (current is None or hashlib.sha256(current).hexdigest() != expected):
+                raise RuntimeError("다른 앱에서 프로젝트가 변경되었습니다. 최신 학습 기록을 보호하기 위해 저장하지 않았습니다. 프로젝트를 다시 열어 주세요.")
+            unchanged = False
+            if current is not None:
+                previous = json.loads(current)
+                unchanged = ({k: v for k, v in previous.items() if k != "modified"}
+                             == {k: v for k, v in data.items() if k != "modified"})
+                if unchanged:
+                    # An inference-only window must not invalidate a trainer's
+                    # project snapshot just by saving an unchanged form.
+                    modified = previous["modified"]
+            if not unchanged:
+                try:
+                    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=base,
+                                                     prefix=".project-", suffix=".tmp", delete=False) as stream:
+                        temporary = stream.name
+                        stream.write(payload)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.replace(temporary, filepath)
+                    current = payload.encode("utf-8")
+                finally:
+                    if temporary and os.path.exists(temporary):
+                        os.unlink(temporary)
         project.modified = modified
         project.project_dir = base
         project._active_filepath = filepath
+        project._saved_digest = hashlib.sha256(current).hexdigest()
+        project._saved_path = os.path.realpath(filepath)
         return filepath
 
     @staticmethod
@@ -473,8 +516,9 @@ class ProjectManager:
         Returns: ProjectData 인스턴스
         """
         filepath = os.path.abspath(filepath)
-        with open(filepath, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+        with open(filepath, "rb") as f:
+            original_bytes = f.read()
+        raw = json.loads(original_bytes)
 
         if not isinstance(raw, dict) or raw.get("task", "classify") not in SUPPORTED_TASKS:
             raise ValueError("지원하지 않는 프로젝트 형식 또는 태스크")
@@ -533,6 +577,8 @@ class ProjectManager:
             defect_generation=raw.get("defect_generation", {}),
         )
         project._active_filepath = filepath
+        project._saved_digest = hashlib.sha256(original_bytes).hexdigest()
+        project._saved_path = os.path.realpath(filepath)
         return project
 
     @staticmethod

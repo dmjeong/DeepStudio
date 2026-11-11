@@ -1,5 +1,7 @@
 # Deep Vision Studio
 
+14.86: [SEG 정답으로 가상 불량 생성](docs/SEGMENTATION_SYNTHESIS.md) — crack·이물·shift·double·flip, 원본 크기 이미지와 정답 마스크, 검수 후 새 학습 프로젝트 저장.
+
 로컬 환경에서 이미지 데이터 편집, 학습, 추론과 결과 검토를 수행하는 도구입니다.
 이 저장소의 루트가 애플리케이션 소스 루트입니다.
 
@@ -7,9 +9,9 @@
 
 | 태스크 | 학습·추론 엔진 | 데이터 |
 |---|---|---|
-| 분류 | EfficientNet B0/B1, ResNet 18/50, ConvNeXt V1 Tiny, Custom CSP | 클래스별 이미지 폴더 |
-| 시맨틱 분할 | SAM2 Hiera Tiny/Small/Base+/Large, DeepLab V3+ ResNet34, U-Net ResNet18, Custom CSP | 이미지와 클래스 인덱스 마스크 |
-| 박스 탐지 | Re-DETR v4 Small/Medium/Large, LibreYOLO9 Tiny, Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
+| 분류 | EfficientNet B0/B1, ResNet 18/50, ConvNeXt V1 Tiny, LibreYOLO MobileNetV4 Small/Medium, Custom CSP | 클래스별 이미지 폴더 |
+| 시맨틱 분할 | SAM2 Hiera Tiny/Small/Base+/Large, DeepLab V3+ ResNet34, U-Net ResNet18, DINOv2 ViT-S/14 + Detail, Custom CSP | 이미지와 클래스 인덱스 마스크 |
+| 박스 탐지 | Re-DETR v4 Small/Medium/Large, LibreYOLO9 Tiny, D-FINE Nano (COCO), Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
 | 이상 탐지 | PatchCore 또는 Custom CSP 재구성 | 정상 이미지, 선택적 평가용 불량 이미지 |
 | 회전 박스 | 데이터 편집·크롭만 지원 | 클래스와 네 꼭짓점의 정규화 좌표 |
 
@@ -17,6 +19,55 @@
 실행을 거부하며, 현재 엔진을 명시적으로 선택해야 합니다.
 
 ## 실행
+
+### 탐지·LibreYOLO 분류 패치 학습 (12.84)
+
+학습 화면의 **패치 학습**을 체크하고 **데이터 증강**에서 반전·회전·색상 변화를 편집한다.
+탐지는 박스도 함께 자르며, 분류는 모든 패치를 합쳐 원본 한 장의 라벨로 학습한다.
+새 기본 모델 D-FINE Nano / MobileNetV4 Medium과 C++ 패치 추론도 지원한다.
+Python 실행자는 `gui/update_native_models.bat`으로 새 가중치를 준비할 수 있다.
+[사용법·모델 선택·검증 범위](docs/native-patch-training.md)를 먼저 확인한다.
+
+### LibreYOLO 분류의 전체 이미지 입력 (11.84)
+
+- 기본 제공 MobileNetV4는 이미지 전체를 224×224로 크기 조정합니다. 종횡비는 바뀔 수 있지만,
+  상하좌우를 자동으로 잘라 버리지 않습니다. 학습·검증·추론·Grad-CAM과 ONNX/C++가 같은 전처리를 사용합니다.
+- 추론 화면의 **원본 전체**는 저장된 크롭도 해제합니다. **모델 설정 / JSON 설정**에서는 사용자가
+  지정한 ROI만 자르며, Grad-CAM은 검사한 원본 위치에 표시합니다. 히트맵이 전체 시야를 대상으로 하더라도
+  모델이 중요하게 본 위치에만 강하게 표시됩니다.
+- 기존 `.pt`는 다시 학습하지 않아도 로드됩니다. 다만 중앙만 보던 이전 버전과 입력 범위가 달라져
+  점수·판정이 달라질 수 있으므로 검사 이미지로 확인하세요. 가장자리 정보까지 학습시키려면 기존 가중치로
+  **추가 학습**을 하세요. 구형 체크포인트의 **중단 재개**는 전처리와 이전 best 지표가 달라 허용하지 않습니다.
+- 새 best/last에는 전체 입력 정책과 지정 ROI를 저장하며 ONNX JSON에도 기록합니다.
+  C++에는 함께 내보낸 `.onnx`와 `.json`을 사용하세요.
+
+### DINOv2 세그멘테이션 (10.57)
+
+- **Segmentation → DINOv2 ViT-S/14 + Detail**을 선택합니다. 기본 입력은 392×392,
+  흑백 1채널과 RGB 3채널을 지원합니다. 이미지 안의 영역에 클래스를 라벨링합니다.
+- `LVD-142M 가중치로 시작`은 Meta의 공식 사전학습 **백본**을 사용합니다.
+  픽셀별 분할 헤드는 사용자 마스크로 학습해야 하며, 즉시 불량을 찾는 완성 모델이 아닙니다.
+  처음에는 백본 고정으로 헤드/세부 경로를 학습하고, 필요하면 전체 미세조정합니다.
+  결함 픽셀이 적으면 `클래스 가중치 balanced`와 `CE + Dice`를 함께 비교하세요.
+  짧은 학습에서 배경만 나오는지 반드시 클래스별 결과로 확인합니다.
+- `build.bat`/`build.bat setup gpu`와 `prepare_model_weights.bat segment`에 가중치가 포함됩니다.
+  Python 사용자 개별 준비: `python python/prepare_builtin_assets.py --only dinov2_vits14`.
+  수동 파일 위치: `gui/builtin_assets/dinov2/dinov2_vits14_pretrain.pth`.
+  공식 SHA256을 검사하므로 이름만 바꾼 다른 가중치는 사용할 수 없습니다.
+- 기존 `.pt` 학습/추론, `.onnx + .json` 및 암호화 내보내기를 사용합니다. 내보낸 공간 크기는
+  고정이며 동적 배치만 선택 가능합니다. C++/C#에서는 기존 segmentation 로더를 사용합니다.
+- 패치 특징과 함께 원본 해상도의 CNN 세부 경로를 사용합니다. 앱에서 입력 이미지를
+  축소하면 작은 결함이 없어질 수 있으므로, 미세 결함에는 충분한 입력 크기 또는 ROI를 사용하세요.
+  입력 크기를 늘리면 Transformer 연산량/메모리 사용량도 커집니다. CPU 전체 20ms는 보장하지 않습니다.
+- 코드/기본 가중치 Apache-2.0. [출처·라이선스](THIRD_PARTY_NOTICES.md),
+  [구현·검증 보고서](docs/04-report/dinov2-segmentation.report.md).
+
+실제 공개 가중치 기능/속도 재검사:
+```bat
+python tools/dinov2_segmentation_smoke.py --weights gui/builtin_assets/dinov2/dinov2_vits14_pretrain.pth --report dinov2-smoke.json
+```
+이 도구는 합성 데이터로 학습/복원/ONNX/암호화를 검증하고 메모리 입력 기준 CPU 시간을
+기록합니다. 실제 공정의 정확도 평가를 대신하지 않습니다.
 
 [C++17 / C# ONNX 실행·자동 테스트 예제](example/README.md)는 `example/`에서 제공한다.
 
@@ -31,7 +82,7 @@ GPU 이름을 선택하면 EfficientNet을 포함한 기본 모델 학습이 CUD
 CUDA 학습에서는 pinned memory, 지속 worker, batch prefetch와 제한된 이미지 디코딩
 캐시를 자동 적용한다. 학습 로그의 `workers`, `pin_memory`, `persistent/prefetch` 값으로
 실제 데이터 공급 설정을 확인할 수 있다.
-EfficientNet B0/B1, ResNet, ConvNeXt, DeepLab V3+, U-Net, PatchCore 백본, LibreYOLO,
+EfficientNet B0/B1, ResNet, ConvNeXt, DeepLab V3+, U-Net, DINOv2, PatchCore 백본, LibreYOLO,
 Re-DETR v4, SAM2 Hiera Tiny/Small/Base+/Large는 앱 실행 중 별도 다운로드를 하지 않는다.
 SAM2는 Settings에서 받거나 프로젝트에 적용하지 않는다. 분할 프로젝트에서 Hiera 변형을
 선택하면 기본 제공 가중치로 prompt mask 미세조정을 실행할 수 있다. 학습 결과는 같은
@@ -46,8 +97,20 @@ Python 3.11 환경에서 이 폴더로 이동합니다.
 
 ```sh
 python -m pip install -r gui/requirements.txt
+python python/prepare_builtin_assets.py
 python gui/main.py
 ```
+
+Windows에서 처음 준비할 때는 `gui\build.bat setup gpu`를 실행하면 GPU 런타임과
+전체 기본 가중치를 준비하고 끝납니다(EXE 생성 없음). 이미 Python으로 실행 중인데
+가중치가 없다고 나오면 `gui\prepare_model_weights.bat`을 실행하세요.
+세그멘테이션만 복구하려면 `gui\build.bat weights segment`로 U-Net의 ResNet18,
+DeepLab의 ResNet34, SAM2 Tiny/Small/Base+/Large를 한 번에 받습니다.
+정상 파일은 재다운로드하지 않습니다. `gui\build.bat weights check`는 다운로드 없이 검사합니다.
+저장 위치는 앱과 동일한 `gui/builtin_assets`이며 `DVS_BUILTIN_ASSETS_DIR`를 설정했다면
+그 경로를 사용합니다. 공식 SAM2 수동 파일도 SHA256이 일치하면 manifest 없이 인식합니다.
+환경변수에는 절대 경로를 권장합니다. 상대 경로는 Python 실행 시 저장소 루트,
+EXE에서는 실행파일 폴더를 기준으로 해석하므로 실행한 작업 폴더에 영향을 받지 않습니다.
 
 빌드 환경이 이미 준비된 Windows PC에서 소스 변경을 확인할 때는 저장소 폴더에서
 다음과 같이 실행합니다. `build.bat`으로 EXE를 다시 만들 필요는 없습니다.
@@ -159,3 +222,7 @@ worker와 encoder/decoder ONNX export에 연결되어 있고, video memory-state
 최소사양은 UI/CPU 추론, GPU 학습, Docker 확장으로 구분하며 모델별 실측 후 확정합니다.
 현재 초안은 RAM16GB/CPU 실행, RAM32GB·VRAM12GB/GPU 학습을 검증 기준으로 제시하며,
 모든 모델·해상도의 실행 보장을 뜻하지 않습니다.
+
+### 세그멘테이션 첫 클래스 / 자동 배경
+
+배경은 자동 예약되며 라벨 없는 이미지는 배경으로 학습합니다. 기존 프로젝트의 첫 클래스 복구 방법과 마스크 규칙은 [사용 안내](docs/SEGMENTATION_BACKGROUND.ko.md)를 참고하세요.

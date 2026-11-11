@@ -72,7 +72,7 @@ class _OfficialSam2Decoder(torch.nn.Module):
             image_pe=prompt_encoder.get_dense_pe(),
             sparse_prompt_embeddings=sparse,
             dense_prompt_embeddings=dense,
-            multimask_output=True,
+            multimask_output=getattr(self.model, "dvs_multimask_output", True),
             repeat_image=False,
             high_res_features=[image_features_0, image_features_1],
         )

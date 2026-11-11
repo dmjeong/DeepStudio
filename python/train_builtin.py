@@ -116,6 +116,13 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
                         pixel_counts_out=None, class_report_out=None, should_stop=None, progress=None):
     training = optimizer is not None
     model.train(training)
+    if training:
+        # Freezing a pretrained backbone must also preserve its BN statistics.
+        for module in model.modules():
+            if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                affine = tuple(module.parameters(recurse=False))
+                if affine and not any(p.requires_grad for p in affine):
+                    module.eval()
     total_loss = 0.0
     samples = 0
     intersection = None
@@ -129,8 +136,18 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
                 raise _Stopped()
             images = images.to(device, non_blocking=non_blocking)
             masks = masks.to(device, dtype=torch.long, non_blocking=non_blocking)
-            logits = model(images)
-            loss = criterion(logits, masks)
+            if training and hasattr(model, "forward_train"):
+                logits, auxiliary, boundary = model.forward_train(images)
+                loss = criterion(logits, masks)
+                config = model.training_loss_config
+                for aux_logits in auxiliary:
+                    loss = loss + config["auxiliary_segmentation_weight"] * criterion(aux_logits, masks)
+                if boundary is not None:
+                    from segmentation_models import boundary_loss
+                    loss = loss + config["boundary_weight"] * boundary_loss(boundary, masks)
+            else:
+                logits = model(images)
+                loss = criterion(logits, masks)
             if training:
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -380,6 +397,15 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     model = model.to(target)
     log(f"가중치 로드 완료: {model_id} / {model.weight_provenance}")
     head_prefixes = HEAD_PREFIXES[model_id]
+    resume_checkpoint = (torch.load(resume, map_location="cpu", weights_only=True)
+                         if resume is not None else None)
+    if resume_checkpoint is not None and model_id in {"bisenetv2", "stdc1"} and not freeze_backbone:
+        groups = resume_checkpoint.get("optimizer_state_dict", {}).get("param_groups", [])
+        if len(groups) == 1 and len(groups[0]["params"]) == len(list(model.parameters())):
+            # 13.84 trained these scratch-only adapters with one optimizer group.
+            # Preserve its parameter ordering, moments and scheduler on resume.
+            head_prefixes = ("",)
+            log("기존 체크포인트의 단일 학습률 그룹을 유지하여 재개합니다.")
     head_parameters, backbone_parameters = [], []
     for name, parameter in model.named_parameters():
         is_head = any(name.startswith(prefix) for prefix in head_prefixes)
@@ -423,7 +449,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                      ))
     else:
         scheduler = main_scheduler
-    loss_details = {}
+    loss_details = {"model_auxiliary_loss": dict(getattr(model, "training_loss_config", {}))}
     if spec.task == "segment":
         from segmentation_loss import SegmentationLoss, pixel_class_weights
 
@@ -457,6 +483,11 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                            if tiling else None),
         **loss_details,
     }
+    if spec.task == "segment":
+        training_config["unlabeled_policy"] = "background"
+        training_config["automatic_background_images"] = {
+            split: len(getattr(getattr(loader, "dataset", None), "unlabeled", []))
+            for split, loader in (("train", train_loader), ("val", val_loader))}
     start_epoch = 0
     history: list[dict] = []
     best_metric = float("inf") if policy.direction == "min" else float("-inf")
@@ -464,7 +495,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     resume_best_checkpoint = None
     if resume is not None:
         resume_path = Path(resume)
-        checkpoint = torch.load(resume_path, map_location="cpu", weights_only=False)
+        checkpoint = resume_checkpoint
         if checkpoint.get("model_id") != model_id:
             raise ValueError("resume checkpoint model_id does not match the requested adapter")
         saved_metric = checkpoint.get("training_config", {}).get("selection_metric", "engine_default")
@@ -511,9 +542,10 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         validation_metrics = {}
         report = None
         # 데스크톱 요청만: 배치마다 중지 요청 확인 + 에폭 안의 진행 기록. 웹 요청은 기본 호출 모양 그대로
-        watch = (lambda label, loader: {"should_stop": should_stop,
-                                        "progress": _BatchProgress(log, f"에폭 {epoch + 1} {label}", len(loader), target)}
-                 if class_report else {})
+        def watch(label, loader):
+            return ({"should_stop": should_stop,
+                     "progress": _BatchProgress(log, f"에폭 {epoch + 1} {label}", len(loader), target)}
+                    if class_report else {})
         try:
             if spec.task == "classify":
                 train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target,
@@ -606,10 +638,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
 
 
 def main() -> None:
-    specs = tuple(get_builtin_spec(model_id) for model_id in (
-        "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18",
-        "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg", "unet_lite",
-        "unet_mobilenetv2"))
+    from builtin_models import BUILTIN_MODEL_SPECS
+    specs = tuple(BUILTIN_MODEL_SPECS.values())
     parser = argparse.ArgumentParser(description="Train a built-in Deep Vision Studio adapter")
     parser.add_argument("--model", choices=[spec.model_id for spec in specs], required=True)
     parser.add_argument("--data_root", required=True)
@@ -623,8 +653,8 @@ def main() -> None:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--resume")
-    parser.add_argument("--pretrained", action="store_true", help="Load the selected ImageNet backbone")
-    parser.add_argument("--initial_weights", help="Local torchvision backbone or matching Studio checkpoint")
+    parser.add_argument("--pretrained", action="store_true", help="Load the selected model's packaged pretrained backbone")
+    parser.add_argument("--initial_weights", help="Local official backbone or matching Studio checkpoint")
     parser.add_argument("--selection_metric", default="engine_default")
     parser.add_argument("--segmentation_loss", choices=("ce_dice", "ce"), default="ce_dice",
                         help="segment: CE + foreground Dice (default) or plain pixel CE")

@@ -16,7 +16,7 @@ OUTPUT_NAMES = {
 }
 
 RE_DETR_VARIANTS = frozenset({"Small", "Medium", "Large"})
-UPSTREAM_FAMILIES = frozenset({"mobilenetv4", "yolo9", "rtdetrv4"})
+UPSTREAM_FAMILIES = frozenset({"mobilenetv4", "yolo9", "rtdetrv4", "dfine"})
 
 
 class ExportVerificationError(ValueError):
@@ -92,15 +92,8 @@ def checkpoint_backend(checkpoint):
     raise ValueError("지원하지 않는 체크포인트 포맷")
 
 
-def _upstream_spec(checkpoint, region=None):
-    """Read the schema written by the shipped LibreYOLO trainers.
-
-    패치 학습한 검출 모델(체크포인트의 타일 규칙)은 입력을 타일 크기가 아니라 판정 영역 크기로 잡는다:
-
-        판정 영역 W×H ─▶ 배율 s ─▶ 32의 배수로 올림 = 모델 입력   (학습 타일과 같은 물체 크기로 한 번에 추론)
-
-    region: (가로, 세로). 없으면 학습 때 기록한 영상 크기.
-    """
+def _upstream_spec(checkpoint):
+    """Read the schema written by the shipped LibreYOLO trainers."""
     family = checkpoint.get("model_family")
     task = checkpoint.get("task")
     if family not in UPSTREAM_FAMILIES or task not in {"classify", "detect"}:
@@ -117,35 +110,22 @@ def _upstream_spec(checkpoint, region=None):
     size = _positive_int(checkpoint.get("imgsz"), "imgsz")
     if task == "classify" and family != "mobilenetv4":
         raise ValueError("기본 제공 LibreYOLO 분류 체크포인트 모델군 불일치")
-    if task == "detect" and family not in {"yolo9", "rtdetrv4"}:
+    if task == "detect" and family not in {"yolo9", "rtdetrv4", "dfine"}:
         raise ValueError("기본 제공 LibreYOLO 검출 체크포인트 모델군 불일치")
-    height = width = size
-    from upstream_models import PATCH_TRAINING_FAMILIES, checkpoint_tiling
-    tiling = checkpoint_tiling(checkpoint) if task == "detect" else None
-    if tiling:
-        if family not in PATCH_TRAINING_FAMILIES:
-            raise ValueError("패치 학습 검출 내보내기는 LibreYOLO9 모델만 지원합니다")
-        region = region or tiling["region"]
-        if not region:
-            raise ValueError("패치 학습 검출 모델은 판정 영역 크기(가로×세로 px)가 있어야 C++에서 한 번에 추론할 수 있습니다. "
-                             "내보내기 화면에서 판정 영역 크기를 입력하세요.")
-        region = [_positive_int(value, "region") for value in region]
-        scaled = [max(1, int(round(value * tiling["scale"]))) for value in region]
-        width, height = (-(-value // WHOLE_IMAGE_MULTIPLE) * WHOLE_IMAGE_MULTIPLE for value in scaled)
-        tiling = {**tiling, "region": region, "scaled": scaled}
-    # 입력 정규화는 LibreYOLO가 그 모델에 실제로 쓰는 것과 같아야 한다 (SDK는 이 값으로 (v/255 - mean) / std 를 계산한다).
-    #   MobileNetV4 분류        ImageNet 평균 · 표준편차
-    #   LibreYOLO9 · RT-DETR v4  0~1 그대로 (v/255) — ImageNet 정규화를 넣으면 검출이 수만 개 쏟아진다
     if task == "classify":
-        mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+        from libreyolo_classification import preprocessing_contract
+        from center_crop import checkpoint_center_crop
+        preprocessing = preprocessing_contract(size, checkpoint.get("studio_preprocessing"))
+        preprocessing["center_crop"] = checkpoint_center_crop(checkpoint)
     else:
-        mean, std = [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]
+        from native_detection import preprocessing_contract
+        from center_crop import checkpoint_center_crop
+        preprocessing = preprocessing_contract(family, size)
+        preprocessing["center_crop"] = checkpoint_center_crop(checkpoint)
     return {"family": family, "task": task, "num_classes": num_classes,
-            "class_names": class_names, "input_height": height, "input_width": width,
-            "in_channels": 3, "tiling": tiling,
-            "preprocessing": {"normalize_mean": mean, "normalize_std": std,
-                                "input_size": [height, width], "in_channels": 3,
-                                "color_order": "RGB"}}
+            "class_names": class_names, "input_height": size, "input_width": size,
+            "in_channels": 3,
+            "preprocessing": preprocessing}
 
 
 def _upstream_reference_outputs(model, family, dummy):
@@ -162,7 +142,7 @@ def _upstream_reference_outputs(model, family, dummy):
     finally:
         if family == "yolo9" and old_export is not None:
             head.export = old_export
-    if family == "rtdetrv4":
+    if family in {"rtdetrv4", "dfine"}:
         if not isinstance(value, dict) or not {"pred_logits", "pred_boxes"} <= set(value):
             raise ValueError("LibreYOLO Re-DETR v4 PyTorch 출력 형식 오류")
         return [value["pred_logits"], value["pred_boxes"]]
@@ -171,29 +151,11 @@ def _upstream_reference_outputs(model, family, dummy):
     return [value]
 
 
-# LibreYOLO9 출력의 상자 좌표(픽셀) 허용 오차. 좌표 = 기준점 ± 거리 × 보폭(최대 32)이라, 합성곱의 FP32 반올림 차이가
-# 보폭만큼 커져 0.01~0.06 px 차이가 난다(640·1600×960·3520×1504에서 실측, 확률은 1e-5 수준으로 일치).
-# 원소 크기에 비례하는 허용 오차(rtol)는 0 근처 좌표에서 0.001 px이 되어 정상 모델을 실패로 판정했다.
-YOLO9_BOX_ATOL_PX = 0.25
-
-
-def validate_yolo9_output(expected, actual, *, atol, rtol):
-    """LibreYOLO9 출력 (1, 4 + 클래스 수, 후보 수): 앞 4행 = 픽셀 좌표 상자, 나머지 = 클래스 확률.
-
-        확률   ─▶ 일반 검증 기준 (atol · rtol) 그대로
-        상자   ─▶ 0.25 px 이내 (검출 결과에 영향이 없는 크기, 실측 오차의 4배 이상 여유)
-    """
-    expected, actual = np.asarray(expected), np.asarray(actual)
-    if expected.shape != actual.shape or expected.ndim != 3 or expected.shape[1] < 5:
-        raise ValueError(f"ONNX 출력 형태 불일치: {expected.shape} != {actual.shape}")
-    validate_outputs(expected[:, 4:], actual[:, 4:], atol=atol, rtol=rtol)
-    validate_outputs(expected[:, :4], actual[:, :4], atol=YOLO9_BOX_ATOL_PX, rtol=rtol)
-
-
 def verify_upstream_onnx(onnx_path, model, spec, dummy):
     """Compare every raw exported tensor with the public native checkpoint."""
     import onnxruntime as ort
-    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    from onnx_session import cpu_session_options
+    session = ort.InferenceSession(str(onnx_path), cpu_session_options(), providers=["CPUExecutionProvider"])
     inputs = session.get_inputs()
     if len(inputs) != 1:
         raise ValueError("LibreYOLO ONNX 입출력 개수 오류: 이미지 입력 1개 필요")
@@ -202,16 +164,16 @@ def verify_upstream_onnx(onnx_path, model, spec, dummy):
     if len(actual) != len(expected):
         raise ValueError(f"LibreYOLO ONNX 출력 개수 불일치: PyTorch={len(expected)}, ONNX={len(actual)}")
     tolerances = verification_tolerances(spec["task"])
+    if spec["family"] in {"rtdetrv4", "dfine"}:
+        from detection_export_validation import validate_detection_sets
+        return validate_detection_sets([v.detach().cpu().numpy() for v in expected], actual, **tolerances)
     for index, (reference, converted) in enumerate(zip(expected, actual)):
         reference = reference.detach().cpu().numpy()
         if spec["task"] == "classify":
             validate_classification_outputs(reference, converted, **tolerances)
         else:
             try:
-                if spec["family"] == "yolo9":
-                    validate_yolo9_output(reference, converted, **tolerances)
-                else:
-                    validate_outputs(reference, converted, **tolerances)
+                validate_outputs(reference, converted, **tolerances)
             except ValueError as exc:
                 raise ValueError(f"LibreYOLO ONNX 출력 {index} 검증 실패: {exc}") from exc
     return True
@@ -295,15 +257,6 @@ def deployment_preview(checkpoint_path):
     task = checkpoint.get("task")
     preview = {"task": task, "patch": bool(tiling) and task == "segment", "vit": str(model_id).startswith("dinov2_"),
                "region": tiling.get("region"), "scale": float(tiling.get("scale", 1.0)), "rules": None}
-    if task == "detect":
-        # 패치 학습한 LibreYOLO9 검출 모델도 판정 영역 크기로 내보낸다
-        try:
-            from upstream_models import checkpoint_tiling
-            detect_tiling = checkpoint_tiling(checkpoint)
-        except ValueError:
-            detect_tiling = None
-        if detect_tiling:
-            preview.update(patch=True, region=detect_tiling["region"], scale=detect_tiling["scale"])
     if task == "segment":
         try:
             preview["rules"] = deployment_defect_rules(checkpoint_path, list(checkpoint.get("class_names") or []))
@@ -486,6 +439,11 @@ def export_to_onnx(model, dummy_input, output_path, opset_version=17,
     names = list(output_names or [output_name])
     axes = ({"input_image": {0: "batch_size"},
              **{name: {0: "batch_size"} for name in names}} if dynamic_batch else None)
+    retain_spatial_shapes = task == "segment" and getattr(model, "export_dynamic_spatial", False)
+    if retain_spatial_shapes:
+        axes = axes or {}
+        for name in ["input_image", *names]:
+            axes.setdefault(name, {}).update({2: "height", 3: "width"})
     model.cpu().eval()
     # 명시적 legacy exporter로 버전별 기본값 변화와 외부 데이터 분리를 피한다.
     exporter_options = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
@@ -496,6 +454,17 @@ def export_to_onnx(model, dummy_input, output_path, opset_version=17,
                           opset_version=opset_version, do_constant_folding=constant_folding,
                           input_names=["input_image"], output_names=names,
                           dynamic_axes=axes, **exporter_options)
+    if retain_spatial_shapes:
+        # Keep dynamic internal Reshape calculations, but publish the same
+        # fixed input/output size expected by the native segmentation SDK.
+        import onnx
+        graph = onnx.load(str(output_path))
+        for value in [graph.graph.input[0], *graph.graph.output]:
+            for axis, size in ((2, dummy_input.shape[-2]), (3, dummy_input.shape[-1])):
+                dim = value.type.tensor_type.shape.dim[axis]
+                dim.ClearField("dim_param")
+                dim.dim_value = int(size)
+        onnx.save(graph, str(output_path))
     return str(output_path)
 
 
@@ -527,12 +496,13 @@ def verify_redetr_onnx(onnx_path, dummy_input, pytorch_model):
     """Verify both Re-DETR outputs and their required tensor shapes."""
     import torch
     import onnxruntime as ort
+    from onnx_session import cpu_session_options
     pytorch_model.cpu().eval()
     with torch.no_grad():
         expected = pytorch_model(dummy_input.cpu())
     if not isinstance(expected, (tuple, list)) or len(expected) != 2:
         raise ValueError("Re-DETR model must return (pred_boxes, pred_logits)")
-    actual = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"]).run(
+    actual = ort.InferenceSession(str(onnx_path), cpu_session_options(), providers=["CPUExecutionProvider"]).run(
         None, {"input_image": dummy_input.cpu().numpy()})
     if len(actual) != 2:
         raise ValueError("Re-DETR ONNX must contain pred_boxes and pred_logits outputs")
@@ -565,17 +535,17 @@ def create_inference_config(output_dir, task, num_classes, input_size,
                             model_config=None):
     size = [input_size, input_size] if isinstance(input_size, int) else list(input_size)
     preprocessing = dict(preprocessing or {})
-    upstream_backends = {"libreyolo_mobilenetv4", "libreyolo_yolo9", "libreyolo_rtdetrv4"}
+    upstream_backends = {"libreyolo_mobilenetv4", "libreyolo_yolo9", "libreyolo_rtdetrv4", "libreyolo_dfine"}
     if backend not in {"custom", "builtin", "efficientnet", "patchcore", "redetr_v4", *upstream_backends}:
         raise ValueError("지원하지 않는 모델 형식입니다. 등록된 모델 체크포인트를 선택하세요.")
-    if backend in {"redetr_v4", "libreyolo_rtdetrv4", "libreyolo_yolo9"} and task != "detect":
+    if backend in {"redetr_v4", "libreyolo_rtdetrv4", "libreyolo_dfine", "libreyolo_yolo9"} and task != "detect":
         raise ValueError("Re-DETR v4 backend는 detect 태스크만 지원합니다.")
-    if backend in {"redetr_v4", "libreyolo_rtdetrv4"} and (output_names is None or len(output_names) != 2):
+    if backend in {"redetr_v4", "libreyolo_rtdetrv4", "libreyolo_dfine"} and (output_names is None or len(output_names) != 2):
         raise ValueError("Re-DETR v4는 pred_boxes와 pred_logits 두 출력 이름이 필요합니다.")
     detection_cpp_supported = task != "detect" or detection_box_encoding in {
         "grid_sigmoid_xywh", "normalized_cxcywh"
     }
-    if backend in {"redetr_v4", "libreyolo_rtdetrv4"}:
+    if backend in {"redetr_v4", "libreyolo_rtdetrv4", "libreyolo_dfine"}:
         detection_cpp_supported = detection_box_encoding in {None, "normalized_cxcywh", "normalized_xyxy"}
     if backend == "libreyolo_yolo9":
         detection_cpp_supported = detection_box_encoding == "pixel_xyxy"
@@ -593,7 +563,7 @@ def create_inference_config(output_dir, task, num_classes, input_size,
                             detection_cpp_supported) or
                           (backend == "patchcore" and task == "anomaly")) or
                          (backend in {"efficientnet", "libreyolo_mobilenetv4"} and task == "classify") or
-                         (backend in {"redetr_v4", "libreyolo_rtdetrv4", "libreyolo_yolo9"} and
+                         (backend in {"redetr_v4", "libreyolo_rtdetrv4", "libreyolo_dfine", "libreyolo_yolo9"} and
                           task == "detect" and detection_cpp_supported),
     }
     if architecture is not None:
@@ -607,7 +577,7 @@ def create_inference_config(output_dir, task, num_classes, input_size,
             config["model_config"] = dict(model_config)
     elif backend == "builtin" and model_config is not None:
         config["model_config"] = dict(model_config)
-    elif backend in {"redetr_v4", "libreyolo_rtdetrv4"}:
+    elif backend in {"redetr_v4", "libreyolo_rtdetrv4", "libreyolo_dfine"}:
         config["postprocessing"] = {
             "box_format": detection_box_encoding or "normalized_cxcywh",
             "objectness": "none", "class_scores": "sigmoid",
@@ -652,7 +622,7 @@ def _upstream_onnx_tensor_names(onnx_path, family):
     initializers.update(value.values.name for value in graph.sparse_initializer)
     inputs = [value.name for value in graph.input if value.name not in initializers]
     outputs = [value.name for value in graph.output]
-    expected_outputs = 2 if family == "rtdetrv4" else 1
+    expected_outputs = 2 if family in {"rtdetrv4", "dfine"} else 1
     if len(inputs) != 1 or len(outputs) != expected_outputs:
         raise ValueError(f"LibreYOLO ONNX 입출력 개수 오류: 입력 1개·출력 {expected_outputs}개 필요 "
                          f"(실제 입력 {len(inputs)}개·출력 {len(outputs)}개)")
@@ -660,25 +630,28 @@ def _upstream_onnx_tensor_names(onnx_path, family):
 
 
 def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_version,
-                                dynamic_batch, simplify, verify, log, region=None):
+                                dynamic_batch, simplify, verify, log):
     """Export shipped LibreYOLO checkpoints without rebuilding them as CustomCSP."""
     import onnx
+    import onnxruntime as ort
     import torch
     from upstream_models import load_upstream_checkpoint
 
-    spec = _upstream_spec(checkpoint, region)
-    if spec["tiling"]:
-        log("패치 학습 검출 모델: 판정 영역 {}×{}를 한 번에 넣는 고정 입력 {}×{}로 내보냅니다 (배율 {:.0%})".format(
-            *spec["tiling"]["region"], spec["input_width"], spec["input_height"], spec["tiling"]["scale"]))
+    ort.disable_telemetry_events()  # Also applies to sessions created by the native exporter.
+    spec = _upstream_spec(checkpoint)
     family = spec["family"]
     backend = {"mobilenetv4": "libreyolo_mobilenetv4", "yolo9": "libreyolo_yolo9",
-               "rtdetrv4": "libreyolo_rtdetrv4"}[family]
+               "rtdetrv4": "libreyolo_rtdetrv4", "dfine": "libreyolo_dfine"}[family]
     output = Path(output)
     config_name = output.with_suffix(".json").name
     with tempfile.TemporaryDirectory(prefix=".onnx-export-", dir=output.parent) as temporary:
         stage = Path(temporary)
         staged_model = stage / output.name
         log(f"내보내기 시작: LibreYOLO {family}")
+        if family == "mobilenetv4":
+            log("LibreYOLO 분류: 전체 입력 영역 크기 조정, 자동 중앙 자르기 없음")
+            if checkpoint.get("studio_preprocessing") is None:
+                log("기존 가중치를 전체 영상 전처리로 내보냅니다. 이전 중앙 자르기 추론과 판정이 달라질 수 있습니다.")
         model = load_upstream_checkpoint(checkpoint_path, device="cpu")
         exported = Path(model.export(format="onnx", output_path=str(staged_model),
                                      imgsz=(spec["input_height"], spec["input_width"]),
@@ -705,15 +678,26 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
             input_name=input_name, output_names=output_names, detection_box_encoding=detection_encoding,
             model_config={"model_family": family, "upstream_export": "libreyolo_public_api"})
         manifest = json.loads(Path(staged_config).read_text(encoding="utf-8"))
+        from native_patches import validate_patches
+        patches = validate_patches(checkpoint.get("studio_patches"), spec["task"])
+        if patches:
+            if patches["size"] != spec["input_height"]:
+                raise ValueError("패치 크기와 모델 입력 크기가 다릅니다")
+            manifest["patches"] = patches
+        if patches or spec["task"] == "detect":
+            manifest["schema_version"] = 7
         manifest["export"] = {"opset": opset_version, "precision": "float32",
                               "dynamic_batch": dynamic_batch,
                               "verification_tolerance": verification_tolerances(spec["task"]),
                               "verification_reference": "libreyolo_exported_pytorch_graph"}
-        if spec["tiling"]:
-            # C++ SDK는 넘겨받은 영상을 이 입력 크기로 맞춘다. 학습과 같은 물체 크기가 되려면 판정 영역을 넘겨야 한다.
-            manifest["export"]["tiling"] = spec["tiling"]
+        if family in {"dfine", "rtdetrv4"}:
+            manifest["postprocessing"].update(selection="query_class_topk", class_aware_nms=False)
+            if verify:
+                from detection_export_validation import CONFIDENCE_FLOOR
+                manifest["postprocessing"]["validated_confidence_floor"] = CONFIDENCE_FLOOR
+                manifest["export"]["verification_policy"] = "detr_detection_set_v1"
+                manifest["export"]["verification_scope"] = "seeded_and_zero_probes; detections >= confidence floor"
         if family == "yolo9":
-            manifest["export"]["verification_tolerance"]["box_atol_px"] = YOLO9_BOX_ATOL_PX
             manifest["postprocessing"] = {
                 "box_format": "pixel_xyxy", "objectness": "none",
                 "class_scores": "probabilities", "confidence": "class_score",
@@ -769,8 +753,7 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
     if backend == "libreyolo":
         return _export_upstream_checkpoint(checkpoint_path, output, checkpoint,
                                            opset_version=opset_version, dynamic_batch=dynamic_batch,
-                                           simplify=simplify, verify=verify, log=log,
-                                           region=(overrides or {}).get("region_size"))
+                                           simplify=simplify, verify=verify, log=log)
     config_name = output.with_suffix(".json").name
     with tempfile.TemporaryDirectory(prefix=".onnx-export-", dir=output.parent) as temp:
         stage = Path(temp)
@@ -1081,7 +1064,16 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
         diagnostic_path = None
     def report(message):
         events.append(str(message))
-        log(message)
+        try:
+            log(message)
+        except UnicodeEncodeError:
+            if log is not print:
+                raise  # Application callbacks must retain their original error contract.
+            import sys
+            encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+            # Legacy Windows redirected consoles may be CP1252/CP949. Keep the
+            # original Unicode in diagnostics; escape only unsupported console text.
+            print(str(message).encode(encoding, errors="backslashreplace").decode(encoding))
     report("체크포인트 및 ONNX 의존성 로드")
     try:
         if any(_paths_alias(output_path, path) for path in sources):

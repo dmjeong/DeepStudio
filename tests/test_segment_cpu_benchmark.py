@@ -26,10 +26,25 @@ def test_model_input_is_padded_like_the_whole_image_contract():
     assert tool.parse_size("3100x1500") == (3100, 1500)
 
 
-@pytest.mark.parametrize("model", tool.MODELS)
+def test_candidates_cover_the_unets_and_the_realtime_models():
+    # U-Net 계열은 1/2 해상도 출력(half)이 있고, 1/8 해상도에서 판정하는 실시간 분할망에는 없다
+    assert set(tool.MODELS) == {"unet_resnet18", "unet_mobilenetv2", "unet_lite", "unet_mobilenetv4_small",
+                                "unet_shufflenetv2", "unet_efficientnet_b1", "bisenetv2", "stdc1"}
+    assert set(tool.MODELS) - set(tool.HALF_OUTPUT) == {"bisenetv2", "stdc1"}
+
+
+def test_realtime_models_reject_the_half_output():
+    pytest.importorskip("torch")
+    with pytest.raises(ValueError, match="half"):
+        tool.build_export_model("bisenetv2", "half")
+
+
+@pytest.mark.parametrize("model", sorted(tool.HALF_OUTPUT))
 def test_half_output_upsampled_equals_full_output(model):
     torch = pytest.importorskip("torch")
     pytest.importorskip("torchvision")
+    if model in ("unet_mobilenetv4_small", "unet_efficientnet_b1"):
+        pytest.importorskip("timm")
     x = torch.randn(1, 3, 64, 96)
     with torch.no_grad():
         full = tool.build_export_model(model, "full")(x)
@@ -82,3 +97,18 @@ def test_benchmark_writes_records_and_reuses_models(tmp_path, monkeypatch):
     monkeypatch.setattr(tool, "export_fp32", fail)
     monkeypatch.setattr(tool, "export_int8", fail)
     assert tool.main(arguments) == 0
+
+
+@pytest.mark.parametrize("model,head", [("unet_shufflenetv2", "full"), ("unet_shufflenetv2", "half"),
+                                         ("bisenetv2", "full"), ("stdc1", "full")])
+def test_new_models_export_a_graph_that_runs_at_other_sizes(tmp_path, model, head):
+    """새 모델도 파일 하나로 배율 · 슬롯 크기를 바꿔 잰다. ShuffleNetV2의 채널 섞기가 크기를 굳히면 여기서 실패한다."""
+    pytest.importorskip("torch")
+    pytest.importorskip("onnx")
+    pytest.importorskip("cv2")
+    ort = pytest.importorskip("onnxruntime")
+    path = tmp_path / f"{model}_{head}.onnx"
+    tool.export_fp32(model, head, path)
+    session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    output = session.run(None, {tool.INPUT_NAME: np.zeros((1, 3, 128, 192), np.float32)})[0]
+    assert output.shape == ((1, 3, 128, 192) if head == "full" else (1, 3, 64, 96))

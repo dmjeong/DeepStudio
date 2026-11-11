@@ -316,7 +316,8 @@ export function Training({
               </>
             )}
             <div className="form-grid">
-              {numeric("입력 크기 (px)", "input_size", 32, 4096)}
+              {cfg.training_mode.startsWith("upstream") ? <p>모델 입력 / 패치 크기: {selectedModel?.input_size[0] ?? cfg.input_size}px (고정)</p>
+                : numeric("입력 크기 (px)", "input_size", 32, 4096)}
               {numeric("배치 크기", "batch_size", 1, 1024)}
             </div>
             <Check label="중앙 크롭 사용" value={Boolean(cfg.patchcore_crop_enabled)}
@@ -381,6 +382,19 @@ export function Training({
                     </Field>
                   )}
                 </div>
+                {options.capabilities.patch_training && <div className="form-grid">
+                  <label><input type="checkbox" checked={cfg.patch_training ?? false}
+                    onChange={e => set("patch_training", e.target.checked)} />패치 학습</label>
+                  {cfg.patch_training && <>
+                    <Field label="패치 배율"><select value={cfg.patch_scale ?? 1} onChange={e => set("patch_scale", Number(e.target.value))}>
+                      {[1, .75, .5, .35, .25].map(v => <option key={v} value={v}>{v}</option>)}
+                    </select></Field>
+                    {project.task !== "classify" && <Field label="이미지당 학습 패치 (0=전체)"><input type="number" min="0" max="256"
+                      value={cfg.patches_per_image ?? 0} onChange={e => set("patches_per_image", Number(e.target.value))} /></Field>}
+                    <p className="muted">{project.task === "classify" ? "모든 패치를 합쳐 원본 한 장의 클래스를 학습합니다. 배치는 패치 묶음 크기입니다."
+                      : project.task === "detect" ? "박스를 함께 자르고 추론 시 원본 좌표로 합칩니다. 검증 mAP는 패치 단위입니다." : "패치 크기는 입력 크기입니다."}</p>
+                  </>}
+                </div>}
                 <div className="form-grid">
                   {[
                     ["수평 반전 확률", "horizontal_flip", 1],

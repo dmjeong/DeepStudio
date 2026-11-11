@@ -405,6 +405,7 @@ class ProjectWidget(QWidget):
                 project_dir=project_dir,
                 class_names=class_names,
             )
+            class_names = list(project.data.class_names)
 
             # 입력 채널 설정
             in_ch = 3 if self.channel_combo.currentIndex() == 0 else 1

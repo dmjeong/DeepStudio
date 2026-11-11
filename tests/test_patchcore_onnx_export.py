@@ -41,11 +41,12 @@ def test_patchcore_wrapper_exports_and_verifies_fixed_bank(tmp_path):
     config = (tmp_path / "patchcore.json")
     assert config.is_file()
     manifest = json.loads(config.read_text())
-    assert manifest["schema_version"] == 5
-    # C++ SDK는 input_name 이 없는 JSON을 읽지 못한다: 그래프의 실제 입력 이름과 같아야 한다
     import onnxruntime as ort
-    session = ort.InferenceSession(str(tmp_path / "patchcore.onnx"), providers=["CPUExecutionProvider"])
-    assert manifest["input_name"] == session.get_inputs()[0].name == "input_image"
+    session = ort.InferenceSession(result["output_path"], providers=["CPUExecutionProvider"])
+    assert manifest["input_name"] == session.get_inputs()[0].name
+    assert manifest["output_names"] == [value.name for value in session.get_outputs()]
+    assert manifest["output_name"] == manifest["output_names"][0]
+    assert manifest["schema_version"] == 5
     assert manifest["export"]["opset"] == 17
     assert manifest["export"]["verification_tolerance"] == {"atol": 1e-3, "rtol": 1e-3}
     assert manifest["postprocessing"]["score"] == STANDARD_SCORE_DEFINITION

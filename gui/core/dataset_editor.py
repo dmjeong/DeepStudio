@@ -161,6 +161,8 @@ def scan_dataset(project, cancelled=lambda: False, overlay_limit=0):
             except (OSError, ValueError) as exc:
                 error = str(exc)
                 items = []
+            if error:
+                classes.clear()
             counts.update(classes)
             for item in items:
                 item["class"] = names[item["class_id"]]
@@ -183,6 +185,9 @@ def scan_dataset(project, cancelled=lambda: False, overlay_limit=0):
             if object_task:
                 record.update(regions=region_names, region_items=items,
                               size=list(size) if size else None)
+            if project.task == "segment":
+                record["training_target"] = ("error" if error else
+                                             "mask" if annotated else "automatic_background")
             records.append(record)
         summary = {
             "split": split,

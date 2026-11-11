@@ -99,6 +99,9 @@ class PatchCoreWorker(TrainingEngine):
                     raise ValueError(f"기존 대표 패치 {pc.memory_bank.shape[0]:,}개. 최대 대표 패치 수를 더 크게 설정 필요")
             else:
                 pc.memory_bank = None
+                from patchcore import STANDARD_FEATURE_AGGREGATION, STANDARD_SCORE_DEFINITION
+                pc.set_feature_aggregation(STANDARD_FEATURE_AGGREGATION)
+                pc.score_definition = STANDARD_SCORE_DEFINITION
                 pc.input_size, pc.preprocessing = int(cfg.input_size), "opencv_full_range_v2"
                 pc.center_crop = crop
             pc.device = torch.device(device)
@@ -113,7 +116,7 @@ class PatchCoreWorker(TrainingEngine):
         else:
             if source == "imagenet":
                 self.signals.log_message.emit(
-                    "  ImageNet 백본 준비: 캐시 확인 후 필요하면 시스템 인증서로 다운로드합니다.")
+                    "  ImageNet 백본 준비: 설치된 기본 가중치·사용자 가중치 폴더·캐시를 확인합니다.")
             pc = PatchCore(backbone_name=name, device=device,
                            sampling_ratio=cfg.patchcore_sampling_ratio, n_neighbors=cfg.patchcore_n_neighbors,
                            input_size=cfg.input_size, pretrained=source == "imagenet",
@@ -121,6 +124,7 @@ class PatchCoreWorker(TrainingEngine):
                            max_candidates=candidates, max_memory_bank=bank_limit,
                            seed=getattr(cfg, "patchcore_seed", 0), center_crop=crop)
         self.signals.log_message.emit(f"  백본: {pc.backbone_name} | 가중치: {pc.weight_source}")
+        self.signals.log_message.emit(f"  특징 집계: {pc.feature_aggregation} | 점수: {pc.score_definition}")
         self.signals.log_message.emit("  백본 가중치와 BatchNorm 고정. 현재 정상 데이터로 메모리 뱅크 구축")
         self.signals.log_message.emit(
             f"  특징 {pc.backbone.feature_dim}차원 | 후보 최대 {candidates:,} / 대표 최대 {bank_limit:,} 패치")
@@ -174,6 +178,7 @@ class PatchCoreWorker(TrainingEngine):
             self.signals.log_message.emit(f"  {message}")
         pc.fit(train_loader, progress_callback=progress, cancel_callback=lambda: self._stop_requested,
                append=getattr(cfg, "patchcore_append", False))
+        pc.training_metadata["augmentation"] = train_loader.dataset.augmentation_info()
         if self._stop_requested:
             raise PatchCoreCancelled()
         record.config_snapshot["patchcore_training"] = pc.training_metadata
@@ -189,7 +194,9 @@ class PatchCoreWorker(TrainingEngine):
         pc.anomaly_threshold = evaluation.get("optimal_threshold")
         pc.calibration = {"evaluable": evaluation.get("evaluable", False),
                           "reason": evaluation.get("reason", ""), "sample_count": evaluation.get("sample_count", 0),
-                          "method": "validation_f1", "threshold_comparator": ">="}
+                          "method": "validation_f1", "threshold_comparator": ">=",
+                          "threshold_selection": evaluation.get("threshold_selection"),
+                          "threshold_margin": evaluation.get("threshold_margin")}
         readiness = "ready" if pc.anomaly_threshold is not None else "uncalibrated"
         record.config_snapshot["patchcore_readiness"] = {
             "state": readiness, "evaluation_split": evaluation.get("split", ""),
@@ -244,13 +251,20 @@ class PatchCoreWorker(TrainingEngine):
         training, validation, labels, split = discover_data(data_cfg.root)
         self._patchcore_evaluation_split = split
         batch = min(cfg.batch_size, max(1, 1048576 // (cfg.input_size * cfg.input_size)))
-        self.signals.log_message.emit(f"  정상 학습 {len(training)}장 | 실제 배치 {batch} (설정 {cfg.batch_size})")
+        train_data = PatchCoreDataset(training, cfg.input_size, center_crop=crop,
+            augmentation=cfg.augmentation, augmentation_views=getattr(cfg, "patchcore_augmentation_views", 0),
+            seed=getattr(cfg, "patchcore_seed", 0))
+        self.signals.log_message.emit(
+            f"  정상 원본 {len(training)}장 + 추가 증강 {len(train_data) - len(training)}장 "
+            f"= 특징 추출 {len(train_data)}장 | 실제 배치 {batch} (설정 {cfg.batch_size})")
+        if train_data.augmentation_views:
+            self.signals.log_message.emit(f"  적용 증강: {train_data.augmentation} | 시드 {train_data.seed}. 평가·추론에는 미적용")
         self.signals.log_message.emit(f"  보정 평가 {split}: {len(validation)}장" if validation else "  평가 이미지 없음: 정상 뱅크만 구축, AUROC/임계값은 평가 불가")
         self.signals.log_message.emit("  OpenCV 정확 리사이즈 + RGB/회색조 ImageNet 정규화, 16비트 전체 범위 보존")
         if crop:
             self.signals.log_message.emit(f"  원본 중앙 {crop['width']}×{crop['height']} px 크롭 → 입력 {cfg.input_size}×{cfg.input_size} px. 불량 평가 이미지는 크롭 내부에 불량이 있어야 합니다")
         # GUI QThread 안에서 Windows spawn 워커를 다시 만들지 않는다.
-        train_loader = DataLoader(PatchCoreDataset(training, cfg.input_size, center_crop=crop), batch_size=batch,
+        train_loader = DataLoader(train_data, batch_size=batch,
                                   shuffle=False, num_workers=0, drop_last=False)
         val_loader = (DataLoader(PatchCoreDataset(validation, cfg.input_size, labels, center_crop=crop), batch_size=batch,
                                  shuffle=False, num_workers=0, drop_last=False) if validation else None)
@@ -292,6 +306,9 @@ class PatchCoreWorker(TrainingEngine):
             meter.update(scores, labels_np)
 
         results = meter.compute()
+        if results.get("optimal_threshold") is not None:
+            from patchcore_calibration import stable_threshold
+            results.update(stable_threshold(meter.scores, results["optimal_threshold"]))
         auroc = results.get("auroc")
 
         self.signals.log_message.emit(

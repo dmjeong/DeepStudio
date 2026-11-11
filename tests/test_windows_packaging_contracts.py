@@ -75,7 +75,7 @@ def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk()
     assert '"--collect-all", "libreyolo"' in script
     assert '"--collect-all", "sam2"' in script
     assert '"--hidden-import", "huggingface_hub"' in script
-    assert '"--add-data", f"{BUILTIN_ASSETS_DIR}{os.pathsep}builtin_assets"' in script
+    assert '"--add-data", f"{builtin_asset_root()}{os.pathsep}builtin_assets"' in script
 
 
 def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():
@@ -84,7 +84,8 @@ def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():
     assert 'set "DVS_ACCELERATOR=auto"' in script
     assert "python -m pip install -r requirements.txt" in script
     assert "SAM2_BUILD_CUDA=0" in script
-    assert "prepare_builtin_assets.py --output builtin_assets" in script
+    assert "python ..\\python\\prepare_builtin_assets.py" in script
+    assert "prepare_builtin_assets.py --output builtin_assets" not in script
     assert "pip show pyinstaller" not in script
 
 
@@ -333,6 +334,34 @@ def test_pyinstaller_native_runtime_argument_is_opt_in_and_filters_library_files
     args = build["_native_runtime_arguments"]()
     assert args == ["--add-binary", f"{runtime / f'onnxruntime{suffix}'}{os.pathsep}.",
                     "--add-binary", f"{runtime / f'vision_runtime{suffix}'}{os.pathsep}."]
+
+
+def test_pyinstaller_checks_and_packages_the_same_asset_override(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import builtin_assets
+    builder = runpy.run_path(str(ROOT / "gui" / "build_exe.py"))["build"]
+    namespace = builder.__globals__
+    for name in ("check_pyinstaller", "check_runtime_dependencies", "check_training_accelerator"):
+        monkeypatch.setitem(namespace, name, lambda: True)
+    monkeypatch.setitem(namespace, "_native_runtime_arguments", lambda: [])
+    root = tmp_path / "custom weights"
+    monkeypatch.setenv("DVS_BUILTIN_ASSETS_DIR", str(root))
+    checked = []
+
+    def missing(*, bundle_only):
+        assert bundle_only and root.is_dir()
+        checked.append(builtin_assets.builtin_asset_root())
+        return []
+
+    def capture(command, **kwargs):
+        assert f"{root}{os.pathsep}builtin_assets" in command
+        assert kwargs["env"]["DVS_BUILTIN_ASSETS_DIR"] == str(root)
+        return SimpleNamespace(returncode=23)  # stop before looking for a built EXE
+
+    monkeypatch.setattr(builtin_assets, "missing_assets", missing)
+    monkeypatch.setattr(namespace["subprocess"], "run", capture)
+    assert builder() == 23
+    assert checked == [root]
 
 
 def test_payload_wrapper_scripts_collect_and_verify_exact_bytes(tmp_path):

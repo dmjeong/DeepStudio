@@ -13,7 +13,7 @@ from core.project import ProjectData, ProjectManager
 from core.qt_training import TrainWorker, PatchCoreWorker
 from core.training_modes import (training_engine_name, training_capabilities, MODE_LABELS,
                                  BUILTIN_ADAPTER_IDS, BUILTIN_SCRATCH_ONLY_IDS, UPSTREAM_ADAPTER_IDS,
-                                 SAM2_ADAPTER_IDS, DETECTION_PATCH_IDS)
+                                 SAM2_ADAPTER_IDS)
 from core.training_progress import remaining_seconds, run_description
 from core.training_time import format_hms
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
@@ -72,6 +72,18 @@ class TrainingWidget(TrainingForm, QWidget):
             help_text = "Settings에서 추가한 모델의 .dvmodel 팩에 포함된 학습 코드와 가중치를 사용합니다."
             if not self._selected_container_spec()[1]:
                 help_text = "선택한 추가 모델 팩이 설치되지 않았습니다. Settings에서 .dvmodel을 설치하세요."
+        elif self.project is not None:
+            from builtin_assets import builtin_asset_path, required_pretrained_asset
+            asset = required_pretrained_asset(
+                self.project.task, str(mode), self.model_id_combo.currentData() or "",
+                efficientnet_model=self.efficientnet_model_combo.currentData() or "efficientnet_b0")
+            if asset:
+                try:
+                    path = builtin_asset_path(asset, verify=False)
+                    help_text += f"\n기본 가중치 파일 있음: {path.name} (학습 시작 시 무결성 검사)"
+                except (OSError, ValueError, RuntimeError):
+                    help_text += (f"\n기본 가중치 준비 필요: {asset}. "
+                                  "Python 실행은 gui/prepare_model_weights.bat을 먼저 실행하세요.")
         self.mode_help.setText(help_text)
         self.hp_group.setEnabled(True)
         self.aug_group.setEnabled(mode not in {"efficientnet_resume"})
@@ -96,7 +108,7 @@ class TrainingWidget(TrainingForm, QWidget):
             # 사전학습 가중치가 없는 모델: 고를 수 없는 '사전학습으로 시작'은 보여 주지 않는다
             choices = [("builtin_scratch", f"{name} 처음부터 학습"),
                        ("builtin_transfer", f"{name} 이전 학습 결과(.pt)로 이어서")]
-            self.mode_desc.setText(f"선택 모델: {name}\n사전학습 가중치 없음 — 라이선스 걱정 없이 내 데이터로만 학습합니다.")
+            self.mode_desc.setText(f"선택 모델: {name}\n기본 사전학습 파일은 제공하지 않습니다. 내 데이터로 학습하거나 이전 학습 결과를 불러옵니다.")
         elif model_id in BUILTIN_ADAPTER_IDS:
             source = "LVD-142M" if model_id.startswith("dinov2_") else "ImageNet"  # DINOv2는 자기지도 사전학습
             choices = [("builtin_finetune", f"{name} {source} 가중치로 시작"),
@@ -418,23 +430,7 @@ class TrainingWidget(TrainingForm, QWidget):
         if self.project is not None and self.project.task == "segment" and mode in MODE_LABELS \
                 and not mode.startswith("sam2"):
             keys = ["horizontal_flip", "rotation", "color_jitter"]
-        if self._upstream_model_selected():
-            # LibreYOLO 모델: '직접 설정'을 켠 경우에만 화면 값이 학습에 들어간다 (끄면 모델 기본 증강)
-            keys = []
-            if self.aug_custom_check.isChecked():
-                keys = ["horizontal_flip", "rotation", "color_jitter"]
-                if self.project is not None and self.project.task == "detect":
-                    keys.append("mosaic")
         return keys
-
-    def _detection_patch_supported(self):
-        return (self.project is not None and self.project.task == "detect"
-                and (self.model_id_combo.currentData() or "") in DETECTION_PATCH_IDS
-                and str(self.mode_combo.currentData() or "").startswith("upstream"))
-
-    def _upstream_model_selected(self):
-        return (self.model_id_combo.currentData() or "") in UPSTREAM_ADAPTER_IDS \
-            and str(self.mode_combo.currentData() or "").startswith("upstream")
 
     def _reset_unsupported_augmentation(self):
         if self.project:
@@ -474,7 +470,7 @@ class TrainingWidget(TrainingForm, QWidget):
             return
         is_anomaly = self.project is not None and self.project.task == "anomaly"
         is_pc = is_anomaly and self.anomaly_method_combo.currentData() == "patchcore"
-        resume = not is_anomaly and self.mode_combo.currentData() in {"efficientnet_resume"}
+        resume = not is_anomaly and str(self.mode_combo.currentData()).endswith("_resume")
         source = self.pc_source_combo.currentData()
         self.pc_backbone_combo.setEnabled(is_pc and source != "patchcore")
         self.pc_weights_edit.setEnabled(is_pc and source != "imagenet")
@@ -493,9 +489,15 @@ class TrainingWidget(TrainingForm, QWidget):
                         self.pc_candidates_spin, self.pc_bank_spin, self.pc_seed_spin):
             control.setEnabled(is_pc)
         for control in (self.epochs_spin, self.lr_spin, self.wd_spin, self.optimizer_combo,
-                        self.scheduler_combo, self.patience_spin, self.hflip_spin,
-                        self.rotation_spin, self.color_jitter_spin):
+                        self.scheduler_combo, self.patience_spin):
             control.setEnabled(not is_pc and not resume)
+        for control in (self.pc_aug_views_label, self.pc_aug_views_spin, self.pc_aug_info):
+            control.setVisible(is_pc)
+        self.pc_aug_views_spin.setEnabled(is_pc)
+        views = self.pc_aug_views_spin.value()
+        self.pc_aug_info.setText(
+            (f"원본 1장 + 증강 {views}장으로 특징 수집. " if views else "현재 증강 꺼짐: 추가 증강 수를 1 이상으로 설정하세요. ")
+            + "반전·회전이 불량에 해당하면 아래 값을 0으로 두세요. 증강도 정상으로 저장됩니다.")
         for control in (self.batch_spin, self.input_size_spin, self.class_weight_combo):
             control.setEnabled(not resume)
         # SAM2는 자체 prompt 손실을 쓰므로 분할 손실·가중치 선택이 적용되지 않는다.
@@ -503,28 +505,32 @@ class TrainingWidget(TrainingForm, QWidget):
         self.segmentation_loss_combo.setEnabled(not resume and not sam2)
         if self.project and self.project.task == "segment" and sam2:
             self.class_weight_combo.setEnabled(False)
-        # 패치 학습: 분할(SAM2 제외)만. SAM2는 1024 고정 입력의 자체 학습을 쓴다.
+        # 분할(SAM2 제외), native 탐지와 분류의 패치 계약을 구분한다.
         segment = self.project is not None and self.project.task == "segment"
         self.advise_btn.setVisible(segment)
         self.advise_btn.setEnabled(segment and not resume and getattr(self, "_advice_scan", None) is None)
-        # 검출 패치 학습: LibreYOLO9 모델만 (타일로 잘라 학습, 추론은 같은 배율의 타일 · C++는 판정 영역 한 번에)
-        detect_patch = self._detection_patch_supported()
-        self.patch_check.setVisible(segment or detect_patch)
-        self.patch_check.setEnabled((segment and not sam2 and not resume) or (detect_patch and not resume))
-        patch = segment and not sam2 and self.patch_check.isChecked()
-        tiles = detect_patch and self.patch_check.isChecked()
-        for control in (self.patch_info, self.patch_scale_label, self.patch_scale_combo):
-            control.setVisible((segment or detect_patch) and self.patch_check.isChecked())
-        for control in (self.patch_count_label, self.patch_count_spin):   # 이미지당 패치 수는 분할 전용
-            control.setVisible(segment and self.patch_check.isChecked())
-        self.patch_count_spin.setEnabled(patch and not resume)
-        self.patch_scale_combo.setEnabled((patch or tiles) and not resume)
-        if tiles:
-            scale = float(self.patch_scale_combo.currentData() or 1.0)
-            self.patch_info.setText(
-                f"영상을 {'줄이지 않고' if scale == 1 else f'{scale:.0%}로 줄인 뒤'} 640px 타일로 잘라 학습합니다(물체가 있는 타일 + 배경 타일 일부)."
-                "\n추론도 같은 배율의 타일로 나눠 합치고, C++ 내보내기는 판정 영역 전체를 한 번에 넣는 입력으로 만듭니다.")
-            self.patch_info.setStyleSheet("")
+        native = self.project is not None and self.project.task in {"classify", "detect"} and str(self.mode_combo.currentData()).startswith("upstream")
+        available = (segment and not sam2) or native
+        self.patch_check.setVisible(segment or native)
+        self.patch_check.setEnabled(available and not resume)
+        patch = available and self.patch_check.isChecked()
+        if native:
+            from upstream_models import get_upstream_spec
+            size = get_upstream_spec(self.project.model.model_id).input_size
+            self.input_size_spin.setValue(size)
+            self.input_size_spin.setEnabled(False)
+        for control in (self.patch_count_label, self.patch_count_spin, self.patch_info,
+                        self.patch_scale_label, self.patch_scale_combo):
+            control.setVisible(patch)
+        self.patch_count_spin.setSpecialValueText("전체 패치" if native else "자동 (이미지 면적 ÷ 패치 면적)")
+        self.patch_count_spin.setToolTip("0=모든 격자 패치. 양수는 원본별 고정 표본 수. 검증은 항상 모든 패치." if native
+                                        else "한 epoch에 이미지마다 자르는 패치 수. 0=자동(최대 64).")
+        if native:
+            self.patch_check.setToolTip("25% 겹침 격자로 전체 영역을 자릅니다. 학습한 배율·패치 규칙을 추론과 배포에도 적용합니다.")
+        else:
+            self.patch_check.setToolTip("분할 학습: 결함 위치와 임의 위치에서 자릅니다. 추론은 모델에 저장한 영역 처리 방식을 따릅니다.")
+        self.patch_count_spin.setEnabled(patch and not resume and not (native and self.project.task == "classify"))
+        self.patch_scale_combo.setEnabled(patch and not resume)
         if patch:
             size = self.input_size_spin.value()
             scale = float(self.patch_scale_combo.currentData() or 1.0)
@@ -543,6 +549,12 @@ class TrainingWidget(TrainingForm, QWidget):
                 self.pc_crop_info.setText(
                     f"중앙 {self.pc_crop_width_spin.value()}×{self.pc_crop_height_spin.value()} px를 자른 뒤 "
                     "패치 학습합니다(위 설정). 박스와 마스크도 함께 자르고, 저장한 모델의 추론에도 같은 크롭을 적용합니다.")
+            if native:
+                self.patch_info.setStyleSheet("")
+                self.patch_info.setText(
+                    f"{size}px · 배율 {scale:g} · 겹침 25% · " +
+                    ("모든 패치를 합쳐 원본 한 장의 클래스 학습/판정 (배치=패치 묶음)"
+                     if self.project.task == "classify" else "박스도 함께 자름 · 추론 시 원본 좌표로 합침 · 검증 mAP는 패치 단위"))
         elif segment and sam2:
             self.patch_info.setText("SAM2는 패치 학습을 쓰지 않습니다.")
         self.selection_combo.setEnabled(not is_pc and not resume)
@@ -554,19 +566,8 @@ class TrainingWidget(TrainingForm, QWidget):
                                 if capabilities["layer_debug"] else capabilities["layer_debug_reason"])
         applied = self._desktop_augmentation(capabilities)
         for key, control in (("horizontal_flip", self.hflip_spin), ("rotation", self.rotation_spin),
-                             ("color_jitter", self.color_jitter_spin), ("mosaic", self.mosaic_check)):
+                             ("color_jitter", self.color_jitter_spin)):
             control.setEnabled(not resume and key in applied)
-        upstream = self._upstream_model_selected()
-        detect = self.project is not None and self.project.task == "detect"
-        self.aug_custom_check.setVisible(upstream)
-        self.aug_custom_check.setEnabled(upstream and not resume)
-        self.mosaic_check.setVisible(upstream and detect)
-        self.aug_info.setVisible(upstream)
-        if upstream:
-            self.aug_info.setText(
-                "아래 값을 학습에 적용합니다." + (" 회전은 모자이크를 켠 경우에만 적용됩니다." if detect else
-                                          " 무작위 잘라내기 없이 검증과 같은 구도로 학습합니다.")
-                if self.aug_custom_check.isChecked() else "모델 기본 증강으로 학습합니다. 아래 값은 적용되지 않습니다.")
         self.amp_check.setEnabled(not is_pc and not resume and self._device_manager.cuda_available)
         self.tl_group.setVisible(not is_pc and self._selected_container_spec()[0] is None and
                                  (is_anomaly or self.mode_combo.currentData() == "custom"))
@@ -607,7 +608,7 @@ class TrainingWidget(TrainingForm, QWidget):
 
     def _browse_patchcore_weights(self):
         filepath, _ = QFileDialog.getOpenFileName(
-            self, "PatchCore 전이학습 가중치 선택", "", "PyTorch 체크포인트 (*.pt *.pth)"
+            self, "PatchCore 전이학습 가중치 선택", "", "PyTorch 체크포인트 (*.pt *.pth *.tar)"
         )
         if filepath:
             self.pc_weights_edit.setText(filepath)
@@ -616,7 +617,7 @@ class TrainingWidget(TrainingForm, QWidget):
         """이어학습용 이전 체크포인트 선택"""
         filepath, _ = QFileDialog.getOpenFileName(
             self, "이전 학습 모델 선택", "",
-            "PyTorch 체크포인트 (*.pt *.pth)"
+            "PyTorch 체크포인트 (*.pt *.pth *.tar)"
         )
         if filepath:
             self.resume_edit.setText(filepath)
@@ -679,8 +680,6 @@ class TrainingWidget(TrainingForm, QWidget):
 
         # 데이터 증강 설정 복원
         aug = cfg.augmentation
-        self.aug_custom_check.setChecked(bool(getattr(aug, "custom", False)))
-        self.mosaic_check.setChecked(bool(aug.mosaic))
         self.unsupported_aug_reset.setVisible(bool(aug.vertical_flip or aug.mixup_alpha))
         self.hflip_spin.setValue(aug.horizontal_flip)
         self.rotation_spin.setValue(aug.rotation)
@@ -751,6 +750,7 @@ class TrainingWidget(TrainingForm, QWidget):
             self.pc_candidates_spin.setValue(cfg.patchcore_max_candidates)
             self.pc_bank_spin.setValue(cfg.patchcore_max_memory_bank)
             self.pc_seed_spin.setValue(cfg.patchcore_seed)
+            self.pc_aug_views_spin.setValue(getattr(cfg, "patchcore_augmentation_views", 0))
 
         self.pc_crop_check.setChecked(cfg.patchcore_crop_enabled)
         self.pc_crop_width_spin.setValue(cfg.patchcore_crop_width)
@@ -789,7 +789,7 @@ class TrainingWidget(TrainingForm, QWidget):
         """사전학습 가중치 파일 선택"""
         filepath, _ = QFileDialog.getOpenFileName(
             self, "가중치 파일 선택", "",
-            "PyTorch 체크포인트 (*.pt *.pth)"
+            "PyTorch 체크포인트 (*.pt *.pth *.tar)"
         )
         if filepath:
             self.weights_edit.setText(filepath)
@@ -874,15 +874,13 @@ class TrainingWidget(TrainingForm, QWidget):
                              if self.project.task in ("classify", "segment") else "none")
         cfg.segmentation_loss = self.segmentation_loss_combo.currentData() or "ce_dice"
         sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
-        cfg.patch_training = ((self.project.task == "segment" and not sam2 and self.patch_check.isChecked())
-                              or (self._detection_patch_supported() and self.patch_check.isChecked()))
-        cfg.patches_per_image = self.patch_count_spin.value()
+        native = self.project.task in {"classify", "detect"} and str(self.mode_combo.currentData()).startswith("upstream")
+        cfg.patch_training = ((self.project.task == "segment" and not sam2 or native) and self.patch_check.isChecked())
+        cfg.patches_per_image = 0 if native and self.project.task == "classify" else self.patch_count_spin.value()
         cfg.patch_scale = float(self.patch_scale_combo.currentData() or 1.0)
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
         cfg.augmentation.rotation = self.rotation_spin.value()
         cfg.augmentation.color_jitter = self.color_jitter_spin.value()
-        cfg.augmentation.custom = self._upstream_model_selected() and self.aug_custom_check.isChecked()
-        cfg.augmentation.mosaic = self.mosaic_check.isChecked()
 
         # ── PatchCore 설정 동기화 (이상 탐지 전용) ──────
         if self.project and self.project.task == "anomaly":
@@ -899,6 +897,7 @@ class TrainingWidget(TrainingForm, QWidget):
             cfg.patchcore_max_candidates = self.pc_candidates_spin.value()
             cfg.patchcore_max_memory_bank = self.pc_bank_spin.value()
             cfg.patchcore_seed = self.pc_seed_spin.value()
+            cfg.patchcore_augmentation_views = self.pc_aug_views_spin.value()
 
         cfg.patchcore_crop_enabled = self.pc_crop_check.isChecked()
         cfg.patchcore_crop_width = self.pc_crop_width_spin.value()
@@ -1078,7 +1077,7 @@ class TrainingWidget(TrainingForm, QWidget):
 
         # 사전학습 가중치가 설치본에 없으면 학습을 시작한 뒤가 아니라 지금 알리고 받는 방법을 안내한다
         cfg = self.project.training
-        from builtin_assets import builtin_asset_path, required_pretrained_asset
+        from builtin_assets import builtin_asset_path, required_pretrained_asset, missing_asset_help
         asset = required_pretrained_asset(
             self.project.task, cfg.training_mode,
             cfg.efficientnet_model if cfg.training_mode.startswith("efficientnet") else getattr(self.project.model, "model_id", ""),
@@ -1088,7 +1087,10 @@ class TrainingWidget(TrainingForm, QWidget):
             try:
                 # 손상·다른 파일도 지금 거른다 (해시는 파일마다 한 번만 계산)
                 builtin_asset_path(asset)
-            except (FileNotFoundError, RuntimeError, ValueError):
+            except (RuntimeError, ValueError, OSError) as exc:
+                if not isinstance(exc, FileNotFoundError):
+                    QMessageBox.warning(self, "사전학습 가중치 확인 실패", f"{exc}\n\n{missing_asset_help(asset)}")
+                    return
                 # 받는 주소·넣는 곳을 알리고 그 자리에서 가져오게 한다. 가져오면 그대로 학습을 시작한다.
                 from widgets.pretrained_weights import offer_weight_import
                 if not offer_weight_import(self, asset):

@@ -48,7 +48,8 @@ class DesktopJob(QThread):
     def __init__(self, kind, payload, parent=None, *, manager=None):
         super().__init__(parent)
         self.kind, self.payload = kind, payload
-        # 작업을 돌릴 줄. 기본은 주 작업 줄, 학습 중 CPU 추론은 CPU 추론 줄(core.job_manager.inference_manager)
+        # 작업을 돌릴 줄. 기본은 주 작업 줄, 이 앱이 학습 중일 때의 CPU 추론은 CPU 추론 줄
+        # (core.job_manager.inference_manager 가 고른다)
         self.manager = manager or desktop_manager()
         self.job_id = None
         self.cancelled = False
@@ -131,7 +132,8 @@ class PersistentInferenceCache:
             heatmap = {**heatmap, "image_path": image_path, "original": arrays["original"],
                        "activation": arrays["activation"], "base_image": arrays.get("base_image"),
                        "valid_mask": arrays.get("valid_mask")}
-        return {"preview": arrays.get("preview"), "heatmap": heatmap, "info": row.get("info", "")}
+        return {"preview": arrays.get("preview"), "original": arrays.get("original"),
+                "heatmap": heatmap, "info": row.get("info", "")}
 
 
 def inference_result(row):

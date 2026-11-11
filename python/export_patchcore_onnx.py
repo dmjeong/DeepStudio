@@ -18,7 +18,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from patchcore import LEGACY_SCORE_DEFINITION, STANDARD_SCORE_DEFINITION, SUPPORTED_SCORE_DEFINITIONS
+from patchcore import LEGACY_SCORE_DEFINITION, SUPPORTED_SCORE_DEFINITIONS, LEGACY_FEATURE_AGGREGATION
 
 # CPU ONNX Runtime may reassociate FP32 arithmetic while preserving the
 # deployment result. Keep the same explicit parity profile as the generic
@@ -129,12 +129,17 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
         _export_graph(model, dummy, staged, opset)
         import onnx
         onnx.checker.check_model(str(staged))
+        graph = onnx.load(str(staged), load_external_data=False).graph
+        if len(graph.input) != 1 or len(graph.output) != 2:
+            raise ValueError("PatchCore export requires one input and score/map outputs")
+        input_name = graph.input[0].name
+        output_names = [value.name for value in graph.output]
         if verify:
             import onnxruntime as ort
             with torch.inference_mode():
                 expected = model(dummy)
             actual = ort.InferenceSession(str(staged), providers=["CPUExecutionProvider"]).run(
-                None, {"input_image": dummy.numpy()})
+                output_names, {input_name: dummy.numpy()})
             for reference, converted in zip(expected, actual):
                 # Preserve a strict bounded FP32 deployment gate while
                 # reporting the actual failing element when a graph drifts.
@@ -142,8 +147,8 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
         os.replace(staged, output)
     config = {
         "schema_version": 5, "backend": "patchcore", "task": "anomaly",
-        "model_path": output.name, "input_name": "input_image", "output_name": "anomaly_score",
-        "output_names": ["anomaly_score", "anomaly_map"], "input_channels": 3,
+        "model_path": output.name, "input_name": input_name, "output_name": output_names[0],
+        "output_names": output_names, "input_channels": 3,
         "input_height": size, "input_width": size, "num_classes": 1,
         "normalize_mean": [0.485, 0.456, 0.406], "normalize_std": [0.229, 0.224, 0.225],
         "class_names": [], "preprocessing": {"input_size": [size, size], "in_channels": 3,
@@ -152,6 +157,7 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
         "value_range": "uint8_0_255_or_uint16_0_65535", "implementation": "opencv_full_range_v2", "color_order": "RGB",
         "center_crop": crop}, "verification": "passed" if verify else "skipped",
         "export": {"opset": opset, "precision": "float32", "dynamic_batch": False,
+                   "feature_aggregation": getattr(patchcore, "feature_aggregation", LEGACY_FEATURE_AGGREGATION),
                    "verification_tolerance": dict(VERIFICATION_TOLERANCE),
                    "verification_reference": "exported_pytorch_graph"},
         "cpp_supported": True,

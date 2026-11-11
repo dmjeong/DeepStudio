@@ -156,17 +156,11 @@ def build():
     if PYTHON_DIR not in sys.path:
         sys.path.insert(0, PYTHON_DIR)
     # 빠진 사전학습 가중치는 빌드를 막지 않는다. 그 모델을 쓸 때 앱의 Settings · 모델 관리에서 가져온다.
-    os.makedirs(BUILTIN_ASSETS_DIR, exist_ok=True)
-    from builtin_assets import SOURCE_URLS, missing_assets
-    previous = os.environ.get("DVS_BUILTIN_ASSETS_DIR")
-    os.environ["DVS_BUILTIN_ASSETS_DIR"] = BUILTIN_ASSETS_DIR
-    try:
-        missing = missing_assets(bundle_only=True)
-    finally:
-        if previous is None:
-            os.environ.pop("DVS_BUILTIN_ASSETS_DIR", None)
-        else:
-            os.environ["DVS_BUILTIN_ASSETS_DIR"] = previous
+    from builtin_assets import SOURCE_URLS, missing_assets, builtin_asset_root
+    # Verify and package the same root, including an explicit caller override.
+    asset_root = builtin_asset_root()
+    asset_root.mkdir(parents=True, exist_ok=True)
+    missing = missing_assets(bundle_only=True)
     if missing:
         print(f"[warning] 설치본에 넣지 못한 사전학습 가중치 {len(missing)}개 (빌드는 계속):")
         for model_id in missing:
@@ -192,7 +186,7 @@ def build():
 
         # 데이터 파일 포함
         "--add-data", f"{RESOURCES_DIR}{os.pathsep}resources",
-        "--add-data", f"{BUILTIN_ASSETS_DIR}{os.pathsep}builtin_assets",
+        "--add-data", f"{builtin_asset_root()}{os.pathsep}builtin_assets",
         "--add-data", f"{PYTHON_DIR}{os.pathsep}python",
         "--add-data", f"{os.path.join(PROJECT_ROOT, 'licenses')}{os.pathsep}licenses",  # DINOv2 Apache-2.0 고지
         "--add-data", f"{os.path.join(PROJECT_ROOT, 'model_sdk', 'schemas')}{os.pathsep}model_sdk/schemas",
@@ -210,6 +204,10 @@ def build():
         # Collect their package and package data so the installed EXE does not
         # fail only when a user selects LibreYOLO/RT-DETRv4.
         "--collect-all", "libreyolo",
+        "--collect-all", "timm",
+        "--collect-submodules", "segmentation_backbones",
+        "--hidden-import", "segmentation_models",
+        "--collect-all", "pycocotools",
         "--collect-all", "sam2",
         "--collect-all", "hydra",
         "--collect-all", "omegaconf",
@@ -226,6 +224,7 @@ def build():
         "--hidden-import", "onnx",
         "--hidden-import", "onnxruntime",
         "--hidden-import", "model_crypto",
+        "--hidden-import", "dinov2_segmentation",
         "--hidden-import", "dinov2",
         "--hidden-import", "cryptography.hazmat.primitives.ciphers.aead",
         "--hidden-import", "psutil",
@@ -262,6 +261,9 @@ def build():
 
         # 합성 불량 생성 엔진
         "--hidden-import", "core.defect_generator",
+        "--hidden-import", "core.segmentation_synthesis",
+        "--hidden-import", "core.segmentation_synthesis_store",
+        "--hidden-import", "widgets.segmentation_synthesis_widget",
 
         # OpenCV (합성 불량 + 이미지 전처리)
         "--hidden-import", "cv2",

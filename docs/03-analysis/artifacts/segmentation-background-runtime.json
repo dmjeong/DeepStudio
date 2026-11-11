@@ -1,0 +1,33 @@
+{
+  "environment": "macOS ARM64 CPU, PyTorch 2.14.1",
+  "purpose": "Functional smoke on generated images, not accuracy evidence",
+  "models": [
+    {
+      "model": "unet_resnet18",
+      "train": "passed",
+      "onnx": "passed",
+      "samples_per_split": 2,
+      "automatic_background_per_split": 1,
+      "seconds": 1.382
+    },
+    {
+      "model": "deeplabv3plus_resnet34",
+      "train": "passed",
+      "onnx": "passed",
+      "samples_per_split": 2,
+      "automatic_background_per_split": 1,
+      "seconds": 4.107
+    },
+    {
+      "model": "sam2_hiera_tiny",
+      "train": "passed",
+      "checkpoint_reload": "passed",
+      "onnx": "passed",
+      "train_images": 2,
+      "val_images": 2,
+      "background_only_validation": true,
+      "seconds": 6.103
+    }
+  ],
+  "windows_cuda_tested": false
+}

@@ -33,30 +33,28 @@ class InferenceOperations:
 
         model = self._upstream_model
         task = self._upstream_task
-        # 패치 학습한 검출 모델: 영상을 입력 크기로 줄이지 않는다. 학습과 같은 배율로 줄인 뒤
-        # 타일로 나눠 추론하고 합친다 (물체 크기가 학습 때와 같아야 작은 결함이 보인다).
-        tiling = getattr(self, "_detect_tiling", None) if task == "detect" else None
-        source, options = image_path, {}
-        if tiling:
-            options = {"tiling": True, "overlap_ratio": tiling["overlap"] / tiling["tile"]}
-            if tiling["scale"] != 1:
-                import cv2
-                with Image.open(image_path) as opened:
-                    pixels = np.asarray(opened.convert("RGB"))
-                size = (max(1, int(round(pixels.shape[1] * tiling["scale"]))),
-                        max(1, int(round(pixels.shape[0] * tiling["scale"]))))
-                source = Image.fromarray(cv2.resize(pixels, size, interpolation=getattr(cv2, tiling["interpolation"])))
         with self._measure_inference_stage("inference"):
-            result = model.predict(source, imgsz=int(self._input_size[0]),
-                                   conf=float(getattr(self, "detection_confidence", .25)),
-                                   iou=float(getattr(self, "detection_iou", .5)),
-                                   device=str(self._infer_device), **options)
+            with Image.open(image_path) as source:
+                original = display_rgb(np.asarray(source.convert("RGB")))
+            crop = self._center_crop
+            box = center_crop_box((original.shape[1], original.shape[0]), crop)
+            source_image = Image.fromarray(original[box[1]:box[3], box[0]:box[2]])
+            patches = getattr(model, "studio_patches", None)
+            if patches:
+                from native_patch_inference import predict_patches
+                result = predict_patches(model, source_image, patches,
+                    conf=float(getattr(self, "detection_confidence", .25)),
+                    iou=float(getattr(self, "detection_iou", .5)))
+            else:
+                result = model.predict(source_image, imgsz=int(self._input_size[0]),
+                                       conf=float(getattr(self, "detection_confidence", .25)),
+                                       iou=float(getattr(self, "detection_iou", .5)),
+                                       device=str(self._infer_device))
         if isinstance(result, (list, tuple)):
             if len(result) != 1:
                 raise ValueError("LibreYOLO 단일 이미지 추론 결과 형식 오류")
             result = result[0]
-        with Image.open(image_path) as source:
-            original = display_rgb(np.asarray(source.convert("RGB")))
+        self._original_preview_rgb = original
         if task == "classify":
             probs = as_numpy(result.probs.data).reshape(-1).astype(np.float64)
             if not len(probs) or not np.isfinite(probs).all():
@@ -67,7 +65,11 @@ class InferenceOperations:
                 raise ValueError("LibreYOLO 분류 클래스 목록 불일치")
             prediction = InferenceResult(image_path, "ok", task, f"{names[top]} {probs[top]:.1%}",
                                          details={"class_names": list(names), "probabilities": probs.tolist(),
-                                                  "runtime": "libreyolo-pytorch", "device": str(self._infer_device)})
+                                                  "runtime": "libreyolo-pytorch", "device": str(self._infer_device),
+                                                  "preprocessing_policy": getattr(model, "studio_input_policy", None),
+                                                  "preprocessing_migrated": bool(getattr(model, "studio_legacy_preprocessing", False)),
+                                                  "original_size": [original.shape[1], original.shape[0]],
+                                                  "crop_box": list(box), "center_crop": crop})
             self._current_preview_rgb = original
         elif task == "detect":
             if result.boxes is None:
@@ -82,19 +84,49 @@ class InferenceOperations:
             detections = [{"class_id": int(cls), "confidence": float(score),
                            "bbox": np.clip(box, 0, 1).astype(float).tolist()}
                           for box, score, cls in zip(boxes, scores, classes)]
+            detections = restore_detections(detections, (original.shape[1], original.shape[0]), crop)
             prediction = InferenceResult(image_path, "ok", task, f"{len(detections)}개 탐지",
                                          details={"num_detections": len(detections), "detections": detections,
                                                   "class_names": list(self.class_names),
                                                   "runtime": "libreyolo-pytorch", "device": str(self._infer_device)})
-            if tiling:
-                prediction.details["tiling"] = {**tiling, "tiles": int(getattr(result, "num_tiles", 0) or 0)}
             self._current_preview_rgb = draw_detection_boxes(original, detections)
         else:
             raise ValueError(f"LibreYOLO 태스크 미지원: {task}")
+        if patches:
+            prediction.details["patches"] = {**patches, "tiles": result.studio_tiles}
         self._heatmap_cache = None
-        self.info = "LibreYOLO native PyTorch 추론 | Grad-CAM 미지원"
-        if tiling:
-            self.info += f" | 패치 학습 모델: {tiling['tile']}px 타일, 배율 {tiling['scale']:.0%}"
+        self.info = "LibreYOLO native PyTorch 추론"
+        preprocessing_info = ""
+        if task == "classify":
+            preprocessing_info = " | 입력 영역 전체 사용 · 자동 자르기 없음"
+            if getattr(model, "studio_legacy_preprocessing", False):
+                preprocessing_info += " | 구형 모델 전처리 변경: 판정 결과 재확인 필요"
+            self.info += preprocessing_info
+        if task == "classify" and self.gradcam_enabled and self._gradcam is not None:
+            try:
+                with self._measure_inference_stage("gradcam"):
+                    if patches:
+                        import cv2
+                        x, y, pw, ph = result.studio_winner
+                        tile = np.full((patches["size"], patches["size"], 3), 114, np.uint8)
+                        tile[:ph, :pw] = result.studio_scaled[y:y+ph, x:x+pw]
+                        local, _ = self._gradcam.generate_image(Image.fromarray(tile), self._input_size[0], top)
+                        activation = np.zeros(result.studio_scaled.shape[:2], np.float32)
+                        activation[y:y+ph, x:x+pw] = local[:ph, :pw]
+                        activation = cv2.resize(activation, source_image.size, interpolation=cv2.INTER_LINEAR)
+                        valid = np.ones(activation.shape, bool)
+                        preprocessing_info += " | 최대 로짓에 기여한 패치의 Grad-CAM"
+                    else:
+                        activation, valid = self._gradcam.generate_image(source_image, self._input_size[0], top)
+                    if crop:
+                        from core.heatmap import reproject_center_crop
+                        activation, valid = reproject_center_crop(activation, original.shape[:2], crop)
+                self._set_heatmap_preview(
+                    image_path, original, activation, "Grad-CAM",
+                    f"LibreYOLO | 타겟: blocks | 클래스: {names[top]}" + preprocessing_info, valid_mask=valid)
+            except Exception as exc:
+                self._clear_heatmap_preview()
+                self.info += f" | Grad-CAM 실패: {exc}"
         return prediction
 
     def _run_custom_inference(self, image_path: str):
@@ -236,6 +268,7 @@ class InferenceOperations:
         # 화면과 컬러 히트맵용 변환은 모델 추론 후에만 수행한다.
         from core.image_display import display_rgb
         original_np = display_rgb(original)
+        self._original_preview_rgb = original_np
 
         from core.spatial_preview import draw_detection_boxes, segmentation_preview
         base_preview = original_np
@@ -253,12 +286,25 @@ class InferenceOperations:
             from core.spatial_preview import segmentation_labels
             region = original_np[box[1]:box[3], box[0]:box[2]] if crop else original_np
             labels = segmentation_labels(pred_mask, region.shape[1], region.shape[0])
-            # 결함 판정 화면은 배경을 칠하지 않아 결함만 눈에 띄게 한다 (결함 분석이 없는 요청은 기존 표시).
-            base_preview, counts = segmentation_preview(pred_mask, region, self.model.num_classes, labels=labels,
-                                                        tint_background=review is None)
+            regions = {}
+            base_preview, counts = segmentation_preview(pred_mask, region, self.model.num_classes,
+                                                        class_names=self.class_names or (), details_out=regions)
             if crop:
                 base_preview = paste_crop_preview(original_np, base_preview, crop)
-            prediction.details.update(pixel_counts=counts, class_names=list(self.class_names))
+                for item in regions["segmentation_regions"]:
+                    x1, y1, x2, y2 = item["bbox"]
+                    item["bbox"] = [x1 + box[0], y1 + box[1], x2 + box[0], y2 + box[1]]
+            prediction.details.update(pixel_counts=counts, class_names=list(self.class_names),
+                                      original_size=[original_np.shape[1], original_np.shape[0]], **regions)
+            names = list(self.class_names or [])
+            found = [f"{names[c] if c < len(names) else f'클래스 {c}'} {n}개"
+                     for c, n in regions["region_counts"].items()]
+            prediction = replace(prediction, summary=" · ".join(found) if found else "검출 영역 없음")
+            from core.segmentation_evaluation import evaluate_segmentation
+            prediction.details["segmentation_evaluation"] = evaluate_segmentation(
+                pred_mask, image_path, original_np.shape, self.class_names,
+                getattr(self, "_evaluation_project", None) or getattr(self, "project", None),
+                crop_box=box if crop else None)
             if review is not None:
                 prediction = self._review_segmentation(prediction, image_path, pred_mask, labels, probabilities,
                                                        original_np.shape[1::-1], box if crop else None, review)
@@ -556,7 +602,7 @@ class InferenceEngine(InferenceOperations):
     STATE_FIELDS = ("model", "_patchcore_model", "_upstream_model", "_upstream_task", "_gradcam",
                     "_infer_device", "_input_size", "_normalization", "class_names",
                     "_anomaly_threshold", "_active_checkpoint", "_center_crop", "_onnx_runtime",
-                    "_sam2_predictor", "_sam2_model_id", "_tiling", "_detect_tiling")
+                    "_evaluation_project", "_sam2_predictor", "_sam2_model_id", "_tiling")
 
     def __init__(self, state, *, gradcam=True, input_region=None, runtime="auto", threads=4, segment_review=None,
                  sam2=None):
@@ -577,6 +623,7 @@ class InferenceEngine(InferenceOperations):
             self._onnx_runtime = None
         self._heatmap_cache = None
         self._current_preview_rgb = None
+        self._original_preview_rgb = None
         self.info = ""
         from center_crop import validate_center_crop
         self._saved_center_crop = validate_center_crop(
@@ -654,6 +701,7 @@ class InferenceEngine(InferenceOperations):
         started = time.perf_counter()
         self._stage_timings = {}
         self._heatmap_cache = self._current_preview_rgb = None
+        self._original_preview_rgb = None
         self.info = ""
         try:
             self.prepare()

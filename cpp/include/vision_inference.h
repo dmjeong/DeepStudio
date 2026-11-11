@@ -95,6 +95,9 @@ struct InferenceConfig
     int model_implementation_version = 0; ///< 0: 구형 JSON 또는 직접 설정으로 내부 구조 미상
     int stem_in_channels = 0;
     std::string input_adapter = "unspecified";
+    int patch_size = 0; // schema 7; 0 means full-frame
+    int patch_overlap = 0;
+    double patch_scale = 1.0;
     std::string resize_mode = "stretch";
     std::vector<int> resize_size; ///< Native classification Resize argument: [short] or [H,W]
     std::string classification_output = "logits"; ///< logits or probabilities
@@ -104,6 +107,7 @@ struct InferenceConfig
     float detection_confidence_threshold = 0.25f;
     float detection_iou_threshold = 0.5f;
     int detection_max_detections = 300;
+    bool detection_query_class_topk = false;
     float anomaly_threshold = 0.0f;
     std::string input_value_range = "uint8_0_255"; ///< uint8 or full-range uint8/uint16 input contract
 
@@ -158,6 +162,14 @@ struct SegmentResult
     struct Defect { int class_id = 0; cv::Rect box; int area = 0; float score = 0.0f; };
     std::vector<Defect> defects;
     int removed_defects = 0;       ///< 기준 미달이라 마스크에서 지운 덩어리 수
+    // Adjacent steady_clock intervals in ms. Rebuild SDK AND callers together.
+    double preprocess_ms = 0.0;    ///< ROI, conversion, resize, normalization, input tensor setup
+    double model_ms = 0.0;         ///< ONNX Runtime Session::Run
+    double validation_ms = 0.0;    ///< Output shape/type and all-element NaN/Inf checks
+    double decode_ms = 0.0;        ///< Per-pixel argmax and (when needed) softmax
+    double rules_ms = 0.0;         ///< Connected components, defect thresholds, coordinates
+    double render_ms = 0.0;        ///< Resize/copy masks, color mask, pixel counts
+    double postprocess_ms = 0.0;   ///< validation + decode + rules + render (not an extra stage)
 };
 
 struct Detection
@@ -306,12 +318,15 @@ private:
      * 5. HWC → CHW 레이아웃 변환 (ONNX 표준)
      * 6. 배치 차원 추가 (BCHW)
      */
-    std::vector<float> Preprocess(const cv::Mat& image);
+    ClassifyResult ClassifySingle(const cv::Mat& image, bool apply_crop, std::vector<float>* raw_logits = nullptr);
+    DetectResult DetectSingle(const cv::Mat& image, bool apply_crop);
+    cv::Mat PatchRegion(const cv::Mat& image, cv::Rect& roi) const;
+    std::vector<float> Preprocess(const cv::Mat& image, bool apply_crop = true);
     std::vector<float> PreprocessWholeRegion(const cv::Mat& region);
     void ApplyDefectRules(cv::Mat& mask, const cv::Mat& scores, const cv::Size& output_size,
                           SegmentResult& result) const;
     void PreprocessInto(const cv::Mat& image, float* data, size_t count,
-                        cv::Mat& converted, cv::Mat& resized);
+                        cv::Mat& converted, cv::Mat& resized, bool apply_crop = true);
 
     /**
      * @brief Softmax 계산 (Classification 후처리)
