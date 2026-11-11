@@ -12,7 +12,7 @@ import threading
 import uuid
 
 from webapp import ROOT
-from webapp.locking import exclusive_file
+from webapp.locking import exclusive_file, parallel_cpu_job, process_alive
 from webapp.storage import read_json, write_json
 
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
@@ -38,7 +38,7 @@ class JobManager:
             job = self._safe_metadata(path)
             if job is None:
                 continue
-            if job["status"] not in TERMINAL:
+            if job["status"] not in TERMINAL and not self._owner_alive(path.parent, job):
                 try:
                     result = read_json(path.parent / "result.json")
                     if not isinstance(result, dict) or result.get("status") not in TERMINAL:
@@ -48,6 +48,19 @@ class JobManager:
                 job.update(result, finished_at=timestamp())
                 write_json(path, job)
             self._jobs[job["id"]] = job
+
+    @staticmethod
+    def _owner_alive(directory, job):
+        if process_alive(job.get("owner_pid"), job.get("owner_started")):
+            return True
+        for name, prefix in (("worker.json", ""), ("request.json", "parent_")):
+            try:
+                identity = read_json(directory / name)
+                if process_alive(identity.get(prefix + "pid"), identity.get(prefix + "started")):
+                    return True
+            except (OSError, ValueError, AttributeError):
+                continue
+        return False
 
     def _safe_metadata(self, path):
         try:
@@ -72,27 +85,31 @@ class JobManager:
             raise FileNotFoundError("작업 기록 없음")
         return directory
 
-    def require_idle(self):
+    def require_idle(self, kind=None, payload=None):
         if self.active_id is not None:
             raise RuntimeError("실행 중인 작업 완료 또는 중단 후 변경 가능")
+        if parallel_cpu_job(kind, payload):
+            return
         with exclusive_file(self.root / "compute.lock"):
             pass
 
     def start(self, kind, payload):
         with self.lock:
-            self.require_idle()
+            self.require_idle(kind, payload)
             job_id = uuid.uuid4().hex
             directory = self.root / job_id
             directory.mkdir()
+            import psutil
+            owner_started = psutil.Process().create_time()
             job = {"id": job_id, "kind": kind, "status": "running", "created_at": timestamp(),
+                   "owner_pid": os.getpid(), "owner_started": owner_started,
                    "finished_at": None, "error": "", "output": {}, "project_path": payload.get("project", {}).get("filepath")}
             write_json(directory / "job.json", job)
             self._jobs[job_id] = job
-            import psutil
-            write_json(directory / "request.json", {"kind": kind, "payload": payload,
-                       "parent_pid": os.getpid(), "parent_started": psutil.Process().create_time()})
             self.active_id = job_id
             try:
+                write_json(directory / "request.json", {"kind": kind, "payload": payload,
+                           "parent_pid": os.getpid(), "parent_started": owner_started})
                 command = ([sys.executable, "--studio-worker", str(directory / "request.json")] if getattr(sys, "frozen", False) else
                            [sys.executable, "-u", "-m", "webapp.worker", str(directory / "request.json")])
                 if kind in {"datagen_train", "datagen_generate"}:
@@ -150,6 +167,15 @@ class JobManager:
 
     def list(self, project_path=None, limit=30):
         with self.lock:
+            # A second app has its own monitor. Refresh live records instead of
+            # retaining its initial "running" state forever in this process.
+            for job_id, job in list(self._jobs.items()):
+                if job["status"] not in TERMINAL:
+                    path = self.root / job_id / "job.json"
+                    try:
+                        self._jobs[job_id] = self._metadata(path)
+                    except ValueError:
+                        pass  # Keep the last known record and the corruption warning.
             revision = self.root.stat().st_mtime_ns
             if revision != self._root_revision:
                 for path in self.root.glob("*/job.json"):
@@ -179,7 +205,10 @@ class JobManager:
             for job_id in job_ids:
                 if job_id == self.active_id:
                     raise RuntimeError("진행 중인 작업 삭제 불가")
-                self.directory(job_id)
+                directory = self.directory(job_id)
+                job = self._safe_metadata(directory / "job.json")
+                if job is not None and job["status"] not in TERMINAL and self._owner_alive(directory, job):
+                    raise RuntimeError("다른 앱에서 진행 중인 작업은 삭제할 수 없습니다")
             for job_id in job_ids:
                 shutil.rmtree(self.directory(job_id))
                 self._jobs.pop(job_id, None)
@@ -190,6 +219,9 @@ class JobManager:
             if job_id == self.active_id:
                 raise RuntimeError("작업 완료 후 내보내기 가능")
             directory = self.directory(job_id)
+            job = self._safe_metadata(directory / "job.json")
+            if job is not None and job["status"] not in TERMINAL and self._owner_alive(directory, job):
+                raise RuntimeError("다른 앱의 작업 완료 후 내보내기 가능합니다")
             target = directory / "history.zip"
             with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
                 for path in directory.rglob("*"):
@@ -202,6 +234,15 @@ class JobManager:
         if job is None:
             raise ValueError("손상된 작업 기록. 저장 공간 화면에서 내보내기 또는 정리 가능")
         result = path.parent / "result.json"
+        if job["status"] not in TERMINAL and not self._owner_alive(path.parent, job):
+            try:
+                recovered = read_json(result)
+                if not isinstance(recovered, dict) or recovered.get("status") not in TERMINAL:
+                    raise ValueError("완료 기록 형식 오류")
+            except (OSError, ValueError, TypeError):
+                recovered = {"status": "interrupted", "error": "실행 앱 종료로 중단된 작업. 저장된 결과 확인 필요"}
+            job.update(recovered, finished_at=timestamp())
+            write_json(path, job)
         if job["status"] == "interrupted" and result.exists():
             try:
                 recovered = read_json(result)

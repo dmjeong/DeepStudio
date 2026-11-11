@@ -116,7 +116,7 @@ class InferenceContractTests(unittest.TestCase):
                 created.append(self)
 
         jobs = ModuleType("core.desktop_jobs")
-        jobs.desktop_manager = lambda: SimpleNamespace(require_idle=lambda: None)
+        jobs.desktop_manager = lambda: SimpleNamespace(require_idle=lambda *args: None)
         worker_module = ModuleType("core.inference_worker")
         worker_module.InferenceWorker = Mock(return_value=Mock())
         self.ns.update(InferenceEngine=Engine, QPushButton=object)

@@ -16,6 +16,7 @@ Deep Vision Studio — 프로젝트 관리
 """
 
 import json
+import hashlib
 import ntpath
 import os
 import re
@@ -466,20 +467,45 @@ class ProjectManager:
         # 원본을 열기 전에 직렬화 완료. 실패시 이전 파일과 메모리 상태 보존.
         payload = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False)
         temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=base,
-                                             prefix=".project-", suffix=".tmp", delete=False) as stream:
-                temporary = stream.name
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, filepath)
-        finally:
-            if temporary and os.path.exists(temporary):
-                os.unlink(temporary)
+        from webapp.locking import exclusive_file
+        # Two apps may read a project for inference. Never let a stale window
+        # overwrite another app's new training results when it closes/saves.
+        with exclusive_file(filepath + ".save.lock", "다른 앱에서 프로젝트를 저장 중입니다. 다시 저장해 주세요."):
+            current = None
+            if os.path.isfile(filepath):
+                with open(filepath, "rb") as stream:
+                    current = stream.read()
+            expected = (getattr(project, "_saved_digest", None)
+                        if getattr(project, "_saved_path", None) == os.path.realpath(filepath) else None)
+            if expected is not None and (current is None or hashlib.sha256(current).hexdigest() != expected):
+                raise RuntimeError("다른 앱에서 프로젝트가 변경되었습니다. 최신 학습 기록을 보호하기 위해 저장하지 않았습니다. 프로젝트를 다시 열어 주세요.")
+            unchanged = False
+            if current is not None:
+                previous = json.loads(current)
+                unchanged = ({k: v for k, v in previous.items() if k != "modified"}
+                             == {k: v for k, v in data.items() if k != "modified"})
+                if unchanged:
+                    # An inference-only window must not invalidate a trainer's
+                    # project snapshot just by saving an unchanged form.
+                    modified = previous["modified"]
+            if not unchanged:
+                try:
+                    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=base,
+                                                     prefix=".project-", suffix=".tmp", delete=False) as stream:
+                        temporary = stream.name
+                        stream.write(payload)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.replace(temporary, filepath)
+                    current = payload.encode("utf-8")
+                finally:
+                    if temporary and os.path.exists(temporary):
+                        os.unlink(temporary)
         project.modified = modified
         project.project_dir = base
         project._active_filepath = filepath
+        project._saved_digest = hashlib.sha256(current).hexdigest()
+        project._saved_path = os.path.realpath(filepath)
         return filepath
 
     @staticmethod
@@ -490,8 +516,9 @@ class ProjectManager:
         Returns: ProjectData 인스턴스
         """
         filepath = os.path.abspath(filepath)
-        with open(filepath, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+        with open(filepath, "rb") as f:
+            original_bytes = f.read()
+        raw = json.loads(original_bytes)
 
         if not isinstance(raw, dict) or raw.get("task", "classify") not in SUPPORTED_TASKS:
             raise ValueError("지원하지 않는 프로젝트 형식 또는 태스크")
@@ -550,6 +577,8 @@ class ProjectManager:
             defect_generation=raw.get("defect_generation", {}),
         )
         project._active_filepath = filepath
+        project._saved_digest = hashlib.sha256(original_bytes).hexdigest()
+        project._saved_path = os.path.realpath(filepath)
         return project
 
     @staticmethod

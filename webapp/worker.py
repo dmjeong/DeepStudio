@@ -13,7 +13,7 @@ import traceback
 from datetime import datetime
 
 from webapp.storage import digest, json_value, read_json, restore_project, write_json
-from webapp.locking import exclusive_file
+from webapp.locking import exclusive_file, parallel_cpu_job
 
 
 class JobContext:
@@ -550,12 +550,17 @@ def infer(context, payload):
             if engine._current_preview_rgb is not None:
                 arrays["preview"] = engine._current_preview_rgb
             if result.status != "error" and (engine._heatmap_cache is None or engine._heatmap_cache.get("original") is None):
-                from PIL import Image
-                from core.image_display import display_rgb
-                with Image.open(path) as source:
-                    arrays["original"] = display_rgb(np.array(source.convert("RGB") if source.mode == "P" else source))
+                original = getattr(engine, "_original_preview_rgb", None)
+                if original is None:
+                    from PIL import Image
+                    from core.image_display import display_rgb
+                    with Image.open(path) as source:
+                        original = display_rgb(np.array(source.convert("RGB") if source.mode == "P" else source))
+                arrays["original"] = original
             cache = engine._heatmap_cache
             if cache is not None:
+                if cache.get("image_path", path) != path:
+                    raise ValueError("원본/반응 맵과 추론 결과의 이미지 경로가 다릅니다")
                 for key in ("original", "activation", "base_image", "valid_mask"):
                     if cache.get(key) is not None:
                         arrays[key] = cache[key]
@@ -799,6 +804,8 @@ def run_job(request_path, monitor_parent=True):
     started = time.perf_counter()
     try:
         request = read_json(request_path)
+        import psutil
+        write_json(request_path.parent / "worker.json", {"pid": os.getpid(), "started": psutil.Process().create_time()})
         context = JobContext(request_path.parent, monitor_parent=monitor_parent,
                              parent_pid=request.get("parent_pid"), parent_started=request.get("parent_started"))
         # 작업 프로세스에서만 모델 라이브러리를 가져오고 CPU 자원을 제한한다.
@@ -807,7 +814,9 @@ def run_job(request_path, monitor_parent=True):
         if request["kind"] in {"train", "infer", "export"}:
             import torch
             torch.set_num_threads(threads)
-        with exclusive_file(request_path.parent.parent / "compute.lock"):
+        lock = (request_path.parent / "compute.lock" if parallel_cpu_job(request["kind"], request["payload"])
+                else request_path.parent.parent / "compute.lock")
+        with exclusive_file(lock):
             result = OPERATIONS[request["kind"]](context, request["payload"])
     except Exception as exc:
         traceback.print_exc()

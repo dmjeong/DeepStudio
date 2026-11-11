@@ -887,11 +887,13 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._preview_cache.clear()
         self._inference_results.clear()
         self._current_preview_rgb = None
-        self._original_preview_rgb = None
+        self._display_original(None)
         self._current_result = None
         self.image_label.set_regions([])
         if self._current_image and os.path.isfile(self._current_image):
             self._show_image(self._current_image)
+        else:
+            self.image_label.setText("이미지를 불러와 주세요")
         self.image_label.set_result()
         self._batch_results.clear()
         self._batch_times.clear()
@@ -1046,7 +1048,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         if self._model_inspection is not None or self._inference_worker is not None:
             return
         try:
-            desktop_manager().require_idle()
+            desktop_manager().require_idle("inspect_model", {"device": self.infer_device_combo.currentData()})
             if not os.path.isfile(path):
                 raise ValueError("가중치 파일 선택 필요")
         except (RuntimeError, ValueError) as exc:
@@ -1320,6 +1322,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         """이미지 표시"""
         self._current_preview_rgb = None
         self._original_preview_rgb = None
+        self._original_image_path = None
         self.image_label.set_regions([])
         pixmap = QPixmap(filepath)
         if not pixmap.isNull():
@@ -1330,6 +1333,9 @@ class InferenceWidget(QWidget, InferenceOperations):
             from PIL import Image
             with Image.open(filepath) as source:
                 pixels = np.array(source)
+            from core.image_display import display_rgb
+            self._original_preview_rgb = display_rgb(pixels)
+            self._original_image_path = filepath
             self.image_label.set_pixel_source(pixels)
             self.original_label.set_pixel_source(pixels)
         else:
@@ -1350,7 +1356,7 @@ class InferenceWidget(QWidget, InferenceOperations):
             return
         from core.desktop_jobs import desktop_manager
         try:
-            desktop_manager().require_idle()
+            desktop_manager().require_idle("infer", {"device": self.infer_device_combo.currentData()})
         except RuntimeError as exc:
             QMessageBox.warning(self, "작업 진행 중", str(exc))
             return
@@ -1718,6 +1724,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._current_image = image_path
         self._current_result = None
         self._current_preview_rgb = None
+        self._display_original(None)
         self.image_label.set_regions([])
         result = self._inference_results.get(image_path)
         if result is None:
@@ -1835,10 +1842,29 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.original_label.setVisible(checked)
         if checked:
             self._switch_view_mode("single")
+            # A hidden panel must never retain the previous image. Prefer the
+            # inference snapshot; the file at this path may have changed since.
+            path = self._current_image
+            if not path:
+                self._display_original(None)
+            elif getattr(self, "_original_image_path", None) != path:
+                original = None
+                try:
+                    entry = self._preview_cache.get(path)
+                    if entry is not None:
+                        original = entry.get("original")
+                    if original is None:
+                        from PIL import Image
+                        with Image.open(path) as source:
+                            original = np.array(source.convert("RGB"))
+                except (OSError, ValueError, KeyError):
+                    pass
+                self._display_original(original)
             self.original_label.set_view(self.image_label._zoom, self.image_label._pan)
 
     def _display_original(self, original):
         self._original_preview_rgb = original
+        self._original_image_path = self._current_image if original is not None else None
         if original is None:
             self.original_label.setText("저장된 원본 없음")
             self.original_label.set_pixel_source(None)
@@ -1921,13 +1947,10 @@ class InferenceWidget(QWidget, InferenceOperations):
         pixmap = QPixmap.fromImage(qimage)
         self.image_label.setPixmap(pixmap)
         cache = self._heatmap_cache
-        if cache is not None and cache.get("original") is not None:
-            original = np.ascontiguousarray(cache["original"])
-            h, w = original.shape[:2]
-            qimage = QImage(original.data, w, h, original.strides[0], QImage.Format.Format_RGB888).copy()
-            self.original_label.setPixmap(QPixmap.fromImage(qimage))
-            self.image_label.set_pixel_source(original)
-            self.original_label.set_pixel_source(original)
+        original = getattr(self, "_original_preview_rgb", None)
+        if cache is not None and cache.get("image_path") == self._current_image:
+            original = cache.get("original", original)
+        self._display_original(original)
         self.original_label.set_view(self.image_label._zoom, self.image_label._pan)
 
     def _run_batch_inference(self):

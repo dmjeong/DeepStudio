@@ -32,6 +32,8 @@ class InferencePreviewCache:
 
     def put(self, image_path, preview, heatmap=None, info="", *, original=None):
         """소유권을 가진 배열 복사본을 저장한다. 실패를 호출자에게 전달한다."""
+        if heatmap is not None and heatmap.get("image_path", image_path) != image_path:
+            raise ValueError("원본/반응 맵과 추론 결과의 이미지 경로가 다릅니다")
         if self._directory is None:
             self._directory = TemporaryDirectory(prefix="deep-studio-inference-")
         key = sha256(os.fsencode(image_path)).hexdigest()

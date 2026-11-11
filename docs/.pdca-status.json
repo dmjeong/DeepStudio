@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-11-11T04:45:26.397552+00:00",
+  "lastUpdated": "2026-11-11T04:54:30.757125+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -21,9 +21,10 @@
     "libreyolo-full-frame",
     "native-patch-training",
     "segmentation-model-candidates",
-    "segmentation-pretrained-completion"
+    "segmentation-pretrained-completion",
+    "inference-compare-concurrency"
   ],
-  "primaryFeature": "segmentation-pretrained-completion",
+  "primaryFeature": "inference-compare-concurrency",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -611,6 +612,24 @@
         "windows_cuda": "not locally executed; CI configured"
       },
       "completedAt": "2026-11-11T04:45:26.397552+00:00"
+    },
+    "inference-compare-concurrency": {
+      "phase": "completed",
+      "version": "13.86",
+      "documents": {
+        "design": "docs/02-design/features/inference-compare-concurrency.design.md",
+        "analysis": "docs/03-analysis/inference-compare-concurrency.md",
+        "report": "docs/RELEASE_13.86.md"
+      },
+      "matchRate": 100,
+      "validation": {
+        "regression": "178 passed, exit 0",
+        "preview_extended": "48 passed, 12 optional LibreYOLO skips, exit 0",
+        "final_jobs": "16 passed, exit 0",
+        "two_main_windows": "two separate processes simultaneously ready, exit 0",
+        "windows_cuda": "not locally executed"
+      },
+      "completedAt": "2026-11-11T04:54:30.757125+00:00"
     }
   },
   "pipeline": {
