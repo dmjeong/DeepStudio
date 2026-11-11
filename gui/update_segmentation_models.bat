@@ -7,7 +7,7 @@ python -m pip install --no-deps timm==1.0.31
 if errorlevel 1 goto :failed
 python -c "import timm, torch, torchvision"
 if errorlevel 1 goto :failed
-python ..\python\prepare_builtin_assets.py --only mobilenetv4_small_encoder,efficientnet_b1_encoder,shufflenet_v2_x1_0 --strict
+python ..\python\prepare_builtin_assets.py --only mobilenetv4_small_encoder,efficientnet_b1_encoder,shufflenet_v2_x1_0,bisenetv2_backbone,stdc1_backbone --strict
 if errorlevel 1 goto :failed
 echo Ready. Restart the Python app and select a model in Training.
 if not defined DVS_WEIGHTS_NONINTERACTIVE pause

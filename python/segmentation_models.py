@@ -17,7 +17,7 @@ MODEL_IDS = (
     "bisenetv2",
     "stdc1",
 )
-SCRATCH_IDS = frozenset({"bisenetv2", "stdc1"})
+AUXILIARY_MODEL_IDS = frozenset({"bisenetv2", "stdc1"})
 TIMM_BACKBONES = {
     "unet_mobilenetv4_small": (
         "mobilenetv4_conv_small.e2400_r224_in1k",
@@ -28,6 +28,67 @@ TIMM_BACKBONES = {
         "efficientnet_b1_encoder",
     ),
 }
+
+
+def _backbone_source(asset, pretrained, weights_path):
+    from builtin_assets import builtin_asset_path
+
+    if pretrained and weights_path:
+        raise ValueError("사전학습과 로컬 백본 가중치를 동시에 지정할 수 없습니다")
+    return (
+        builtin_asset_path(asset)
+        if pretrained
+        else Path(weights_path)
+        if weights_path
+        else None
+    )
+
+
+def _check_backbone_state(actual, expected):
+    """Reject partial checkpoints rather than retaining random encoder tensors."""
+    if not isinstance(actual, dict) or set(actual) != set(expected):
+        raise ValueError("백본 가중치 키가 모델 전체 구조와 일치하지 않습니다")
+    for name, value in actual.items():
+        if (
+            not isinstance(value, torch.Tensor)
+            or value.shape != expected[name].shape
+            or not torch.isfinite(value).all()
+        ):
+            raise ValueError(f"백본 가중치 크기 또는 값이 잘못되었습니다: {name}")
+
+
+def _weight_provenance(asset, source, pretrained, **extra):
+    from builtin_assets import SOURCE_URLS, file_sha256
+
+    return {
+        "source": "imagenet" if pretrained else "local_backbone",
+        "asset": asset,
+        "file": source.name,
+        "sha256": file_sha256(source),
+        **({"url": SOURCE_URLS[asset]} if pretrained else {}),
+        **extra,
+    }
+
+
+def _load_stdc_backbone(backbone, source):
+    payload = torch.load(source, map_location="cpu", weights_only=True)
+    state = payload.get("state_dict", payload) if isinstance(payload, dict) else payload
+    # STDC registers the SAME feature modules twice: features.* and x2/x4/...
+    # The official ImageNet archive contains canonical names only. Filling the
+    # alias keys with random values would overwrite the loaded feature weights.
+    aliases = ("x2.0.", "x4.0.", "x8.0.", "x16.0.", "x32.0.")
+    expected = backbone.state_dict()
+    canonical = {
+        key: value for key, value in expected.items() if not key.startswith(aliases)
+    }
+    _check_backbone_state(state, canonical)
+    expanded = {
+        key: state["features." + key.split(".", 2)[2]]
+        if key.startswith(aliases)
+        else state[key]
+        for key in expected
+    }
+    backbone.load_state_dict(expanded, strict=True)
 
 
 class SmallBatchNorm2d(nn.BatchNorm2d):
@@ -215,19 +276,43 @@ class ThinUNet(nn.Module):
 class BiSeNetV2Segmenter(nn.Module):
     training_loss_config = {"auxiliary_segmentation_weight": 0.4}
 
-    def __init__(self, num_classes, in_channels=3):
+    def __init__(
+        self, num_classes, in_channels=3, *, pretrained=False, weights_path=None
+    ):
         super().__init__()
         from segmentation_backbones.bisenetv2 import BiSeNetV2
         from builtin_models import _replace_conv_in_channels
 
         self.net = BiSeNetV2(num_classes, aux_mode="train")
+        self.weight_provenance = {"source": "random", "backbone": "bisenetv2"}
+        source = _backbone_source("bisenetv2_backbone", pretrained, weights_path)
+        if source is not None:
+            state = torch.load(source, map_location="cpu", weights_only=True)
+            if not isinstance(state, dict) or set(state) != {
+                "detail",
+                "segment",
+                "bga",
+            }:
+                raise ValueError(
+                    "BiSeNetV2 ImageNet 백본은 detail/segment/bga 가중치가 필요합니다"
+                )
+            for name, values in state.items():
+                _check_backbone_state(values, getattr(self.net, name).state_dict())
+            for name, values in state.items():
+                getattr(self.net, name).load_state_dict(values, strict=True)
+            self.weight_provenance = _weight_provenance(
+                "bisenetv2_backbone",
+                source,
+                pretrained,
+                backbone="bisenetv2",
+                pretrained_modules=["net.detail", "net.segment", "net.bga"],
+            )
         self.net.detail.S1[0].conv = _replace_conv_in_channels(
             self.net.detail.S1[0].conv, in_channels
         )
         self.net.segment.S1S2.conv.conv = _replace_conv_in_channels(
             self.net.segment.S1S2.conv.conv, in_channels
         )
-        self.weight_provenance = {"source": "random", "backbone": "bisenetv2"}
         _small_batch_norm(self)
 
     def _features(self, x):
@@ -256,7 +341,9 @@ class STDCSegmenter(nn.Module):
         "boundary_weight": 1.0,
     }
 
-    def __init__(self, num_classes, in_channels=3):
+    def __init__(
+        self, num_classes, in_channels=3, *, pretrained=False, weights_path=None
+    ):
         super().__init__()
         from segmentation_backbones.stdc_model import BiSeNet
         from builtin_models import _replace_conv_in_channels
@@ -271,9 +358,19 @@ class STDCSegmenter(nn.Module):
             base.conv_out32,
         )
         self.boundary = base.conv_out_sp8
+        self.weight_provenance = {"source": "random", "backbone": "STDCNet813"}
+        source = _backbone_source("stdc1_backbone", pretrained, weights_path)
+        if source is not None:
+            _load_stdc_backbone(self.cp.backbone, source)
+            self.weight_provenance = _weight_provenance(
+                "stdc1_backbone",
+                source,
+                pretrained,
+                backbone="STDCNet813",
+                pretrained_modules=["cp.backbone"],
+            )
         first = self.cp.backbone.features[0]
         first.conv = _replace_conv_in_channels(first.conv, in_channels)
-        self.weight_provenance = {"source": "random", "backbone": "STDCNet813"}
         _small_batch_norm(self)
 
     def _features(self, x):
@@ -330,13 +427,11 @@ def boundary_loss(logits, masks):
 def build_segment_candidate(
     model_id, num_classes, in_channels, *, pretrained=False, weights_path=None
 ):
-    if model_id in SCRATCH_IDS:
-        if pretrained or weights_path:
-            raise ValueError(
-                "이 모델은 기본 사전학습 파일을 제공하지 않습니다. 처음부터 학습하거나 같은 모델의 Studio .pt를 선택하세요."
-            )
+    if model_id in AUXILIARY_MODEL_IDS:
         cls = BiSeNetV2Segmenter if model_id == "bisenetv2" else STDCSegmenter
-        return cls(num_classes, in_channels)
+        return cls(
+            num_classes, in_channels, pretrained=pretrained, weights_path=weights_path
+        )
     return ThinUNet(
         model_id,
         num_classes,

@@ -18,7 +18,7 @@ ort = pytest.importorskip("onnxruntime")
 # ORT 1.29 macOS's telemetry HTTP worker can otherwise race process shutdown.
 ort.disable_telemetry_events()
 pytest.importorskip("timm")
-from segmentation_models import MODEL_IDS, SCRATCH_IDS, boundary_loss
+from segmentation_models import MODEL_IDS, AUXILIARY_MODEL_IDS, boundary_loss
 
 
 @pytest.fixture(autouse=True)
@@ -78,7 +78,7 @@ def test_odd_size_single_batch_backward_and_checkpoint(model_id, channels):
         for n, p in model.named_parameters()
         if n in before
     )
-    if model_id in SCRATCH_IDS:
+    if model_id in AUXILIARY_MODEL_IDS:
         assert any(
             p.grad is not None and p.grad.abs().sum() > 0
             for n, p in model.named_parameters()
@@ -95,7 +95,7 @@ def test_odd_size_single_batch_backward_and_checkpoint(model_id, channels):
         restored = load_builtin_checkpoint(checkpoint).eval()
         assert expected.shape == (1, 3, 75, 110)
         torch.testing.assert_close(restored(images), expected, rtol=0, atol=0)
-    if model_id in SCRATCH_IDS:
+    if model_id in AUXILIARY_MODEL_IDS:
         # Evaluation/best selection must not run auxiliary or boundary heads.
         def unexpected_auxiliary(*_):
             raise AssertionError("Training-only head executed during evaluation")
@@ -150,7 +150,7 @@ def test_qt_model_modes_and_packaged_catalog(model_id, tmp_path):
             widget.mode_combo.itemData(i) for i in range(widget.mode_combo.count())
         ]
         assert "builtin_scratch" in modes and "builtin_transfer" in modes
-        assert ("builtin_finetune" in modes) == (model_id not in SCRATCH_IDS)
+        assert "builtin_finetune" in modes
         assert training_capabilities("segment", "builtin_scratch", model_id=model_id)[
             "patch_training"
         ]

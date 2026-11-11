@@ -608,7 +608,7 @@ class TrainingWidget(TrainingForm, QWidget):
 
     def _browse_patchcore_weights(self):
         filepath, _ = QFileDialog.getOpenFileName(
-            self, "PatchCore 전이학습 가중치 선택", "", "PyTorch 체크포인트 (*.pt *.pth)"
+            self, "PatchCore 전이학습 가중치 선택", "", "PyTorch 체크포인트 (*.pt *.pth *.tar)"
         )
         if filepath:
             self.pc_weights_edit.setText(filepath)
@@ -617,7 +617,7 @@ class TrainingWidget(TrainingForm, QWidget):
         """이어학습용 이전 체크포인트 선택"""
         filepath, _ = QFileDialog.getOpenFileName(
             self, "이전 학습 모델 선택", "",
-            "PyTorch 체크포인트 (*.pt *.pth)"
+            "PyTorch 체크포인트 (*.pt *.pth *.tar)"
         )
         if filepath:
             self.resume_edit.setText(filepath)
@@ -789,7 +789,7 @@ class TrainingWidget(TrainingForm, QWidget):
         """사전학습 가중치 파일 선택"""
         filepath, _ = QFileDialog.getOpenFileName(
             self, "가중치 파일 선택", "",
-            "PyTorch 체크포인트 (*.pt *.pth)"
+            "PyTorch 체크포인트 (*.pt *.pth *.tar)"
         )
         if filepath:
             self.weights_edit.setText(filepath)

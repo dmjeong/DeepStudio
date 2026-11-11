@@ -43,7 +43,7 @@ BUILTIN_ADAPTER_IDS = frozenset({
     "unet_mobilenetv4_small", "unet_shufflenetv2", "unet_efficientnet_b1", "bisenetv2", "stdc1",
 })
 # 사전학습 가중치가 없는 기본 모델 (python/builtin_models.SCRATCH_ONLY_MODELS와 같은 목록)
-BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite", "bisenetv2", "stdc1"})
+BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite"})
 
 UPSTREAM_ADAPTER_IDS = frozenset({
     "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",

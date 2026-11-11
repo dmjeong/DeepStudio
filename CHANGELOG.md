@@ -1,3 +1,10 @@
+# 13.85 — 2026-11-11
+
+- Fix (+0.01): BiSeNetV2/STDC1의 빠진 ImageNet 사전학습을 연결. 새 세그멘테이션 5종 모두 UI에서 사전학습/로컬 가중치/처음부터 학습 지원. build.bat·개별 준비 배치와 가중치 관리에 포함.
+- Weights: 원본 배포 파일 SHA256 고정, 모든 백본 텐서의 키/크기 확인, STDC 공유 레이어 별칭의 값 덮어쓰기 방지. RGB 로드 후 흑백 stem 변환. 가중치 누락/불일치를 무작위 초기화로 숨기지 않음.
+- Training: 백본/새 헤드 학습률 구분 및 백본 고정 시 BN 통계 고정. 13.84 단일 optimizer 그룹 체크포인트 재개 호환. STDC .tar 직접 가져오기 지원.
+- Validation: 5종 실제 사전학습/학습/ONNX·INT8/C++·암호화 결과 비교. 사용법과 범위는 docs/RELEASE_13.85.md.
+
 # 13.84 — 2026-11-11
 
 - Models (+1.0): U-Net MobileNetV4 Conv-S / ShuffleNetV2 x1.0 / EfficientNet-B1, BiSeNetV2, STDC1을 데스크톱 기본 모델로 추가. RGB/흑백, 패치 학습, 증강, best 저장·추가 학습과 ONNX/C++ 분할 계약 연결.

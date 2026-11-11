@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-11-11T03:22:11.884492+00:00",
+  "lastUpdated": "2026-11-11T04:45:26.397552+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -20,9 +20,10 @@
     "libreyolo-gradcam-comparison",
     "libreyolo-full-frame",
     "native-patch-training",
-    "segmentation-model-candidates"
+    "segmentation-model-candidates",
+    "segmentation-pretrained-completion"
   ],
-  "primaryFeature": "segmentation-model-candidates",
+  "primaryFeature": "segmentation-pretrained-completion",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -593,6 +594,23 @@
         "windows_cuda": "not locally executed; CI configured"
       },
       "completedAt": "2026-11-11T03:22:11.884492+00:00"
+    },
+    "segmentation-pretrained-completion": {
+      "phase": "completed",
+      "version": "13.85",
+      "documents": {
+        "design": "docs/02-design/features/segmentation-pretrained-completion.design.md",
+        "analysis": "docs/03-analysis/segmentation-pretrained-completion.md",
+        "report": "docs/RELEASE_13.85.md"
+      },
+      "matchRate": 100,
+      "validation": {
+        "regression": "239 passed, 1 skipped, exit 0",
+        "pretrained_integration": "18 passed with official weights and Release C++ probe",
+        "size640": "5/5 training and FP32 ONNX output checks passed",
+        "windows_cuda": "not locally executed; CI configured"
+      },
+      "completedAt": "2026-11-11T04:45:26.397552+00:00"
     }
   },
   "pipeline": {

@@ -21,8 +21,8 @@ release-specific SBOM.
 | cryptography | Python AES-GCM model containers and model-pack signatures | Apache-2.0 OR BSD-3-Clause; https://github.com/pyca/cryptography/blob/main/LICENSE |
 | OpenSSL 3 | Native encrypted-model loader on non-Windows builds | Apache-2.0; https://github.com/openssl/openssl/blob/openssl-3.0/LICENSE.txt |
 | timm 1.0.31 | MobileNetV4 Conv-S / EfficientNet-B1 segmentation encoders | Apache-2.0; bundled text: `licenses/timm-LICENSE.txt`; exact weight revisions and notices: `licenses/segmentation-candidates.md` |
-| CoinCheung BiSeNetV2 | Adapted CPU/ONNX-compatible segmentation implementation | MIT; bundled text: `licenses/bisenet-LICENSE.txt`; no pretrained weights bundled |
-| MichaelFan01 STDC-Seg | Adapted STDC1 segmentation and boundary training | MIT; bundled text: `licenses/stdc-LICENSE.txt`; changes and source hashes: `licenses/segmentation-candidates.md`; no pretrained weights bundled |
+| CoinCheung BiSeNetV2 | Adapted CPU/ONNX-compatible segmentation implementation and maintainer-published ImageNet backbone | MIT repository; bundled text: `licenses/bisenet-LICENSE.txt`; exact weight source/hash and provenance: `licenses/segmentation-candidates.md` |
+| MichaelFan01 STDC-Seg | Adapted STDC1 segmentation and boundary training with authors' ImageNet backbone | MIT repository; bundled text: `licenses/stdc-LICENSE.txt`; changes, source hashes and weight provenance: `licenses/segmentation-candidates.md` |
 
 The Windows native encrypted-model loader uses the OS-provided BCrypt API and
 does not ship an OpenSSL DLL. Python cryptography wheels can contain OpenSSL;

@@ -116,6 +116,13 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
                         pixel_counts_out=None, class_report_out=None, should_stop=None, progress=None):
     training = optimizer is not None
     model.train(training)
+    if training:
+        # Freezing a pretrained backbone must also preserve its BN statistics.
+        for module in model.modules():
+            if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                affine = tuple(module.parameters(recurse=False))
+                if affine and not any(p.requires_grad for p in affine):
+                    module.eval()
     total_loss = 0.0
     samples = 0
     intersection = None
@@ -390,6 +397,15 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     model = model.to(target)
     log(f"가중치 로드 완료: {model_id} / {model.weight_provenance}")
     head_prefixes = HEAD_PREFIXES[model_id]
+    resume_checkpoint = (torch.load(resume, map_location="cpu", weights_only=True)
+                         if resume is not None else None)
+    if resume_checkpoint is not None and model_id in {"bisenetv2", "stdc1"} and not freeze_backbone:
+        groups = resume_checkpoint.get("optimizer_state_dict", {}).get("param_groups", [])
+        if len(groups) == 1 and len(groups[0]["params"]) == len(list(model.parameters())):
+            # 13.84 trained these scratch-only adapters with one optimizer group.
+            # Preserve its parameter ordering, moments and scheduler on resume.
+            head_prefixes = ("",)
+            log("기존 체크포인트의 단일 학습률 그룹을 유지하여 재개합니다.")
     head_parameters, backbone_parameters = [], []
     for name, parameter in model.named_parameters():
         is_head = any(name.startswith(prefix) for prefix in head_prefixes)
@@ -479,7 +495,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     resume_best_checkpoint = None
     if resume is not None:
         resume_path = Path(resume)
-        checkpoint = torch.load(resume_path, map_location="cpu", weights_only=False)
+        checkpoint = resume_checkpoint
         if checkpoint.get("model_id") != model_id:
             raise ValueError("resume checkpoint model_id does not match the requested adapter")
         saved_metric = checkpoint.get("training_config", {}).get("selection_metric", "engine_default")

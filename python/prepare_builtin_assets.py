@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 import tempfile
 
-from builtin_assets import (ASSET_FILES, SEGMENTATION_ASSET_IDS, _manifest, builtin_asset_root,
+from builtin_assets import (ASSET_FILES, PINNED_SHA256, SOURCE_URLS, SEGMENTATION_ASSET_IDS, _manifest, builtin_asset_root,
                             file_sha256, official_torchvision_url, verify_local_asset)
 from model_download import cached_imagenet_weights, enable_requests_native_ca
 from sam2_assets import download_sam2_pretrained
@@ -83,8 +83,7 @@ def prepare(output: str | Path, only=None, *, register_existing: bool = False, s
                     downloaded = download_sam2_pretrained(model_id, target.parent)
                     if downloaded.resolve() != target.resolve():
                         raise RuntimeError(f"SAM2 가중치 경로가 예상과 다릅니다: {downloaded}")
-                elif model_id.startswith("dinov2_") or model_id in {"mobilenetv4_small_encoder", "efficientnet_b1_encoder"}:
-                    from builtin_assets import SOURCE_URLS, PINNED_SHA256
+                elif target.name in PINNED_SHA256:
                     from model_download import cached_https_weights
                     cached_https_weights(SOURCE_URLS[model_id], target,
                                          expected_sha256=PINNED_SHA256[target.name])
@@ -110,7 +109,6 @@ def prepare(output: str | Path, only=None, *, register_existing: bool = False, s
             f"{details}\n원인 해결 후 --only {retry} 로 실패한 모델만 재시도하세요.")
         if strict or register_existing:
             raise RuntimeError(message)
-        from builtin_assets import SOURCE_URLS
         print(f"[warning] {message}\n빌드는 계속합니다.")
         for model_id, _error in failures:
             print(SOURCE_URLS[model_id])

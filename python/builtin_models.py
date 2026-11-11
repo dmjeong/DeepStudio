@@ -13,7 +13,7 @@ from typing import Iterable
 import torch
 from torch import nn
 import torch.nn.functional as F
-from segmentation_models import MODEL_IDS as SEGMENT_CANDIDATES, SCRATCH_IDS
+from segmentation_models import MODEL_IDS as SEGMENT_CANDIDATES
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ BUILTIN_MODEL_SPECS = {
 # 사전학습 가중치가 없는 모델: '처음부터 학습'과 같은 모델의 로컬 체크포인트로만 시작한다.
 for _model_id in SEGMENT_CANDIDATES:
     BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (640, 640), (1, 3))
-SCRATCH_ONLY_MODELS = frozenset({"unet_lite"}) | SCRATCH_IDS
+SCRATCH_ONLY_MODELS = frozenset({"unet_lite"})
 
 # 새로 학습하는 머리 부분(나머지는 사전학습 백본: 백본 학습률 배수·동결 대상)과,
 # 클래스 순서가 다른 체크포인트로 추가 학습할 때 버리는 마지막 분류층.
@@ -69,8 +69,10 @@ CLASS_HEAD_PREFIX = {
     "dinov2_vits14_seg": "head.", "dinov2_vitb14_seg": "head.",
     "unet_lite": "head.", "unet_mobilenetv2": "head.",
 }
-HEAD_PREFIXES.update({model_id: ("",) if model_id in SCRATCH_IDS else ("dec.", "head.")
-                      for model_id in SEGMENT_CANDIDATES})
+HEAD_PREFIXES.update({model_id: ("dec.", "head.") for model_id in SEGMENT_CANDIDATES})
+HEAD_PREFIXES["bisenetv2"] = ("net.head.", "net.aux")
+HEAD_PREFIXES["stdc1"] = ("cp.arm16.", "cp.arm32.", "cp.conv_head32.", "cp.conv_head16.",
+                          "cp.conv_avg.", "ffm.", "head.", "aux16.", "aux32.", "boundary.")
 CLASS_HEAD_PREFIX.update({model_id: "head." for model_id in SEGMENT_CANDIDATES})
 CLASS_HEAD_PREFIX["bisenetv2"] = ("net.head.", "net.aux2.", "net.aux3.", "net.aux4.", "net.aux5_4.")
 CLASS_HEAD_PREFIX["stdc1"] = ("head.", "aux16.", "aux32.")

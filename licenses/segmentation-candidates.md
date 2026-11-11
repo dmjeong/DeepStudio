@@ -1,4 +1,4 @@
-# Segmentation candidates (13.84)
+# Segmentation candidates (13.84, pretrained completion in 13.85)
 
 - timm 1.0.31: Apache-2.0, license copied as `timm-LICENSE.txt`.
   https://github.com/huggingface/pytorch-image-models
@@ -19,9 +19,29 @@
   MIT. Complete notice in `stdc-LICENSE.txt`. Replaced CUDA-specific InPlaceABNSync with
   standard BatchNorm and global pooling with equivalent CPU/ONNX-compatible operations.
 
-BiSeNetV2/STDC pretrained weights are **not bundled**. No claim is made that the repository's
-code license automatically licenses all externally hosted Cityscapes/ImageNet checkpoints.
-Users can train from scratch and transfer their own matching Studio checkpoints.
+## ImageNet backbones added in 13.85
+
+- BiSeNetV2: `backbone_v2.pth`, published by CoinCheung in the MIT project's release 0.0.0.
+  https://github.com/CoinCheung/BiSeNet/releases/download/0.0.0/backbone_v2.pth
+  SHA256: `c63b0eb92c8503232238c29c5b5e5091752860592ab1287d444612c4fe5d3d60`.
+  The maintainer identifies ImageNet as its training dataset:
+  https://github.com/CoinCheung/BiSeNet/issues/192#issuecomment-962935276 and
+  https://github.com/CoinCheung/BiSeNet/issues/173#issuecomment-899207366.
+  It contains detail/segment/bga backbone branches, not a Cityscapes segmentation head.
+  This is the implementation maintainer's checkpoint, not an assertion that it is a checkpoint
+  published by the original BiSeNetV2 paper authors.
+- STDC1: `STDCNet813M_73.91.tar`, the paper authors' ImageNet checkpoint, linked by their
+  MIT repository's README under training instructions.
+  https://github.com/MichaelFan01/STDC-Seg#1-train-stdc-seg
+  Official public Drive folder:
+  https://drive.google.com/drive/folders/1wROFwRt8qWHD4jSo8Zu1gp1d6oYJ3ns1
+  File ID: `1DFoXcV42zy-apUcMh5P8WhsXMRJofgl8`.
+  SHA256: `5354c20179bfca3bd7c5f62b39fdeaecae90e913fd2ff0fa08a927fe3a3393b0`.
+
+The build downloads these original files and includes the upstream MIT notices. Weight files
+are not committed to Git. The archives do not contain a separate weight-specific license;
+the above records their publishers, repository terms and dataset provenance, not a blanket
+legal clearance of ImageNet data. No Cityscapes segmentation checkpoint is downloaded.
 
 The STDC adapter uses BCE + Dice boundary supervision with class-neighbour disagreement
 targets instead of a numeric-class-ID Laplacian. It ignores excluded pixels and their edges.
