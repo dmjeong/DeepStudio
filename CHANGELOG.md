@@ -1,3 +1,10 @@
+# 미배포 — CPU 속도 비교와 같은 앱 학습 중 추론
+
+- Benchmark: `tools/segment_cpu_benchmark.py`가 13.84의 분할 모델 5종(U-Net MobileNetV4 Small · ShuffleNetV2 · EfficientNet-B1, BiSeNetV2, STDC1)도 잰다. 3100×1500에서 8개 모델을 같은 조건으로 잰 표와 해석은 [분할 모델 CPU 속도 측정](docs/SEGMENT_CPU_BENCHMARK.ko.md).
+- Inference: 같은 앱에서 학습 중에도 CPU 모델 로드·추론 가능. 13.86은 다른 앱이 학습 중일 때만 허용했다. 이 앱의 작업 줄이 차 있으면 같은 작업 폴더를 쓰는 두 번째 작업 줄에서 실행하고 작업 기록에 함께 남긴다. GPU 추론은 계속 막고 CPU로 바꾸라고 안내한다.
+- Example: 모든 태스크용 C++ 영상 평가 예제 `cpp/image_eval`(영상별 판정·시간, 하위 폴더 묶음별 판정 수, 결과 그림, CSV). SDK 테스트에서 다섯 태스크로 실행한다.
+- Export: `python/export_onnx.py --region 가로x세로`.
+
 # 14.88 — SEG 합성 중복 입력 허용 (+0.01)
 
 - 같은 폴더와 Train/Val/Test 사이의 중복 이미지 차단·자동 제외 제거. 각 파일의 분할과 정답을 개별 보존.

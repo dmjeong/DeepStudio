@@ -55,6 +55,7 @@ HEADS = ("full", "half")
 HALF_OUTPUT = {"unet_resnet18": ("dec1", True), "unet_mobilenetv2": ("dec1", True), "unet_lite": ("d1", True),
                "unet_mobilenetv4_small": ("head", False), "unet_shufflenetv2": ("head", False),
                "unet_efficientnet_b1": ("head", False)}
+DYNAMIC_EXPORT = frozenset({"bisenetv2"})   # 출력 자르기가 입력 크기를 상수로 굳히는 모델
 MULTIPLE = 32                 # 분할 백본의 최대 보폭 (export_onnx.WHOLE_IMAGE_MULTIPLE 과 같은 값)
 EXPORT_SIZE = (64, 96)        # 내보낼 때 쓰는 작은 입력 (세로, 가로). 그래프는 크기와 무관하게 바뀐다
 CALIBRATION_TILE = (256, 384)
@@ -139,9 +140,10 @@ def export_fp32(model, head, path):
         exporter_options["external_data"] = False
     fixed = path.with_suffix(".fixed.onnx")
     network = build_export_model(model, head)
-    # ShuffleNetV2의 채널 섞기(Reshape)는 공간 크기를 상수로 굳힌다 → 제품 내보내기(export_onnx)처럼
-    # 세로 · 가로를 가변 축으로 내보내 Shape 계산을 그래프에 남긴다 (그래야 다른 입력 크기에서도 돈다).
-    dynamic = getattr(getattr(network, "net", network), "export_dynamic_spatial", False)
+    # ShuffleNetV2의 채널 섞기(Reshape)와 BiSeNetV2의 출력 자르기(Slice)는 공간 크기를 상수로 굳힌다
+    # → 제품 내보내기(export_onnx)처럼 세로 · 가로를 가변 축으로 내보내 Shape 계산을 그래프에 남긴다
+    #   (그래야 다른 입력 크기에서도 원본 해상도 출력이 나온다).
+    dynamic = getattr(getattr(network, "net", network), "export_dynamic_spatial", False) or model in DYNAMIC_EXPORT
     axes = {name: {2: "height", 3: "width"} for name in (INPUT_NAME, "logits")} if dynamic else None
     with torch.no_grad():
         torch.onnx.export(network, torch.zeros(1, 3, *EXPORT_SIZE), str(fixed),
