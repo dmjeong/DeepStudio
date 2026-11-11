@@ -131,7 +131,7 @@ class InferenceOperations:
 
     def _run_custom_inference(self, image_path: str):
         from torchvision import transforms
-        from opencv_preprocess import OpenCVResize, read_image
+        from opencv_preprocess import OpenCVResize, read_image, convert_channels
         # 채널별 정규화 상수 임포트
         # core.paths로 이미 등록됨 (PyInstaller EXE 호환)
         from dataset import get_normalize_params
@@ -159,10 +159,13 @@ class InferenceOperations:
             # 채널 수에 따라 RGB 또는 Grayscale 로드
             crop = getattr(self, "_center_crop", None)
             decode_started = time.perf_counter()
-            original = read_image(image_path, in_channels)
+            # Keep the actual RGB image for original/overlay comparison even
+            # when the model consumes a gray tensor. Decode only once.
+            original = read_image(image_path, 3)
+            model_pixels = convert_channels(original, in_channels)
             decoded = time.perf_counter()
             box = center_crop_box((original.shape[1], original.shape[0]), crop)
-            img = original[box[1]:box[3], box[0]:box[2]]
+            img = model_pixels[box[1]:box[3], box[0]:box[2]]
 
             onnx = getattr(self, "_onnx_runtime", None)
             # 패치 학습 모델: 줄이지 않고 원본 해상도 타일로 나눠 추론한다 (checkpoint의 tiling 규칙).
@@ -574,9 +577,14 @@ class InferenceOperations:
             prediction = replace(make_anomaly_result(image_path, score, self._anomaly_threshold),
                                  details=normalized_details(raw_score, self._patchcore_model.anomaly_threshold, normalization))
 
-        with input_image(image_path, self._patchcore_model.preprocessing) as source:
-            original_np = np.array(source.convert("RGB"))
+        if hasattr(self._patchcore_model, "read_original"):
+            original_np = self._patchcore_model.read_original(image_path)
+            prediction.details["engine"] = "dinomaly"
+        else:
+            with input_image(image_path, self._patchcore_model.preprocessing) as source:
+                original_np = np.array(source.convert("RGB"))
 
+        self._original_preview_rgb = original_np
         activation = normalize_activation_map(amap)
         valid_mask = None
         region = "전체 이미지"
@@ -589,7 +597,7 @@ class InferenceOperations:
         # 표시 범위는 이미지별 상대 강도에만 적용하며 원래 판정 점수는 유지한다.
         self._set_heatmap_preview(
             image_path, original_np, activation,
-            "PatchCore", f"스코어 (0~1): {score:.4f} | 판정 범위: {region}", valid_mask=valid_mask
+            getattr(self._patchcore_model, "name", "PatchCore"), f"스코어 (0~1): {score:.4f} | 판정 범위: {region}", valid_mask=valid_mask
         )
 
         return prediction

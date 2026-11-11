@@ -205,6 +205,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../example/cpp/native_patches/main.cpp")
     target_link_libraries(native_patch_example PRIVATE vision_inference)
     install(TARGETS native_patch_example DESTINATION bin)
 endif()
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND
+   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../example/cpp/dense_models/main.cpp")
+    add_executable(dense_model_example ../example/cpp/dense_models/main.cpp)
+    target_link_libraries(dense_model_example PRIVATE vision_inference)
+endif()
 install(TARGETS efficientnet_cpu_benchmark efficientnet_background_demo DESTINATION bin)
 
 # ── 설치 설정 ────────────────────────────────────────

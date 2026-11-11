@@ -13,6 +13,11 @@ Deep Vision Studio 테스트 — 공통 Fixture
 
 import os
 import sys
+
+# Set before importing ORT: DisableTelemetryEvents() alone leaves the POSIX
+# uploader alive, which can race interpreter shutdown in ORT 1.29.
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
 import pytest
 import numpy as np
 

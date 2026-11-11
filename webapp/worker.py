@@ -12,6 +12,8 @@ import time
 import traceback
 from datetime import datetime
 
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
 from webapp.storage import digest, json_value, read_json, restore_project, write_json
 from webapp.locking import exclusive_file, parallel_cpu_job
 
@@ -91,6 +93,9 @@ def _train_builtin_project(context, project, device, *, class_report=False):
     from train_builtin import train_builtin
 
     model_id = project.model.model_id
+    if model_id == "dinomaly_vits14":
+        from core.dinomaly_trainer import train_project
+        return train_project(context, project, device)
     from builtin_models import BUILTIN_MODEL_SPECS
     spec = BUILTIN_MODEL_SPECS.get(model_id)
     if spec is None or spec.task != project.task:
@@ -159,6 +164,9 @@ def _train_builtin_project(context, project, device, *, class_report=False):
                          selection_metric=cfg.selection_metric,
                          class_names=(list(data.class_names) if project.task == "segment" else None),
                          segmentation_loss=cfg.segmentation_loss,
+                         teacher_checkpoint=cfg.teacher_checkpoint or None,
+                         distillation_alpha=cfg.distillation_alpha,
+                         distillation_temperature=cfg.distillation_temperature,
                          class_weights=(cfg.class_weights if project.task == "segment" else "none"),
                          # 데스크톱에서 켜는 분할 패치 학습 (프로젝트 설정 그대로 전달)
                          patch_training=bool(getattr(cfg, "patch_training", False)) and project.task == "segment",
@@ -639,6 +647,9 @@ def export(context, payload):
                                validation_dir=validation_dir,
                                allow_precision_fallback=payload.get("allow_precision_fallback", False),
                                encryption_key_path=payload.get("encryption_key_path") or None,
+                               precision=payload.get("precision", "float32"),
+                               calibration_dir=payload.get("calibration_dir") or None,
+                               calibration_count=payload.get("calibration_count", 16),
                                sam2_model_id=sam2_model_id,
                                log=lambda line: context.emit("log_message", [line]))
     validation = result.get("classification_validation")

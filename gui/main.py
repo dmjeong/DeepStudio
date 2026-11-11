@@ -34,6 +34,9 @@ import sys
 import os
 import multiprocessing
 
+# Disable ORT's optional uploader before its native library is imported.
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
 # PyInstaller worker가 GUI 진입점을 다시 실행하지 않도록 먼저 분기한다.
 if __name__ == "__main__":
     multiprocessing.freeze_support()

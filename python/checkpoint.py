@@ -7,6 +7,28 @@
 PATCH_SCALE_INTERPOLATION = "INTER_AREA"
 
 
+def previous_best_path(resume_path):
+    """Locate the real Best after the desktop publisher renames best.pt."""
+    import json
+    from pathlib import Path
+
+    resume_path = Path(resume_path)
+    folder = resume_path.parent.resolve()
+    fixed = folder / "best.pt"
+    if fixed.is_file():
+        return fixed
+    selection = folder / "best_selection.json"
+    if selection.is_file():
+        metadata = json.loads(selection.read_text(encoding="utf-8-sig"))
+        selected = (folder / metadata["checkpoint"]).resolve()
+        if not selected.is_relative_to(folder) or not selected.is_file():
+            raise ValueError("Best 선정 기록의 체크포인트가 없거나 실행 폴더 밖에 있습니다")
+        return selected
+    if resume_path.name.startswith("best_") and resume_path.is_file():
+        return resume_path
+    return None
+
+
 def tiling_contract(patch_size, scale=1.0, region=None):
     """패치 학습 모델의 추론 규칙: 원본 해상도에서 tile×tile 창을 overlap만큼 겹쳐 민다.
 

@@ -152,6 +152,9 @@ class TrainingConfig:
     # 분할 손실: "ce_dice"(CE + 전경 Dice, 기본) | "ce"(픽셀 CE만, 9.23까지의 동작)
     # 배경이 대부분인 결함 마스크에서 CE만 쓰면 작은 결함을 놓치기 쉽다 (docs/RELEASE_9.33.md 실험).
     segmentation_loss: str = "ce_dice"
+    teacher_checkpoint: str = ""
+    distillation_alpha: float = 0.3
+    distillation_temperature: float = 2.0
     # 분할/기본 탐지/LibreYOLO 분류 패치 학습. 입력 크기만큼 잘라 학습한다.
     # count=0: 분할은 자동 개수, native 탐지는 전체 격자, native 분류는 원본별 모든 패치 묶음.
     patch_training: bool = False
@@ -309,6 +312,7 @@ class ProjectManager:
             yield raw["data"], key
         yield raw["model"], "pretrained_weights"
         yield raw.setdefault("training", {}), "patchcore_weights"
+        yield raw.setdefault("training", {}), "teacher_checkpoint"
         for key in ("folder", "output", "roi", "texture"):
             yield raw.setdefault("defect_generation", {}), key
         for run in raw.get("runs", []):

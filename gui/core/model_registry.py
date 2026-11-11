@@ -257,6 +257,19 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         specs.append(ModelSpec(model_id, family, variant, "segment", ("windows_native", "onnx"),
                                common, (640, 640), (1, 3), "export_verified",
                                pretrained_asset=asset, metadata=desktop, notes=notes))
+    specs.append(ModelSpec("dinomaly_vits14", "Dinomaly", "DINOv2-S/14", "anomaly",
+                           ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified",
+                           pretrained_asset="Meta DINOv2 ViT-S/14 LVD-142M", metadata=desktop,
+                           notes="고정 인코더 + 재구성기 에폭 학습. 정상 영상만 학습, 검증 정상 상한으로 임계값 보정. S/14 변형."))
+    for model_id, family, variant, asset in (
+        ("efficientvit_b0_seg", "EfficientViT", "B0 + Detail", "EfficientViT B0 ImageNet"),
+        ("efficientvit_b1_seg", "EfficientViT", "B1 + Detail", "EfficientViT B1 ImageNet"),
+        ("sctnet_s", "SCTNet", "Small + Detail", "SCTNet-S official backbone"),
+        ("eomt_dinov2_small", "EoMT", "DINOv2-S + Detail", "Meta DINOv2 ViT-S/14 LVD-142M"),
+    ):
+        specs.append(ModelSpec(model_id, family, variant, "segment", ("windows_native", "onnx"),
+                               common, (448, 448), (1, 3), "export_verified", pretrained_asset=asset, metadata=desktop,
+                               notes="분할 전용 구조 + 원본 해상도 세부 경로. 패치 학습 시 같은 크기 타일 추론."))
     sam2_contract = {"contracts": {"graphs": {
         "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},
                     "outputs": ["image_embeddings", "image_features_0", "image_features_1"]},

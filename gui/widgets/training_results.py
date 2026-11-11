@@ -31,10 +31,14 @@ def _metric_info_for(project=None, results=None):
     if task == "anomaly" and project and project.training.anomaly_method == "reconstruction":
         info["primary"] = "recon_loss"
         info.setdefault("labels", {})["recon_loss"] = "Reconstruction Loss"
+    if task == "anomaly" and project and project.model.model_id == "dinomaly_vits14":
+        info["primary"] = "val_loss"
+        info["display"] = ["val_loss"]
+        info.setdefault("labels", {})["val_loss"] = "정상 검증 재구성 손실"
     if project and getattr(project.training, "selection_metric", "engine_default") != "engine_default":
         from core.model_selection import selection_policy, LABELS
         from core.training_modes import training_engine_name
-        engine = training_engine_name(project.training.training_mode)
+        engine = "dinomaly" if project.model.model_id == "dinomaly_vits14" else training_engine_name(project.training.training_mode)
         policy = selection_policy(project.training, engine, task)
         info["primary"] = policy.metric
         info.setdefault("labels", {})[policy.metric] = LABELS[policy.metric]

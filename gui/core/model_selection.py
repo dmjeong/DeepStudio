@@ -19,6 +19,8 @@ LABELS = {
 
 
 def available_metrics(engine, task):
+    if engine == "dinomaly":
+        return ["engine_default", "val_loss"]
     if task == "classify":
         return ["engine_default", "accuracy", "f1_macro", "recall_macro", "val_loss"]
     if task in ("detect", "obb"):
@@ -56,6 +58,8 @@ def selection_policy(config, engine, task):
     if requested == "engine_default":
         metric = ({"classify": "accuracy", "detect": "mAP_50",
                    "segment": "mIoU", "anomaly": "recon_loss"}[task])
+    if engine == "dinomaly" and requested == "engine_default":
+        metric = "val_loss"
     formula = LABELS[metric]
     return SelectionPolicy(metric, "min" if metric in {"recon_loss", "val_loss"} else "max",
                            formula, "최초")

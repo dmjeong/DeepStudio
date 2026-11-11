@@ -120,6 +120,12 @@ struct InferenceConfig
     int scaled_height = 0;
     int region_interpolation = 0; ///< cv::INTER_AREA 또는 cv::INTER_LINEAR_EXACT
 
+    // Schema 8: fixed training-size tiles for global-context models.
+    int dense_tile = 0;
+    int dense_overlap = 0;
+    double dense_scale = 1.0;
+    int dense_interpolation = 1;
+
     // ── 분할 판정 기준 (postprocessing.defect_rules) ──
     // 클래스 번호별 (최소 면적 px, 최소 점수). 점수 = 덩어리 픽셀의 그 클래스 softmax 평균.
     // 기준 미달 덩어리는 마스크에서 배경(0)으로 지운다 → 설비 코드는 마스크·픽셀 수를 그대로 쓰면 된다.

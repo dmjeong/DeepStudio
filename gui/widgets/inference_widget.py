@@ -1082,7 +1082,9 @@ class InferenceWidget(QWidget, InferenceOperations):
             device_label = self._device_manager.get_device_label(device)
             patchcore_info = result.get("patchcore")
             upstream = bool(result.get("upstream"))
-            if patchcore_info is not None:
+            if patchcore_info is not None and patchcore_info.get("model_id") == "dinomaly_vits14":
+                info = f"Dinomaly 준비 완료 | 고정 DINOv2-S + 재구성기 | 디바이스: {device_label}"
+            elif patchcore_info is not None:
                 count = int(patchcore_info["memory_bank_size"])
                 if count < 1:
                     raise ValueError("PatchCore 메모리 뱅크가 비어 있습니다")
@@ -1103,7 +1105,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         if result.get("tiling"):
             scale = float(result["tiling"].get("scale", 1.0))
             info += (" | 패치 학습 모델 · " + ("원본 해상도" if scale == 1 else f"배율 {scale:.0%}")
-                     + " · 판정 영역 한 번에 추론")
+                     + " · 저장된 영역 처리 규칙으로 추론")
         if result.get("sam2"):
             info += f" | SAM2 {result['sam2']} · 격자 점 자동 분할"
         self._activate_model(path=path, device=device, class_names=names,
@@ -1173,6 +1175,9 @@ class InferenceWidget(QWidget, InferenceOperations):
             from core.inference_loading import _sam2_model_id
             if _sam2_model_id(path, checkpoint):
                 # SAM2는 추론 프로세스에서 불러온다 (공식 Hiera 가중치 + 미세조정 디코더, 장치 선택 그대로)
+                self._start_model_inspection(path)
+                return True
+            if checkpoint.get("type") == "dinomaly":
                 self._start_model_inspection(path)
                 return True
             if checkpoint.get("type") == "patchcore":

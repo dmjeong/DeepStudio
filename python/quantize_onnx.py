@@ -207,12 +207,21 @@ def quantize_segment(config_path, calibration_dir, *, count=16, reduce_range=Fal
 
     config_path = Path(config_path)
     config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not (config.get("preprocessing") or {}).get("whole_image"):
+        from quantize_dense import quantize_dense
+        return quantize_dense(config_path, calibration_dir, count=count, reduce_range=reduce_range,
+                              output_json=output_json, log=log)
     _whole(config)
     height, width = int(config["input_height"]), int(config["input_width"])
     tile = min(int(tile), height, width) // 32 * 32       # 백본 보폭 32의 배수
     source = config_path.parent / config["model_path"]
     output_json = Path(output_json) if output_json else config_path.with_name(config_path.stem + "_int8.json")
     output_onnx = output_json.with_suffix(".onnx")
+    from export_onnx import _paths_alias
+    if any(_paths_alias(target, original) for target in (output_json,output_onnx)
+           for original in (config_path,source)):
+        raise ValueError("INT8 출력으로 FP32 원본을 덮어쓸 수 없습니다")
+    output_json.parent.mkdir(parents=True,exist_ok=True)
     paths = list_images(calibration_dir, count)
     if not paths:
         raise ValueError(f"보정 영상이 없습니다: {calibration_dir}")
@@ -264,7 +273,7 @@ def quantize_segment(config_path, calibration_dir, *, count=16, reduce_range=Fal
 
     started = time.perf_counter()
     reader = Reader()
-    with tempfile.TemporaryDirectory(prefix="dvs-int8-") as work:
+    with tempfile.TemporaryDirectory(prefix=".dvs-int8-", dir=output_json.parent) as work:
         work = Path(work)
         # ① 크기와 무관한 그래프 (FP32 결과는 원본과 같다; compare()가 확인한다)
         flexible = _set_hw(size_free_graph(onnx.load(str(source))), "height", "width")
@@ -283,16 +292,29 @@ def quantize_segment(config_path, calibration_dir, *, count=16, reduce_range=Fal
             extra_options={"CalibStridedMinMax": 1},   # 타일 1장마다 범위 계산 → 누적 (메모리 = 타일 1장 분)
         )
         # ③ 입력을 C++ 계약의 고정 크기로 되돌린다
-        onnx.save(_set_hw(onnx.load(str(work / "int8.onnx")), height, width), str(output_onnx))
-    result = copy.deepcopy(config)
-    result["model_path"] = output_onnx.name
-    result.setdefault("export", {})["quantization"] = {
-        "format": "QDQ", "weights": "int8 per-channel", "activations": "uint8",
-        "calibration": "minmax (tiles)", "calibration_images": reader.used, "calibration_tiles": reader.tiles,
-        "calibration_tile": tile, "reduce_range": bool(reduce_range),
-        "source_model": config["model_path"], "experimental": True}
-    result["export"]["precision"] = "int8"
-    output_json.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        staged_model, staged_json = work / output_onnx.name, work / output_json.name
+        fixed = _set_hw(onnx.load(str(work / "int8.onnx")), height, width)
+        onnx.checker.check_model(fixed)
+        onnx.save(fixed, str(staged_model))
+        result = copy.deepcopy(config)
+        result["model_path"] = output_onnx.name
+        result.setdefault("export", {})["quantization"] = {
+            "format": "QDQ", "weights": "int8 per-channel", "activations": "uint8",
+            "calibration": "minmax (tiles)", "calibration_images": reader.used, "calibration_tiles": reader.tiles,
+            "calibration_tile": tile, "reduce_range": bool(reduce_range),
+            "source_model": config["model_path"], "experimental": True}
+        result["export"]["precision"] = "int8"
+        result["export"]["fp32_verification"] = result.get("verification")
+        result["export"]["verification_policy"] = "int8_finite_and_calibration_comparison_v1"
+        result["verification"] = "int8_compared"
+        staged_json.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        comparison = compare(config_path, staged_json, calibration_dir, count=count, threads=2, log=log)
+        comparison["scope"] = "calibration inputs; not independent accuracy evaluation"
+        result["export"]["quantization"]["comparison"] = comparison
+        staged_json.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        import os
+        os.replace(staged_model, output_onnx)
+        os.replace(staged_json, output_json)
     log(f"INT8 모델: {output_onnx.name} ({output_onnx.stat().st_size / 1e6:.1f} MB, 원본 "
         f"{source.stat().st_size / 1e6:.1f} MB) · 보정 {reader.used}장({reader.tiles}타일) "
         f"{time.perf_counter() - started:.0f}초")
@@ -316,6 +338,9 @@ def compare(fp32_json, int8_json, image_dir, *, count=None, threads=0, log=print
     """클래스 맵 일치율과 결함 클래스별 IoU(FP32를 기준으로). 리포트 dict를 돌려준다."""
     config, fp32 = _session(fp32_json, threads)
     _, int8 = _session(int8_json, threads)
+    if not config.get("preprocessing", {}).get("whole_image"):
+        from quantize_dense import compare_sessions
+        return compare_sessions(config, fp32, int8, list_images(image_dir, count))
     scaled_w, scaled_h = config["preprocessing"]["whole_image"]["scaled"]
     classes = int(config["num_classes"])
     names = config.get("class_names") or [str(i) for i in range(classes)]
@@ -328,6 +353,8 @@ def compare(fp32_json, int8_json, image_dir, *, count=None, threads=0, log=print
         for key, session in (("fp32", fp32), ("int8", int8)):
             started = time.perf_counter()
             logits = session.run(None, {config["input_name"]: tensor})[0]
+            if logits.shape != (1,classes,config["input_height"],config["input_width"]) or not np.isfinite(logits).all():
+                raise ValueError("INT8 비교 출력 형상 또는 NaN/Inf 오류")
             times[key].append(time.perf_counter() - started)
             maps[key] = logits[0, :, :scaled_h, :scaled_w].argmax(0)
         same = int((maps["fp32"] == maps["int8"]).sum())

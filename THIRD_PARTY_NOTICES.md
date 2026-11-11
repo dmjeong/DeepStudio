@@ -23,6 +23,11 @@ release-specific SBOM.
 | timm 1.0.31 | MobileNetV4 Conv-S / EfficientNet-B1 segmentation encoders | Apache-2.0; bundled text: `licenses/timm-LICENSE.txt`; exact weight revisions and notices: `licenses/segmentation-candidates.md` |
 | CoinCheung BiSeNetV2 | Adapted CPU/ONNX-compatible segmentation implementation and maintainer-published ImageNet backbone | MIT repository; bundled text: `licenses/bisenet-LICENSE.txt`; exact weight source/hash and provenance: `licenses/segmentation-candidates.md` |
 | MichaelFan01 STDC-Seg | Adapted STDC1 segmentation and boundary training with authors' ImageNet backbone | MIT repository; bundled text: `licenses/stdc-LICENSE.txt`; changes, source hashes and weight provenance: `licenses/segmentation-candidates.md` |
+| EfficientViT | B0/B1 segmentation backbone and adapted head | Apache-2.0; `licenses/EfficientViT-LICENSE.txt`; exact provenance and modifications: `licenses/modern-dense-models.md` |
+| SCTNet | Small segmentation backbone | MIT; `licenses/SCTNet-LICENSE.txt`; source/weight distinction: `licenses/modern-dense-models.md` |
+| EoMT | DINOv2-S query segmentation adapter | MIT; `licenses/EoMT-LICENSE.txt`; Studio adaptations: `licenses/modern-dense-models.md` |
+| Dinomaly | DINOv2-S normal-feature reconstruction | Apache-2.0; `licenses/Dinomaly-LICENSE.txt`; Studio variant: `licenses/modern-dense-models.md` |
+| SciPy | EoMT Hungarian assignment during training | BSD-3-Clause; https://github.com/scipy/scipy/blob/main/LICENSE.txt; include installed distribution notices in frozen releases |
 
 The Windows native encrypted-model loader uses the OS-provided BCrypt API and
 does not ship an OpenSSL DLL. Python cryptography wheels can contain OpenSSL;

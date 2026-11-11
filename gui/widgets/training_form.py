@@ -189,6 +189,7 @@ class TrainingForm:
         self.anomaly_method_combo.addItem(
             "Reconstruction (재구성 기반)", "reconstruction"
         )
+        self.anomaly_method_combo.addItem("Dinomaly (정상 특징 재구성 학습)", "dinomaly")
         self.anomaly_method_combo.setToolTip(
             "PatchCore (권장)\n"
             "  사전학습 백본으로 정상 패치 특징을 추출해 메모리 뱅크를 구성합니다.\n"
@@ -371,6 +372,30 @@ class TrainingForm:
         )
         self.segmentation_loss_label = QLabel("분할 손실:")
         hp_layout.addRow(self.segmentation_loss_label, self.segmentation_loss_combo)
+        self.distillation_group = QGroupBox("분할 교사 증류 (선택)")
+        kd_layout = QFormLayout(self.distillation_group)
+        self.teacher_edit = QLineEdit()
+        self.teacher_edit.setPlaceholderText("비우면 사용 안 함 · 같은 클래스 순서의 교사 .pt")
+        kd_row = QHBoxLayout()
+        kd_row.addWidget(self.teacher_edit)
+        kd_browse = QPushButton("찾아보기")
+        kd_browse.clicked.connect(self._browse_teacher)
+        kd_row.addWidget(kd_browse)
+        kd_layout.addRow("교사 모델", kd_row)
+        self.kd_alpha = NoWheelDoubleSpinBox()
+        self.kd_alpha.setRange(.01,.99)
+        self.kd_alpha.setSingleStep(.05)
+        self.kd_alpha.setValue(.3)
+        self.kd_temperature = NoWheelDoubleSpinBox()
+        self.kd_temperature.setRange(.1,20)
+        self.kd_temperature.setValue(2)
+        kd_layout.addRow("증류 손실 비중",self.kd_alpha)
+        kd_layout.addRow("온도",self.kd_temperature)
+        kd_note = QLabel("교사와 학생은 같은 증강 패치를 봅니다. 교사는 학습 중에만 필요하며 추론 모델에는 포함되지 않습니다.")
+        kd_note.setWordWrap(True)
+        kd_layout.addRow(kd_note)
+        hp_layout.addRow(self.distillation_group)
+
 
         # ── 입력 크기 (32~1024, 32배수 단위) ──
         # 640 권장: 해상도 보존 vs 학습 속도 최적 밸런스

@@ -1,3 +1,11 @@
+# 15.88 — 최신 분할·Dinomaly·교사 증류 (+1.0)
+
+- 기본 모델에 EfficientViT B0/B1 + Detail, SCTNet-S + Detail, EoMT DINOv2-S + Detail, Dinomaly DINOv2-S/14 추가.
+- RGB/BW8 사전학습·패치·증강·재개, 동일 증강 입력의 분할 교사 증류. Dinomaly는 정상 특징 재구성기를 에폭 학습.
+- FP32/INT8 내보내기 UI와 보정 영상 비교 기록, schema 8 고정 타일 C++ 런타임, 두 정밀도 암호화 로드.
+- 흑백 모델 원본 비교에서도 컬러 원본 보존. 원본 크기 마스크 확대·영역 면적의 C++/앱 픽셀 대응 통일.
+- [사용법](docs/MODERN_DENSE_MODELS.md), [인자 없는 C++ 예제](example/cpp/dense_models/README.ko.md), [검증 보고서](docs/03-analysis/modern-dense-models.md).
+
 # 14.88 — SEG 합성 중복 입력 허용 (+0.01)
 
 - 같은 폴더와 Train/Val/Test 사이의 중복 이미지 차단·자동 제외 제거. 각 파일의 분할과 정답을 개별 보존.

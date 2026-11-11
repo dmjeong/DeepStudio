@@ -14,6 +14,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from segmentation_models import MODEL_IDS as SEGMENT_CANDIDATES
+from modern_segmentation import MODEL_IDS as MODERN_SEGMENT_IDS
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,8 @@ BUILTIN_MODEL_SPECS = {
 # 사전학습 가중치가 없는 모델: '처음부터 학습'과 같은 모델의 로컬 체크포인트로만 시작한다.
 for _model_id in SEGMENT_CANDIDATES:
     BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (640, 640), (1, 3))
+for _model_id in MODERN_SEGMENT_IDS:
+    BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (448, 448), (1, 3))
 SCRATCH_ONLY_MODELS = frozenset({"unet_lite"})
 
 # 새로 학습하는 머리 부분(나머지는 사전학습 백본: 백본 학습률 배수·동결 대상)과,
@@ -76,6 +79,11 @@ HEAD_PREFIXES["stdc1"] = ("cp.arm16.", "cp.arm32.", "cp.conv_head32.", "cp.conv_
 CLASS_HEAD_PREFIX.update({model_id: "head." for model_id in SEGMENT_CANDIDATES})
 CLASS_HEAD_PREFIX["bisenetv2"] = ("net.head.", "net.aux2.", "net.aux3.", "net.aux4.", "net.aux5_4.")
 CLASS_HEAD_PREFIX["stdc1"] = ("head.", "aux16.", "aux32.")
+
+HEAD_PREFIXES.update({mid: ("projections.", "middle.", "expand.", "fusion.", "head.", "aux.") for mid in MODERN_SEGMENT_IDS})
+HEAD_PREFIXES["eomt_dinov2_small"] = ("q.", "class_head.", "mask_head.", "upscale.", "detail.")
+CLASS_HEAD_PREFIX.update({mid: ("fusion.head.", "head.head.", "aux.") for mid in MODERN_SEGMENT_IDS})
+CLASS_HEAD_PREFIX["eomt_dinov2_small"] = ("q.", "class_head.", "detail.2.")
 
 # Pin a concrete revision rather than torchvision's mutable DEFAULT alias.
 IMAGENET_WEIGHTS = {
@@ -132,6 +140,9 @@ _GRADCAM_TARGET_LAYERS = {
 }
 _GRADCAM_TARGET_LAYERS.update({model_id: "dec.3" for model_id in SEGMENT_CANDIDATES})
 _GRADCAM_TARGET_LAYERS.update(bisenetv2="net.bga", stdc1="ffm")
+
+
+_GRADCAM_TARGET_LAYERS.update({mid: "backbone" for mid in MODERN_SEGMENT_IDS})
 
 
 def get_builtin_spec(model_id: str) -> BuiltinModelSpec:
@@ -501,6 +512,9 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
         from dinov2_segmentation import DinoV2Segmentation
         model = DinoV2Segmentation(int(num_classes), in_channels,
                                   pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id in MODERN_SEGMENT_IDS:
+        from modern_segmentation import build_modern_segmenter
+        model = build_modern_segmenter(model_id, int(num_classes), in_channels, pretrained=pretrained, weights_path=backbone_weights)
     elif model_id in SEGMENT_CANDIDATES:
         from segmentation_models import build_segment_candidate
         model = build_segment_candidate(model_id, int(num_classes), in_channels,
@@ -526,10 +540,10 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
     model.gradcam_target_layer = _GRADCAM_TARGET_LAYERS[model_id]
     # ViT는 주의(attention)가 입력 전체를 본다: 패치 학습 모델을 큰 영역에 한 번에 넣으면 학습과 다른 함수가 된다.
     # 추론 엔진은 이 표시가 있으면 학습한 패치 크기의 타일로 추론한다 (합성곱 모델은 한 번에).
-    model.global_attention = model_id.startswith("dinov2_")
+    model.global_attention = getattr(model, "global_attention", False) or model_id.startswith("dinov2_")
     # ViT 미세조정은 합성곱보다 훨씬 작은 백본 학습률이 필요하다. 클래스당 10장 분류(20 epoch)에서
     # 백본 lr 1e-4(기본 배수 0.1)는 정확도가 우연 수준(0.33)으로 무너졌고, 1e-5(×0.1 더)는 0.97이었다.
-    model.backbone_lr_scale = 0.1 if model_id.startswith("dinov2_") else 1.0
+    model.backbone_lr_scale = getattr(model, "backbone_lr_scale", 0.1 if model_id.startswith("dinov2_") else 1.0)
     return model
 
 

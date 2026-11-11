@@ -9,6 +9,7 @@ MODE_LABELS = {
     "efficientnet_scratch": "EfficientNet 무작위 초기화로 시작",
     "builtin_finetune": "선택 모델의 사전학습 가중치로 시작",
     "builtin_transfer": "선택 모델의 로컬 가중치로 시작",
+    "builtin_resume": "중단한 학습 재개",
     "builtin_scratch": "선택 모델을 무작위 초기화로 시작",
     "upstream_finetune": "선택 모델의 사전학습 가중치로 시작",
     "upstream_transfer": "선택 모델의 로컬 가중치로 시작",
@@ -25,6 +26,7 @@ MODE_HELP = {
     "efficientnet_scratch": "선택한 EfficientNet B0/B1 구조를 무작위 초기화하고 처음부터 학습합니다.",
     "builtin_finetune": "선택한 모델의 설치본 사전학습 가중치를 검증 후 로드합니다. DINOv2는 LVD-142M, 나머지는 ImageNet 백본입니다. 분할 헤드는 새로 학습합니다.",
     "builtin_transfer": "같은 모델의 Deep Vision Studio 체크포인트 또는 해당 모델의 공식 백본 .pth를 선택하세요. 새 데이터의 클래스로 학습을 시작합니다.",
+    "builtin_resume": "같은 모델의 last.pt와 best.pt로 옵티마이저·학습 상태를 복원합니다.",
     "builtin_scratch": "선택한 기본 모델 구조를 무작위 초기화하고 처음부터 학습합니다.",
     "upstream_finetune": "선택한 기본 제공 모델의 공식 사전학습 가중치로 시작합니다.",
     "upstream_transfer": "같은 모델군의 로컬 checkpoint를 사용해 새 데이터로 학습합니다.",
@@ -36,10 +38,11 @@ MODE_HELP = {
 }
 
 BUILTIN_ADAPTER_IDS = frozenset({
-    "resnet18", "resnet50", "convnext_v1_tiny",
+    "resnet18", "resnet50", "convnext_v1_tiny", "dinomaly_vits14",
     "deeplabv3plus_resnet34", "unet_resnet18", "dinov2_vits14",
     "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg",
     "unet_lite", "unet_mobilenetv2",
+    "efficientvit_b0_seg", "efficientvit_b1_seg", "sctnet_s", "eomt_dinov2_small",
     "unet_mobilenetv4_small", "unet_shufflenetv2", "unet_efficientnet_b1", "bisenetv2", "stdc1",
 })
 # 사전학습 가중치가 없는 기본 모델 (python/builtin_models.SCRATCH_ONLY_MODELS와 같은 목록)
@@ -74,7 +77,9 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
         raise ValueError("회전 박스 데이터 편집은 지원하지만 OBB 학습 엔진은 제공하지 않습니다.")
     if task not in {"classify", "segment", "detect", "anomaly"}:
         raise ValueError("태스크 오류")
-    engine = "custom" if task == "anomaly" else training_engine_name(mode)
+    engine = "dinomaly" if model_id == "dinomaly_vits14" else "custom" if task == "anomaly" else training_engine_name(mode)
+    if engine == "dinomaly" and (task != "anomaly" or mode not in {"builtin_finetune", "builtin_transfer", "builtin_resume"}):
+        raise ValueError("Dinomaly는 이상 탐지의 사전학습·로컬 가중치·재개 모드를 사용하세요")
     if engine == "builtin" and model_id not in BUILTIN_ADAPTER_IDS:
         raise ValueError("선택한 모델은 기본 모델의 사전학습 모드를 지원하지 않습니다.")
     if mode == "builtin_finetune" and model_id in BUILTIN_SCRATCH_ONLY_IDS:
@@ -87,16 +92,16 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
         raise ValueError("SAM2는 분할 태스크만 지원합니다.")
     if engine == "efficientnet" and task != "classify":
         raise ValueError("EfficientNet은 분류 태스크만 지원")
-    patchcore = task == "anomaly" and anomaly_method == "patchcore"
+    patchcore = task == "anomaly" and anomaly_method == "patchcore" and engine != "dinomaly"
     # These adapters run train_builtin, which does not install observation hooks.
     separate_adapter = model_id in BUILTIN_ADAPTER_IDS | UPSTREAM_ADAPTER_IDS | SAM2_ADAPTER_IDS
     return {
         "engine": engine,
-        "patch_training": (task == "segment" and engine != "sam2") or (engine == "upstream" and task in {"classify", "detect"}),
+        "patch_training": engine == "dinomaly" or (task == "segment" and engine != "sam2") or (engine == "upstream" and task in {"classify", "detect"}),
         "models": ["efficientnet_b0", "efficientnet_b1"] if engine == "efficientnet" else [],
-        "resume": mode.endswith("_resume") and task != "anomaly",
+        "resume": mode.endswith("_resume") and (task != "anomaly" or engine == "dinomaly"),
         "input_channels": [3] if engine in {"sam2", "upstream"} else [1, 3],
-        "augmentation": ["horizontal_flip", "rotation", "color_jitter"] if patchcore or task == "classify" or (task == "detect" and engine == "upstream") else [],
+        "augmentation": ["horizontal_flip", "rotation", "color_jitter"] if patchcore or engine == "dinomaly" or task in {"classify", "segment"} or (task == "detect" and engine == "upstream") else [],
         "layer_debug": not patchcore and not separate_adapter,
         "layer_debug_reason": "레이어 관찰은 현재 EfficientNet과 Custom CSP에서 지원합니다. 선택한 모델의 학습 경로에는 연결되어 있지 않습니다.",
         "default_layer_patterns": "features.0,features.1.*,classifier.1" if engine == "efficientnet" else "backbone.stem,backbone.stage1,backbone.stage4",
@@ -120,7 +125,9 @@ def validate_training_options(project, *, require_runnable=True):
         capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method,
                                              model_id=getattr(project.model, "model_id", ""))
     model_id = getattr(project.model, "model_id", "")
-    if cfg.training_mode in {"builtin_transfer", "upstream_transfer", "upstream_resume", "sam2_transfer"} and require_runnable:
+    if getattr(cfg, "teacher_checkpoint", "") and (project.task != "segment" or capabilities['engine'] != 'builtin'):
+        raise ValueError("교사 증류는 기본 분할 모델의 학습 경로에서 지원합니다")
+    if cfg.training_mode in {"builtin_transfer", "builtin_resume", "upstream_transfer", "upstream_resume", "sam2_transfer"} and require_runnable:
         source = getattr(project.model, "pretrained_weights", "")
         if not source or not Path(source).is_file():
             raise ValueError("선택 모델의 로컬 가중치 파일(.pt/.pth)이 필요합니다.")

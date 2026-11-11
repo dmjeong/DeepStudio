@@ -54,7 +54,15 @@ def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pyto
                                  threads=threads, segment_review=segment_review, sam2=sam2)
         engine.checkpoint_name = Path(path).name
         return engine
-    if checkpoint.get("type") == "patchcore":
+    if checkpoint.get("type") == "dinomaly":
+        if runtime not in ("auto", "pytorch"):
+            raise ValueError("앱의 Dinomaly .pt 추론은 PyTorch, C++ 배포는 ONNX를 사용합니다")
+        from dinomaly_runtime import DinomalyRuntime
+        model = DinomalyRuntime(checkpoint, device)
+        require_saved_input_shape(input_size, model.input_size)
+        state.update(_patchcore_model=model, _anomaly_threshold=model.normalized_threshold,
+                     _input_size=(model.input_size, model.input_size))
+    elif checkpoint.get("type") == "patchcore":
         if runtime not in ("auto", "pytorch"):
             raise ValueError("PatchCore CPU 측정은 pytorch 런타임 사용")
         from patchcore import PatchCore

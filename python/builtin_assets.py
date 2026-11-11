@@ -25,6 +25,9 @@ import sys
 
 
 ASSET_FILES = {
+    "efficientvit_b0": "timm/efficientvit_b0.pth",
+    "efficientvit_b1": "timm/efficientvit_b1.pth",
+    "sctnet_s_backbone": "sctnet/SCT-S_Pretrain.pth",
     "efficientnet_b0": "torchvision/efficientnet_b0_rwightman-7f5810bc.pth",
     "efficientnet_b1": "torchvision/efficientnet_b1-c27df63c.pth",
     "resnet18": "torchvision/resnet18-f37072fd.pth",
@@ -54,6 +57,7 @@ ASSET_FILES = {
 }
 
 SEGMENTATION_ASSET_IDS = (
+    "efficientvit_b0", "efficientvit_b1", "sctnet_s_backbone",
     "bisenetv2_backbone", "stdc1_backbone",
     "shufflenet_v2_x1_0", "mobilenetv4_small_encoder", "efficientnet_b1_encoder",
     "resnet18", "resnet34", "mobilenet_v2", "dinov2_vits14", "dinov2_vitb14", "sam2_hiera_tiny", "sam2_hiera_small",
@@ -63,6 +67,9 @@ SEGMENTATION_ASSET_IDS = (
 
 # 수동 다운로드 주소 (build.bat의 prepare_builtin_assets.py가 받는 것과 같은 공식 파일)
 SOURCE_URLS = {
+    "efficientvit_b0": "https://huggingface.co/timm/efficientvit_b0.r224_in1k/resolve/4844777adc2285905eeb022672ba81620b52bd0c/pytorch_model.bin",
+    "efficientvit_b1": "https://huggingface.co/timm/efficientvit_b1.r224_in1k/resolve/cebc58510738e196c3cce3c3077dc8737973b7ba/pytorch_model.bin",
+    "sctnet_s_backbone": "https://drive.usercontent.google.com/download?id=1rCHGRBCUOOq8frQvMELzfvA-gk-wbedE&export=download&confirm=t",
     "efficientnet_b0": "https://download.pytorch.org/models/efficientnet_b0_rwightman-7f5810bc.pth",
     "efficientnet_b1": "https://download.pytorch.org/models/efficientnet_b1-c27df63c.pth",
     "resnet18": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
@@ -98,6 +105,9 @@ SOURCE_URLS = {
 # 공식 파일 이름에 해시가 없는 가중치의 전체 SHA-256 (공식 주소에서 받은 파일, 2026-10 확인).
 # manifest가 없어도(직접 받은 파일) 이 값과 같아야 쓴다.
 PINNED_SHA256 = {
+    "efficientvit_b0.pth": "92b1a783baee19335e0dbe5af941ad91bfce392b5e55f2dbbae1e4dbea0b6b4e",
+    "efficientvit_b1.pth": "fcd84d10cb51762639cba7e5e3d936fb391777b654ab6e61701f14219d3d4a0f",
+    "SCT-S_Pretrain.pth": "6711235bef62dedb3b76853bc278878027b66ca35b9f8afb9419708ced36b65a",
     "backbone_v2.pth": "c63b0eb92c8503232238c29c5b5e5091752860592ab1287d444612c4fe5d3d60",
     "STDCNet813M_73.91.tar": "5354c20179bfca3bd7c5f62b39fdeaecae90e913fd2ff0fa08a927fe3a3393b0",
     "mobilenetv4_conv_small.pth": "28f2109728e2b5b4296397f0ea2aa8fd1896c8dca1e7f5ff217ae5ec22049e39",
@@ -263,7 +273,7 @@ def verify_local_asset(model_id: str, root: Path, files: dict | None = None) -> 
         if model_id.startswith("sam2_"):
             from sam2_assets import get_sam2_asset
             expected_hash = get_sam2_asset(model_id).sha256
-        elif model_id.startswith("dinov2_"):
+        elif Path(relative).name in PINNED_SHA256:
             expected_hash = PINNED_SHA256[Path(relative).name]
         elif official_torchvision_url(model_id) and match:
             expected_hash = match[1]
@@ -344,6 +354,11 @@ def import_asset(model_id: str, source: str | Path) -> Path:
 
 # 기본 모델 → 설치본 사전학습 백본 가중치 (모델 생성기와 같은 대응)
 BUILTIN_BACKBONE_ASSETS = {
+    "efficientvit_b0_seg": "efficientvit_b0",
+    "efficientvit_b1_seg": "efficientvit_b1",
+    "sctnet_s": "sctnet_s_backbone",
+    "eomt_dinov2_small": "dinov2_vits14",
+    "dinomaly_vits14": "dinov2_vits14",
     "resnet18": "resnet18",
     "resnet50": "resnet50",
     "convnext_v1_tiny": "convnext_v1_tiny",
@@ -367,6 +382,8 @@ def required_pretrained_asset(task: str, mode: str, model_id: str = "", *,
                               patchcore_source: str = "", patchcore_backbone: str = "") -> str | None:
     """이 학습 설정이 시작 전에 꼭 필요로 하는 설치본 가중치 ID (필요 없으면 None)."""
     if task == "anomaly":
+        if model_id == "dinomaly_vits14" or anomaly_method == "dinomaly":
+            return "dinov2_vits14" if mode == "builtin_finetune" else None
         if anomaly_method == "patchcore" and patchcore_source == "imagenet":
             return patchcore_backbone if patchcore_backbone in ASSET_FILES else None
         return None

@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import tempfile
 
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
 import numpy as np
 
 OUTPUT_NAMES = {
@@ -74,6 +76,8 @@ def checkpoint_backend(checkpoint):
     """가중치 포맷을 확인하고 지원하지 않는 포맷은 즉시 거부한다."""
     if not isinstance(checkpoint, dict):
         raise ValueError("체크포인트는 메타데이터를 포함하는 사전이어야 합니다.")
+    if checkpoint.get("type") == "dinomaly":
+        return "dinomaly"
     if checkpoint.get("type") == "patchcore" or checkpoint.get("backend") == "patchcore":
         return "patchcore"
     if checkpoint.get("type") == "builtin_model" or checkpoint.get("backend") == "builtin":
@@ -255,7 +259,7 @@ def deployment_preview(checkpoint_path):
     tiling = checkpoint.get("tiling") or preprocessing.get("tiling") or {}
     model_id = checkpoint.get("model_id") or (checkpoint.get("model_config") or {}).get("model_id") or ""
     task = checkpoint.get("task")
-    preview = {"task": task, "patch": bool(tiling) and task == "segment", "vit": str(model_id).startswith("dinov2_"),
+    preview = {"task": task, "patch": bool(tiling) and task == "segment", "vit": str(model_id).startswith("dinov2_") or model_id in {"efficientvit_b0_seg", "efficientvit_b1_seg", "sctnet_s", "eomt_dinov2_small"},
                "region": tiling.get("region"), "scale": float(tiling.get("scale", 1.0)), "rules": None}
     if task == "segment":
         try:
@@ -731,10 +735,15 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
     backend = checkpoint_backend(checkpoint)
     if validation_dir and backend != "efficientnet":
         raise ValueError("실제 이미지 분류 검증은 현재 EfficientNet 내보내기에서 지원합니다")
-    if backend not in {"custom", "efficientnet", "builtin", "patchcore", "redetr_v4", "sam2", "libreyolo"}:
+    if backend not in {"custom", "efficientnet", "builtin", "patchcore", "dinomaly", "redetr_v4", "sam2", "libreyolo"}:
         raise ValueError("지원하지 않는 모델 형식입니다. 등록된 모델 체크포인트를 선택하세요.")
     if output.resolve() == Path(checkpoint_path).resolve():
         raise ValueError("체크포인트와 ONNX 출력 경로가 같을 수 없습니다.")
+    if backend == "dinomaly":
+        from dinomaly_runtime import export_dinomaly_checkpoint
+        if dynamic_batch:
+            log("Dinomaly는 고정 batch 1로 내보냅니다")
+        return export_dinomaly_checkpoint(checkpoint_path, output_path, verify=verify, opset=opset_version, log=log)
     if backend == "patchcore":
         from export_patchcore_onnx import export_patchcore_checkpoint
         return export_patchcore_checkpoint(checkpoint_path, output_path, verify=verify,
@@ -969,8 +978,9 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                 manifest["export"]["runtime_attempts"] = runtime_attempts
         if backend in {"custom", "builtin"} and spec["task"] == "segment":
             if spec["preprocessing"].get("tiling") and "whole_image" not in spec["preprocessing"]:
-                manifest["cpp_supported"] = False  # ViT 패치 모델: 타일 추론이 필요하다 (데스크톱 엔진만 지원)
-                manifest["cpp_unsupported_reason"] = "ViT patch model requires tiled inference"
+                manifest["schema_version"] = 8
+                manifest["cpp_supported"] = True
+                manifest["export"]["spatial_execution"] = "fixed_tiles_v1"
             if defect_rules is not None:
                 # C++ SDK가 Segment에서 기준 미달 덩어리를 마스크에서 지운다 (설비 코드 변경 없음)
                 manifest.setdefault("postprocessing", {})["defect_rules"] = defect_rules
@@ -1041,7 +1051,8 @@ def _paths_alias(first, second):
 def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_batch=False,
                       simplify=False, verify=True, overrides=None, log=print,
                       bundle_output=None, validation_dir=None, allow_precision_fallback=False,
-                      encryption_key_path=None, sam2_model_id=""):
+                      encryption_key_path=None, sam2_model_id="", precision="float32",
+                      calibration_dir=None, calibration_count=16):
     """실패 단계와 환경을 자동 기록한다. 검증 실패한 모델은 배포하지 않는다.
 
     ``bundle_output`` is optional so existing callers can keep the historical
@@ -1080,7 +1091,13 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
             raise ValueError("출력 파일은 체크포인트 또는 암호키와 다른 경로에 저장해야 합니다.")
         if validation_dir and not verify:
             raise ValueError("실제 이미지 검증을 사용하려면 출력 검증을 켜세요")
-        def run_export(destination):
+        if precision not in {"float32", "int8"}:
+            raise ValueError("내보내기 정밀도는 float32 또는 int8이어야 합니다")
+        if precision == "int8" and (not calibration_dir or not verify):
+            raise ValueError("INT8은 출력 검증과 실제 보정 이미지 폴더가 필요합니다")
+        if precision == "int8" and (type(calibration_count) is not int or calibration_count < 1):
+            raise ValueError("INT8 보정 이미지 수는 1 이상의 정수여야 합니다")
+        def fp32_export(destination):
             if sam2_model_id:
                 if dynamic_batch or simplify:
                     report("SAM2는 고정 image batch와 dynamic prompt 계약을 사용합니다. 동적 배치/단순화 옵션은 적용하지 않습니다.")
@@ -1090,6 +1107,20 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
             return _export_checkpoint(checkpoint_path, destination, opset_version, dynamic_batch,
                                       simplify, verify, overrides, report, validation_dir=validation_dir,
                                       allow_precision_fallback=allow_precision_fallback)
+        def run_export(destination):
+            if precision == "float32":
+                return fp32_export(destination)
+            import tempfile
+            from quantize_onnx import quantize_segment
+            with tempfile.TemporaryDirectory(prefix=".int8-export-", dir=Path(destination).parent) as directory:
+                fp32 = fp32_export(Path(directory) / "reference.onnx")
+                output_json = quantize_segment(fp32["config_path"], calibration_dir, count=calibration_count,
+                                               output_json=Path(destination).with_suffix(".json"), log=report)
+                result = dict(fp32, output_path=str(Path(destination)), config_path=str(output_json),
+                              precision="int8", verification="int8_compared", file_size_mb=Path(destination).stat().st_size/1024**2)
+                manifest = json.loads(output_json.read_text(encoding="utf-8"))
+                result["quantization_comparison"] = manifest["export"]["quantization"].get("comparison", {})
+                return result
         if encryption_key_path:
             if bundle_output is not None:
                 raise ValueError("암호화 파일 자체가 배포 번들입니다. --bundle과 함께 사용할 수 없습니다.")
@@ -1155,6 +1186,8 @@ def parse_args(argv=None):
     parser.add_argument("--dynamic_batch", action="store_true")
     parser.add_argument("--simplify", action="store_true")
     parser.add_argument("--verify", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--precision", choices=("float32", "int8"), default="float32")
+    parser.add_argument("--calibration-dir", help="INT8 보정용 실제 학습 영상 폴더")
     parser.add_argument("--encryption-key", help="32-byte key file; output must use .dvsenc")
     parser.add_argument("--bundle", help="optional .dvdeploy output directory for C++/C# SDK")
     parser.add_argument("--validation-dir", help="class folders of local images for classification FP32 verification")
@@ -1169,7 +1202,7 @@ def main():
                       {key: getattr(args, key) for key in ("task", "num_classes", "in_channels", "input_size")},
                       bundle_output=args.bundle, validation_dir=args.validation_dir,
                       allow_precision_fallback=args.allow_precision_fallback,
-                      encryption_key_path=args.encryption_key)
+                      encryption_key_path=args.encryption_key, precision=args.precision, calibration_dir=args.calibration_dir)
 
 
 if __name__ == "__main__":

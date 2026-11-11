@@ -215,6 +215,18 @@ jobs:
           ctest --test-dir example/build-v141-bw8 -C Debug --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "v141 Debug execution failed" }
 
+      - name: Build dense segmentation and anomaly example with VS2017 C++17
+        shell: pwsh
+        run: |
+          $deps = $env:EXAMPLE_DEPS
+          cmake -S example/cpp/dense_models -B example/build-dense -G "Visual Studio 17 2022" -A x64 -T v141 `
+            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" "-DOpenCV_DIR=$deps/opencv/build/x64/vc16/lib"
+          if ($LASTEXITCODE -ne 0) { throw "Dense example configure failed" }
+          foreach ($config in @('Release', 'Debug')) {
+            cmake --build example/build-dense --config $config --target dense_model_example --parallel 2
+            if ($LASTEXITCODE -ne 0) { throw "Dense example $config build failed" }
+          }
+
       - name: Verify the batch helper uses an isolated SDK build cache
         shell: pwsh
         run: |
@@ -374,6 +386,22 @@ jobs:
           $env:MKL_NUM_THREADS = "1"
           python -m pytest -q tests/test_libreyolo_full_frame.py tests/test_native_patches.py
           if ($LASTEXITCODE -ne 0) { throw "LibreYOLO export -> C++ inference failed" }
+      - name: Verify modern dense model exports in native Windows C++
+        shell: pwsh
+        run: |
+          python python/prepare_builtin_assets.py --only efficientvit_b0,efficientvit_b1,sctnet_s_backbone,dinov2_vits14 --strict
+          if ($LASTEXITCODE -ne 0) { throw "Modern pretrained asset preparation failed" }
+          $env:SEGMENT_PROBE = Join-Path $env:RUNNER_TEMP "vision-cpp-build/Release/segment_probe.exe"
+          $env:ANOMALY_PROBE = Join-Path $env:RUNNER_TEMP "vision-cpp-build/Release/anomaly_probe.exe"
+          $env:PATH = "$env:VISION_NATIVE_RUNTIME_DIR;$env:PATH"
+          $env:DVS_RUN_MODERN_INTEGRATION = "1"
+          $env:DVS_MODERN_INPUT_SIZE = "448"
+          $env:DVS_DINOMALY_INPUT_SIZE = "224"
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:OMP_NUM_THREADS = "2"
+          $env:MKL_NUM_THREADS = "2"
+          python -m pytest -q tests/test_modern_dense_models.py -o tmp_path_retention_policy=failed
+          if ($LASTEXITCODE -ne 0) { throw "Modern FP32/INT8 encrypted C++ parity failed" }
       - name: Verify frozen CUDA training runtime without a GPU
         shell: pwsh
         run: |

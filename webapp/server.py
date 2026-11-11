@@ -79,6 +79,9 @@ class ExportRequest(Body):
     validation_dir: str = ""
     allow_precision_fallback: bool = False
     encryption_key_path: str = ""
+    precision: Literal["float32", "int8"] = "float32"
+    calibration_dir: str = ""
+    calibration_count: int = Field(default=16, ge=1, le=10000)
 
 
 class ModelPackRequest(Body):
@@ -318,14 +321,15 @@ def create_app(state_dir=None):
                 raise ValueError("EfficientNet은 분류 태스크와 B0/B1 모델 선택 필요")
             if cfg.class_weights not in {"none", "balanced", "sqrt"} or cfg.optimizer not in {"adamw", "adam", "sgd"}:
                 raise ValueError("클래스 가중치 또는 optimizer 설정 오류")
-            if cfg.scheduler not in {"cosine", "step", "none"} or cfg.anomaly_method not in {"patchcore", "reconstruction"}:
+            if cfg.scheduler not in {"cosine", "step", "none"} or cfg.anomaly_method not in {"patchcore", "reconstruction", "dinomaly"}:
                 raise ValueError("scheduler 또는 이상 탐지 설정 오류")
             if not 0 < cfg.patchcore_sampling_ratio <= 1 or min(cfg.patchcore_n_neighbors, cfg.patchcore_max_candidates, cfg.patchcore_max_memory_bank) < 1:
                 raise ValueError("PatchCore 비율 또는 패치 수 오류")
             if not math.isfinite(project.model.backbone_lr_mult) or project.model.backbone_lr_mult <= 0:
                 raise ValueError("백본 학습률 배수 범위 오류")
             if project.task != "obb":
-                engine = training_engine_name(cfg.training_mode) if project.task != "anomaly" else "custom"
+                engine = ("dinomaly" if project.model.model_id == "dinomaly_vits14" else
+                          training_engine_name(cfg.training_mode) if project.task != "anomaly" else "custom")
                 selection_policy(cfg, engine, project.task)
             if body.data_root is not None:
                 root = existing_path(body.data_root, directory=True)

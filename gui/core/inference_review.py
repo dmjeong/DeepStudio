@@ -39,7 +39,7 @@ def source_class(image_path, project=None):
 
 def normalized_patchcore(record):
     details = record.get("details") or {}
-    return details.get("engine") == "patchcore" and details.get("score_space") == "normalized_0_1"
+    return details.get("engine") in {"patchcore", "dinomaly"} and details.get("score_space") == "normalized_0_1"
 
 
 def classification_decision(record):

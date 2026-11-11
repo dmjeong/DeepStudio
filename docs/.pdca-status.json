@@ -23,9 +23,10 @@
     "segmentation-model-candidates",
     "segmentation-pretrained-completion",
     "inference-compare-concurrency",
-    "segmentation-reference-synthesis"
+    "segmentation-reference-synthesis",
+    "modern-dense-models"
   ],
-  "primaryFeature": "segmentation-synthesis-duplicates",
+  "primaryFeature": "modern-dense-models",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -684,6 +685,30 @@
       },
       "checkedAt": "2026-11-11T08:25:55.291145+00:00",
       "completedAt": "2026-11-11T08:26:03.361679+00:00"
+    },
+    "modern-dense-models": {
+      "phase": "completed",
+      "version": "15.88",
+      "documents": {
+        "design": "docs/02-design/features/modern-dense-models.design.md",
+        "analysis": "docs/03-analysis/modern-dense-models.md",
+        "report": "docs/RELEASE_15.88.md"
+      },
+      "validation": {
+        "python_unique_passed": 634,
+        "windows_only_skipped": 1,
+        "new_model_tests_passed": 30,
+        "cpp_ctest_passed": 8,
+        "pretrained_assets": "4 official assets verified; RGB/BW8 train/export",
+        "deployment": "FP32/INT8, encrypted/plain, native C++ output parity; multi-tile crop/scale; no-argument example",
+        "checks": "Ruff, Python syntax, workflow YAML, diff check passed",
+        "limits": "Synthetic data only; Windows/i7 latency, CUDA training and Windows EXE not locally verified"
+      },
+      "checkedAt": "2026-11-11T21:22:10.141029+00:00",
+      "matchRate": 100,
+      "matchRateScope": "Implemented design checklist; not accuracy, Windows runtime certification, or performance",
+      "status": "verified_locally",
+      "completedAt": "2026-11-11T21:22:41.015354+00:00"
     }
   },
   "pipeline": {
@@ -1098,6 +1123,24 @@
       "phase": "report",
       "nextPhase": "completed",
       "timestamp": "2026-11-10T00:00:19.275Z"
+    },
+    {
+      "feature": "modern-dense-models",
+      "from": "do",
+      "to": "check",
+      "timestamp": "2026-11-11T21:22:10.141029+00:00"
+    },
+    {
+      "feature": "modern-dense-models",
+      "from": "check",
+      "to": "report",
+      "timestamp": "2026-11-11T21:22:41.015354+00:00"
+    },
+    {
+      "feature": "modern-dense-models",
+      "from": "report",
+      "to": "completed",
+      "timestamp": "2026-11-11T21:22:41.015354+00:00"
     }
   ]
 }

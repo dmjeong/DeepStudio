@@ -56,13 +56,14 @@ class TrainingWidget(TrainingForm, QWidget):
         └──────────────────────┴─────────┴──────────┴──────────┘
         """
         is_anomaly = self.project is not None and self.project.task == "anomaly"
-        mode = "custom" if is_anomaly else self.mode_combo.currentData()
-        self.mode_group.setVisible(not is_anomaly)
+        is_dinomaly = self.model_id_combo.currentData() == "dinomaly_vits14"
+        mode = "custom" if is_anomaly and not is_dinomaly else self.mode_combo.currentData()
+        self.mode_group.setVisible(not is_anomaly or is_dinomaly)
         # 모델 피커: 파인튜닝에서만
         self.efficientnet_frame.setVisible(str(mode).startswith("efficientnet") and mode != "efficientnet_resume")
         self.efficientnet_model_combo.setEnabled(mode != "efficientnet_resume")
         # 이전 모델 경로: 이어학습에서만
-        self.resume_frame.setVisible(mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+        self.resume_frame.setVisible(mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer", "builtin_resume",
                                               "upstream_resume", "upstream_transfer", "sam2_transfer"})
         from core.training_modes import MODE_HELP
         help_text = MODE_HELP.get(mode, "지원하지 않는 학습 모드입니다. 현재 엔진을 선택하세요.")
@@ -104,16 +105,22 @@ class TrainingWidget(TrainingForm, QWidget):
         """Only offer initialization paths that belong to the selected model."""
         model_id = self.model_id_combo.currentData() or ""
         name = self.model_id_combo.currentText()
-        if model_id in BUILTIN_SCRATCH_ONLY_IDS:
+        if model_id == "dinomaly_vits14":
+            choices = [("builtin_finetune", "DINOv2 기본 가중치 + 새 재구성기"),
+                       ("builtin_transfer", "로컬 Dinomaly / DINOv2 가중치로 시작"),
+                       ("builtin_resume", "중단한 Dinomaly 학습 재개")]
+            self.mode_desc.setText("정상 이미지만 에폭 학습. 인코더는 고정하고 재구성기를 학습합니다.")
+        elif model_id in BUILTIN_SCRATCH_ONLY_IDS:
             # 사전학습 가중치가 없는 모델: 고를 수 없는 '사전학습으로 시작'은 보여 주지 않는다
             choices = [("builtin_scratch", f"{name} 처음부터 학습"),
                        ("builtin_transfer", f"{name} 이전 학습 결과(.pt)로 이어서")]
             self.mode_desc.setText(f"선택 모델: {name}\n기본 사전학습 파일은 제공하지 않습니다. 내 데이터로 학습하거나 이전 학습 결과를 불러옵니다.")
         elif model_id in BUILTIN_ADAPTER_IDS:
-            source = "LVD-142M" if model_id.startswith("dinov2_") else "ImageNet"  # DINOv2는 자기지도 사전학습
+            source = "LVD-142M" if model_id.startswith(("dinov2_", "eomt_")) else "ImageNet"  # DINOv2는 자기지도 사전학습
             choices = [("builtin_finetune", f"{name} {source} 가중치로 시작"),
                        ("builtin_transfer", f"{name} 로컬 가중치로 시작"),
-                       ("builtin_scratch", f"{name} 처음부터 학습")]
+                       ("builtin_scratch", f"{name} 처음부터 학습"),
+                       ("builtin_resume", f"{name} 중단한 학습 재개")]
             scope = "분류 모델" if self.project.task == "classify" else "백본 (분할 헤드는 새로 학습)"
             self.mode_desc.setText(f"선택 모델: {name}\n사전학습 범위: {scope}")
         elif model_id.startswith("efficientnet_") or (not model_id and self.project.task == "classify"):
@@ -146,7 +153,7 @@ class TrainingWidget(TrainingForm, QWidget):
             self.mode_combo.setCurrentIndex(max(0, self.mode_combo.findData(preferred)))
         finally:
             self.mode_combo.blockSignals(False)
-        self.mode_combo.setEnabled(self.project.task not in {"anomaly", "obb"} and len(choices) > 1)
+        self.mode_combo.setEnabled((self.project.task not in {"anomaly", "obb"} or model_id == "dinomaly_vits14") and len(choices) > 1)
 
     def _set_model_options(self, project):
         """Filter the shared catalog to the current task and restore model_id."""
@@ -237,6 +244,14 @@ class TrainingWidget(TrainingForm, QWidget):
                 self.resume_edit.clear()
                 self.weights_edit.clear()
         self._displayed_model_id = model_id
+        if self.project.task == "anomaly":
+            method = "dinomaly" if model_id == "dinomaly_vits14" else "patchcore"
+            self.anomaly_method_combo.blockSignals(True)
+            self.anomaly_method_combo.setCurrentIndex(self.anomaly_method_combo.findData(method))
+            self.anomaly_method_combo.blockSignals(False)
+            self.anomaly_method_combo.setEnabled(model_id != "dinomaly_vits14")
+            self.project.training.anomaly_method = method
+
         # The selected catalog ID is the source of truth for the worker too.
         self.project.model.model_id = model_id
         try:
@@ -469,8 +484,12 @@ class TrainingWidget(TrainingForm, QWidget):
         if not hasattr(self, "tl_group"):
             return
         is_anomaly = self.project is not None and self.project.task == "anomaly"
-        is_pc = is_anomaly and self.anomaly_method_combo.currentData() == "patchcore"
-        resume = not is_anomaly and str(self.mode_combo.currentData()).endswith("_resume")
+        is_dinomaly = self.model_id_combo.currentData() == "dinomaly_vits14"
+        if is_anomaly and not is_dinomaly and self.anomaly_method_combo.currentData() == "dinomaly":
+            self.model_id_combo.setCurrentIndex(self.model_id_combo.findData("dinomaly_vits14"))
+            return
+        is_pc = is_anomaly and not is_dinomaly and self.anomaly_method_combo.currentData() == "patchcore"
+        resume = (not is_anomaly or is_dinomaly) and str(self.mode_combo.currentData()).endswith("_resume")
         source = self.pc_source_combo.currentData()
         self.pc_backbone_combo.setEnabled(is_pc and source != "patchcore")
         self.pc_weights_edit.setEnabled(is_pc and source != "imagenet")
@@ -491,6 +510,7 @@ class TrainingWidget(TrainingForm, QWidget):
         for control in (self.epochs_spin, self.lr_spin, self.wd_spin, self.optimizer_combo,
                         self.scheduler_combo, self.patience_spin):
             control.setEnabled(not is_pc and not resume)
+        self.epochs_spin.setEnabled(not is_pc)
         for control in (self.pc_aug_views_label, self.pc_aug_views_spin, self.pc_aug_info):
             control.setVisible(is_pc)
         self.pc_aug_views_spin.setEnabled(is_pc)
@@ -503,6 +523,15 @@ class TrainingWidget(TrainingForm, QWidget):
         # SAM2는 자체 prompt 손실을 쓰므로 분할 손실·가중치 선택이 적용되지 않는다.
         sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
         self.segmentation_loss_combo.setEnabled(not resume and not sam2)
+        self.distillation_group.setVisible(self.project is not None and self.project.task == "segment"
+                                          and self.model_id_combo.currentData() in BUILTIN_ADAPTER_IDS)
+        self.finetune_freeze_check.setEnabled(not is_dinomaly)
+        self.backbone_lr_spin.setEnabled(not is_dinomaly and not resume)
+        self.amp_check.setEnabled(not is_dinomaly)
+        if is_dinomaly:
+            self.finetune_freeze_check.setChecked(True)
+            self.amp_check.setChecked(False)
+
         if self.project and self.project.task == "segment" and sam2:
             self.class_weight_combo.setEnabled(False)
         # 분할(SAM2 제외), native 탐지와 분류의 패치 계약을 구분한다.
@@ -510,8 +539,8 @@ class TrainingWidget(TrainingForm, QWidget):
         self.advise_btn.setVisible(segment)
         self.advise_btn.setEnabled(segment and not resume and getattr(self, "_advice_scan", None) is None)
         native = self.project is not None and self.project.task in {"classify", "detect"} and str(self.mode_combo.currentData()).startswith("upstream")
-        available = (segment and not sam2) or native
-        self.patch_check.setVisible(segment or native)
+        available = (segment and not sam2) or native or is_dinomaly
+        self.patch_check.setVisible(segment or native or is_dinomaly)
         self.patch_check.setEnabled(available and not resume)
         patch = available and self.patch_check.isChecked()
         if native:
@@ -580,7 +609,7 @@ class TrainingWidget(TrainingForm, QWidget):
             self.selection_combo.clear()
             self.selection_info.setText("현재 태스크 또는 저장된 학습 모드는 지원하지 않습니다.")
             return
-        engine = training_engine_name(self.mode_combo.currentData())
+        engine = "dinomaly" if self.model_id_combo.currentData() == "dinomaly_vits14" else training_engine_name(self.mode_combo.currentData())
         current = self.selection_combo.currentData() or "engine_default"
         self.selection_combo.blockSignals(True)
         self.selection_combo.clear()
@@ -601,10 +630,15 @@ class TrainingWidget(TrainingForm, QWidget):
         if self.project.task == "anomaly" and self.anomaly_method_combo.currentData() == "patchcore":
             self.selection_info.setText("PatchCore는 메모리 뱅크 1회 구축: 에폭별 Best 비교 없음")
             return
-        engine = training_engine_name(self.mode_combo.currentData())
+        engine = "dinomaly" if self.model_id_combo.currentData() == "dinomaly_vits14" else training_engine_name(self.mode_combo.currentData())
         policy = selection_policy(SimpleNamespace(selection_metric=self.selection_combo.currentData() or "engine_default"),
                                   engine, self.project.task)
         self.selection_info.setText(policy.describe() + "\nBest 저장과 조기 종료에 동일하게 적용")
+
+    def _browse_teacher(self):
+        path, _ = QFileDialog.getOpenFileName(self, "분할 교사 모델", "", "PyTorch (*.pt *.pth)")
+        if path:
+            self.teacher_edit.setText(path)
 
     def _browse_patchcore_weights(self):
         filepath, _ = QFileDialog.getOpenFileName(
@@ -638,7 +672,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self.debug_batches.setValue(cfg.layer_debug_batches)
 
         # ── 학습 모드 복원 ──
-        mode = "custom" if project.task == "anomaly" else getattr(cfg, "training_mode", "efficientnet_finetune")
+        mode = "custom" if project.task == "anomaly" and project.model.model_id != "dinomaly_vits14" else getattr(cfg, "training_mode", "builtin_finetune")
         self._populate_training_modes(mode)
         if hasattr(self, "_on_model_id_changed"):
             self._on_model_id_changed(keep_mode=True)
@@ -670,6 +704,9 @@ class TrainingWidget(TrainingForm, QWidget):
                 break
         loss_index = self.segmentation_loss_combo.findData(getattr(cfg, "segmentation_loss", "ce_dice"))
         self.segmentation_loss_combo.setCurrentIndex(max(loss_index, 0))
+        self.teacher_edit.setText(cfg.teacher_checkpoint)
+        self.kd_alpha.setValue(cfg.distillation_alpha)
+        self.kd_temperature.setValue(cfg.distillation_temperature)
         self.patch_check.setChecked(bool(getattr(cfg, "patch_training", False)))
         self.patch_count_spin.setValue(int(getattr(cfg, "patches_per_image", 0)))
         scale_index = self.patch_scale_combo.findData(float(getattr(cfg, "patch_scale", 1.0)))
@@ -705,7 +742,7 @@ class TrainingWidget(TrainingForm, QWidget):
         # 이어학습 경로 복원
         self.resume_edit.setText(
             (getattr(mcfg, "pretrained_weights", "") or "")
-            if mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+            if mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer", "builtin_resume",
                         "upstream_resume", "upstream_transfer", "sam2_transfer"}
             else ""
         )
@@ -730,7 +767,7 @@ class TrainingWidget(TrainingForm, QWidget):
         if is_anomaly:
             # 이상 탐지 방법 복원 (patchcore / reconstruction)
             method = getattr(cfg, "anomaly_method", "patchcore")
-            idx = 0 if method == "patchcore" else 1
+            idx = max(0, self.anomaly_method_combo.findData("dinomaly" if project.model.model_id == "dinomaly_vits14" else method))
             self.anomaly_method_combo.setCurrentIndex(idx)
 
             # 코어셋 비율 · kNN 이웃 수 복원
@@ -815,7 +852,7 @@ class TrainingWidget(TrainingForm, QWidget):
         cfg.scheduler = sch_map.get(self.scheduler_combo.currentIndex(), "cosine")
 
         # ── 학습 모드 ──
-        cfg.training_mode = "custom" if self.project.task == "anomaly" else self.mode_combo.currentData()
+        cfg.training_mode = "custom" if self.project.task == "anomaly" and self.model_id_combo.currentData() != "dinomaly_vits14" else self.mode_combo.currentData()
         cfg.efficientnet_model = self.efficientnet_model_combo.currentData() or "efficientnet_b0"
         cfg.efficientnet_no_decay = self.efficientnet_no_decay_check.isChecked()
         cfg.layer_debug_enabled = self.debug_check.isChecked() and self._training_capabilities()["layer_debug"]
@@ -836,7 +873,7 @@ class TrainingWidget(TrainingForm, QWidget):
                     mcfg.pretrained_weights = ""
         if mcfg.model_id not in {"efficientnet_b0", "efficientnet_b1"} and cfg.training_mode.startswith("efficientnet"):
             cfg.training_mode = "custom"
-        if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+        if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer", "builtin_resume",
                                  "upstream_resume", "upstream_transfer", "sam2_transfer"}:
             # 이어학습: resume_edit → pretrained_weights
             mcfg.pretrained_weights = self.resume_edit.text().strip()
@@ -873,9 +910,13 @@ class TrainingWidget(TrainingForm, QWidget):
         cfg.class_weights = (self.class_weight_combo.currentData()
                              if self.project.task in ("classify", "segment") else "none")
         cfg.segmentation_loss = self.segmentation_loss_combo.currentData() or "ce_dice"
+        cfg.teacher_checkpoint = (self.teacher_edit.text().strip()
+                                  if self.project.task == "segment" and mcfg.model_id in BUILTIN_ADAPTER_IDS else "")
+        cfg.distillation_alpha = self.kd_alpha.value()
+        cfg.distillation_temperature = self.kd_temperature.value()
         sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
         native = self.project.task in {"classify", "detect"} and str(self.mode_combo.currentData()).startswith("upstream")
-        cfg.patch_training = ((self.project.task == "segment" and not sam2 or native) and self.patch_check.isChecked())
+        cfg.patch_training = ((self.project.task == "segment" and not sam2 or native or mcfg.model_id == "dinomaly_vits14") and self.patch_check.isChecked())
         cfg.patches_per_image = 0 if native and self.project.task == "classify" else self.patch_count_spin.value()
         cfg.patch_scale = float(self.patch_scale_combo.currentData() or 1.0)
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
@@ -884,8 +925,7 @@ class TrainingWidget(TrainingForm, QWidget):
 
         # ── PatchCore 설정 동기화 (이상 탐지 전용) ──────
         if self.project and self.project.task == "anomaly":
-            method_idx = self.anomaly_method_combo.currentIndex()
-            cfg.anomaly_method = "patchcore" if method_idx == 0 else "reconstruction"
+            cfg.anomaly_method = "dinomaly" if mcfg.model_id == "dinomaly_vits14" else self.anomaly_method_combo.currentData()
             cfg.patchcore_sampling_ratio = self.pc_sampling_spin.value()
             cfg.patchcore_n_neighbors = self.pc_neighbors_spin.value()
             cfg.patchcore_backbone = self.pc_backbone_combo.currentData()
@@ -1126,7 +1166,7 @@ class TrainingWidget(TrainingForm, QWidget):
             if not path or not os.path.isfile(path):
                 QMessageBox.warning(self, "가중치 파일 확인", f"전이학습 가중치 파일이 없습니다:\n{path}")
                 return
-        if not is_anomaly and mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+        if not is_anomaly and mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer", "builtin_resume",
                                        "upstream_resume", "upstream_transfer", "sam2_transfer"}:
             resume_path = self.project.model.pretrained_weights
             if not resume_path:

@@ -300,6 +300,23 @@ jobs:
           python python/prepare_builtin_assets.py --only mobilenetv4_small_encoder,efficientnet_b1_encoder,shufflenet_v2_x1_0,bisenetv2_backbone,stdc1_backbone --strict
           python -m pytest -q tests/test_segmentation_candidates.py -k training_export_quantization_and_cpp
           python -m pytest -q tests/test_segmentation_pretrained.py
+      - name: Verify modern dense models FP32 INT8 encryption and native parity
+        env:
+          DVS_RUN_MODERN_INTEGRATION: "1"
+          DVS_MODERN_INPUT_SIZE: "448"
+          DVS_DINOMALY_INPUT_SIZE: "224"
+          SEGMENT_PROBE: ${{ github.workspace }}/build/segment_probe
+          ANOMALY_PROBE: ${{ github.workspace }}/build/anomaly_probe
+          QT_QPA_PLATFORM: offscreen
+          OMP_NUM_THREADS: "2"
+          MKL_NUM_THREADS: "2"
+        run: |
+          sudo apt-get update && sudo apt-get install -y libegl1 libopengl0
+          python -m pip install PySide6 scipy matplotlib psutil
+          python python/prepare_builtin_assets.py --only efficientvit_b0,efficientvit_b1,sctnet_s_backbone,dinov2_vits14 --strict
+          python -m pytest -q tests/test_modern_dense_models.py -o tmp_path_retention_policy=failed
+          cmake -S example/cpp/dense_models -B example/dense-build -DCMAKE_BUILD_TYPE=Release -DONNXRUNTIME_ROOT="$RUNNER_TEMP/onnxruntime-linux-x64-1.29.0"
+          cmake --build example/dense-build --target dense_model_example --parallel 2
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"

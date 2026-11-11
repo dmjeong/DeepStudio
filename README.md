@@ -1,5 +1,7 @@
 # Deep Vision Studio
 
+15.88: [최신 분할·Dinomaly 모델과 증류](docs/MODERN_DENSE_MODELS.md) — EfficientViT B0/B1, SCTNet-S, EoMT, Dinomaly. FP32/INT8 ONNX·C++ 고정 타일·암호화·원본 비교·증강/패치 학습.
+
 14.86: [SEG 정답으로 가상 불량 생성](docs/SEGMENTATION_SYNTHESIS.md) — crack·이물·shift·double·flip, 원본 크기 이미지와 정답 마스크, 검수 후 새 학습 프로젝트 저장.
 
 로컬 환경에서 이미지 데이터 편집, 학습, 추론과 결과 검토를 수행하는 도구입니다.
@@ -12,7 +14,7 @@
 | 분류 | EfficientNet B0/B1, ResNet 18/50, ConvNeXt V1 Tiny, LibreYOLO MobileNetV4 Small/Medium, Custom CSP | 클래스별 이미지 폴더 |
 | 시맨틱 분할 | SAM2 Hiera Tiny/Small/Base+/Large, DeepLab V3+ ResNet34, U-Net ResNet18, DINOv2 ViT-S/14 + Detail, Custom CSP | 이미지와 클래스 인덱스 마스크 |
 | 박스 탐지 | Re-DETR v4 Small/Medium/Large, LibreYOLO9 Tiny, D-FINE Nano (COCO), Custom CSP | 정규화된 `class cx cy width height` 텍스트 |
-| 이상 탐지 | PatchCore 또는 Custom CSP 재구성 | 정상 이미지, 선택적 평가용 불량 이미지 |
+| 이상 탐지 | PatchCore, Dinomaly DINOv2-S/14, Custom CSP 재구성 | 정상 이미지, 선택적 평가용 불량 이미지 |
 | 회전 박스 | 데이터 편집·크롭만 지원 | 클래스와 네 꼭짓점의 정규화 좌표 |
 
 회전 박스의 학습·모델 추론 엔진은 제공하지 않습니다. 지원하지 않는 저장된 학습 모드는

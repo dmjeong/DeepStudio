@@ -111,10 +111,10 @@ def test_quantize_writes_an_int8_model_that_matches_fp32(exported):
     assert report["class_iou"]["spot"] > 0.9
 
 
-def test_quantize_rejects_models_without_the_whole_image_contract(tmp_path):
+def test_quantize_rejects_non_dense_tasks(tmp_path):
     from quantize_onnx import quantize_segment
     (tmp_path / "c.json").write_text(json.dumps({"task": "classify", "model_path": "c.onnx"}), encoding="utf-8")
-    with pytest.raises(ValueError, match="whole_image"):
+    with pytest.raises(ValueError, match="분할·Dinomaly"):
         quantize_segment(tmp_path / "c.json", tmp_path, log=lambda _m: None)
 
 

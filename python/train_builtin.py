@@ -113,7 +113,7 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
 
 
 def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None,
-                        pixel_counts_out=None, class_report_out=None, should_stop=None, progress=None):
+                        pixel_counts_out=None, class_report_out=None, should_stop=None, progress=None, distiller=None):
     training = optimizer is not None
     model.train(training)
     if training:
@@ -136,7 +136,9 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
                 raise _Stopped()
             images = images.to(device, non_blocking=non_blocking)
             masks = masks.to(device, dtype=torch.long, non_blocking=non_blocking)
-            if training and hasattr(model, "forward_train"):
+            if training and hasattr(model, "compute_training_loss"):
+                logits, loss = model.compute_training_loss(images, masks, criterion)
+            elif training and hasattr(model, "forward_train"):
                 logits, auxiliary, boundary = model.forward_train(images)
                 loss = criterion(logits, masks)
                 config = model.training_loss_config
@@ -148,6 +150,8 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
             else:
                 logits = model(images)
                 loss = criterion(logits, masks)
+            if training and distiller is not None:
+                loss = distiller(images, logits, masks, loss)
             if training:
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -281,7 +285,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   segmentation_loss: str = "ce_dice", class_weights: str = "none",
                   patch_training: bool = False, patches_per_image: int = 0, patch_scale: float = 1.0,
                   class_report: bool = False, should_stop=lambda: False,
-                  center_crop: dict | None = None) -> Path:
+                  center_crop: dict | None = None, teacher_checkpoint=None,
+                  distillation_alpha=.3, distillation_temperature=2.) -> Path:
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
     if gui_path not in sys.path:
@@ -467,7 +472,16 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                             class_weight_values=pixel_weights)
     else:
         criterion = nn.CrossEntropyLoss(ignore_index=255, label_smoothing=label_smoothing)
+    distiller = None
+    if teacher_checkpoint:
+        if spec.task != "segment":
+            raise ValueError("픽셀 증류는 분할 태스크만 지원합니다")
+        from segmentation_distillation import SegmentationDistiller
+        distiller = SegmentationDistiller(teacher_checkpoint, class_names, in_channels, target,
+                                         alpha=distillation_alpha, temperature=distillation_temperature)
+        log(f"동일 증강 입력 교사 증류: {distiller.config}")
     training_config = {
+        "distillation": distiller.config if distiller else None,
         "optimizer": optimizer_name, "scheduler": scheduler_name,
         "learning_rate": learning_rate, "weight_decay": weight_decay,
         "warmup_epochs": warmup_epochs, "early_stop_patience": early_stop_patience,
@@ -498,6 +512,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         checkpoint = resume_checkpoint
         if checkpoint.get("model_id") != model_id:
             raise ValueError("resume checkpoint model_id does not match the requested adapter")
+        if checkpoint.get("training_config", {}).get("distillation") != training_config["distillation"]:
+            raise ValueError("재개할 때 교사 가중치와 증류 설정을 유지해야 합니다")
         saved_metric = checkpoint.get("training_config", {}).get("selection_metric", "engine_default")
         saved_policy = selection_policy(SimpleNamespace(selection_metric=saved_metric), "builtin", spec.task)
         if saved_policy.metric != policy.metric:
@@ -515,10 +531,11 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         start_epoch = int(checkpoint.get("epoch", -1)) + 1
         history = list(checkpoint.get("metrics_history") or [])
-        previous_best_path = resume_path.parent / "best.pt"
-        if previous_best_path.is_file():
+        from checkpoint import previous_best_path
+        previous_best = previous_best_path(resume_path)
+        if previous_best is not None:
             resume_best_checkpoint = torch.load(
-                previous_best_path, map_location="cpu", weights_only=False
+                previous_best, map_location="cpu", weights_only=True
             )
             if resume_best_checkpoint.get("model_id") != model_id:
                 raise ValueError("best checkpoint model_id does not match the resume adapter")
@@ -556,6 +573,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                 seen_pixels = []
                 train_loss, train_metric = _segmentation_epoch(model, train_loader, criterion, optimizer, target,
                                                                pixel_counts_out=seen_pixels,
+                                                               **({"distiller": distiller} if distiller is not None else {}),
                                                                **watch("학습", train_loader))
                 if epoch == start_epoch and class_weights == "none":
                     _log_rare_class_hint(seen_pixels, class_names, log)

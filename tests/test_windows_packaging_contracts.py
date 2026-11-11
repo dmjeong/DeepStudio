@@ -114,6 +114,7 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
         (examples / "cpp" / name).write_text("example code", encoding="utf-8")
     for name in ("with_opencv/CMakeLists.txt", "with_evision/CMakeLists.txt",
                  "with_evision/roi_example.h", "with_evision/roi_example.cpp",
+                 "dense_models/main.cpp", "dense_models/CMakeLists.txt", "dense_models/build.bat",
                  "nlohmann/json.hpp", "nlohmann/LICENSE.MIT", "nlohmann/CMakeLists.txt",
                  "with_evision/classifier.h", "with_evision/bw8_preprocess.h"):
         path = examples / "cpp" / name
@@ -125,6 +126,7 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     (cpp / "include" / "vision_inference.h").write_text("header", encoding="utf-8")
     (cpp / "include" / "ort_vs2017.cmake").write_text("compatibility script", encoding="utf-8")
     (cpp / "src" / "vision_inference.cpp").write_text("source", encoding="utf-8")
+    (cpp / "src" / "dense_tiles.h").write_text("tile implementation", encoding="utf-8")
     (csharp / "VisionRuntime.csproj").write_text("runtime", encoding="utf-8")
     (csharp / "VisionRuntime.cs").write_text("source", encoding="utf-8")
     notice = tmp_path / "THIRD_PARTY_NOTICES.md"
@@ -142,6 +144,7 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     )
     assert {item.name for item in payload.iterdir()} == {"app", "Examples", "THIRD_PARTY_NOTICES.md"}
     assert (payload / "Examples/cpp/vision-runtime/src/vision_inference.cpp").is_file()
+    assert (payload / "Examples/cpp/vision-runtime/src/dense_tiles.h").read_text() == "tile implementation"
     assert (payload / "Examples/cpp/with_evision/bw8_preprocess.h").is_file()
     assert (payload / "Examples/cpp/with_opencv/CMakeLists.txt").is_file()
     assert (payload / "Examples/cpp/vision-runtime/include/ort_vs2017.cmake").read_text(encoding="utf-8") == "compatibility script"

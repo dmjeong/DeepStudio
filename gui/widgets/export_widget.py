@@ -16,7 +16,7 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QFileDialog, QMessageBox, QGroupBox,
-    QFormLayout, QSpinBox,
+    QFormLayout, QSpinBox, QComboBox,
     QCheckBox, QTextEdit, QProgressBar,
 )
 from PySide6.QtCore import QThread, Signal
@@ -41,11 +41,12 @@ class ExportWorker(QThread):
     def __init__(self, checkpoint_path, output_path, opset_version,
                  dynamic_batch, simplify, verify, parent=None, *, sam2_model_id="",
                  validation_dir=None, allow_precision_fallback=False, encryption_key_path=None, overrides=None,
-                 merge_with=""):
+                 merge_with="", precision="float32", calibration_dir=None):
         super().__init__(parent)
         self.checkpoint_path = checkpoint_path
         self.output_path = output_path
         self.options = dict(opset_version=opset_version, dynamic_batch=dynamic_batch,
+                            precision=precision, calibration_dir=calibration_dir,
                             simplify=simplify, verify=verify, validation_dir=validation_dir,
                             allow_precision_fallback=allow_precision_fallback,
                             encryption_key_path=encryption_key_path, overrides=overrides)
@@ -188,6 +189,20 @@ class ExportWidget(QWidget):
         opset_row.addStretch(1)
         opt_layout.addRow("Opset 버전:", opset_row)
 
+        self.export_precision = QComboBox()
+        self.export_precision.addItem("FP32 (원본 정밀도)", "float32")
+        self.export_precision.addItem("INT8 QDQ (분할·Dinomaly, 보정 필요)", "int8")
+        opt_layout.addRow("정밀도:", self.export_precision)
+        self.calibration_edit = QLineEdit()
+        self.calibration_edit.setPlaceholderText("INT8 보정용 학습 이미지 폴더 (정상·불량 혼합)")
+        calibration_row = QHBoxLayout()
+        calibration_row.addWidget(self.calibration_edit)
+        calibration_browse = QPushButton("찾아보기...")
+        calibration_browse.clicked.connect(self._browse_calibration)
+        calibration_row.addWidget(calibration_browse)
+        opt_layout.addRow("INT8 보정 이미지:", calibration_row)
+        self.calibration_edit.setToolTip("INT8은 FP32와 값이 달라질 수 있습니다. 출력 차이 리포트를 저장하며 검증/시험 데이터의 실제 판정도 비교하세요.")
+
         self.dynamic_check = QCheckBox("동적 배치 크기 지원")
         opt_layout.addRow("", self.dynamic_check)
 
@@ -275,6 +290,8 @@ class ExportWidget(QWidget):
             self.encrypt_check.setChecked(False)
             self.key_edit.clear()
         self.project = project
+        self.export_precision.setCurrentIndex(0)
+        self.calibration_edit.setText(project.data.train_dir or "")
         self.validation_edit.clear()
         efficientnet = project.task == "classify" and str(getattr(project.model, "model_id", "")).startswith("efficientnet_")
         self.dataset_verify_check.setChecked(efficientnet)
@@ -342,7 +359,7 @@ class ExportWidget(QWidget):
                             ". <b>판정 영역 크기를 입력하세요</b> — 설비에서 넘기는 영상 크기"
                             "(예전 체크포인트라 학습 영상 크기 기록이 없습니다)."))
         elif preview.get("patch") and preview.get("vit"):
-            lines.append("ViT 패치 모델은 타일 추론이 필요해 C++ SDK에서는 쓸 수 없습니다(데스크톱 추론 전용).")
+            lines.append("전역 문맥 모델: 학습 크기 타일로 내보냅니다. 새 C++ SDK(schema 8)가 자동으로 영역을 나누고 결과를 합칩니다.")
         if preview.get("task") == "segment":
             rules = preview.get("rules")
             if preview.get("rules_error"):
@@ -397,6 +414,11 @@ class ExportWidget(QWidget):
                 self.encrypt_check.setChecked(True)
             except Exception as exc:
                 QMessageBox.warning(self, "키 생성 실패", str(exc))
+
+    def _browse_calibration(self):
+        folder = QFileDialog.getExistingDirectory(self, "INT8 보정 이미지 폴더", self.calibration_edit.text())
+        if folder:
+            self.calibration_edit.setText(folder)
 
     def _browse_validation(self):
         folder = QFileDialog.getExistingDirectory(self, "분류 비교 이미지 폴더", self.validation_edit.text())
@@ -454,6 +476,10 @@ class ExportWidget(QWidget):
                 QMessageBox.warning(self, "모델 합치기", "합친 모델은 아직 암호화 내보내기를 지원하지 않습니다. 암호화를 끄세요.")
                 return
 
+        if self.export_precision.currentData() == "int8":
+            if merge_with or not self.verify_check.isChecked() or not os.path.isdir(self.calibration_edit.text().strip()):
+                QMessageBox.warning(self, "INT8 설정", "출력 검증과 보정 이미지 폴더가 필요합니다. 모델 합치기는 FP32로 먼저 내보내세요.")
+                return
         validation_dir = None
         if self.dataset_verify_check.isChecked() and self.verify_check.isChecked():
             validation_dir = self.validation_edit.text().strip()
@@ -473,6 +499,7 @@ class ExportWidget(QWidget):
             simplify=self.simplify_check.isChecked(),
             verify=self.verify_check.isChecked(), parent=self,
             validation_dir=validation_dir,
+            precision=self.export_precision.currentData(), calibration_dir=self.calibration_edit.text().strip() or None,
             allow_precision_fallback=self.precision_check.isChecked(),
             encryption_key_path=encryption_key_path,
             merge_with=merge_with,
@@ -534,7 +561,8 @@ class ExportWidget(QWidget):
         self.log_text.setTextCursor(cursor)
 
     def _on_finished(self, result):
-        status = "검증 통과" if result["verification"] == "passed" else "검증 건너뜀"
+        status = ("INT8 실행·보정 영상 비교 완료" if result.get("precision") == "int8" else
+                  "검증 통과" if result["verification"] == "passed" else "검증 건너뜀")
         if result.get("merged"):
             text = (f"두 모델 합치기 완료 ({status})\n\n모델: {result['output_path']}\n설정: {result['config_path']}\n"
                     f"크기: {result['file_size_mb']:.1f} MB\n클래스: {', '.join(result['class_names'])}\n"
@@ -549,6 +577,8 @@ class ExportWidget(QWidget):
                 f"모델: {result['output_path']}\n"
                 f"설정: {result.get('config_path') or '암호화 파일에 포함'}\n"
                 f"크기: {result['file_size_mb']:.1f} MB")
+        if result.get("precision") == "int8":
+            text += "\nINT8은 FP32와 수치·정확도가 달라질 수 있습니다. 보정 영상 비교 결과는 로그와 JSON에 저장했습니다. 별도 시험 영상으로 확인하세요."
         if result.get("backend") == "sam2" and not result.get("encrypted"):
             text += "\nSAM2는 encoder ONNX, decoder ONNX, sam2.json 세 파일을 함께 배포합니다."
         if result.get("encrypted"):
