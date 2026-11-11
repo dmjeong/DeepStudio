@@ -4,6 +4,7 @@ import importlib.util
 import os
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest.mock import Mock
 
@@ -31,13 +32,18 @@ class HeatmapControlTests(unittest.TestCase):
         self.widget.show()
         self.application.processEvents()
         self.original = np.full((2, 4, 3), 100, dtype=np.uint8)
+        from PIL import Image
+        directory = tempfile.TemporaryDirectory(prefix="heatmap-control-")
+        self.addCleanup(directory.cleanup)
+        self.image_path = str(Path(directory.name) / "current.png")
+        Image.fromarray(self.original).save(self.image_path)
         self.activation = np.array([[0, 0.2, 0.6, 1], [0, 0.2, 0.6, 1]], dtype=np.float32)
-        self.widget._current_image = "current.png"
+        self.widget._current_image = self.image_path
         self.widget.gradcam_checkbox.setChecked(True)
-        self.result = InferenceResult("current.png", "ok", "anomaly", "NG 0.1234",
+        self.result = InferenceResult(self.image_path, "ok", "anomaly", "NG 0.1234",
                                       "#E05555", 0.1234, 0.1, elapsed_sec=0.025)
         self.widget._present_result(self.result)
-        self.widget._set_heatmap_preview("current.png", self.original, self.activation,
+        self.widget._set_heatmap_preview(self.image_path, self.original, self.activation,
                                         "Grad-CAM", "test")
 
     def tearDown(self):
@@ -73,7 +79,7 @@ class HeatmapControlTests(unittest.TestCase):
         mask = np.ones(self.activation.shape, bool)
         mask[:, -1] = False
         self.widget.gradcam_alpha_combo.setCurrentIndex(self.widget.gradcam_alpha_combo.findData(1.0))
-        self.widget._set_heatmap_preview("current.png", self.original, self.activation,
+        self.widget._set_heatmap_preview(self.image_path, self.original, self.activation,
                                         "Grad-CAM", "test", valid_mask=mask)
         self.settle()
         self.assertEqual(self.pixel(0), (0, 0, 127))
@@ -115,7 +121,7 @@ class HeatmapControlTests(unittest.TestCase):
 
     def test_toggle_preserves_native_result_image_and_cached_map(self):
         base = np.full_like(self.original, 33)
-        self.widget._set_heatmap_preview("current.png", self.original, self.activation,
+        self.widget._set_heatmap_preview(self.image_path, self.original, self.activation,
                                         "Grad-CAM", "native", base_image=base)
         self.widget.gradcam_checkbox.setChecked(False)
         self.settle()
@@ -134,7 +140,7 @@ class HeatmapControlTests(unittest.TestCase):
         self.widget.image_label.setText("new image")
         self.settle()
         self.assertEqual(self.widget.image_label.text(), "new image")
-        self.widget._set_heatmap_preview("current.png", self.original, self.activation,
+        self.widget._set_heatmap_preview(self.image_path, self.original, self.activation,
                                         "Grad-CAM", "test")
         self.widget._current_image = "other.png"
         self.widget.image_label.setText("other image")
@@ -145,7 +151,7 @@ class HeatmapControlTests(unittest.TestCase):
     def test_patchcore_uses_range_without_gradcam_checkbox_or_threshold_change(self):
         self.widget.gradcam_checkbox.setChecked(False)
         self.widget._anomaly_threshold = 0.1
-        self.widget._set_heatmap_preview("current.png", self.original, self.activation,
+        self.widget._set_heatmap_preview(self.image_path, self.original, self.activation,
                                         "PatchCore", "score 0.1234")
         self.widget.heatmap_lower_spin.setValue(50)
         self.settle()

@@ -37,6 +37,7 @@ def render(scale, output):
         from core.project import ProjectManager
         from app.main_window import MainWindow
         from widgets.training_results import HAS_MATPLOTLIB
+        from main import load_stylesheet
         if not HAS_MATPLOTLIB:
             raise RuntimeError("Matplotlib Qt canvas is required")
 
@@ -44,7 +45,7 @@ def render(scale, output):
             report["issues"].append("".join(traceback.format_exception(kind, value, tb)))
         sys.excepthook = record_exception
         app = QApplication.instance() or QApplication([])
-        app.setStyleSheet((ROOT / "gui/resources/styles/dark_theme.qss").read_text(encoding="utf-8"))
+        app.setStyleSheet(load_stylesheet())
         window = MainWindow()
         page = window.training_page
         window.content_stack.setCurrentWidget(page)

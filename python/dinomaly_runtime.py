@@ -189,6 +189,7 @@ def export_dinomaly_checkpoint(
                     validate_outputs(a.numpy(), b, **tolerance)
         config["verification"] = "passed" if verify else "skipped"
         config["export"] = {
+            "onnxruntime_version": ort.__version__,
             "opset": opset,
             "precision": "float32",
             "dynamic_batch": False,

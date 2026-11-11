@@ -150,12 +150,17 @@ def query_loss(pred_masks, pred_classes, target):
         if not valid.any():
             continue
         labels = torch.unique(target[batch][valid])
+        # The encoder pads right/bottom to a 14-pixel patch boundary. Decode
+        # in that same coordinate system, then crop, just as semantic() does.
+        # Resizing directly to (e.g.) 640 shrinks the 644-pixel field and
+        # misaligns narrow target masks during query matching/training.
+        padded_size = tuple(((s + 13) // 14) * 14 for s in target.shape[-2:])
         masks = F.interpolate(
             pred_masks[batch : batch + 1],
-            size=target.shape[-2:],
+            size=padded_size,
             mode="bilinear",
             align_corners=False,
-        )[0, :, valid]
+        )[0, :, : target.shape[-2], : target.shape[-1]][:, valid]
         truth = (target[batch][None] == labels[:, None, None])[:, valid].float()
         probabilities = masks.sigmoid()
         dice_cost = 1 - (2 * probabilities @ truth.T + 1) / (

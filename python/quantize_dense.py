@@ -146,6 +146,7 @@ def quantize_dense(
         result.setdefault("export", {}).update(
             precision="int8",
             quantization={
+                "onnxruntime_version": ort.__version__,
                 "format": "QDQ",
                 "weights": "int8 per-channel",
                 "activations": "uint8",

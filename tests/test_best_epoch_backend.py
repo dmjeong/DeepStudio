@@ -101,7 +101,10 @@ class PatchCoreBestEpoch(unittest.TestCase):
                 evaluation = {"auroc": auroc, "f1": .8 if auroc is not None else None,
                               "evaluable": auroc is not None, "optimal_threshold": None}
                 def loader():
-                    return SimpleNamespace(dataset=SimpleNamespace(samples=[], preprocessing="full_range_v1"))
+                    return SimpleNamespace(dataset=SimpleNamespace(
+                        samples=[], preprocessing="full_range_v1",
+                        augmentation_info=lambda: {"additional_views": 0},
+                    ))
                 worker = SimpleNamespace(
                     project=project, signals=capture_signals(events), _stop_requested=False,
                     _prepare_model=lambda *args: model,
@@ -109,6 +112,7 @@ class PatchCoreBestEpoch(unittest.TestCase):
                     _evaluate_patchcore=lambda *args: (auroc, evaluation),
                 )
                 method(worker)
+                self.assertEqual(model.training_metadata["augmentation"], {"additional_views": 0})
                 update = next(event for event in events if event[0] == "best_epoch_updated")
                 self.assertEqual(update[1], 1)
                 self.assertTrue(math.isnan(update[2]) and math.isnan(update[3]))

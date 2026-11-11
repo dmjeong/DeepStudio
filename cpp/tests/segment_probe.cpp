@@ -14,6 +14,10 @@
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--runtime-version") {
+        std::cout << OrtGetApiBase()->GetVersionString() << '\n';
+        return 0;
+    }
     if (argc < 4 || argc > 7) {
         std::cerr << "usage: segment_probe <config.json|model.dvsenc> <image> <mask.png> [threads] [repeat] [key]\n";
         return 2;

@@ -510,7 +510,9 @@ class TrainingWidget(TrainingForm, QWidget):
         for control in (self.epochs_spin, self.lr_spin, self.wd_spin, self.optimizer_combo,
                         self.scheduler_combo, self.patience_spin):
             control.setEnabled(not is_pc and not resume)
-        self.epochs_spin.setEnabled(not is_pc)
+        # Built-in trainers accept an extended total epoch count on resume.
+        # EfficientNet/upstream resume restore their checkpoint schedule.
+        self.epochs_spin.setEnabled(not is_pc and (not resume or self.mode_combo.currentData() == "builtin_resume"))
         for control in (self.pc_aug_views_label, self.pc_aug_views_spin, self.pc_aug_info):
             control.setVisible(is_pc)
         self.pc_aug_views_spin.setEnabled(is_pc)

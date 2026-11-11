@@ -19,6 +19,23 @@ ort.disable_telemetry_events()
 from modern_segmentation import MODEL_IDS
 
 
+@pytest.fixture(scope="module", autouse=True)
+def matching_native_runtime():
+    """Compare language bindings of the same runtime, not different kernels."""
+    if not os.environ.get("SEGMENT_PROBE"):
+        return
+    segment = Path(os.environ["SEGMENT_PROBE"])
+    for probe in (segment, segment.with_name("anomaly_probe" + segment.suffix)):
+        result = subprocess.run(
+            [str(probe), "--runtime-version"], capture_output=True, text=True,
+            check=True, timeout=10,
+        )
+        assert result.stdout.strip() == ort.__version__, (
+            f"Python ORT {ort.__version__} != {probe.name} ORT {result.stdout.strip()}. "
+            "Install the pinned runtime used by the native SDK before comparing outputs."
+        )
+
+
 @pytest.fixture(autouse=True)
 def threads():
     previous = torch.get_num_threads()
@@ -139,7 +156,7 @@ def test_modern_pretrained_train_fp32_int8_cpp_original(model_id, channels, tmp_
     for manifest_path in (config, quantized):
         manifest = json.loads(manifest_path.read_text())
         options = ort.SessionOptions()
-        options.intra_op_num_threads = 2
+        options.intra_op_num_threads = 1  # same setting as the native probe
         session = ort.InferenceSession(
             str(manifest_path.parent / manifest["model_path"]),
             options,
@@ -164,7 +181,9 @@ def test_modern_pretrained_train_fp32_int8_cpp_original(model_id, channels, tmp_
             timeout=120,
         )
         assert result.returncode == 0, result.stderr
-        np.testing.assert_array_equal(np.array(Image.open(output)), expected)
+        np.testing.assert_array_equal(
+            np.array(Image.open(output)), expected, err_msg=manifest_path.name,
+        )
     key = create_key(tmp_path / "model.key")
     sealed = tmp_path / "model.dvsenc"
     encrypt_config(config, sealed, read_key(key))
@@ -285,6 +304,10 @@ def test_modern_qt_controls_and_round_trip(model_id, tmp_path):
         assert not widget.pc_sampling_spin.isEnabled()
     capabilities = validate_training_options(project, require_runnable=False)
     assert capabilities["patch_training"] and "rotation" in capabilities["augmentation"]
+    widget.mode_combo.setCurrentIndex(widget.mode_combo.findData("builtin_resume"))
+    assert widget.epochs_spin.isEnabled()
+    assert not widget.lr_spin.isEnabled()
+    assert not widget.patch_check.isEnabled()
     export = ExportWidget()
     export.set_project(project)
     assert export.export_precision.findData("int8") >= 0
@@ -391,7 +414,7 @@ def test_dinomaly_train_export_int8_cpp_preview(channels, tmp_path):
         config = Path(result["config_path"])
         manifest = json.loads(config.read_text())
         options = ort.SessionOptions()
-        options.intra_op_num_threads = 2
+        options.intra_op_num_threads = 1  # same setting as the native probe
         session = ort.InferenceSession(
             result["output_path"], options, providers=["CPUExecutionProvider"]
         )
@@ -419,7 +442,7 @@ def test_dinomaly_train_export_int8_cpp_preview(channels, tmp_path):
         actual = np.fromfile(target, np.float32).reshape(frame.shape[:2])
         truth = np.zeros(frame.shape[:2], np.float32)
         truth[4:68, 5:85] = expected
-        np.testing.assert_allclose(actual, truth, atol=2e-5, rtol=2e-4)
+        np.testing.assert_allclose(actual, truth, atol=2e-5, rtol=2e-4, err_msg=config.name)
         info = json.loads(process.stdout.strip().splitlines()[-1])
         assert abs(info["score"] - float(expected.max())) < 2e-5
         key = create_key(tmp_path / (config.stem + ".key"))
@@ -642,9 +665,8 @@ def test_dense_cpp_multitile_crop_scale_and_no_arguments(task, tmp_path):
         }
     )
     config["model_path"] = "model.onnx"
-    value = lambda name, shape: helper.make_tensor_value_info(
-        name, TensorProto.FLOAT, shape
-    )
+    def value(name, shape):
+        return helper.make_tensor_value_info(name, TensorProto.FLOAT, shape)
     if task == "segment":
         config.update(
             task="segment",
@@ -720,8 +742,11 @@ def test_dense_cpp_multitile_crop_scale_and_no_arguments(task, tmp_path):
         expected[1:180, 1:276] = cv2.resize(
             dense[0], (275, 179), interpolation=cv2.INTER_LINEAR
         )
+        # Only the restored display map uses OpenCV's float bilinear resize:
+        # 4.10 x86 vs 5.0 Python differ by <= 7.7e-6 in coordinate rounding.
+        # The model/stitched score below retains its separate stricter check.
         np.testing.assert_allclose(
-            np.fromfile(output, np.float32).reshape(expected.shape), expected, atol=2e-6
+            np.fromfile(output, np.float32).reshape(expected.shape), expected, atol=1e-5
         )
         assert json.loads(process.stdout)["score"] == pytest.approx(
             float(dense.max()), abs=2e-6
@@ -777,5 +802,26 @@ def test_dense_cpp_multitile_crop_scale_and_no_arguments(task, tmp_path):
                 expected.shape
             ),
             expected,
-            atol=2e-6,
+            atol=1e-5,  # float display-map resize; see native comparison above
         )
+
+
+@pytest.mark.parametrize("shape", [(31, 45), (75, 110), (640, 640)])
+def test_eomt_query_targets_keep_original_coordinates_when_padded(shape):
+    from eomt import query_loss
+    from torch.nn import functional as F
+
+    height, width = shape
+    target = torch.zeros(1, height, width, dtype=torch.long)
+    target[:, height // 3 : height // 3 + 2, width // 3 : width - 2] = 1
+    target[:, :2] = 255
+    masks = torch.randn(1, 3, 8, 12, requires_grad=True)
+    classes = torch.randn(1, 3, 3, requires_grad=True)
+    # Adding only ignored right/bottom padding must not move the real labels.
+    padded = F.pad(target, (0, (-width) % 14, 0, (-height) % 14), value=255)
+    cropped_loss = query_loss(masks, classes, target)
+    padded_loss = query_loss(masks, classes, padded)
+    torch.testing.assert_close(cropped_loss, padded_loss, rtol=0, atol=1e-6)
+    cropped_gradient = torch.autograd.grad(cropped_loss, masks, retain_graph=True)[0]
+    padded_gradient = torch.autograd.grad(padded_loss, masks)[0]
+    torch.testing.assert_close(cropped_gradient, padded_gradient, rtol=0, atol=1e-6)

@@ -1,6 +1,7 @@
 # Deep Vision Studio
 
-15.88: [최신 분할·Dinomaly 모델과 증류](docs/MODERN_DENSE_MODELS.md) — EfficientViT B0/B1, SCTNet-S, EoMT, Dinomaly. FP32/INT8 ONNX·C++ 고정 타일·암호화·원본 비교·증강/패치 학습.
+15.89: [회귀 오류 수정](docs/RELEASE_15.89.md) — EoMT 학습 마스크 좌표, 재개 화면, Windows·배포 검사 환경 수정.
+[최신 분할·Dinomaly 모델과 증류](docs/MODERN_DENSE_MODELS.md) — EfficientViT B0/B1, SCTNet-S, EoMT, Dinomaly. FP32/INT8 ONNX·C++ 고정 타일·암호화·원본 비교·증강/패치 학습.
 
 14.86: [SEG 정답으로 가상 불량 생성](docs/SEGMENTATION_SYNTHESIS.md) — crack·이물·shift·double·flip, 원본 크기 이미지와 정답 마스크, 검수 후 새 학습 프로젝트 저장.
 

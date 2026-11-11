@@ -8,6 +8,10 @@
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--runtime-version") {
+        std::cout << OrtGetApiBase()->GetVersionString() << '\n';
+        return 0;
+    }
     if (argc != 4 && argc != 5) return 2; // config.json|model.dvsenc image map.f32 [key]
     try {
         VisionInference engine;

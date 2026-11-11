@@ -24,9 +24,10 @@
     "segmentation-pretrained-completion",
     "inference-compare-concurrency",
     "segmentation-reference-synthesis",
-    "modern-dense-models"
+    "modern-dense-models",
+    "modern-dense-regression"
   ],
-  "primaryFeature": "modern-dense-models",
+  "primaryFeature": "modern-dense-regression",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -709,6 +710,20 @@
       "matchRateScope": "Implemented design checklist; not accuracy, Windows runtime certification, or performance",
       "status": "verified_locally",
       "completedAt": "2026-11-11T21:22:41.015354+00:00"
+    },
+    "modern-dense-regression": {
+      "phase": "check",
+      "status": "in_progress",
+      "version": "15.89",
+      "documents": {
+        "analysis": "docs/03-analysis/modern-dense-regression.md",
+        "report": "docs/RELEASE_15.89.md"
+      },
+      "validation": {
+        "local_modern_and_ui": "65 passed; native CTest 7 passed",
+        "eomt_padding_regression": "3 failed before / 3 passed after",
+        "remote": "pending"
+      }
     }
   },
   "pipeline": {
