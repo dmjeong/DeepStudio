@@ -165,17 +165,9 @@ def test_val_never_published_train_and_test_not_donors(tmp_path):
         store.publish(result["batch_id"])
 
 
-def test_cross_split_duplicate_invalid_mask_and_no_examples(tmp_path):
+def test_invalid_mask_and_no_examples(tmp_path):
     project = make_fixture(tmp_path)
-    source = Path(project.data.train_dir) / "1.png"
-    target = Path(project.data.val_dir) / "1.png"
-    original = target.read_bytes()
-    target.write_bytes(source.read_bytes())
     store = SynthesisStore(project)
-    with pytest.raises(ValueError, match="중복"):
-        store.analyze()
-    assert store.list("profiles") == []
-    target.write_bytes(original)
     mask_path = Path(project.data.root) / "masks/train/0.png"
     good_mask = mask_path.read_bytes()
     image = np.array(Image.open(mask_path))
@@ -472,3 +464,67 @@ def test_analysis_waits_for_dataset_scan_and_can_cancel(tmp_path):
         assert not worker.is_alive()
     assert isinstance(failures[0], InterruptedError)
     assert len(store.list("profiles")) == 1
+
+
+def test_duplicate_inputs_keep_each_split_and_annotation_through_publication(tmp_path):
+    from core.segmentation_synthesis_store import format_analysis_report
+
+    project = make_fixture(tmp_path)
+    root = Path(project.data.root)
+    source = Path(project.data.train_dir) / "0.png"
+    original_mask = np.array(Image.open(root / "masks/train/0.png"))
+    for split in ("val", "test"):
+        (Path(getattr(project.data, split + "_dir")) / "0.png").write_bytes(
+            source.read_bytes()
+        )
+        Image.fromarray(original_mask).save(root / "masks" / split / "0.png")
+    # Same split, identical annotation; and a nested same-name image with its
+    # own different annotation. Preserve both instead of discarding either one.
+    for name in ("duplicate.png", "nested/0.png"):
+        target = Path(project.data.train_dir) / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+        mask_path = root / "masks/train" / name
+        mask_path.parent.mkdir(parents=True, exist_ok=True)
+        labels = original_mask.copy()
+        if "nested" in name:
+            labels[labels == 1] = 2
+        Image.fromarray(labels).save(mask_path)
+    store = SynthesisStore(project)
+    analyzed = store.analyze()
+    profile = store.load("profiles", analyzed["profile_id"])
+    assert len(profile["images"]) == 8
+    assert analyzed["analysis"]["duplicate_images"] == 4
+    assert "중복 입력 4장" in format_analysis_report(analyzed["analysis"])
+    assert sum("duplicate_of" in row for row in profile["images"]) == 4
+    assert all(d["split"] != "test" for d in profile["donors"])
+    generated = store.generate(profile["id"], {"1": 1}, split="train")
+    assert generated["generated"] == 1
+    store.review(generated["batch_id"], "000000", "approved")
+    saved = store.publish(generated["batch_id"])
+    restored = ProjectManager.load(saved["project_path"])
+    assert len(list(Path(restored.data.train_dir).glob("*.png"))) == 5
+    assert len(list(Path(restored.data.val_dir).glob("*.png"))) == 2
+    assert len(list(Path(restored.data.test_dir).glob("*.png"))) == 2
+    for row in profile["images"]:
+        published = (
+            Path(restored.data.root)
+            / "masks"
+            / row["split"]
+            / ("original-" + row["id"] + ".png")
+        )
+        source_mask = (
+            root
+            / "masks"
+            / row["split"]
+            / Path(row["source"]).relative_to(
+                Path(getattr(project.data, row["split"] + "_dir"))
+            )
+        )
+        np.testing.assert_array_equal(
+            np.array(Image.open(published)), np.array(Image.open(source_mask))
+        )
+    generated_val = store.generate(profile["id"], {"1": 1}, split="val")
+    assert generated_val["generated"] == 1
+    with pytest.raises(ValueError, match="Val"):
+        store.publish(generated_val["batch_id"])

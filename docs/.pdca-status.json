@@ -25,7 +25,7 @@
     "inference-compare-concurrency",
     "segmentation-reference-synthesis"
   ],
-  "primaryFeature": "segmentation-synthesis-empty-analysis",
+  "primaryFeature": "segmentation-synthesis-duplicates",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -666,6 +666,24 @@
         "windows": "EXE and user dataset not locally verified"
       },
       "completedAt": "2026-11-11T07:39:07.159889+00:00"
+    },
+    "segmentation-synthesis-duplicates": {
+      "phase": "completed",
+      "version": "14.88",
+      "documents": {
+        "design": "docs/02-design/features/segmentation-synthesis-duplicates.design.md",
+        "analysis": "docs/03-analysis/segmentation-synthesis-duplicates.md",
+        "report": "docs/RELEASE_14.88.md"
+      },
+      "matchRate": 100,
+      "validation": {
+        "regression": "139 passed, no skips, exit 0",
+        "duplicates": "same/cross split, different masks, nested names, publication verified",
+        "ui": "real analysis and preview clicks; no duplicate warning dialog",
+        "windows": "EXE and user dataset not locally verified"
+      },
+      "checkedAt": "2026-11-11T08:25:55.291145+00:00",
+      "completedAt": "2026-11-11T08:26:03.361679+00:00"
     }
   },
   "pipeline": {

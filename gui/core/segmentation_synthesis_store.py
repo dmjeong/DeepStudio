@@ -53,6 +53,7 @@ def analysis_report(project):
         "splits": {},
         "issues": [],
         "current_image": "",
+        "duplicate_images": 0,
     }
     for split in ("train", "val", "test"):
         images = str(getattr(project.data, split + "_dir", ""))
@@ -95,6 +96,10 @@ def format_analysis_report(report):
     ]
     if report.get("error"):
         lines.append("오류: " + report["error"])
+    if report.get("duplicate_images"):
+        lines.append(
+            f"중복 입력 {report['duplicate_images']}장 — 각 파일의 분할과 정답을 그대로 보존했습니다."
+        )
     for split, row in report["splits"].items():
         lines += [
             f"\n{split.upper()}: 이미지 {row['images']}장 / 정답 파일 있는 이미지 {row['annotated']}장 / 불량 포함 {row['foreground_images']}장",
@@ -319,19 +324,15 @@ class SynthesisStore:
                     str(image.shape).encode() + image.tobytes()
                 ).hexdigest()
                 mask_hash = hashlib.sha256(mask.tobytes()).hexdigest()
-                if identity in seen:
-                    old_split, old_mask = seen[identity]
-                    if old_split != split:
-                        raise ValueError(
-                            f"같은 이미지가 {old_split}/{split}에 중복됩니다: {source.name}. 분할을 정리하세요."
-                        )
-                    if old_mask != mask_hash:
-                        raise ValueError(
-                            f"같은 이미지에 서로 다른 정답이 있습니다: {source.name}"
-                        )
-                    continue
-                seen[identity] = (split, mask_hash)
                 image_id = f"{number:06d}"
+                duplicate_of = seen.get(identity)
+                if duplicate_of is not None:
+                    report["duplicate_images"] += 1
+                else:
+                    seen[identity] = image_id
+                # Keep every file with its own split and annotation, including
+                # identical pixels with different masks. Do not cross-link masks
+                # or silently remove inputs when publishing a training project.
                 entry = {
                     "id": image_id,
                     "source": str(source),
@@ -339,9 +340,12 @@ class SynthesisStore:
                     "annotated": annotated,
                     "shape": list(image.shape),
                     "pixel_sha256": identity,
+                    "mask_pixel_sha256": mask_hash,
                     "image": self.put(folder, f"images/{image_id}.png", image),
                     "mask": self.put(folder, f"masks/{image_id}.png", mask),
                 }
+                if duplicate_of is not None:
+                    entry["duplicate_of"] = duplicate_of
                 data["images"].append(entry)
                 if split != "test":
                     for class_id in range(1, len(classes)):

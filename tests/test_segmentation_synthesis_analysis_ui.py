@@ -129,16 +129,11 @@ def test_only_val_references_select_on_switch_and_keep_manual_choices(page):
     assert not widget.publish_button.isEnabled()
 
 
-@pytest.mark.parametrize("problem", ["duplicate", "background", "bad_mask"])
+@pytest.mark.parametrize("problem", ["background", "bad_mask"])
 def test_analysis_failure_explains_reason_and_records_counts(page, problem):
     app, widget, project = page
     root = Path(project.data.root)
-    if problem == "duplicate":
-        (Path(project.data.val_dir) / "1.png").write_bytes(
-            (Path(project.data.train_dir) / "1.png").read_bytes()
-        )
-        expected = "중복"
-    elif problem == "background":
+    if problem == "background":
         for split in ("train", "val"):
             for path in (root / "masks" / split).glob("*.png"):
                 Image.fromarray(np.zeros((240, 480), np.uint8)).save(path)
@@ -175,3 +170,24 @@ def test_refresh_failure_is_not_reported_as_success(page, monkeypatch):
     assert "분석 결과 읽기 실패" in widget.message.text()
     assert "분석 완료" not in widget.message.text()
     assert widget._notice.isVisible()
+
+
+def test_duplicate_images_analyze_and_generate_without_warning_dialog(page):
+    app, widget, project = page
+    source = Path(project.data.train_dir) / "0.png"
+    mask = Path(project.data.root) / "masks/train/0.png"
+    for split in ("val", "test"):
+        (Path(getattr(project.data, split + "_dir")) / "0.png").write_bytes(
+            source.read_bytes()
+        )
+        (Path(project.data.root) / "masks" / split / "0.png").write_bytes(
+            mask.read_bytes()
+        )
+    click_and_wait(app, widget, widget.analyze_button)
+    assert widget._result["status"] == "completed", widget.message.text()
+    assert widget._analysis["duplicate_images"] == 2
+    assert not widget._notice.isVisible()
+    assert all(int(widget.classes.item(i, 1).text()) > 0 for i in range(5))
+    click_and_wait(app, widget, widget.preview_button)
+    assert widget._result["status"] == "completed", widget.message.text()
+    assert widget.samples.count() == 5 and not widget._notice.isVisible()
