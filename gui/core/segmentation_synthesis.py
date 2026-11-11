@@ -36,10 +36,10 @@ def validate_pair(image, mask, classes):
         raise ValueError("마스크 클래스 번호가 프로젝트와 다릅니다.")
 
 
-def extract_regions(mask, class_id, policy):
+def extract_regions(mask, class_id, policy, *, diagnostics=None):
     """Merge nearby disconnected parts for structural defects (e.g. double)."""
     binary = (mask == class_id).astype(np.uint8)
-    n, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     boxes = [tuple(map(int, s[:4])) for s in stats[1:]]
     groups = [{i} for i in range(1, n)]
     if policy == "structure":
@@ -69,6 +69,15 @@ def extract_regions(mask, class_id, policy):
                         groups[a] |= groups.pop(b)
                         changed = True
                         break
+    if diagnostics is not None:
+        diagnostics.update(
+            components=n - 1,
+            groups=len(groups),
+            accepted=0,
+            crowded=0,
+            edge=0,
+            context=0,
+        )
     regions = []
     height, width = mask.shape
     for group in groups:
@@ -82,21 +91,48 @@ def extract_regions(mask, class_id, policy):
             8,
             int(max(right - x, bottom - y) * (0.65 if policy == "structure" else 0.2)),
         )
-        x0, y0, x1, y1 = (
-            max(0, x - margin),
-            max(0, y - margin),
-            min(width, right + margin),
-            min(height, bottom + margin),
+        # Context can include another labelled defect even when the defect
+        # itself is usable. Retry a smaller clean context rather than discarding
+        # every example. Keep at least 20% for structural geometry, 4px for texture.
+        minimum = (
+            max(4, int(np.ceil(max(right - x, bottom - y) * 0.2)))
+            if policy == "structure"
+            else 4
         )
-        local = mask[y0:y1, x0:x1]
-        own = np.isin(labels[y0:y1, x0:x1], list(group))
-        # Do not paste an unlabelled part of a neighbouring defect/ignore region.
-        if np.any((local != 0) & ~own):
-            continue
-        if policy == "structure" and (
-            x0 == x or y0 == y or x1 == right or y1 == bottom
+        failure = "crowded"
+        for padding in sorted(
+            {margin, max(minimum, margin // 2), minimum}, reverse=True
         ):
+            x0, y0, x1, y1 = (
+                max(0, x - padding),
+                max(0, y - padding),
+                min(width, right + padding),
+                min(height, bottom + padding),
+            )
+            if policy == "structure" and (
+                x0 == x or y0 == y or x1 == right or y1 == bottom
+            ):
+                failure = "edge"
+                break
+            local = mask[y0:y1, x0:x1]
+            own = np.isin(labels[y0:y1, x0:x1], list(group))
+            if np.any((local != 0) & ~own):
+                failure = "crowded"
+                continue
+            if _context(own.astype(np.uint8) * class_id, policy).sum() < 12:
+                failure = "context"
+                continue
+            break
+        else:
+            if diagnostics is not None:
+                diagnostics[failure] += 1
             continue
+        if failure == "edge":
+            if diagnostics is not None:
+                diagnostics["edge"] += 1
+            continue
+        if diagnostics is not None:
+            diagnostics["accepted"] += 1
         regions.append(
             {
                 "box": [x0, y0, x1 - x0, y1 - y0],

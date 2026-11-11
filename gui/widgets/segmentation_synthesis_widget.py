@@ -6,11 +6,12 @@ import numpy as np
 from core.desktop_jobs import DesktopJob
 from core.mask_annotations import MaskDocument
 from core.segmentation_synthesis import POLICIES, default_policy
-from core.segmentation_synthesis_store import SynthesisStore
+from core.segmentation_synthesis_store import SynthesisStore, format_analysis_report
 from PIL import Image
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QImage, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSpinBox,
@@ -53,6 +55,14 @@ class SegmentationSynthesisWidget(QWidget):
         self.project = self._worker = self._result = None
         self.batch = None
         self.output_path = ""
+        self._analysis = None
+        self._operation = None
+        self._selection_context = None
+        self._available_classes = set()
+        self._last_error = ""
+        self._job_details = ""
+        self._notice = QMessageBox(self)
+        self._notice.setWindowModality(Qt.WindowModality.NonModal)
         layout = QVBoxLayout(self)
         note = QLabel(
             "실제 SEG 정답으로 가상 불량 만들기 · 원본 해상도 유지 · 별도 학습 모델/인터넷 불필요\n"
@@ -68,7 +78,8 @@ class SegmentationSynthesisWidget(QWidget):
         self.profiles.currentIndexChanged.connect(lambda: self.guard(self.load_profile))
         row.addWidget(QLabel("정답 분석 버전"))
         row.addWidget(self.profiles, 1)
-        row.addWidget(self.button("1. 프로젝트 정답 분석", self.analyze))
+        self.analyze_button = self.button("1. 프로젝트 정답 분석", self.analyze)
+        row.addWidget(self.analyze_button)
         self.unlabelled = QCheckBox("정답 없는 사진도 정상 바탕으로")
         self.unlabelled.setToolTip(
             "체크하지 않으면 마스크/폴리곤 정답이 있는 사진만 바탕으로 사용합니다. 정상 사진은 빈 마스크도 가능합니다."
@@ -111,10 +122,12 @@ class SegmentationSynthesisWidget(QWidget):
             "주변 밝기를 맞춘 뒤 표면 차이 허용값. 작을수록 엄격하며 합성 가능한 위치가 줄어듭니다."
         )
         row.addWidget(self.tolerance)
-        row.addWidget(
-            self.button("2. 클래스당 1장 미리 생성", lambda: self.generate(True))
+        self.preview_button = self.button(
+            "2. 클래스당 1장 미리 생성", lambda: self.generate(True)
         )
-        row.addWidget(self.button("설정 수량 생성", self.generate))
+        self.generate_button = self.button("설정 수량 생성", self.generate)
+        row.addWidget(self.preview_button)
+        row.addWidget(self.generate_button)
         controls.addLayout(row)
         row = QHBoxLayout()
         self.allowed = QLineEdit()
@@ -196,6 +209,80 @@ class SegmentationSynthesisWidget(QWidget):
         self.open_button.setEnabled(False)
         row.addWidget(self.open_button)
         layout.addLayout(row)
+        # Keep status and actionable errors above the table even on a small
+        # Windows display; a bottom-only label looked like a no-op.
+        layout.removeWidget(self.message)
+        layout.removeWidget(self.progress)
+        status = QWidget()
+        status_layout = QVBoxLayout(status)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        self.message.setMaximumHeight(64)
+        status_layout.addWidget(self.message)
+        self.analysis_summary = QLabel("아직 정답을 분석하지 않았습니다.")
+        self.analysis_summary.setWordWrap(True)
+        status_layout.addWidget(self.analysis_summary)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.progress, 1)
+        self.details_button = self.button("분석 상세 / 오류 보기", self.show_details)
+        self.copy_button = self.button("내용 복사", self.copy_details)
+        buttons.addWidget(self.details_button)
+        buttons.addWidget(self.copy_button)
+        status_layout.addLayout(buttons)
+        layout.insertWidget(1, status)
+
+    def diagnostic_text(self):
+        text = format_analysis_report(self._analysis)
+        if self._last_error:
+            text = "오류: " + self._last_error + "\n\n" + text
+        if self._job_details:
+            text += "\n\n실행 기록:\n" + self._job_details
+        return text
+
+    def copy_details(self):
+        QApplication.clipboard().setText(self.diagnostic_text())
+
+    def show_details(self):
+        self._notice.setWindowTitle("SEG 정답 분석 상세")
+        self._notice.setIcon(QMessageBox.Icon.Information)
+        self._notice.setInformativeText("")
+        self._notice.setText(self._last_error or self.analysis_summary.text())
+        self._notice.setDetailedText(self.diagnostic_text())
+        self._notice.show()
+        self._notice.raise_()
+
+    def show_error(self, message):
+        self._last_error = str(message)
+        self.message.setText("작업 실패: " + self._last_error)
+        self.progress.setFormat("실패 — %p%")
+        self._notice.setWindowTitle("SEG 가상 불량 작업 실패")
+        self._notice.setIcon(QMessageBox.Icon.Warning)
+        self._notice.setText(self._last_error)
+        self._notice.setInformativeText(
+            "상단 ‘분석 상세 / 오류 보기’에서 경로와 제외 이유를 확인하고 ‘내용 복사’로 복사할 수 있습니다."
+        )
+        self._notice.setDetailedText(self.diagnostic_text())
+        self._notice.show()
+        self._notice.raise_()
+
+    def update_summary(self):
+        if self._analysis is None:
+            self.analysis_summary.setText(
+                "분석 기록 없음 — 프로젝트 정답 분석을 실행하세요."
+            )
+            return
+        parts = []
+        for split in ("train", "val"):
+            row = self._analysis["splits"][split]
+            usable = sum(v["accepted"] for v in row["classes"].values())
+            parts.append(
+                f"{split.upper()} 이미지 {row['images']}장 · 정답 파일 {row['annotated']}장 · 사용 가능한 참조 {usable}개"
+            )
+        prefix = (
+            "분석 실패(처리된 범위의 집계) | "
+            if self._analysis.get("status") == "failed"
+            else ""
+        )
+        self.analysis_summary.setText(prefix + " | ".join(parts))
 
     def button(self, title, action):
         button = QPushButton(title)
@@ -206,7 +293,7 @@ class SegmentationSynthesisWidget(QWidget):
         try:
             return action()
         except Exception as exc:  # noqa: BLE001 - display failures at the UI boundary
-            self.message.setText(str(exc))
+            self.show_error(str(exc))
 
     def store(self):
         return SynthesisStore(self.project)
@@ -215,6 +302,12 @@ class SegmentationSynthesisWidget(QWidget):
         if self._worker:
             return
         self.project = project
+        self._analysis = None
+        self._selection_context = None
+        self._available_classes = set()
+        self._last_error = self._job_details = ""
+        self._notice.close()
+        self.update_summary()
         self.output_path = ""
         self.open_button.setEnabled(False)
         self.classes.setRowCount(0)
@@ -316,18 +409,45 @@ class SegmentationSynthesisWidget(QWidget):
             if profile:
                 combo = self.classes.cellWidget(i, 3)
                 combo.setCurrentIndex(combo.findData(profile["policies"][str(cid)]))
+        self.update_available()
         if profile:
+            self._analysis = profile.get("analysis")
+            self.update_summary()
             self.unlabelled.setChecked(profile["include_unlabelled"])
-            self.update_available()
             if profile["notes"]:
                 self.message.setText("\n".join(profile["notes"][:10]))
 
     def update_available(self):
         col = 1 if self.split.currentData() == "train" else 2
+        context = (self.profiles.currentData(), self.split.currentData())
+        available = set()
         for i in range(self.classes.rowCount()):
             count = self.classes.item(i, col)
-            if count is not None and count.text() == "0":
-                self.classes.item(i, 0).setCheckState(Qt.CheckState.Unchecked)
+            item = self.classes.item(i, 0)
+            cid = item.data(Qt.ItemDataRole.UserRole)
+            usable = bool(context[0] and count is not None and int(count.text()) > 0)
+            item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | (
+                    Qt.ItemFlag.ItemIsUserCheckable
+                    if usable
+                    else Qt.ItemFlag.NoItemFlags
+                )
+            )
+            if usable:
+                available.add(cid)
+                if (
+                    context != self._selection_context
+                    or cid not in self._available_classes
+                ):
+                    item.setCheckState(Qt.CheckState.Checked)
+                item.setToolTip("사용 가능한 실제 불량 참조가 있습니다.")
+            else:
+                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setToolTip(
+                    "이 분할의 참조가 없습니다. 정답 분석 상세에서 경로와 제외 사유를 확인하세요."
+                )
+        self._selection_context, self._available_classes = context, available
 
     def analyze(self):
         self.launch(
@@ -517,6 +637,13 @@ class SegmentationSynthesisWidget(QWidget):
         if self._worker:
             raise ValueError("실행 중인 작업을 먼저 마치거나 중단하세요.")
         self._result = None
+        self._operation = operation
+        self._last_error = self._job_details = ""
+        self._notice.close()
+        if operation == "analyze":
+            self.profiles.setCurrentIndex(-1)
+            self._analysis = None
+            self.update_summary()
         self._worker = DesktopJob(
             "seg_synthesis",
             {"project": project_view(self.project), "operation": operation, **values},
@@ -530,6 +657,7 @@ class SegmentationSynthesisWidget(QWidget):
         self.review_controls.setEnabled(False)
         self.stop.setEnabled(True)
         self.progress.setValue(0)
+        self.progress.setFormat("%p%")
         self.message.setText("작업 중…")
         self._worker.start()
 
@@ -540,43 +668,85 @@ class SegmentationSynthesisWidget(QWidget):
             self.progress.setValue(round(100 * args[0] / args[1]))
 
     def finished(self):
-        worker, result = self._worker, self._result or {}
+        worker = self._worker
+        result = self._result or {
+            "status": "failed",
+            "error": worker.error or "작업 완료 결과를 받지 못했습니다.",
+        }
+        operation = self._operation
         self._worker = None
         worker.deleteLater()
         self.controls.setEnabled(True)
         self.review_controls.setEnabled(True)
         self.stop.setEnabled(False)
-        self.guard(self.refresh)
         output = result.get("output", {})
-        for field, combo in (("profile_id", self.profiles), ("batch_id", self.batches)):
-            if field in output:
-                combo.setCurrentIndex(combo.findData(output[field]))
-        if result.get("status") == "completed":
-            self.progress.setValue(100)
-            if "project_path" in output:
-                self.output_path = output["project_path"]
-                self.open_button.setEnabled(True)
-                self.message.setText(
-                    f"학습 프로젝트 저장 완료: {self.output_path}\n앱의 ‘프로젝트 열기’에서 이 파일을 선택하세요. 원본 프로젝트는 그대로입니다."
-                )
-            elif "generated" in output:
-                self.message.setText(
-                    f"후보 {output['generated']}장 생성, {len(output['failures'])}장 제외. 결과와 정답을 검수한 뒤 승인하세요."
-                    + (
-                        "\n" + output["failures"][0]["reason"]
-                        if output["failures"]
-                        else ""
+        if "analysis" in output:
+            self._analysis = output["analysis"]
+            self.update_summary()
+        if result.get("status") != "completed":
+            if worker.job_id:
+                from core.job_manager import desktop_manager
+
+                try:
+                    log = desktop_manager().directory(worker.job_id) / "console.log"
+                    self._job_details = (
+                        str(log)
+                        + "\n"
+                        + log.read_text(encoding="utf-8", errors="replace")[-12000:]
                     )
-                )
-                self.generation_finished.emit(output["generated"])
+                except OSError:
+                    self._job_details = "실행 로그를 읽지 못했습니다."
+            if result.get("status") == "cancelled":
+                self.message.setText("작업이 중단되었습니다.")
+                self.progress.setFormat("중단 — %p%")
             else:
-                self.message.setText(
-                    f"정답 분석 완료: 참조 {output.get('donors', 0)}개"
-                    + (
-                        "\n" + "\n".join(output.get("notes", [])[:5])
-                        if output.get("notes")
-                        else ""
-                    )
-                )
+                self.show_error(result.get("error") or "작업이 실패했습니다.")
+            return
+        try:
+            self.refresh()
+            for field, combo in (
+                ("profile_id", self.profiles),
+                ("batch_id", self.batches),
+            ):
+                if field in output:
+                    index = combo.findData(output[field])
+                    if index < 0:
+                        raise ValueError(
+                            "작업은 끝났지만 저장된 결과를 화면에서 읽지 못했습니다. 기록 폴더와 프로젝트 클래스를 확인하세요."
+                        )
+                    combo.setCurrentIndex(index)
+            # An old profile may have been selected during refresh. Load the
+            # newly returned profile explicitly even if its index did not change.
+            if operation == "analyze":
+                self.load_profile()
+        except Exception as exc:  # noqa: BLE001 - do not turn a result-loading error into success
+            self.show_error(str(exc))
+            return
+        self.progress.setValue(100)
+        if "project_path" in output:
+            self.output_path = output["project_path"]
+            self.open_button.setEnabled(True)
+            self.message.setText(
+                f"학습 프로젝트 저장 완료: {self.output_path}\n앱의 ‘프로젝트 열기’에서 이 파일을 선택하세요. 원본 프로젝트는 그대로입니다."
+            )
+        elif "generated" in output:
+            message = f"후보 {output['generated']}장 생성, {len(output['failures'])}장 제외. 결과와 정답을 검수한 뒤 승인하세요."
+            if output["failures"]:
+                message += "\n" + output["failures"][0]["reason"]
+            if not output["generated"]:
+                self.show_error(message)
+            else:
+                self.message.setText(message)
+            self.generation_finished.emit(output["generated"])
         else:
-            self.message.setText(result.get("error") or "작업이 중단되었습니다.")
+            selected_split = self.split.currentData()
+            available = sum(
+                int(self.classes.item(i, 1 if selected_split == "train" else 2).text())
+                for i in range(self.classes.rowCount())
+            )
+            message = f"정답 분석 완료: 참조 {output.get('donors', 0)}개. {selected_split.upper()} 사용 가능 {available}개."
+            if available:
+                message += " 선택된 클래스로 ‘클래스당 1장 미리 생성’을 누르세요."
+            else:
+                message += " 이 분할에는 참조가 없습니다. Train/Val을 확인하세요."
+            self.message.setText(message)

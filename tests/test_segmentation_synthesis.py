@@ -198,7 +198,7 @@ def test_cancel_and_file_tampering_no_partial_publication(tmp_path):
 
     with pytest.raises(InterruptedError):
         store.analyze(context=Cancel())
-    assert not list((store.root / "profiles").iterdir())
+    assert not list((store.root / "profiles").glob("*"))
     profile = store.analyze()
     with pytest.raises(InterruptedError):
         store.generate(profile["profile_id"], {"1": 1}, context=Cancel())
@@ -384,3 +384,91 @@ def test_thin_branch_survives_wide_junction_and_new_classes_can_reanalyze(tmp_pa
     project.data.class_names[2] = "FM-new-name"
     new = store.analyze()
     assert [p["id"] for p in store.list("profiles")] == [new["profile_id"]]
+
+
+def test_context_recovers_nearby_defect_without_losing_other_class():
+    mask = np.zeros((120, 180), np.uint8)
+    mask[40:60, 40:60] = 3
+    mask[50:55, 68:72] = 2
+    stats = {}
+    regions = extract_regions(mask, 3, "structure", diagnostics=stats)
+    assert len(regions) == 1 and stats["components"] == stats["accepted"] == 1
+    x, y, w, h = regions[0]["box"]
+    assert w < 46  # default 20 + 2*13 includes the neighbouring FM
+    assert not np.any(mask[y : y + h, x : x + w] == 2)
+    assert regions[0]["pixels"] == 400
+    # Cannot manufacture normal context when the other defect directly touches.
+    mask[50:55, 60:64] = 2
+    regions = extract_regions(mask, 3, "structure", diagnostics=stats)
+    assert regions == [] and stats["crowded"] == 1
+
+
+def test_no_usable_reference_retains_counts_and_specific_diagnostics(tmp_path):
+    from core.segmentation_synthesis_store import (
+        SynthesisAnalysisError,
+        format_analysis_report,
+    )
+
+    project = make_fixture(tmp_path)
+    for split in ("train", "val"):
+        for path in (Path(project.data.root) / "masks" / split).glob("*.png"):
+            mask = np.zeros((240, 480), np.uint8)
+            mask[:10, 30:50] = 3  # structural object is cut by image edge
+            Image.fromarray(mask).save(path)
+    store = SynthesisStore(project)
+    with pytest.raises(SynthesisAnalysisError) as caught:
+        store.analyze()
+    report = caught.value.report
+    assert report["splits"]["train"]["annotated"] == 2
+    assert report["splits"]["train"]["classes"]["3"]["pixels"] == 400
+    assert report["splits"]["train"]["classes"]["3"]["edge"] == 2
+    assert "불량 정답은 있지만" in str(caught.value)
+    assert "테두리 2" in format_analysis_report(report)
+    assert store.list("profiles") == []
+
+
+def test_analysis_waits_for_dataset_scan_and_can_cancel(tmp_path):
+    import threading
+
+    from core.annotation_journal import project_edit_lock
+
+    store = SynthesisStore(make_fixture(tmp_path))
+
+    class Context:
+        def __init__(self):
+            self.waiting = threading.Event()
+            self.cancel = False
+
+        def cancelled(self):
+            return self.cancel
+
+        def emit(self, event, args):
+            if event == "log_message" and "기다립니다" in args[0]:
+                self.waiting.set()
+
+    outputs, failures = [], []
+    context = Context()
+
+    def analyze():
+        try:
+            outputs.append(store.analyze(context))
+        except (ValueError, InterruptedError, OSError) as exc:
+            failures.append(exc)
+
+    with project_edit_lock(store.project):
+        worker = threading.Thread(target=analyze)
+        worker.start()
+        assert context.waiting.wait(5)
+        assert not outputs and not failures
+    worker.join(10)
+    assert not worker.is_alive() and outputs and not failures
+    context = Context()
+    with project_edit_lock(store.project):
+        worker = threading.Thread(target=analyze)
+        worker.start()
+        assert context.waiting.wait(5)
+        context.cancel = True
+        worker.join(5)
+        assert not worker.is_alive()
+    assert isinstance(failures[0], InterruptedError)
+    assert len(store.list("profiles")) == 1

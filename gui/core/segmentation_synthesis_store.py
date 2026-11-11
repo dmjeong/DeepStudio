@@ -5,8 +5,9 @@ import hashlib
 import re
 import shutil
 import tempfile
+import time
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,6 +35,83 @@ def notify(context, text, current=0, total=0):
         context.emit("log_message", [text])
         if total:
             context.emit("progress_updated", [current, total])
+
+
+class SynthesisAnalysisError(ValueError):
+    """Keep the actual analysis failure and its counts available to the UI."""
+
+    def __init__(self, message, report):
+        super().__init__(message)
+        self.report = report
+
+
+def analysis_report(project):
+    classes = list(project.data.class_names)
+    result = {
+        "status": "running",
+        "classes": classes,
+        "splits": {},
+        "issues": [],
+        "current_image": "",
+    }
+    for split in ("train", "val", "test"):
+        images = str(getattr(project.data, split + "_dir", ""))
+        root = Path(images)
+        base = (
+            root.parent.parent
+            if root.parent.name == "images"
+            else Path(project.data.root)
+        )
+        result["splits"][split] = {
+            "folder": images,
+            "mask_folder": str(base / "masks" / split),
+            "label_folder": str(base / "labels" / split),
+            "images": 0,
+            "annotated": 0,
+            "foreground_images": 0,
+            "classes": {
+                str(i): {
+                    "pixels": 0,
+                    "components": 0,
+                    "accepted": 0,
+                    "crowded": 0,
+                    "edge": 0,
+                    "context": 0,
+                }
+                for i in range(1, len(classes))
+            },
+        }
+    return result
+
+
+def format_analysis_report(report):
+    if not report:
+        return "분석 기록이 없습니다. 프로젝트 정답 분석을 실행하세요."
+    lines = [
+        "SEG 정답 분석: "
+        + {"ready": "완료", "failed": "실패", "running": "진행 중"}.get(
+            report.get("status"), "확인 필요"
+        )
+    ]
+    if report.get("error"):
+        lines.append("오류: " + report["error"])
+    for split, row in report["splits"].items():
+        lines += [
+            f"\n{split.upper()}: 이미지 {row['images']}장 / 정답 파일 있는 이미지 {row['annotated']}장 / 불량 포함 {row['foreground_images']}장",
+            f"이미지 폴더: {row['folder']}",
+            f"마스크 폴더: {row['mask_folder']}",
+            f"폴리곤 폴더: {row['label_folder']}",
+        ]
+        for cid, info in row["classes"].items():
+            name = report["classes"][int(cid)]
+            lines.append(
+                f"  {name}: 정답 {info['pixels']}px / 영역 {info['components']} / 사용 가능 {info['accepted']}"
+                f" / 주변 다른 정답 {info['crowded']} / 테두리 {info['edge']} / 문맥 부족 {info['context']}"
+            )
+    if report.get("current_image") and report.get("status") == "failed":
+        lines.append("\n처리 중이던 이미지: " + report["current_image"])
+    lines.extend(report.get("issues", [])[:30])
+    return "\n".join(lines)
 
 
 class SynthesisStore:
@@ -130,13 +208,43 @@ class SynthesisStore:
     def analyze(self, context=None, *, include_unlabelled=False, policies=None):
         from core.annotation_journal import project_edit_lock, recover_pending
 
-        with project_edit_lock(self.project):
-            recover_pending(self.project)
-            return self._analyze(
-                context, include_unlabelled=include_unlabelled, policies=policies
-            )
+        report = analysis_report(self.project)
+        try:
+            with ExitStack() as locks:
+                deadline = time.monotonic() + 30
+                waiting = False
+                while True:
+                    checked(context)
+                    try:
+                        locks.enter_context(project_edit_lock(self.project))
+                        break
+                    except RuntimeError:
+                        # Dataset page scans automatically after opening a
+                        # project. Wait for its read lock in this worker rather
+                        # than failing the user's first analysis click.
+                        if time.monotonic() >= deadline:
+                            raise
+                        if not waiting:
+                            notify(
+                                context,
+                                "데이터셋 화면의 읽기/저장이 끝나기를 기다립니다. 중단 버튼으로 취소할 수 있습니다.",
+                            )
+                            waiting = True
+                        time.sleep(0.1)
+                recover_pending(self.project)
+                return self._analyze(
+                    context,
+                    report,
+                    include_unlabelled=include_unlabelled,
+                    policies=policies,
+                )
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            report.update(status="failed", error=str(exc))
+            raise SynthesisAnalysisError(str(exc), report) from exc
 
-    def _analyze(self, context=None, *, include_unlabelled=False, policies=None):
+    def _analyze(self, context, report, *, include_unlabelled=False, policies=None):
         from core.class_management import IMAGE_EXTENSIONS, _walk_files
         from core.dataset_editor import sidecars, split_root
         from core.mask_annotations import load_mask_document
@@ -170,6 +278,11 @@ class SynthesisStore:
                     for p in sorted(_walk_files(root))
                     if p.suffix.lower() in IMAGE_EXTENSIONS
                 ]
+        for split, row in report["splits"].items():
+            if row["folder"] and not Path(row["folder"]).is_dir():
+                report["issues"].append(
+                    f"{split}: 이미지 폴더가 없습니다: {row['folder']}"
+                )
         if not paths:
             raise ValueError("프로젝트에 이미지가 없습니다.")
         if len(paths) > 10000:
@@ -183,14 +296,25 @@ class SynthesisStore:
                 "include_unlabelled": bool(include_unlabelled),
                 "notes": [],
                 "synthetic": True,
+                "analysis": report,
             }
             seen = {}
             for number, (split, source) in enumerate(paths):
                 checked(context)
+                report["current_image"] = str(source)
+                summary = report["splits"][split]
+                summary["images"] += 1
+                annotated = bool(sidecars(self.project, source, split))
+                summary["annotated"] += int(annotated)
                 image = read_image(source)
                 document = load_mask_document(self.project, source, split)
                 mask = document.render()
                 validate_pair(image, mask, len(classes))
+                summary["foreground_images"] += int(np.any((mask > 0) & (mask != 255)))
+                for class_id in range(1, len(classes)):
+                    summary["classes"][str(class_id)]["pixels"] += int(
+                        np.count_nonzero(mask == class_id)
+                    )
                 identity = hashlib.sha256(
                     str(image.shape).encode() + image.tobytes()
                 ).hexdigest()
@@ -207,7 +331,6 @@ class SynthesisStore:
                         )
                     continue
                 seen[identity] = (split, mask_hash)
-                annotated = bool(sidecars(self.project, source, split))
                 image_id = f"{number:06d}"
                 entry = {
                     "id": image_id,
@@ -222,9 +345,18 @@ class SynthesisStore:
                 data["images"].append(entry)
                 if split != "test":
                     for class_id in range(1, len(classes)):
+                        details = {}
                         regions = extract_regions(
-                            mask, class_id, selected[str(class_id)]
+                            mask, class_id, selected[str(class_id)], diagnostics=details
                         )
+                        for name in (
+                            "components",
+                            "accepted",
+                            "crowded",
+                            "edge",
+                            "context",
+                        ):
+                            summary["classes"][str(class_id)][name] += details[name]
                         if (mask == class_id).any() and not regions:
                             data["notes"].append(
                                 f"{split}/{source.name}/{classes[class_id]}: 주변 정답/테두리 때문에 참조 추출 제외"
@@ -260,15 +392,23 @@ class SynthesisStore:
                     len(paths),
                 )
             if not data["donors"]:
-                raise ValueError(
-                    "Train/Val에 사용할 불량 정답 영역이 없습니다. 불량을 라벨링한 뒤 분석하세요."
-                )
+                inspected = [report["splits"][split] for split in ("train", "val")]
+                if not any(v["annotated"] for v in inspected):
+                    reason = "Train/Val 정답 파일을 찾지 못했습니다. 분석 상세의 마스크/폴리곤 폴더를 확인하세요."
+                elif not any(v["foreground_images"] for v in inspected):
+                    reason = "정답 파일은 있지만 배경/제외 영역뿐입니다. 불량 클래스 마스크가 필요합니다."
+                else:
+                    reason = "불량 정답은 있지만 주변 정답 또는 이미지 테두리 때문에 사용할 참조가 없습니다. 분석 상세의 클래스별 제외 사유를 확인하세요."
+                raise ValueError(reason)
             checked(context)
+            report["status"] = "ready"
+            report["issues"].extend(data["notes"][:30])
             write_json(folder / "manifest.json", data)
         return {
             "profile_id": key,
             "donors": len(data["donors"]),
             "notes": data["notes"],
+            "analysis": report,
         }
 
     def generate(

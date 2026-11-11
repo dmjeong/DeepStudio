@@ -792,7 +792,7 @@ def datagen_generate(context, payload):
 
 
 def seg_synthesis(context, payload):
-    from core.segmentation_synthesis_store import SynthesisStore
+    from core.segmentation_synthesis_store import SynthesisStore, SynthesisAnalysisError
     import cv2
     cv2.setNumThreads(2)
     store = SynthesisStore(restore_project(payload["project"]))
@@ -802,7 +802,12 @@ def seg_synthesis(context, payload):
         raise ValueError("SEG 합성 작업 종류 오류")
     try:
         result = getattr(store, operation)(context=context, **values)
+        if "analysis" in result:
+            write_json(context.directory / "segmentation-analysis.json", result["analysis"])
         return {"status": "completed", "output": result}
+    except SynthesisAnalysisError as exc:
+        write_json(context.directory / "segmentation-analysis.json", exc.report)
+        return {"status": "failed", "error": str(exc), "output": {"analysis": exc.report}}
     except InterruptedError:
         return {"status": "cancelled", "output": {}}
 
