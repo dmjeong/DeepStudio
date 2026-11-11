@@ -676,6 +676,9 @@ class InferenceWidget(QWidget, InferenceOperations):
         compare_layout = QHBoxLayout(compare_box)
         compare_layout.setContentsMargins(0, 0, 0, 0)
         self.original_label = ResultImageLabel("원본")
+        # 결과 칸과 같은 바탕 · 테두리 · 최소 크기 (없으면 원본만 밝은 창 바탕 위에 떠 보인다)
+        self.original_label.setMinimumSize(240, 180)
+        self.original_label.setStyleSheet(self.image_label.styleSheet())
         self.original_label.hide()
         compare_layout.addWidget(self.original_label)
         compare_layout.addWidget(self.image_label)
@@ -684,6 +687,8 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._view_stack.addWidget(compare_box)
         self.compare_check = QCheckBox("원본 비교")
         self.compare_check.toggled.connect(self.original_label.setVisible)
+        self.compare_check.toggled.connect(lambda _checked: self._sync_original())   # 켤 때 지금 영상의 원본을 읽는다
+        self._original_key = None   # 원본 칸이 지금 보여 주는 영상 (("file" | "cache", 경로))
         gradcam_row.addWidget(self.compare_check)
         self.image_label.setToolTip("휠: 확대 / 드래그: 이동 / 더블 클릭: 화면 맞춤 / 마우스 위치: 원본 픽셀\n" + self.image_label_hint)
 
@@ -1288,20 +1293,94 @@ class InferenceWidget(QWidget, InferenceOperations):
             self.batch_time_label.setText(f"검증 이미지 {len(images)}장을 골랐습니다. 모델을 로드한 뒤 '추론 시작'을 누르세요.")
             self.batch_time_label.show()
 
+    def _set_original_pixmap(self, pixmap):
+        """원본 칸에 그림을 넣고 '원본' 배지를 단다 (어느 쪽이 원본인지 바로 보이게)."""
+        self.original_label.setPixmap(pixmap)
+        self.original_label.set_result("원본", "#8A92A4")
+
+    def _rgb_pixmap(self, rgb):
+        """8비트 RGB 배열(연속 메모리) → QPixmap."""
+        height, width = rgb.shape[:2]
+        return QPixmap.fromImage(QImage(rgb.data, width, height, rgb.strides[0],
+                                        QImage.Format.Format_RGB888).copy())
+
+    def _read_original(self, filepath):
+        """원본 영상을 한 번 읽는다 → (표시용 8비트 RGB, 픽셀 값 표시용 원래 배열). 못 읽으면 None.
+
+        결과 그림과 같은 변환(display_rgb)을 써서 흑백 · 16비트 · TIFF도 같은 밝기로 보인다.
+        """
+        from PIL import Image
+        from core.image_display import display_rgb
+        try:
+            with Image.open(filepath) as source:
+                pixels = np.array(source)
+                if pixels.dtype == np.int32 and pixels.min() >= 0 and pixels.max() <= 65535:
+                    pixels = pixels.astype(np.uint16)        # 16비트 영상을 32비트 정수로 여는 형식
+                try:
+                    rgb = display_rgb(pixels)
+                except ValueError:                           # 팔레트 · 1비트 등: PIL이 RGB로 바꾼다
+                    rgb = display_rgb(np.array(source.convert("RGB")))
+        except (OSError, ValueError):
+            return None
+        return rgb, pixels
+
+    def _sync_original(self):
+        """'원본' 칸과 픽셀 값 표시를 지금 보는 영상(_current_image)의 원본으로 맞춘다.
+
+            결과 그림만 바꾸는 경로(저장된 분할 · 검출 결과를 고를 때)에서는 원본 칸이 이전 영상으로 남았다.
+            ┌ 히트맵 캐시에 원본이 있다 ─▶ 그 배열 (이미 메모리에 있음)
+            └ 없다                      ─▶ 파일에서 읽는다 (원본 비교를 켰을 때만: 결과를 넘겨 볼 때 매번 읽지 않게)
+        """
+        from core.image_display import display_rgb
+        path = self._current_image
+        cache = self._heatmap_cache
+        if cache is not None and cache.get("original") is not None and cache.get("image_path", path) == path:
+            if self._original_key != ("cache", path):
+                original = display_rgb(cache["original"])     # 흑백(H×W)도 RGB로: 그대로 읽으면 줄무늬가 된다
+                self._set_original_pixmap(self._rgb_pixmap(original))
+                self.image_label.set_pixel_source(original)
+                self.original_label.set_pixel_source(original)
+                self._original_key = ("cache", path)
+            return
+        if not path or self._original_key == ("file", path):
+            return
+        if not self.compare_check.isChecked():
+            # 읽지 않은 채로 둔다: 이전 영상의 원본 · 픽셀 값이 지금 영상 것처럼 보이지 않게 비운다
+            if self._original_key is not None:
+                self.original_label.setText("원본")
+                self.image_label.set_pixel_source(None)
+                self.original_label.set_pixel_source(None)
+                self._original_key = None
+            return
+        loaded = self._read_original(path)
+        if loaded is None:
+            self.original_label.setText("원본 표시 불가")
+            self.image_label.set_pixel_source(None)
+            self.original_label.set_pixel_source(None)
+            self._original_key = None
+            return
+        rgb, pixels = loaded
+        self._set_original_pixmap(self._rgb_pixmap(rgb))
+        self.image_label.set_pixel_source(pixels)
+        self.original_label.set_pixel_source(pixels)
+        self._original_key = ("file", path)
+
     def _show_image(self, filepath: str):
         """이미지 표시"""
         self._current_preview_rgb = None
-        pixmap = QPixmap(filepath)
-        if not pixmap.isNull():
+        loaded = self._read_original(filepath)
+        if loaded is not None:
+            rgb, pixels = loaded
+            pixmap = self._rgb_pixmap(rgb)
             self.image_label.setPixmap(pixmap)
-            self.original_label.setPixmap(pixmap)
-            from PIL import Image
-            with Image.open(filepath) as source:
-                pixels = np.array(source)
+            self._set_original_pixmap(pixmap)
             self.image_label.set_pixel_source(pixels)
             self.original_label.set_pixel_source(pixels)
+            self._original_key = ("file", filepath)
         else:
             self.image_label.setText("이미지 표시 불가")
+            self.original_label.setText("원본 표시 불가")
+            self._original_key = None
         result = self._current_result
         if result is not None and result.image_path == filepath:
             self.image_label.set_result(result.summary, result.color)
@@ -1825,14 +1904,7 @@ class InferenceWidget(QWidget, InferenceOperations):
 
         pixmap = QPixmap.fromImage(qimage)
         self.image_label.setPixmap(pixmap)
-        cache = self._heatmap_cache
-        if cache is not None and cache.get("original") is not None:
-            original = np.ascontiguousarray(cache["original"])
-            h, w = original.shape[:2]
-            qimage = QImage(original.data, w, h, original.strides[0], QImage.Format.Format_RGB888).copy()
-            self.original_label.setPixmap(QPixmap.fromImage(qimage))
-            self.image_label.set_pixel_source(original)
-            self.original_label.set_pixel_source(original)
+        self._sync_original()
 
     def _run_batch_inference(self):
         """

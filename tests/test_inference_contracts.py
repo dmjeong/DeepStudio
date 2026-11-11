@@ -232,14 +232,18 @@ class InferenceContractTests(unittest.TestCase):
         self.assertEqual(widget._current_image, missing)
 
     def test_unreadable_image_clears_previous_preview(self):
-        self.ns["QPixmap"] = lambda _: SimpleNamespace(isNull=lambda: True)
-        widget = self.methods("_show_image")()
+        # 원본은 PIL로 한 번 읽는다(_read_original). 못 읽으면 결과 칸과 원본 칸 모두 이전 그림을 지운다.
+        widget = self.methods("_show_image", "_read_original", "_set_original_pixmap")()
         widget.image_label = Label()
+        widget.original_label = Label()
         widget._current_result = None
         widget.image_label.setText("previous image")
+        widget.original_label.setText("previous original")
         widget.image_path_label = Label()
         widget._show_image("missing.png")
         self.assertEqual(widget.image_label.text(), "이미지 표시 불가")
+        self.assertEqual(widget.original_label.text(), "원본 표시 불가")
+        self.assertIsNone(widget._original_key)
         self.assertEqual(widget.image_path_label.text(), "missing.png")
 
     def test_patchcore_classmethod_return_and_selected_device_are_used(self):
