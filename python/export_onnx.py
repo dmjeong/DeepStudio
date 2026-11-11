@@ -439,6 +439,11 @@ def export_to_onnx(model, dummy_input, output_path, opset_version=17,
     names = list(output_names or [output_name])
     axes = ({"input_image": {0: "batch_size"},
              **{name: {0: "batch_size"} for name in names}} if dynamic_batch else None)
+    retain_spatial_shapes = task == "segment" and getattr(model, "export_dynamic_spatial", False)
+    if retain_spatial_shapes:
+        axes = axes or {}
+        for name in ["input_image", *names]:
+            axes.setdefault(name, {}).update({2: "height", 3: "width"})
     model.cpu().eval()
     # 명시적 legacy exporter로 버전별 기본값 변화와 외부 데이터 분리를 피한다.
     exporter_options = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
@@ -449,6 +454,17 @@ def export_to_onnx(model, dummy_input, output_path, opset_version=17,
                           opset_version=opset_version, do_constant_folding=constant_folding,
                           input_names=["input_image"], output_names=names,
                           dynamic_axes=axes, **exporter_options)
+    if retain_spatial_shapes:
+        # Keep dynamic internal Reshape calculations, but publish the same
+        # fixed input/output size expected by the native segmentation SDK.
+        import onnx
+        graph = onnx.load(str(output_path))
+        for value in [graph.graph.input[0], *graph.graph.output]:
+            for axis, size in ((2, dummy_input.shape[-2]), (3, dummy_input.shape[-1])):
+                dim = value.type.tensor_type.shape.dim[axis]
+                dim.ClearField("dim_param")
+                dim.dim_value = int(size)
+        onnx.save(graph, str(output_path))
     return str(output_path)
 
 

@@ -280,6 +280,14 @@ jobs:
         run: |
           python -m pip install libreyolo==1.5.0 pycocotools==2.0.11
           python -m pytest -q tests/test_libreyolo_full_frame.py tests/test_native_patches.py
+      - name: Verify trained segmentation candidates and encrypted models in C++
+        env:
+          SEGMENT_PROBE: ${{ github.workspace }}/build/segment_probe
+          OMP_NUM_THREADS: "2"
+          MKL_NUM_THREADS: "2"
+        run: |
+          python -m pip install timm==1.0.31
+          python -m pytest -q tests/test_segmentation_candidates.py -k training_export_quantization_and_cpp
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"

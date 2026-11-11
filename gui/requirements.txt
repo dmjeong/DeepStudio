@@ -30,6 +30,7 @@ matplotlib>=3.7.0           # 학습 Loss/Metric 차트
 # ── 핵심 (python/ 의존성) ──
 torch>=2.0.0
 torchvision>=0.15.0
+timm==1.0.31               # Native MobileNetV4 / EfficientNet-B1 segmentation encoders
 truststore==0.10.4          # Windows 시스템 인증서로 ImageNet 다운로드
 certifi>=2024.2.2           # 공개 CA 인증서 목록
 Pillow>=9.0.0

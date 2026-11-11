@@ -242,6 +242,21 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         "export_verified", pretrained_asset="MobileNet_V2_Weights.IMAGENET1K_V1", metadata=desktop,
         notes="경량 사전학습 백본 U-Net(ImageNet MobileNetV2 + 얇은 디코더); ResNet18 U-Net처럼 넓게 보고 "
               "3504×1504 CPU 약 0.7초(ResNet18 U-Net 약 2.5초). 패치 학습 = 전체 추론 (전역 연산 없음)"))
+    for model_id, family, variant, asset, notes in (
+        ("unet_mobilenetv4_small", "U-Net", "MobileNetV4 Conv-S", "timm MobileNetV4 Conv-S ImageNet",
+         "ImageNet 사전학습 백본 + 얇은 디코더. 원본 ROI 해상도 유지; 속도와 정확도는 검사 데이터로 비교하세요."),
+        ("unet_shufflenetv2", "U-Net", "ShuffleNetV2 x1.0", "ShuffleNet_V2_X1_0_Weights.IMAGENET1K_V1",
+         "ImageNet 사전학습 백본 + 얇은 디코더. INT8 가속 효과는 CPU에 따라 다릅니다."),
+        ("unet_efficientnet_b1", "U-Net", "EfficientNet-B1", "timm EfficientNet-B1 RA4 ImageNet",
+         "ImageNet 사전학습 백본 + 얇은 디코더. SE 전역 문맥을 사용하므로 실제 판정 ROI로 품질을 평가하세요."),
+        ("bisenetv2", "BiSeNetV2", "Standard", "",
+         "세부/의미 이중 경로 + 학습 보조 손실. 기본 사전학습 파일 없음; 처음부터 학습/Studio .pt 추가 학습."),
+        ("stdc1", "STDC", "STDC1", "",
+         "STDCNet813 + 학습 보조 분할/경계 손실. 기본 사전학습 파일 없음; 처음부터 학습/Studio .pt 추가 학습."),
+    ):
+        specs.append(ModelSpec(model_id, family, variant, "segment", ("windows_native", "onnx"),
+                               common, (640, 640), (1, 3), "export_verified",
+                               pretrained_asset=asset, metadata=desktop, notes=notes))
     sam2_contract = {"contracts": {"graphs": {
         "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},
                     "outputs": ["image_embeddings", "image_features_0", "image_features_1"]},

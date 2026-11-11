@@ -204,6 +204,9 @@ def build():
         # Collect their package and package data so the installed EXE does not
         # fail only when a user selects LibreYOLO/RT-DETRv4.
         "--collect-all", "libreyolo",
+        "--collect-all", "timm",
+        "--collect-submodules", "segmentation_backbones",
+        "--hidden-import", "segmentation_models",
         "--collect-all", "pycocotools",
         "--collect-all", "sam2",
         "--collect-all", "hydra",

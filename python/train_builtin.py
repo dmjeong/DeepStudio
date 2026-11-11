@@ -129,8 +129,18 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
                 raise _Stopped()
             images = images.to(device, non_blocking=non_blocking)
             masks = masks.to(device, dtype=torch.long, non_blocking=non_blocking)
-            logits = model(images)
-            loss = criterion(logits, masks)
+            if training and hasattr(model, "forward_train"):
+                logits, auxiliary, boundary = model.forward_train(images)
+                loss = criterion(logits, masks)
+                config = model.training_loss_config
+                for aux_logits in auxiliary:
+                    loss = loss + config["auxiliary_segmentation_weight"] * criterion(aux_logits, masks)
+                if boundary is not None:
+                    from segmentation_models import boundary_loss
+                    loss = loss + config["boundary_weight"] * boundary_loss(boundary, masks)
+            else:
+                logits = model(images)
+                loss = criterion(logits, masks)
             if training:
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -423,7 +433,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                      ))
     else:
         scheduler = main_scheduler
-    loss_details = {}
+    loss_details = {"model_auxiliary_loss": dict(getattr(model, "training_loss_config", {}))}
     if spec.task == "segment":
         from segmentation_loss import SegmentationLoss, pixel_class_weights
 
@@ -516,9 +526,10 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         validation_metrics = {}
         report = None
         # 데스크톱 요청만: 배치마다 중지 요청 확인 + 에폭 안의 진행 기록. 웹 요청은 기본 호출 모양 그대로
-        watch = (lambda label, loader: {"should_stop": should_stop,
-                                        "progress": _BatchProgress(log, f"에폭 {epoch + 1} {label}", len(loader), target)}
-                 if class_report else {})
+        def watch(label, loader):
+            return ({"should_stop": should_stop,
+                     "progress": _BatchProgress(log, f"에폭 {epoch + 1} {label}", len(loader), target)}
+                    if class_report else {})
         try:
             if spec.task == "classify":
                 train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target,
@@ -611,10 +622,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
 
 
 def main() -> None:
-    specs = tuple(get_builtin_spec(model_id) for model_id in (
-        "dinov2_vits14", "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18",
-        "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg", "unet_lite",
-        "unet_mobilenetv2"))
+    from builtin_models import BUILTIN_MODEL_SPECS
+    specs = tuple(BUILTIN_MODEL_SPECS.values())
     parser = argparse.ArgumentParser(description="Train a built-in Deep Vision Studio adapter")
     parser.add_argument("--model", choices=[spec.model_id for spec in specs], required=True)
     parser.add_argument("--data_root", required=True)

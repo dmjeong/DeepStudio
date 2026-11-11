@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-11-11T01:32:56.496613+00:00",
+  "lastUpdated": "2026-11-11T03:22:11.884492+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -19,9 +19,10 @@
     "segmentation-thread-scaling-review",
     "libreyolo-gradcam-comparison",
     "libreyolo-full-frame",
-    "native-patch-training"
+    "native-patch-training",
+    "segmentation-model-candidates"
   ],
-  "primaryFeature": "native-patch-training",
+  "primaryFeature": "segmentation-model-candidates",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -572,6 +573,26 @@
         "windows_gpu": "not locally measured; CI tests configured"
       },
       "completedAt": "2026-11-11T01:32:56.496613+00:00"
+    },
+    "segmentation-model-candidates": {
+      "phase": "completed",
+      "version": "13.84",
+      "documents": {
+        "plan": "docs/02-design/features/segmentation-model-candidates.design.md",
+        "design": "docs/02-design/features/segmentation-model-candidates.design.md",
+        "report": "docs/RELEASE_13.84.md",
+        "analysis": "docs/03-analysis/segmentation-model-candidates.md"
+      },
+      "matchRate": 100,
+      "validation": {
+        "python_regression": "199 passed / 1 skipped, exit 0",
+        "final_related": "89 passed, exit 0",
+        "cpp": "7/7 passed",
+        "640_training_export": "5/5 passed",
+        "official_pretrained_training_export": "3/3 passed",
+        "windows_cuda": "not locally executed; CI configured"
+      },
+      "completedAt": "2026-11-11T03:22:11.884492+00:00"
     }
   },
   "pipeline": {

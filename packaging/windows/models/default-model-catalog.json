@@ -182,6 +182,62 @@
       "metadata": {}
     },
     {
+      "model_id": "libreyolo_classify_mobilenetv4_medium",
+      "family": "LibreYOLO",
+      "variant": "MobileNetV4 Medium",
+      "task": "classify",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "Small보다 표현 용량이 큰 분류 후보. Apache-2.0 ImageNet-1k 가중치; 속도와 검사 정확도는 데이터별 비교 필요",
+      "metadata": {}
+    },
+    {
+      "model_id": "libreyolo_detect_dfine_nano",
+      "family": "D-FINE",
+      "variant": "Nano (COCO)",
+      "task": "detect",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "ICLR 2025 경량 DETR 후보. Apache-2.0 COCO 전용 가중치; Objects365 사전학습 없음",
+      "metadata": {}
+    },
+    {
       "model_id": "patchcore_wide_resnet50_2",
       "family": "PatchCore",
       "variant": "Wide-ResNet50-2",
@@ -667,6 +723,171 @@
       }
     },
     {
+      "model_id": "unet_mobilenetv4_small",
+      "family": "U-Net",
+      "variant": "MobileNetV4 Conv-S",
+      "task": "segment",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "timm MobileNetV4 Conv-S ImageNet",
+      "notes": "ImageNet 사전학습 백본 + 얇은 디코더. 원본 ROI 해상도 유지; 속도와 정확도는 검사 데이터로 비교하세요.",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
+      "model_id": "unet_shufflenetv2",
+      "family": "U-Net",
+      "variant": "ShuffleNetV2 x1.0",
+      "task": "segment",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "ShuffleNet_V2_X1_0_Weights.IMAGENET1K_V1",
+      "notes": "ImageNet 사전학습 백본 + 얇은 디코더. INT8 가속 효과는 CPU에 따라 다릅니다.",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
+      "model_id": "unet_efficientnet_b1",
+      "family": "U-Net",
+      "variant": "EfficientNet-B1",
+      "task": "segment",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "timm EfficientNet-B1 RA4 ImageNet",
+      "notes": "ImageNet 사전학습 백본 + 얇은 디코더. SE 전역 문맥을 사용하므로 실제 판정 ROI로 품질을 평가하세요.",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
+      "model_id": "bisenetv2",
+      "family": "BiSeNetV2",
+      "variant": "Standard",
+      "task": "segment",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "",
+      "notes": "세부/의미 이중 경로 + 학습 보조 손실. 기본 사전학습 파일 없음; 처음부터 학습/Studio .pt 추가 학습.",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
+      "model_id": "stdc1",
+      "family": "STDC",
+      "variant": "STDC1",
+      "task": "segment",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "",
+      "notes": "STDCNet813 + 학습 보조 분할/경계 손실. 기본 사전학습 파일 없음; 처음부터 학습/Studio .pt 추가 학습.",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
       "model_id": "sam2_hiera_tiny",
       "family": "SAM2",
       "variant": "Hiera Tiny",
@@ -961,62 +1182,6 @@
           }
         }
       }
-    },
-    {
-      "model_id": "libreyolo_classify_mobilenetv4_medium",
-      "family": "LibreYOLO",
-      "variant": "MobileNetV4 Medium",
-      "task": "classify",
-      "runtimes": [
-        "windows_native",
-        "onnx"
-      ],
-      "capabilities": [
-        "cpp",
-        "csharp",
-        "export_onnx",
-        "infer",
-        "train"
-      ],
-      "input_size": [
-        224,
-        224
-      ],
-      "input_channels": [
-        3
-      ],
-      "release_status": "requested",
-      "pretrained_asset": "",
-      "notes": "Apache-2.0 사전학습 가중치; 상세 출처는 licenses/native-models-12.84.md",
-      "metadata": {}
-    },
-    {
-      "model_id": "libreyolo_detect_dfine_nano",
-      "family": "LibreYOLO",
-      "variant": "D-FINE Nano",
-      "task": "detect",
-      "runtimes": [
-        "windows_native",
-        "onnx"
-      ],
-      "capabilities": [
-        "cpp",
-        "csharp",
-        "export_onnx",
-        "infer",
-        "train"
-      ],
-      "input_size": [
-        640,
-        640
-      ],
-      "input_channels": [
-        3
-      ],
-      "release_status": "requested",
-      "pretrained_asset": "",
-      "notes": "Apache-2.0 사전학습 가중치; 상세 출처는 licenses/native-models-12.84.md",
-      "metadata": {}
     }
   ]
 }

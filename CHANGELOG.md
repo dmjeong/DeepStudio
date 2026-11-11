@@ -1,3 +1,11 @@
+# 13.84 — 2026-11-11
+
+- Models (+1.0): U-Net MobileNetV4 Conv-S / ShuffleNetV2 x1.0 / EfficientNet-B1, BiSeNetV2, STDC1을 데스크톱 기본 모델로 추가. RGB/흑백, 패치 학습, 증강, best 저장·추가 학습과 ONNX/C++ 분할 계약 연결.
+- Weights: U-Net 3종의 공식 백본을 build.bat과 별도 update_segmentation_models.bat에서 다운로드·검증. BiSeNetV2/STDC1은 처음부터 학습과 Studio 체크포인트 추가 학습 제공; 기본 사전학습 파일은 제공하지 않음을 UI에 표시.
+- Training: BiSeNetV2 보조 분할 손실, STDC1 보조 분할/경계 손실 추가. 학습 전용 출력을 배포에서 제외하고 배치 1의 전역 풀링 BatchNorm 처리. 주 출력으로 검증·best 선택.
+- Export: ShuffleNetV2 채널 재배열에 고정된 공간 크기가 남아 INT8 타일 보정에서 실패하던 문제 수정. 평문·암호화 C++ 마스크 일치 검사 추가.
+- Validation: 상세 설정/사용법/로컬 검사 한계는 docs/RELEASE_13.84.md 참고.
+
 # 12.84 — 2026-11-11
 
 - Feature (+1.0): native 탐지와 LibreYOLO 분류에 패치 학습·추론 추가. 탐지는 박스 동시 자르기/원본 좌표 복원/NMS, 분류는 원본 이미지 라벨을 유지하는 MIL 최대 logit 집계. GUI·웹에서 설정하며 체크포인트/CSV에 적용 값 기록.

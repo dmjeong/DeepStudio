@@ -13,6 +13,7 @@ from typing import Iterable
 import torch
 from torch import nn
 import torch.nn.functional as F
+from segmentation_models import MODEL_IDS as SEGMENT_CANDIDATES, SCRATCH_IDS
 
 
 @dataclass(frozen=True)
@@ -42,7 +43,9 @@ BUILTIN_MODEL_SPECS = {
 }
 
 # 사전학습 가중치가 없는 모델: '처음부터 학습'과 같은 모델의 로컬 체크포인트로만 시작한다.
-SCRATCH_ONLY_MODELS = frozenset({"unet_lite"})
+for _model_id in SEGMENT_CANDIDATES:
+    BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (640, 640), (1, 3))
+SCRATCH_ONLY_MODELS = frozenset({"unet_lite"}) | SCRATCH_IDS
 
 # 새로 학습하는 머리 부분(나머지는 사전학습 백본: 백본 학습률 배수·동결 대상)과,
 # 클래스 순서가 다른 체크포인트로 추가 학습할 때 버리는 마지막 분류층.
@@ -66,6 +69,11 @@ CLASS_HEAD_PREFIX = {
     "dinov2_vits14_seg": "head.", "dinov2_vitb14_seg": "head.",
     "unet_lite": "head.", "unet_mobilenetv2": "head.",
 }
+HEAD_PREFIXES.update({model_id: ("",) if model_id in SCRATCH_IDS else ("dec.", "head.")
+                      for model_id in SEGMENT_CANDIDATES})
+CLASS_HEAD_PREFIX.update({model_id: "head." for model_id in SEGMENT_CANDIDATES})
+CLASS_HEAD_PREFIX["bisenetv2"] = ("net.head.", "net.aux2.", "net.aux3.", "net.aux4.", "net.aux5_4.")
+CLASS_HEAD_PREFIX["stdc1"] = ("head.", "aux16.", "aux32.")
 
 # Pin a concrete revision rather than torchvision's mutable DEFAULT alias.
 IMAGENET_WEIGHTS = {
@@ -74,6 +82,7 @@ IMAGENET_WEIGHTS = {
     "resnet50": ("ResNet50_Weights", "IMAGENET1K_V2"),
     "convnext_tiny": ("ConvNeXt_Tiny_Weights", "IMAGENET1K_V1"),
     "mobilenet_v2": ("MobileNet_V2_Weights", "IMAGENET1K_V1"),
+    "shufflenet_v2_x1_0": ("ShuffleNet_V2_X1_0_Weights", "IMAGENET1K_V1"),
 }
 
 
@@ -89,7 +98,8 @@ def _torchvision_base(name, *, pretrained=False, weights_path=None):
         enum, revision = IMAGENET_WEIGHTS[name]
         weights = getattr(getattr(models, enum), revision)
         key = {"resnet18": "resnet18", "resnet34": "resnet34", "resnet50": "resnet50",
-               "convnext_tiny": "convnext_v1_tiny", "mobilenet_v2": "mobilenet_v2"}[name]
+               "convnext_tiny": "convnext_v1_tiny", "mobilenet_v2": "mobilenet_v2",
+               "shufflenet_v2_x1_0": "shufflenet_v2_x1_0"}[name]
         source = builtin_asset_path(key)
         provenance.update(source="imagenet", weights=f"{enum}.{revision}", url=weights.url)
     elif weights_path:
@@ -118,6 +128,8 @@ _GRADCAM_TARGET_LAYERS = {
     "unet_lite": "e4",
     "unet_mobilenetv2": "encoder.17",
 }
+_GRADCAM_TARGET_LAYERS.update({model_id: "dec.3" for model_id in SEGMENT_CANDIDATES})
+_GRADCAM_TARGET_LAYERS.update(bisenetv2="net.bga", stdc1="ffm")
 
 
 def get_builtin_spec(model_id: str) -> BuiltinModelSpec:
@@ -487,6 +499,10 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
         from dinov2_segmentation import DinoV2Segmentation
         model = DinoV2Segmentation(int(num_classes), in_channels,
                                   pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id in SEGMENT_CANDIDATES:
+        from segmentation_models import build_segment_candidate
+        model = build_segment_candidate(model_id, int(num_classes), in_channels,
+                                        pretrained=pretrained, weights_path=backbone_weights)
     elif model_id == "unet_mobilenetv2":
         model = UNetMobileNetV2(int(num_classes), in_channels,
                                 pretrained=pretrained, weights_path=backbone_weights)

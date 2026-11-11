@@ -40,9 +40,10 @@ BUILTIN_ADAPTER_IDS = frozenset({
     "deeplabv3plus_resnet34", "unet_resnet18", "dinov2_vits14",
     "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg",
     "unet_lite", "unet_mobilenetv2",
+    "unet_mobilenetv4_small", "unet_shufflenetv2", "unet_efficientnet_b1", "bisenetv2", "stdc1",
 })
 # 사전학습 가중치가 없는 기본 모델 (python/builtin_models.SCRATCH_ONLY_MODELS와 같은 목록)
-BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite"})
+BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite", "bisenetv2", "stdc1"})
 
 UPSTREAM_ADAPTER_IDS = frozenset({
     "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",
@@ -77,7 +78,7 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
     if engine == "builtin" and model_id not in BUILTIN_ADAPTER_IDS:
         raise ValueError("선택한 모델은 기본 모델의 사전학습 모드를 지원하지 않습니다.")
     if mode == "builtin_finetune" and model_id in BUILTIN_SCRATCH_ONLY_IDS:
-        raise ValueError("초경량 U-Net은 사전학습 가중치가 없습니다. '처음부터 학습'을 선택하세요.")
+        raise ValueError("선택 모델은 기본 사전학습 파일이 없습니다. 처음부터 학습하거나 이전 학습 결과를 선택하세요.")
     if engine == "upstream" and model_id not in UPSTREAM_ADAPTER_IDS:
         raise ValueError("선택한 모델은 upstream native 학습 모드를 지원하지 않습니다.")
     if engine == "sam2" and model_id not in SAM2_ADAPTER_IDS:

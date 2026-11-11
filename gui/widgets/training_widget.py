@@ -108,7 +108,7 @@ class TrainingWidget(TrainingForm, QWidget):
             # 사전학습 가중치가 없는 모델: 고를 수 없는 '사전학습으로 시작'은 보여 주지 않는다
             choices = [("builtin_scratch", f"{name} 처음부터 학습"),
                        ("builtin_transfer", f"{name} 이전 학습 결과(.pt)로 이어서")]
-            self.mode_desc.setText(f"선택 모델: {name}\n사전학습 가중치 없음 — 라이선스 걱정 없이 내 데이터로만 학습합니다.")
+            self.mode_desc.setText(f"선택 모델: {name}\n기본 사전학습 파일은 제공하지 않습니다. 내 데이터로 학습하거나 이전 학습 결과를 불러옵니다.")
         elif model_id in BUILTIN_ADAPTER_IDS:
             source = "LVD-142M" if model_id.startswith("dinov2_") else "ImageNet"  # DINOv2는 자기지도 사전학습
             choices = [("builtin_finetune", f"{name} {source} 가중치로 시작"),

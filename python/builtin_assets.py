@@ -33,6 +33,9 @@ ASSET_FILES = {
     "wide_resnet50_2": "torchvision/wide_resnet50_2-95faca4d.pth",
     "convnext_v1_tiny": "torchvision/convnext_tiny-983f1562.pth",
     "mobilenet_v2": "torchvision/mobilenet_v2-b0353104.pth",
+    "shufflenet_v2_x1_0": "torchvision/shufflenetv2_x1-5666bf0f80.pth",
+    "mobilenetv4_small_encoder": "timm/mobilenetv4_conv_small.pth",
+    "efficientnet_b1_encoder": "timm/efficientnet_b1_ra4.pth",
     "dinov2_vits14": "dinov2/dinov2_vits14_pretrain.pth",
     "dinov2_vitb14": "dinov2/dinov2_vitb14_pretrain.pth",
     "libreyolo_classify_mobilenetv4_small": "libreyolo/LibreMobileNetV4s-cls.pt",
@@ -49,6 +52,7 @@ ASSET_FILES = {
 }
 
 SEGMENTATION_ASSET_IDS = (
+    "shufflenet_v2_x1_0", "mobilenetv4_small_encoder", "efficientnet_b1_encoder",
     "resnet18", "resnet34", "mobilenet_v2", "dinov2_vits14", "dinov2_vitb14", "sam2_hiera_tiny", "sam2_hiera_small",
     "sam2_hiera_base_plus", "sam2_hiera_large",
 )
@@ -64,6 +68,9 @@ SOURCE_URLS = {
     "wide_resnet50_2": "https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth",
     "convnext_v1_tiny": "https://download.pytorch.org/models/convnext_tiny-983f1562.pth",
     "mobilenet_v2": "https://download.pytorch.org/models/mobilenet_v2-b0353104.pth",
+    "shufflenet_v2_x1_0": "https://download.pytorch.org/models/shufflenetv2_x1-5666bf0f80.pth",
+    "mobilenetv4_small_encoder": "https://huggingface.co/timm/mobilenetv4_conv_small.e2400_r224_in1k/resolve/331fb803779522b685cf942e15f914fb6741c1eb/pytorch_model.bin",
+    "efficientnet_b1_encoder": "https://huggingface.co/timm/efficientnet_b1.ra4_e3600_r240_in1k/resolve/4e4a9c08eee4bdb118d69d27f87ace8fdf3fc743/pytorch_model.bin",
     "dinov2_vits14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth",
     "dinov2_vitb14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth",
     "libreyolo_classify_mobilenetv4_small":
@@ -86,6 +93,8 @@ SOURCE_URLS = {
 # 공식 파일 이름에 해시가 없는 가중치의 전체 SHA-256 (공식 주소에서 받은 파일, 2026-10 확인).
 # manifest가 없어도(직접 받은 파일) 이 값과 같아야 쓴다.
 PINNED_SHA256 = {
+    "mobilenetv4_conv_small.pth": "28f2109728e2b5b4296397f0ea2aa8fd1896c8dca1e7f5ff217ae5ec22049e39",
+    "efficientnet_b1_ra4.pth": "aaf5438e2525c3f5a467e1c515ee6d19041cf5bd0ab77b9467370c6c506bdaa1",
     "dinov2_vits14_pretrain.pth": "b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9",
     "dinov2_vitb14_pretrain.pth": "0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73",
 }
@@ -335,6 +344,9 @@ BUILTIN_BACKBONE_ASSETS = {
     "dinov2_vits14": "dinov2_vits14",
     "deeplabv3plus_resnet34": "resnet34",
     "unet_mobilenetv2": "mobilenet_v2",
+    "unet_mobilenetv4_small": "mobilenetv4_small_encoder",
+    "unet_shufflenetv2": "shufflenet_v2_x1_0",
+    "unet_efficientnet_b1": "efficientnet_b1_encoder",
     # 모델 ID(…_cls 분류, …_seg 분할)는 main의 DINOv2 분할(dinov2_vits14)과 겹치지 않게, 가중치 ID는 같은 공식 파일이라 공유
     "dinov2_vits14_cls": "dinov2_vits14", "dinov2_vits14_seg": "dinov2_vits14",
     "dinov2_vitb14_cls": "dinov2_vitb14", "dinov2_vitb14_seg": "dinov2_vitb14",

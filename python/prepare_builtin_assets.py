@@ -83,12 +83,11 @@ def prepare(output: str | Path, only=None, *, register_existing: bool = False, s
                     downloaded = download_sam2_pretrained(model_id, target.parent)
                     if downloaded.resolve() != target.resolve():
                         raise RuntimeError(f"SAM2 가중치 경로가 예상과 다릅니다: {downloaded}")
-                elif model_id.startswith("dinov2_"):
+                elif model_id.startswith("dinov2_") or model_id in {"mobilenetv4_small_encoder", "efficientnet_b1_encoder"}:
                     from builtin_assets import SOURCE_URLS, PINNED_SHA256
-                    DINOV2_URL = SOURCE_URLS[model_id]
-                    DINOV2_SHA256 = PINNED_SHA256[target.name]
                     from model_download import cached_https_weights
-                    cached_https_weights(DINOV2_URL, target, expected_sha256=DINOV2_SHA256)
+                    cached_https_weights(SOURCE_URLS[model_id], target,
+                                         expected_sha256=PINNED_SHA256[target.name])
                 elif model_id.startswith(("libreyolo_", "re_detr_")):
                     _download_upstream(model_id, target)
                 else:
