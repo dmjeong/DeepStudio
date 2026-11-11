@@ -239,6 +239,21 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         "export_verified", pretrained_asset="MobileNet_V2_Weights.IMAGENET1K_V1", metadata=desktop,
         notes="경량 사전학습 백본 U-Net(ImageNet MobileNetV2 + 얇은 디코더); ResNet18 U-Net처럼 넓게 보고 "
               "3504×1504 CPU 약 0.7초(ResNet18 U-Net 약 2.5초). 패치 학습 = 전체 추론 (전역 연산 없음)"))
+    # LibreYOLO 상위 변형: 기존 Tiny/Small과 같은 학습·추론·내보내기 경로를 쓴다 (데스크톱 전용 목록)
+    specs.extend([
+        ModelSpec("libreyolo_detect_9s", "LibreYOLO", "9 Small", "detect", ("windows_native", "onnx"), common,
+                  (640, 640), (3,), metadata=desktop, notes="9 Tiny보다 정확(연산 약 3배). 작은 결함은 패치 학습과 함께"),
+        ModelSpec("libreyolo_detect_9m", "LibreYOLO", "9 Medium", "detect", ("windows_native", "onnx"), common,
+                  (640, 640), (3,), metadata=desktop, notes="9 Small보다 정확(연산 약 3배). GPU 학습 권장"),
+        ModelSpec("libreyolo_detect_9c", "LibreYOLO", "9 Compact", "detect", ("windows_native", "onnx"), common,
+                  (640, 640), (3,), metadata=desktop, notes="LibreYOLO9 중 가장 정확하고 가장 무겁다. GPU 학습 권장"),
+        ModelSpec("libreyolo_classify_mobilenetv4_medium", "LibreYOLO", "MobileNetV4 Medium", "classify",
+                  ("windows_native", "onnx"), common, (224, 224), (3,), metadata=desktop,
+                  notes="MobileNetV4 Small보다 정확(연산 약 4배)"),
+        ModelSpec("libreyolo_classify_mobilenetv4_large", "LibreYOLO", "MobileNetV4 Large", "classify",
+                  ("windows_native", "onnx"), common, (256, 256), (3,), metadata=desktop,
+                  notes="MobileNetV4 중 가장 정확. 기본 입력 256"),
+    ])
     sam2_contract = {"contracts": {"graphs": {
         "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},
                     "outputs": ["image_embeddings", "image_features_0", "image_features_1"]},

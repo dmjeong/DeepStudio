@@ -92,8 +92,15 @@ def checkpoint_backend(checkpoint):
     raise ValueError("지원하지 않는 체크포인트 포맷")
 
 
-def _upstream_spec(checkpoint):
-    """Read the schema written by the shipped LibreYOLO trainers."""
+def _upstream_spec(checkpoint, region=None):
+    """Read the schema written by the shipped LibreYOLO trainers.
+
+    패치 학습한 검출 모델(체크포인트의 타일 규칙)은 입력을 타일 크기가 아니라 판정 영역 크기로 잡는다:
+
+        판정 영역 W×H ─▶ 배율 s ─▶ 32의 배수로 올림 = 모델 입력   (학습 타일과 같은 물체 크기로 한 번에 추론)
+
+    region: (가로, 세로). 없으면 학습 때 기록한 영상 크기.
+    """
     family = checkpoint.get("model_family")
     task = checkpoint.get("task")
     if family not in UPSTREAM_FAMILIES or task not in {"classify", "detect"}:
@@ -112,12 +119,26 @@ def _upstream_spec(checkpoint):
         raise ValueError("기본 제공 LibreYOLO 분류 체크포인트 모델군 불일치")
     if task == "detect" and family not in {"yolo9", "rtdetrv4"}:
         raise ValueError("기본 제공 LibreYOLO 검출 체크포인트 모델군 불일치")
+    height = width = size
+    from upstream_models import PATCH_TRAINING_FAMILIES, checkpoint_tiling
+    tiling = checkpoint_tiling(checkpoint) if task == "detect" else None
+    if tiling:
+        if family not in PATCH_TRAINING_FAMILIES:
+            raise ValueError("패치 학습 검출 내보내기는 LibreYOLO9 모델만 지원합니다")
+        region = region or tiling["region"]
+        if not region:
+            raise ValueError("패치 학습 검출 모델은 판정 영역 크기(가로×세로 px)가 있어야 C++에서 한 번에 추론할 수 있습니다. "
+                             "내보내기 화면에서 판정 영역 크기를 입력하세요.")
+        region = [_positive_int(value, "region") for value in region]
+        scaled = [max(1, int(round(value * tiling["scale"]))) for value in region]
+        width, height = (-(-value // WHOLE_IMAGE_MULTIPLE) * WHOLE_IMAGE_MULTIPLE for value in scaled)
+        tiling = {**tiling, "region": region, "scaled": scaled}
     return {"family": family, "task": task, "num_classes": num_classes,
-            "class_names": class_names, "input_height": size, "input_width": size,
-            "in_channels": 3,
+            "class_names": class_names, "input_height": height, "input_width": width,
+            "in_channels": 3, "tiling": tiling,
             "preprocessing": {"normalize_mean": [0.485, 0.456, 0.406],
                                 "normalize_std": [0.229, 0.224, 0.225],
-                                "input_size": [size, size], "in_channels": 3,
+                                "input_size": [height, width], "in_channels": 3,
                                 "color_order": "RGB"}}
 
 
@@ -246,6 +267,15 @@ def deployment_preview(checkpoint_path):
     task = checkpoint.get("task")
     preview = {"task": task, "patch": bool(tiling) and task == "segment", "vit": str(model_id).startswith("dinov2_"),
                "region": tiling.get("region"), "scale": float(tiling.get("scale", 1.0)), "rules": None}
+    if task == "detect":
+        # 패치 학습한 LibreYOLO9 검출 모델도 판정 영역 크기로 내보낸다
+        try:
+            from upstream_models import checkpoint_tiling
+            detect_tiling = checkpoint_tiling(checkpoint)
+        except ValueError:
+            detect_tiling = None
+        if detect_tiling:
+            preview.update(patch=True, region=detect_tiling["region"], scale=detect_tiling["scale"])
     if task == "segment":
         try:
             preview["rules"] = deployment_defect_rules(checkpoint_path, list(checkpoint.get("class_names") or []))
@@ -602,13 +632,16 @@ def _upstream_onnx_tensor_names(onnx_path, family):
 
 
 def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_version,
-                                dynamic_batch, simplify, verify, log):
+                                dynamic_batch, simplify, verify, log, region=None):
     """Export shipped LibreYOLO checkpoints without rebuilding them as CustomCSP."""
     import onnx
     import torch
     from upstream_models import load_upstream_checkpoint
 
-    spec = _upstream_spec(checkpoint)
+    spec = _upstream_spec(checkpoint, region)
+    if spec["tiling"]:
+        log("패치 학습 검출 모델: 판정 영역 {}×{}를 한 번에 넣는 고정 입력 {}×{}로 내보냅니다 (배율 {:.0%})".format(
+            *spec["tiling"]["region"], spec["input_width"], spec["input_height"], spec["tiling"]["scale"]))
     family = spec["family"]
     backend = {"mobilenetv4": "libreyolo_mobilenetv4", "yolo9": "libreyolo_yolo9",
                "rtdetrv4": "libreyolo_rtdetrv4"}[family]
@@ -648,6 +681,9 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
                               "dynamic_batch": dynamic_batch,
                               "verification_tolerance": verification_tolerances(spec["task"]),
                               "verification_reference": "libreyolo_exported_pytorch_graph"}
+        if spec["tiling"]:
+            # C++ SDK는 넘겨받은 영상을 이 입력 크기로 맞춘다. 학습과 같은 물체 크기가 되려면 판정 영역을 넘겨야 한다.
+            manifest["export"]["tiling"] = spec["tiling"]
         if family == "yolo9":
             manifest["postprocessing"] = {
                 "box_format": "pixel_xyxy", "objectness": "none",
@@ -704,7 +740,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
     if backend == "libreyolo":
         return _export_upstream_checkpoint(checkpoint_path, output, checkpoint,
                                            opset_version=opset_version, dynamic_batch=dynamic_batch,
-                                           simplify=simplify, verify=verify, log=log)
+                                           simplify=simplify, verify=verify, log=log,
+                                           region=(overrides or {}).get("region_size"))
     config_name = output.with_suffix(".json").name
     with tempfile.TemporaryDirectory(prefix=".onnx-export-", dir=output.parent) as temp:
         stage = Path(temp)

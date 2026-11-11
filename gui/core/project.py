@@ -112,6 +112,8 @@ class AugmentationConfig:
     )
     mixup_alpha: float = 0.0          # Mixup 알파
     mosaic: bool = False              # 모자이크 증강 (detection용)
+    # LibreYOLO 모델(검출 · MobileNetV4 분류): False면 모델 기본 증강, True면 위 값(뒤집기 · 회전 · 색상 · 모자이크)을 적용
+    custom: bool = False
 
 
 @dataclass

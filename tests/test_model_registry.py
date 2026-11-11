@@ -33,6 +33,22 @@ def test_requested_catalog_contains_every_product_family_and_redetr_sizes():
     assert {f"sam2_hiera_{variant}" for variant in ("tiny", "small", "base_plus", "large")} <= ids
 
 
+def test_larger_libreyolo_variants_are_desktop_only_and_trainable():
+    """LibreYOLO9 S/M/C와 MobileNetV4 Medium/Large: 데스크톱 목록에만 보이고(웹 목록은 그대로) 학습 경로가 있다."""
+    from core.training_modes import DETECTION_PATCH_IDS, UPSTREAM_ADAPTER_IDS, training_capabilities
+    registry = ModelRegistry.builtin()
+    added = {"libreyolo_detect_9s", "libreyolo_detect_9m", "libreyolo_detect_9c",
+             "libreyolo_classify_mobilenetv4_medium", "libreyolo_classify_mobilenetv4_large"}
+    assert not added & {spec.model_id for spec in registry.list()}
+    desktop = {spec.model_id: spec for spec in registry.list(surface="desktop")}
+    assert added <= set(desktop) and added <= UPSTREAM_ADAPTER_IDS
+    assert desktop["libreyolo_classify_mobilenetv4_large"].input_size == (256, 256)
+    assert training_capabilities("detect", "upstream_finetune", model_id="libreyolo_detect_9m")["engine"] == "upstream"
+    # 검출 패치 학습은 LibreYOLO9 계열 전부, RT-DETR는 제외
+    assert DETECTION_PATCH_IDS == {"libreyolo_detect_9t", "libreyolo_detect_9s", "libreyolo_detect_9m",
+                                   "libreyolo_detect_9c"}
+
+
 def test_catalog_keeps_unverified_models_out_of_release_ready_view():
     registry = ModelRegistry.builtin()
     assert registry.list("detect", release_ready=True) == ()

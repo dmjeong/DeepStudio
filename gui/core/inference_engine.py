@@ -33,11 +33,24 @@ class InferenceOperations:
 
         model = self._upstream_model
         task = self._upstream_task
+        # 패치 학습한 검출 모델: 영상을 입력 크기로 줄이지 않는다. 학습과 같은 배율로 줄인 뒤
+        # 타일로 나눠 추론하고 합친다 (물체 크기가 학습 때와 같아야 작은 결함이 보인다).
+        tiling = getattr(self, "_detect_tiling", None) if task == "detect" else None
+        source, options = image_path, {}
+        if tiling:
+            options = {"tiling": True, "overlap_ratio": tiling["overlap"] / tiling["tile"]}
+            if tiling["scale"] != 1:
+                import cv2
+                with Image.open(image_path) as opened:
+                    pixels = np.asarray(opened.convert("RGB"))
+                size = (max(1, int(round(pixels.shape[1] * tiling["scale"]))),
+                        max(1, int(round(pixels.shape[0] * tiling["scale"]))))
+                source = Image.fromarray(cv2.resize(pixels, size, interpolation=getattr(cv2, tiling["interpolation"])))
         with self._measure_inference_stage("inference"):
-            result = model.predict(image_path, imgsz=int(self._input_size[0]),
+            result = model.predict(source, imgsz=int(self._input_size[0]),
                                    conf=float(getattr(self, "detection_confidence", .25)),
                                    iou=float(getattr(self, "detection_iou", .5)),
-                                   device=str(self._infer_device))
+                                   device=str(self._infer_device), **options)
         if isinstance(result, (list, tuple)):
             if len(result) != 1:
                 raise ValueError("LibreYOLO 단일 이미지 추론 결과 형식 오류")
@@ -73,11 +86,15 @@ class InferenceOperations:
                                          details={"num_detections": len(detections), "detections": detections,
                                                   "class_names": list(self.class_names),
                                                   "runtime": "libreyolo-pytorch", "device": str(self._infer_device)})
+            if tiling:
+                prediction.details["tiling"] = {**tiling, "tiles": int(getattr(result, "num_tiles", 0) or 0)}
             self._current_preview_rgb = draw_detection_boxes(original, detections)
         else:
             raise ValueError(f"LibreYOLO 태스크 미지원: {task}")
         self._heatmap_cache = None
         self.info = "LibreYOLO native PyTorch 추론 | Grad-CAM 미지원"
+        if tiling:
+            self.info += f" | 패치 학습 모델: {tiling['tile']}px 타일, 배율 {tiling['scale']:.0%}"
         return prediction
 
     def _run_custom_inference(self, image_path: str):
@@ -539,7 +556,7 @@ class InferenceEngine(InferenceOperations):
     STATE_FIELDS = ("model", "_patchcore_model", "_upstream_model", "_upstream_task", "_gradcam",
                     "_infer_device", "_input_size", "_normalization", "class_names",
                     "_anomaly_threshold", "_active_checkpoint", "_center_crop", "_onnx_runtime",
-                    "_sam2_predictor", "_sam2_model_id", "_tiling")
+                    "_sam2_predictor", "_sam2_model_id", "_tiling", "_detect_tiling")
 
     def __init__(self, state, *, gradcam=True, input_region=None, runtime="auto", threads=4, segment_review=None,
                  sam2=None):

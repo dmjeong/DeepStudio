@@ -638,6 +638,166 @@
       }
     },
     {
+      "model_id": "libreyolo_detect_9s",
+      "family": "LibreYOLO",
+      "variant": "9 Small",
+      "task": "detect",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "9 Tiny보다 정확(연산 약 3배). 작은 결함은 패치 학습과 함께",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
+      "model_id": "libreyolo_detect_9m",
+      "family": "LibreYOLO",
+      "variant": "9 Medium",
+      "task": "detect",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "9 Small보다 정확(연산 약 3배). GPU 학습 권장",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
+      "model_id": "libreyolo_detect_9c",
+      "family": "LibreYOLO",
+      "variant": "9 Compact",
+      "task": "detect",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        640,
+        640
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "LibreYOLO9 중 가장 정확하고 가장 무겁다. GPU 학습 권장",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
+      "model_id": "libreyolo_classify_mobilenetv4_medium",
+      "family": "LibreYOLO",
+      "variant": "MobileNetV4 Medium",
+      "task": "classify",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        224,
+        224
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "MobileNetV4 Small보다 정확(연산 약 4배)",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
+      "model_id": "libreyolo_classify_mobilenetv4_large",
+      "family": "LibreYOLO",
+      "variant": "MobileNetV4 Large",
+      "task": "classify",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        256,
+        256
+      ],
+      "input_channels": [
+        3
+      ],
+      "release_status": "requested",
+      "pretrained_asset": "",
+      "notes": "MobileNetV4 중 가장 정확. 기본 입력 256",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ]
+      }
+    },
+    {
       "model_id": "sam2_hiera_tiny",
       "family": "SAM2",
       "variant": "Hiera Tiny",

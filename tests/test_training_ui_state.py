@@ -214,6 +214,63 @@ def test_upstream_shipped_models_offer_native_initialization_modes(page, task, m
     assert "Custom CSP" not in page.mode_desc.text()
 
 
+def _upstream_page(page, task, model_id):
+    project = copy.deepcopy(page.project)
+    project.task = task
+    project.model.model_id = model_id
+    project.training.training_mode = "upstream_finetune"
+    page.set_project(project)
+    return project
+
+
+def test_upstream_augmentation_is_applied_only_when_set_directly(page):
+    """LibreYOLO 모델: '직접 설정'을 켜야 화면 값이 학습에 들어간다. 끄면 칸이 잠겨 모델 기본 증강임을 보인다."""
+    _upstream_page(page, "detect", "libreyolo_detect_9s")
+    assert not page.aug_custom_check.isHidden() and not page.mosaic_check.isHidden()
+    assert not page.aug_custom_check.isChecked()
+    assert not any(control.isEnabled() for control in
+                   (page.hflip_spin, page.rotation_spin, page.color_jitter_spin, page.mosaic_check))
+    assert "모델 기본" in page.aug_info.text()
+
+    page.aug_custom_check.setChecked(True)
+    assert all(control.isEnabled() for control in
+               (page.hflip_spin, page.rotation_spin, page.color_jitter_spin, page.mosaic_check))
+    page.hflip_spin.setValue(0.0)
+    page.mosaic_check.setChecked(True)
+    page._sync_config()
+    augmentation = page.project.training.augmentation
+    assert augmentation.custom and augmentation.mosaic and augmentation.horizontal_flip == 0.0
+
+    # 분류(MobileNetV4)도 같은 스위치를 쓴다. 모자이크는 검출 전용
+    _upstream_page(page, "classify", "libreyolo_classify_mobilenetv4_medium")
+    assert not page.aug_custom_check.isHidden() and page.mosaic_check.isHidden()
+
+
+def test_builtin_classification_keeps_its_augmentation_controls(page):
+    """LibreYOLO가 아닌 모델에는 스위치가 없고, 기존처럼 칸을 바로 바꿀 수 있다."""
+    assert page.aug_custom_check.isHidden()
+    assert page.hflip_spin.isEnabled() and page.rotation_spin.isEnabled()
+    page._sync_config()
+    assert page.project.training.augmentation.custom is False
+
+
+@pytest.mark.parametrize("model_id,supported", [("libreyolo_detect_9t", True), ("libreyolo_detect_9c", True),
+                                                 ("re_detr_v4_small", False)])
+def test_detection_patch_training_is_offered_for_libreyolo9_only(page, model_id, supported):
+    _upstream_page(page, "detect", model_id)
+    assert page.patch_check.isHidden() != supported
+    if supported:
+        page.patch_check.setChecked(True)
+        assert not page.patch_scale_combo.isHidden() and page.patch_count_spin.isHidden()   # 패치 수는 분할 전용
+        assert "타일" in page.patch_info.text()
+        page._sync_config()
+        assert page.project.training.patch_training is True
+    else:
+        page.patch_check.setChecked(True)
+        page._sync_config()
+        assert page.project.training.patch_training is False
+
+
 def test_confusion_matrix_clear_removes_previous_color_scale(page):
     import numpy as np
     chart = page.cm_chart

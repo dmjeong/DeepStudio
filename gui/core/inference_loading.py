@@ -82,8 +82,10 @@ def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pyto
                 raise ValueError("LibreYOLO 체크포인트의 입력 크기(imgsz) 누락")
             require_saved_input_shape(input_size, (size, size))
             model = load_upstream_checkpoint(path, device=str(device))
+            from upstream_models import checkpoint_tiling
             state.update(_upstream_model=model, class_names=class_names, _input_size=(size, size),
-                         _normalization=None, _upstream_task=task)
+                         _normalization=None, _upstream_task=task,
+                         _detect_tiling=checkpoint_tiling(checkpoint) if task == "detect" else None)
         else:
             if runtime not in ("auto", "pytorch") and not (runtime == "onnx" and checkpoint.get("engine") == "efficientnet"):
                 raise ValueError("이 ONNX 경로는 EfficientNet 체크포인트를 지원합니다")

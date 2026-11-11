@@ -13,7 +13,7 @@ from core.project import ProjectData, ProjectManager
 from core.qt_training import TrainWorker, PatchCoreWorker
 from core.training_modes import (training_engine_name, training_capabilities, MODE_LABELS,
                                  BUILTIN_ADAPTER_IDS, BUILTIN_SCRATCH_ONLY_IDS, UPSTREAM_ADAPTER_IDS,
-                                 SAM2_ADAPTER_IDS)
+                                 SAM2_ADAPTER_IDS, DETECTION_PATCH_IDS)
 from core.training_progress import remaining_seconds, run_description
 from core.training_time import format_hms
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
@@ -418,7 +418,23 @@ class TrainingWidget(TrainingForm, QWidget):
         if self.project is not None and self.project.task == "segment" and mode in MODE_LABELS \
                 and not mode.startswith("sam2"):
             keys = ["horizontal_flip", "rotation", "color_jitter"]
+        if self._upstream_model_selected():
+            # LibreYOLO 모델: '직접 설정'을 켠 경우에만 화면 값이 학습에 들어간다 (끄면 모델 기본 증강)
+            keys = []
+            if self.aug_custom_check.isChecked():
+                keys = ["horizontal_flip", "rotation", "color_jitter"]
+                if self.project is not None and self.project.task == "detect":
+                    keys.append("mosaic")
         return keys
+
+    def _detection_patch_supported(self):
+        return (self.project is not None and self.project.task == "detect"
+                and (self.model_id_combo.currentData() or "") in DETECTION_PATCH_IDS
+                and str(self.mode_combo.currentData() or "").startswith("upstream"))
+
+    def _upstream_model_selected(self):
+        return (self.model_id_combo.currentData() or "") in UPSTREAM_ADAPTER_IDS \
+            and str(self.mode_combo.currentData() or "").startswith("upstream")
 
     def _reset_unsupported_augmentation(self):
         if self.project:
@@ -491,14 +507,24 @@ class TrainingWidget(TrainingForm, QWidget):
         segment = self.project is not None and self.project.task == "segment"
         self.advise_btn.setVisible(segment)
         self.advise_btn.setEnabled(segment and not resume and getattr(self, "_advice_scan", None) is None)
-        self.patch_check.setVisible(segment)
-        self.patch_check.setEnabled(segment and not sam2 and not resume)
+        # 검출 패치 학습: LibreYOLO9 모델만 (타일로 잘라 학습, 추론은 같은 배율의 타일 · C++는 판정 영역 한 번에)
+        detect_patch = self._detection_patch_supported()
+        self.patch_check.setVisible(segment or detect_patch)
+        self.patch_check.setEnabled((segment and not sam2 and not resume) or (detect_patch and not resume))
         patch = segment and not sam2 and self.patch_check.isChecked()
-        for control in (self.patch_count_label, self.patch_count_spin, self.patch_info,
-                        self.patch_scale_label, self.patch_scale_combo):
+        tiles = detect_patch and self.patch_check.isChecked()
+        for control in (self.patch_info, self.patch_scale_label, self.patch_scale_combo):
+            control.setVisible((segment or detect_patch) and self.patch_check.isChecked())
+        for control in (self.patch_count_label, self.patch_count_spin):   # 이미지당 패치 수는 분할 전용
             control.setVisible(segment and self.patch_check.isChecked())
         self.patch_count_spin.setEnabled(patch and not resume)
-        self.patch_scale_combo.setEnabled(patch and not resume)
+        self.patch_scale_combo.setEnabled((patch or tiles) and not resume)
+        if tiles:
+            scale = float(self.patch_scale_combo.currentData() or 1.0)
+            self.patch_info.setText(
+                f"영상을 {'줄이지 않고' if scale == 1 else f'{scale:.0%}로 줄인 뒤'} 640px 타일로 잘라 학습합니다(물체가 있는 타일 + 배경 타일 일부)."
+                "\n추론도 같은 배율의 타일로 나눠 합치고, C++ 내보내기는 판정 영역 전체를 한 번에 넣는 입력으로 만듭니다.")
+            self.patch_info.setStyleSheet("")
         if patch:
             size = self.input_size_spin.value()
             scale = float(self.patch_scale_combo.currentData() or 1.0)
@@ -528,8 +554,19 @@ class TrainingWidget(TrainingForm, QWidget):
                                 if capabilities["layer_debug"] else capabilities["layer_debug_reason"])
         applied = self._desktop_augmentation(capabilities)
         for key, control in (("horizontal_flip", self.hflip_spin), ("rotation", self.rotation_spin),
-                             ("color_jitter", self.color_jitter_spin)):
+                             ("color_jitter", self.color_jitter_spin), ("mosaic", self.mosaic_check)):
             control.setEnabled(not resume and key in applied)
+        upstream = self._upstream_model_selected()
+        detect = self.project is not None and self.project.task == "detect"
+        self.aug_custom_check.setVisible(upstream)
+        self.aug_custom_check.setEnabled(upstream and not resume)
+        self.mosaic_check.setVisible(upstream and detect)
+        self.aug_info.setVisible(upstream)
+        if upstream:
+            self.aug_info.setText(
+                "아래 값을 학습에 적용합니다." + (" 회전은 모자이크를 켠 경우에만 적용됩니다." if detect else
+                                          " 무작위 잘라내기 없이 검증과 같은 구도로 학습합니다.")
+                if self.aug_custom_check.isChecked() else "모델 기본 증강으로 학습합니다. 아래 값은 적용되지 않습니다.")
         self.amp_check.setEnabled(not is_pc and not resume and self._device_manager.cuda_available)
         self.tl_group.setVisible(not is_pc and self._selected_container_spec()[0] is None and
                                  (is_anomaly or self.mode_combo.currentData() == "custom"))
@@ -642,6 +679,8 @@ class TrainingWidget(TrainingForm, QWidget):
 
         # 데이터 증강 설정 복원
         aug = cfg.augmentation
+        self.aug_custom_check.setChecked(bool(getattr(aug, "custom", False)))
+        self.mosaic_check.setChecked(bool(aug.mosaic))
         self.unsupported_aug_reset.setVisible(bool(aug.vertical_flip or aug.mixup_alpha))
         self.hflip_spin.setValue(aug.horizontal_flip)
         self.rotation_spin.setValue(aug.rotation)
@@ -835,12 +874,15 @@ class TrainingWidget(TrainingForm, QWidget):
                              if self.project.task in ("classify", "segment") else "none")
         cfg.segmentation_loss = self.segmentation_loss_combo.currentData() or "ce_dice"
         sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
-        cfg.patch_training = (self.project.task == "segment" and not sam2 and self.patch_check.isChecked())
+        cfg.patch_training = ((self.project.task == "segment" and not sam2 and self.patch_check.isChecked())
+                              or (self._detection_patch_supported() and self.patch_check.isChecked()))
         cfg.patches_per_image = self.patch_count_spin.value()
         cfg.patch_scale = float(self.patch_scale_combo.currentData() or 1.0)
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
         cfg.augmentation.rotation = self.rotation_spin.value()
         cfg.augmentation.color_jitter = self.color_jitter_spin.value()
+        cfg.augmentation.custom = self._upstream_model_selected() and self.aug_custom_check.isChecked()
+        cfg.augmentation.mosaic = self.mosaic_check.isChecked()
 
         # ── PatchCore 설정 동기화 (이상 탐지 전용) ──────
         if self.project and self.project.task == "anomaly":

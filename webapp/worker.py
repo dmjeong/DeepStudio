@@ -266,6 +266,13 @@ def _train_upstream_project(context, project, device):
                 )
             ])
             return
+        if event.get("event") == "tiles_prepared":
+            train, val = event["splits"].get("train", {}), event["splits"].get("val", {})
+            context.emit("log_message", [
+                "  패치 학습: {}px 타일 · 배율 {:.0%} · 겹침 {}px | train {}장 → 타일 {}개(물체 있음 {}) | val {}장 → 타일 {}개".format(
+                    event["tile"], event["scale"], event["overlap"], train.get("images", 0), train.get("tiles", 0),
+                    train.get("object_tiles", 0), val.get("images", 0), val.get("tiles", 0))])
+            return
         if event.get("event") != "epoch_finished":
             return
         history.append(dict(event))
@@ -287,12 +294,25 @@ def _train_upstream_project(context, project, device):
     mode = str(cfg.training_mode)
     source = project.model.pretrained_weights or None
     context.emit("log_message", [f"기본 native 모델 학습: {spec.family}/{spec.size}"])
+    # 증강: '직접 설정'을 켠 프로젝트만 화면 값을 넘긴다. 끄면 모델 기본 증강(이전과 같은 동작)
+    aug = cfg.augmentation
+    augmentation = ({"horizontal_flip": aug.horizontal_flip, "rotation": aug.rotation,
+                     "color_jitter": aug.color_jitter, "mosaic": bool(aug.mosaic)}
+                    if getattr(aug, "custom", False) else None)
+    # 검출 패치 학습: 영상을 줄이지 않고 모델 입력 크기의 타일로 잘라 학습한다
+    tiling = ({"scale": float(getattr(cfg, "patch_scale", 1.0)), "max_tiles": 0}
+              if project.task == "detect" and getattr(cfg, "patch_training", False) else None)
+    if augmentation is None:
+        context.emit("log_message", ["  증강: 모델 기본값"])
+    else:
+        context.emit("log_message", ["  증강(직접 설정): 수평 뒤집기 {horizontal_flip:g} · 회전 {rotation:g}° · 색상 {color_jitter:g}".format(
+            **augmentation) + (f" · 모자이크 {'켬' if augmentation['mosaic'] else '끔'}" if spec.task == "detect" else "")])
     result = train_upstream_model(
         model_id, data_root=data.root, class_names=list(data.class_names), output_dir=run_dir,
         epochs=cfg.epochs, batch_size=cfg.batch_size, learning_rate=cfg.learning_rate,
         device=str(device), weights=source, pretrained=mode == "upstream_finetune", resume=mode == "upstream_resume",
         use_amp=cfg.use_amp, patience=cfg.early_stop_patience,
-        val_split=data.val_split, seed=0, emit=progress)
+        val_split=data.val_split, seed=0, augmentation=augmentation, tiling=tiling, emit=progress)
     checkpoint = result.get("best_checkpoint") or result.get("last_checkpoint")
     if not checkpoint or not Path(checkpoint).is_file():
         raise RuntimeError("upstream 학습이 best.pt 또는 last.pt를 만들지 않았습니다")
@@ -320,7 +340,8 @@ def _train_upstream_project(context, project, device):
                        "input_size": spec.input_size, "use_amp": cfg.use_amp},
             applied={"pretrained": mode == "upstream_finetune",
                      "resume": mode == "upstream_resume", "val_split": data.val_split,
-                     "seed": 0},
+                     "seed": 0, "augmentation": augmentation or "model_default",
+                     "tiling": result.get("tiling")},
         ))
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status="completed",

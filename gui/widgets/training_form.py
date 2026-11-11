@@ -494,6 +494,20 @@ class TrainingForm:
         aug_group = QGroupBox("데이터 증강")
         aug_layout = QFormLayout(aug_group)
 
+        # LibreYOLO 모델(검출 · MobileNetV4 분류): 모델 기본 증강을 쓸지, 아래 값을 적용할지 고른다
+        self.aug_custom_check = QCheckBox("직접 설정 (끄면 모델 기본 증강)")
+        self.aug_custom_check.setToolTip(
+            "끄면 모델에 내장된 증강을 그대로 씁니다.\n"
+            "  LibreYOLO9: 모자이크 · 수평 뒤집기 0.5 · 색상 변화\n"
+            "  RT-DETR v4: 수평 뒤집기 0.5\n"
+            "  MobileNetV4 분류: 무작위 잘라내기(면적 50~100%) · 수평 뒤집기 0.5\n"
+            "켜면 아래 값만 적용합니다. 분류는 무작위 잘라내기를 쓰지 않아 가장자리 결함이 잘려 나가지 않습니다.")
+        self.aug_custom_check.toggled.connect(self._on_patchcore_settings_changed)
+        aug_layout.addRow(self.aug_custom_check)
+        self.aug_info = QLabel()
+        self.aug_info.setWordWrap(True)
+        aug_layout.addRow(self.aug_info)
+
         self.hflip_spin = NoWheelDoubleSpinBox()
         self.hflip_spin.setRange(0, 1)
         self.hflip_spin.setSingleStep(0.1)
@@ -514,6 +528,12 @@ class TrainingForm:
         self.color_jitter_spin.setSingleStep(0.05)
         self.color_jitter_spin.setValue(0.2)
         aug_layout.addRow("색상 변화:", self.color_jitter_spin)
+
+        self.mosaic_check = QCheckBox("모자이크 (영상 4장을 한 장으로 합쳐 학습)")
+        self.mosaic_check.setToolTip(
+            "검출 전용. 작은 물체와 다양한 배치를 학습하는 데 도움이 됩니다.\n"
+            "회전 각도는 모자이크로 합친 영상에만 적용됩니다. 물체의 위치·방향이 고정된 검사에서는 끄는 편이 낫습니다.")
+        aug_layout.addRow("", self.mosaic_check)
 
         self.advanced_check = QCheckBox("고급 설정: 최적화 상세와 데이터 증강")
         self.advanced_check.setChecked(False)

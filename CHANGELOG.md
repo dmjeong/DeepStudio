@@ -35,6 +35,9 @@
 - C++ 영상 평가 예제 `cpp/image_eval`: 내보낸 모델 JSON과 영상(파일·폴더)을 받아 C++ SDK로 추론하고 영상별 판정·시간, 하위 폴더(ok/ng) 묶음별 판정 수, 결과 그림(분할 결함 상자, 이상 탐지 히트맵), `eval.csv`를 낸다. 분할·이상 탐지(PatchCore)·검출·분류가 같은 프로그램으로 돌고, `--roi x,y,w,h`로 판정 영역만 잘라 넣는다. 인자 없이 실행하면 소스 맨 위의 경로 두 개를 쓴다. 한글 경로의 영상도 읽는다. 사용법은 `cpp/image_eval/README.ko.md`.
 - PatchCore ONNX 내보내기가 JSON에 `input_name`을 쓰지 않아 C++ SDK가 모델을 열지 못했다(`key 'input_name' not found`). 내보내기가 `input_name`을 기록한다. 이전에 내보낸 모델은 다시 내보내거나 JSON에 `"input_name": "input_image"`를 넣는다.
 - `python/export_onnx.py --region 가로x세로`: 패치 학습 분할 모델의 판정 영역 크기를 명령으로 준다.
+- 검출 패치 학습(데스크톱, LibreYOLO9): 학습 화면에서 `패치 학습`을 켜면 영상을 640으로 줄이지 않고 겹치는 640px 타일로 잘라 학습한다(물체가 있는 타일 전부 + 배경 타일 일부, 패치 배율 적용). 데스크톱 추론은 같은 배율의 타일로 나눠 합치고, ONNX 내보내기는 판정 영역 × 배율 크기의 고정 입력으로 만들어 C++ `Detect` 한 번으로 추론한다. 타일 규칙은 체크포인트에 기록한다. 합성 실험(1600×960 영상의 8~16px 물체, LibreYOLO9 Tiny 40 epoch): 검증 물체 40개 중 패치 학습 40개 검출·오검출 0, 전체 축소 학습 0개 검출. RT-DETR v4는 입력 크기가 고정된 구조라 지원하지 않는다.
+- LibreYOLO 모델(검출·MobileNetV4 분류)의 증강을 바꿀 수 있다. 학습 화면 `데이터 증강 → 직접 설정`을 켜면 화면의 수평 뒤집기·회전·색상 변화와 모자이크(검출)를 적용한다. 끄면 이전처럼 모델 기본 증강을 쓰고 칸은 잠긴다. 이전에는 분류 화면의 값이 LibreYOLO 학습에 전달되지 않았고, 검출 화면은 칸이 잠겨 있었다. 분류의 직접 설정은 LibreYOLO의 고정 무작위 잘라내기(면적 50~100%) 대신 검증과 같은 구도로 학습한다.
+- 모델 추가(데스크톱): 객체 탐지 LibreYOLO9 Small·Medium·Compact, 분류 MobileNetV4 Medium·Large(입력 256). Tiny/Small과 같은 학습·추론·내보내기 경로를 쓴다. 설치본 빌드가 해당 사전학습 가중치를 함께 받는다. 설명은 `docs/LIBREYOLO_MODEL_PACKS.ko.md`.
 - 검증 범위와 실험 조건은 `docs/RELEASE_9.33.md`에 기록한다.
 
 **9.23 — Detection·Segmentation 공통 라벨링 작업실**

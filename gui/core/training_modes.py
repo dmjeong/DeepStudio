@@ -45,9 +45,16 @@ BUILTIN_ADAPTER_IDS = frozenset({
 BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite"})
 
 UPSTREAM_ADAPTER_IDS = frozenset({
-    "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",
+    "libreyolo_classify_mobilenetv4_small", "libreyolo_classify_mobilenetv4_medium",
+    "libreyolo_classify_mobilenetv4_large",
+    "libreyolo_detect_9t", "libreyolo_detect_9s", "libreyolo_detect_9m", "libreyolo_detect_9c",
     "re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large",
 })
+
+# 검출 패치 학습을 지원하는 모델 (python/upstream_models.PATCH_TRAINING_FAMILIES = yolo9 와 같은 범위).
+# RT-DETR는 입력 크기가 고정된 구조라 판정 영역 전체를 한 번에 추론하는 C++ 배포를 만들 수 없다.
+DETECTION_PATCH_IDS = frozenset(model_id for model_id in UPSTREAM_ADAPTER_IDS
+                                if model_id.startswith("libreyolo_detect_9"))
 
 SAM2_ADAPTER_IDS = frozenset({
     "sam2_hiera_tiny", "sam2_hiera_small", "sam2_hiera_base_plus",
