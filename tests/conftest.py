@@ -43,6 +43,27 @@ def _retain_qt_application():
         app = widgets.QApplication.instance() or widgets.QApplication([])
         app.setQuitOnLastWindowClosed(False)
     yield app
+    # Some unittest classes retain closed widgets in class attributes. Destroy
+    # them while Python/Qt are both alive, not during PySide's atexit sweep
+    # after the interpreter starts unloading extension modules on Windows.
+    if widgets is not None and widgets.QApplication.instance() is not None:
+        from PySide6.QtCore import QCoreApplication, QEvent, QThread, QThreadPool
+        import shiboken6
+
+        for window in widgets.QApplication.topLevelWidgets():
+            window.close()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.MetaCall)
+        assert QThreadPool.globalInstance().waitForDone(10000), "Qt thread pool did not finish"
+        for window in widgets.QApplication.topLevelWidgets():
+            for worker in window.findChildren(QThread):
+                assert not worker.isRunning() or worker.wait(10000), (
+                    f"GUI thread did not finish: {type(worker).__name__}"
+                )
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.MetaCall)
+        for window in widgets.QApplication.topLevelWidgets():
+            window.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        shiboken6.delete(widgets.QApplication.instance())
 
 
 def pytest_runtest_logreport(report):
