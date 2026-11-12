@@ -210,7 +210,11 @@ def build():
         "--hidden-import", "PySide6.QtGui",
         # PyInstaller의 Qt hook에만 의존하지 않고 Qt DLL·플러그인과 shiboken을
         # 함께 수집한다. Windows EXE가 시작 시 PySide6를 못 찾는 회귀를 막는다.
-        "--collect-all", "PySide6",
+        # Collect the runtime files without importing unused Qt3D/QML/WebEngine
+        # Python modules. Their hooks can spend minutes scanning QML plugins;
+        # this application uses QtCore/QtGui/QtWidgets (declared above).
+        "--collect-binaries", "PySide6",
+        "--collect-data", "PySide6",
         "--collect-all", "shiboken6",
         # Shipped native model families are imported lazily from the worker.
         # Collect their package and package data so the installed EXE does not

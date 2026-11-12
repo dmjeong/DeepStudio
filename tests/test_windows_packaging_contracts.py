@@ -70,7 +70,8 @@ def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk()
     assert "--add-binary" in script
     assert "packaging" in script and "windows" in script and "models" in script
     assert "check_runtime_dependencies" in script
-    assert '"--collect-all", "PySide6"' in script
+    assert '"--collect-binaries", "PySide6"' in script
+    assert '"--collect-data", "PySide6"' in script
     assert '"--collect-all", "shiboken6"' in script
     assert '"--collect-all", "libreyolo"' in script
     assert '"--collect-all", "sam2"' in script
