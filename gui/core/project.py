@@ -140,6 +140,9 @@ class TrainingConfig:
     patches_per_image: int = 0
     # 패치 학습 배율: 1.0 = 원본 해상도. 0.5면 이미지를 절반으로 줄인 뒤 자른다 (추론 계산량 1/4).
     patch_scale: float = 1.0
+    # 패치 학습의 '원본 그대로'(데스크톱): 자르지 않고 판정 영역 전체(직사각형, 32 배수로 채움)를 샘플 하나로.
+    # 추론 규칙은 패치 학습과 같다. 입력 크기 칸은 추론의 타일 대체 경로 크기로만 쓴다.
+    patch_whole_image: bool = False
     device: str = "auto"  # auto, cpu, cuda, cuda:0, cuda:1
     use_amp: bool = True              # Mixed Precision (GPU 시 자동 활성화)
     # ── 학습 모드 ──

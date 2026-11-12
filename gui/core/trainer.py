@@ -878,6 +878,8 @@ class TrainWorker(TrainingEngine):
                     patch_size=input_size[0] if patch else 0,
                     patches_per_image=int(getattr(cfg, "patches_per_image", 0)),
                     patch_scale=float(getattr(cfg, "patch_scale", 1.0)) if patch else 1.0,
+                    # '원본 그대로': 판정 영역 전체를 자르지 않고 (데스크톱에서만 켤 수 있는 설정)
+                    whole_image=bool(patch and getattr(cfg, "patch_whole_image", False)),
                 )
                 from dataset import unlabeled_message
                 if unlabeled_message(*loaders):

@@ -5,6 +5,9 @@
 # 25%면 픽셀 4개 중 2개만 쓰고 2개를 버려, 버려지는 자리에 놓인 1px 크랙이 영상에서 사라졌다(마스크에는 남음).
 # INTER_AREA는 모든 픽셀을 평균하므로 1px 크랙이 어느 위치에 있어도 1/4 대비의 선으로 남는다.
 PATCH_SCALE_INTERPOLATION = "INTER_AREA"
+# 판정 영역 전체를 한 번에 넣을 때 세로·가로를 맞추는 배수 (분할 백본의 최대 보폭 = 1/32).
+# 학습(원본 그대로)·데스크톱 추론·ONNX 고정 입력이 같은 값을 쓴다.
+WHOLE_IMAGE_MULTIPLE = 32
 
 
 def tiling_contract(patch_size, scale=1.0, region=None):

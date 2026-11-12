@@ -169,6 +169,10 @@ def _train_builtin_project(context, project, device, *, class_report=False):
                          # 데스크톱 요청만: 학습한 중앙 크롭을 체크포인트에 남겨 추론·내보내기가 같은 영역을 본다
                          # (이전에는 크롭 데이터로 학습하고 원본 전체를 추론했다). 웹 동작은 그대로.
                          center_crop=crop if class_report else None,
+                         # 데스크톱 요청만: 패치 학습의 '원본 그대로'(판정 영역 전체를 자르지 않고 학습)
+                         whole_image=(bool(class_report) and project.task == "segment"
+                                      and bool(getattr(cfg, "patch_training", False))
+                                      and bool(getattr(cfg, "patch_whole_image", False))),
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),

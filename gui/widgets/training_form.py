@@ -414,6 +414,14 @@ class TrainingForm:
             "줄인 뒤 가장 가는 결함이 1.5~2px 이상 남는 배율을 고르세요(마스크는 작은 결함을 보존해 줄입니다).")
         self.patch_scale_combo.currentIndexChanged.connect(self._on_patchcore_settings_changed)
         self.patch_scale_label = QLabel("패치 배율:")
+        # 원본 그대로: 자르지 않고 판정 영역 전체(직사각형)를 샘플 하나로 (추론과 같은 입력 모양)
+        self.patch_whole_check = QCheckBox("원본 그대로 (자르지 않고 판정 영역 전체로 학습)")
+        self.patch_whole_check.setToolTip(
+            "패치로 자르지 않고 판정 영역 전체(예: 3504×1504)를 줄이지 않은 직사각형 그대로 학습합니다.\n"
+            "추론과 입력 모양·채움이 같아 패치 테두리 차이가 없고, 칩 배열 전체를 한 번에 봅니다.\n"
+            "대신 결함 중심 샘플링이 없고(작은 결함 비율 그대로), 한 장이 크므로 배치를 1~4로 줄이세요.\n"
+            "입력 크기 칸은 추론의 타일 대체 경로(메모리 부족 시) 크기로만 쓰입니다. DINOv2(ViT)는 지원하지 않습니다.")
+        self.patch_whole_check.toggled.connect(self._on_patchcore_settings_changed)
         # 데이터에 맞게 자동 설정: 라벨된 결함 굵기로 패치·배율·모델을 고른다 (분할 전용)
         self.advise_btn = QPushButton("데이터에 맞게 자동 설정…")
         self.advise_btn.setToolTip(
@@ -423,6 +431,7 @@ class TrainingForm:
         hp_layout.addRow("", self.advise_btn)
         hp_layout.addRow("", self.patch_check)
         hp_layout.addRow(self.patch_scale_label, self.patch_scale_combo)
+        hp_layout.addRow("", self.patch_whole_check)
         hp_layout.addRow(self.patch_count_label, self.patch_count_spin)
         hp_layout.addRow(self.patch_info)
         hp_layout.addRow("", self.pc_crop_check)

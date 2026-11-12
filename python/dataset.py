@@ -35,7 +35,7 @@ import torchvision.transforms as T
 import numpy as np
 from PIL import Image
 from opencv_preprocess import OpenCVResize, read_image, resize
-from checkpoint import PATCH_SCALE_INTERPOLATION
+from checkpoint import PATCH_SCALE_INTERPOLATION, WHOLE_IMAGE_MULTIPLE
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -597,11 +597,20 @@ class PatchSegmentationDataset(SegmentationDataset):
 
     패치가 이미지보다 크면 남는 부분은 이미지 0 / 마스크 255(학습 제외)로 채운다.
     디코딩한 이미지·마스크는 작업자 프로세스마다 메모리 한도(기본 1.5GB) 안에서 재사용한다.
+
+    whole_image=True (원본 그대로): 자르지 않고 판정 영역 전체(배율 적용 뒤)가 샘플 하나다.
+
+        원본 1504×3504 ─▶ 증강 ─▶ 정규화 ─▶ 오른쪽·아래를 0으로 채워 1504×3520 (32의 배수, 직사각형)
+                                             마스크의 채운 부분 = 255 (학습 제외)
+
+        추론(데스크톱 '한 번에'·C++ whole_image)과 같은 입력 모양·같은 채움이다 → 패치 테두리 차이가 없다.
+        대신 결함 중심 샘플링이 없고(결함 비율 그대로), 이미지 1장 = 1스텝이라 배치가 작다.
+        patch_size는 추론의 타일 대체 경로(메모리 부족 등)에서 쓰는 타일 크기로만 남는다.
     """
 
     def __init__(self, img_dir: str, mask_dir: str, *, patch_size: int, patches_per_image: int = 0,
                  defect_ratio: float = 0.5, cache_limit_mb: int = 1536, scale: float = 1.0,
-                 interpolation: str = PATCH_SCALE_INTERPOLATION, **kwargs):
+                 interpolation: str = PATCH_SCALE_INTERPOLATION, whole_image: bool = False, **kwargs):
         if patch_size < 32:
             raise ValueError("패치 크기는 32px 이상이어야 합니다")
         scaled_size(1, 1, scale)  # 배율 범위 확인
@@ -621,16 +630,31 @@ class PatchSegmentationDataset(SegmentationDataset):
         self._native_bytes = 0
         self._native_limit = int(cache_limit_mb) * 1024 * 1024
         self._sizes = [scaled_size(*self._image_size(image), self.scale) for image, _mask in self.pairs]
+        self.whole_image = bool(whole_image)
+        if self.whole_image:
+            # 원본 그대로: 이 폴더에서 가장 큰 (배율 적용) 영상을 32의 배수로 올린 크기에 모두 맞춘다
+            # (한 배치의 텐서 크기가 같아야 한다; 같은 판정 영역이면 모두 같은 크기다).
+            width = max((w for w, _h in self._sizes), default=patch_size)
+            height = max((h for _w, h in self._sizes), default=patch_size)
+            self.whole_size = (-(-height // WHOLE_IMAGE_MULTIPLE) * WHOLE_IMAGE_MULTIPLE,
+                               -(-width // WHOLE_IMAGE_MULTIPLE) * WHOLE_IMAGE_MULTIPLE)
+            patches_per_image = 1
         if patches_per_image <= 0:
             # 자동: 이미지 면적 ÷ 패치 면적 (3500×1504, 512 → 이미지당 20개 = 한 epoch에 이미지 전체를 한 번 본 셈)
             area = max(w * h for w, h in self._sizes)
             patches_per_image = max(1, min(64, int(np.ceil(area / (patch_size * patch_size)))))
         self.patches_per_image = int(patches_per_image)
         if not self.is_train:
-            # 검증은 겹치지 않는 고정 타일 (마지막 타일만 끝에 맞춰 조금 겹친다)
-            self.tiles = [(index, x, y) for index, (w, h) in enumerate(self._sizes)
-                          for y in patch_origins(h, patch_size, patch_size)
-                          for x in patch_origins(w, patch_size, patch_size)]
+            # 검증은 겹치지 않는 고정 타일 (마지막 타일만 끝에 맞춰 조금 겹친다). 원본 그대로면 이미지 한 장 = 하나.
+            self.tiles = ([(index, 0, 0) for index in range(len(self.pairs))] if self.whole_image else
+                          [(index, x, y) for index, (w, h) in enumerate(self._sizes)
+                           for y in patch_origins(h, patch_size, patch_size)
+                           for x in patch_origins(w, patch_size, patch_size)])
+        if self.whole_image:
+            print(f"   원본 그대로 학습: 판정 영역 전체 {self.whole_size[1]}×{self.whole_size[0]}"
+                  + (f" (배율 {self.scale:.0%})" if self.scale != 1 else " (원본 해상도)")
+                  + (", 이미지 1장 = 샘플 1개" if self.is_train else f", 검증 이미지 {len(self.tiles)}장"))
+            return
         print(f"   패치 학습: {patch_size}×{patch_size}"
               + (f", 배율 {self.scale:.0%}" if self.scale != 1 else ", 원본 해상도") + ", "
               + (f"이미지당 {self.patches_per_image}개 (결함 중심 {self.defect_ratio:.0%})" if self.is_train
@@ -707,7 +731,26 @@ class PatchSegmentationDataset(SegmentationDataset):
             piece_image, piece_mask = padded_image, padded_mask
         return np.ascontiguousarray(piece_image), np.ascontiguousarray(piece_mask)
 
+    def _whole_item(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """원본 그대로: 판정 영역 전체 → 증강·정규화 → 정규화 뒤 0 / 마스크 255로 32 배수까지 채운다."""
+        image, mask, _foreground = self._load_native(index)
+        tensor, target = self._augment_to_tensors(Image.fromarray(np.ascontiguousarray(image)),
+                                                  Image.fromarray(np.ascontiguousarray(mask)), self.pairs[index][1])
+        height, width = self.whole_size
+        if tuple(target.shape) != (height, width):
+            if target.shape[0] > height or target.shape[1] > width:
+                raise ValueError(f"영상 크기가 판정 영역보다 큽니다: {self.pairs[index][0]}")
+            # 추론과 같은 채움: 정규화한 뒤의 0 (C++ pad = zero_after_normalize)
+            padded = torch.zeros((tensor.shape[0], height, width), dtype=tensor.dtype)
+            padded[:, :tensor.shape[1], :tensor.shape[2]] = tensor
+            padded_mask = torch.full((height, width), 255, dtype=target.dtype)
+            padded_mask[:target.shape[0], :target.shape[1]] = target
+            tensor, target = padded, padded_mask
+        return tensor, target
+
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.whole_image:
+            return self._whole_item(idx if self.is_train else self.tiles[idx][0])
         if self.is_train:
             index = idx // self.patches_per_image
             image, mask, foreground = self._load_native(index)
@@ -1092,12 +1135,14 @@ def create_segmentation_loaders(
     patch_size: int = 0,
     patches_per_image: int = 0,
     patch_scale: float = 1.0,
+    whole_image: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Segmentation 데이터 로더 생성
 
     patch_size > 0이면 패치 학습(PatchSegmentationDataset). input_size는 무시하고 패치 크기를 쓴다.
     patch_scale < 1이면 이미지를 그 배율로 줄인 뒤 자른다 (1 = 원본 해상도).
+    whole_image=True면 자르지 않고 판정 영역 전체를 원본 그대로(직사각형) 넣는다 (patch_size는 타일 대체 경로용).
 
     필요 구조:
         data_root/images/train/, data_root/images/val/
@@ -1111,7 +1156,7 @@ def create_segmentation_loaders(
     """
     if patch_size:
         common = {"patch_size": int(patch_size), "patches_per_image": int(patches_per_image),
-                  "scale": float(patch_scale)}
+                  "scale": float(patch_scale), "whole_image": bool(whole_image)}
         dataset_type = PatchSegmentationDataset
     else:
         common = {"input_size": input_size}

@@ -174,7 +174,7 @@ def _positive_int(value, name):
     return int(value)
 
 
-WHOLE_IMAGE_MULTIPLE = 32  # 분할 백본의 최대 보폭: 판정 영역을 이 배수로 채워 넣는다 (데스크톱 엔진과 같은 규칙)
+from checkpoint import WHOLE_IMAGE_MULTIPLE  # 분할 백본의 최대 보폭 32: 판정 영역을 이 배수로 채운다 (학습·데스크톱과 같은 규칙)
 
 
 def whole_image_contract(spec, model, region=None):

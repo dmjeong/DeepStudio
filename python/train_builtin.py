@@ -264,7 +264,9 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   segmentation_loss: str = "ce_dice", class_weights: str = "none",
                   patch_training: bool = False, patches_per_image: int = 0, patch_scale: float = 1.0,
                   class_report: bool = False, should_stop=lambda: False,
-                  center_crop: dict | None = None) -> Path:
+                  center_crop: dict | None = None, whole_image: bool = False) -> Path:
+    """whole_image: (데스크톱) 패치 학습의 '원본 그대로' 모드. 자르지 않고 판정 영역 전체를 직사각형 그대로 넣는다.
+    추론·내보내기 규칙(tiling, whole_image)은 패치 학습과 같다 → 추론 쪽은 바뀌지 않는다."""
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
     if gui_path not in sys.path:
@@ -301,6 +303,11 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         raise ValueError("input_size must contain two values >= 32")
     if patch_training and spec.task != "segment":
         raise ValueError("패치 학습은 분할 모델만 지원합니다")
+    if whole_image and not patch_training:
+        raise ValueError("원본 그대로 학습은 패치 학습을 켠 분할 모델에서만 쓸 수 있습니다")
+    if whole_image and model_id.startswith("dinov2_"):
+        # ViT는 추론을 학습 패치 크기 타일로 한다(주의가 전체를 봄) → 전체로 학습하면 추론과 달라진다
+        raise ValueError("DINOv2(ViT) 모델은 원본 그대로 학습을 지원하지 않습니다. 패치 학습을 쓰세요.")
     if patch_training and input_size[0] != input_size[1]:
         raise ValueError("패치 학습은 정사각형 입력 크기(= 패치 크기)가 필요합니다")
     from checkpoint import tiling_contract
@@ -341,7 +348,12 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             in_channels=in_channels, num_classes=num_classes,
             flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter,
             patch_size=input_size[0] if patch_training else 0, patches_per_image=patches_per_image,
-            patch_scale=patch_scale if patch_training else 1.0)
+            patch_scale=patch_scale if patch_training else 1.0, whole_image=whole_image)
+        if whole_image:
+            height, width = train_loader.dataset.whole_size
+            log(f"  원본 그대로 학습: 샘플 = {width}×{height} 전체 · 배치 {batch_size} · "
+                f"한 번에 {width * height * batch_size / 1e6:.1f}M px "
+                f"(패치 640×16 = 6.6M px). GPU 메모리가 넘치면 배치를 1~2로 줄이세요.")
         from dataset import unlabeled_message
         if unlabeled_message(train_loader, val_loader):
             log(unlabeled_message(train_loader, val_loader))

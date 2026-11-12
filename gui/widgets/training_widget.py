@@ -495,11 +495,29 @@ class TrainingWidget(TrainingForm, QWidget):
         self.patch_check.setEnabled(segment and not sam2 and not resume)
         patch = segment and not sam2 and self.patch_check.isChecked()
         for control in (self.patch_count_label, self.patch_count_spin, self.patch_info,
-                        self.patch_scale_label, self.patch_scale_combo):
+                        self.patch_scale_label, self.patch_scale_combo, self.patch_whole_check):
             control.setVisible(segment and self.patch_check.isChecked())
-        self.patch_count_spin.setEnabled(patch and not resume)
+        model_id = str(self.model_id_combo.currentData() or "")
+        vit = model_id.startswith("dinov2_")
+        self.patch_whole_check.setEnabled(patch and not resume and not vit)
+        if vit and self.patch_whole_check.isChecked():
+            self.patch_whole_check.setChecked(False)   # ViT는 학습 크기 타일로 추론한다
+        whole = patch and self.patch_whole_check.isChecked()
+        self.patch_count_spin.setEnabled(patch and not resume and not whole)   # 원본 그대로 = 이미지당 1개
         self.patch_scale_combo.setEnabled(patch and not resume)
-        if patch:
+        if whole:
+            scale = float(self.patch_scale_combo.currentData() or 1.0)
+            if self.pc_crop_check.isChecked():
+                width = max(1, round(self.pc_crop_width_spin.value() * scale))
+                height = max(1, round(self.pc_crop_height_spin.value() * scale))
+                area = f"크롭 {width}×{height} px"
+            else:
+                area = "판정 영역 전체" + (f" × {scale:.0%}" if scale != 1 else "")
+            self.patch_info.setText(
+                f"{area}를 자르지 않고 그대로 학습 (32의 배수로 0 채움) · 추론과 같은 입력\n"
+                f"이미지 1장 = 1샘플 · 배치 1~4 권장 · 입력 크기 {self.input_size_spin.value()}px는 추론 타일 대체용")
+            self.patch_info.setStyleSheet("")
+        elif patch:
             size = self.input_size_spin.value()
             scale = float(self.patch_scale_combo.currentData() or 1.0)
             area, small = "원본" + (f" × {scale:.0%}" if scale != 1 else ""), False
@@ -634,6 +652,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self.segmentation_loss_combo.setCurrentIndex(max(loss_index, 0))
         self.patch_check.setChecked(bool(getattr(cfg, "patch_training", False)))
         self.patch_count_spin.setValue(int(getattr(cfg, "patches_per_image", 0)))
+        self.patch_whole_check.setChecked(bool(getattr(cfg, "patch_whole_image", False)))
         scale_index = self.patch_scale_combo.findData(float(getattr(cfg, "patch_scale", 1.0)))
         if scale_index < 0:  # 목록에 없는 값(직접 편집한 프로젝트)도 그대로 보여 준다
             self.patch_scale_combo.addItem(f"{float(cfg.patch_scale):.0%}", float(cfg.patch_scale))
@@ -837,6 +856,7 @@ class TrainingWidget(TrainingForm, QWidget):
         sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
         cfg.patch_training = (self.project.task == "segment" and not sam2 and self.patch_check.isChecked())
         cfg.patches_per_image = self.patch_count_spin.value()
+        cfg.patch_whole_image = bool(cfg.patch_training and self.patch_whole_check.isChecked())
         cfg.patch_scale = float(self.patch_scale_combo.currentData() or 1.0)
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
         cfg.augmentation.rotation = self.rotation_spin.value()
