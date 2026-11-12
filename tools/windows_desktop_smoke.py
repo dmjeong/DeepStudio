@@ -7,6 +7,20 @@ import subprocess
 import tempfile
 
 
+def clean_app_environment(source):
+    """Allow Windows system DLLs, never a build-time Python/native SDK PATH."""
+    excluded = {"PATH", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "DVS_BUILTIN_ASSETS_DIR"}
+    prefixes = ("PYTHON", "DEEP_STUDIO_", "DEEPVISION_", "DVS_", "VISION_", "ONNXRUNTIME_", "NATIVE_",
+                "QT_", "QML", "CUDA_PATH", "CUDNN", "CONDA_")
+    environment = {k: v for k, v in source.items()
+                   if k.upper() not in excluded and not k.upper().startswith(prefixes)}
+    from pathlib import PureWindowsPath
+    windows = PureWindowsPath(next((v for k, v in source.items() if k.upper() == "SYSTEMROOT"), r"C:\Windows"))
+    environment["PATH"] = ";".join(map(str, (windows / "System32", windows, windows / "System32/Wbem")))
+    environment["QT_QPA_PLATFORM"] = "offscreen"
+    return environment
+
+
 def checked(command, *, timeout=900, env=None, cwd=None):
     process = subprocess.Popen(command, env=env, cwd=cwd)
     try:
@@ -49,10 +63,7 @@ def run(output, *, app=None, msi=None):
                 executable = Path(app).resolve()
             if not executable.is_file():
                 raise FileNotFoundError(executable)
-            environment = {k: v for k, v in os.environ.items()
-                           if k not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "DVS_BUILTIN_ASSETS_DIR"}
-                           and not k.startswith(("DEEP_STUDIO_", "DEEPVISION_"))}
-            environment["QT_QPA_PLATFORM"] = "offscreen"
+            environment = clean_app_environment(os.environ)
             checked([str(executable), "--smoke-test", str(output)], env=environment, cwd=folder)
             report = json.loads(output.read_text(encoding="utf-8"))
             for field in ("frozen", "persistent_results", "defect_review_saved", "project_class_generation_saved"):

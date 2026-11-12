@@ -65,6 +65,11 @@ on:
       - ".github/workflows/windows-native-sdk.yml"
   workflow_dispatch:
     inputs:
+      installed_build_run_id:
+        description: "Optional completed SDK/payload run to recheck on a fresh runner without rebuilding"
+        required: false
+        default: ""
+        type: string
       require_offline_wsl:
         description: "Require the licensed offline WSL/Docker payload for a production installer"
         required: true
@@ -78,13 +83,20 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   PYTHONUTF8: "1"
   PYTHONIOENCODING: "utf-8"
 
 jobs:
+  installed-app-recheck:
+    if: ${{ inputs.installed_build_run_id != '' }}
+    uses: ./.github/workflows/windows-installed-app.yml
+    with:
+      build_run_id: ${{ inputs.installed_build_run_id }}
   cpp-example-windows:
+    if: ${{ !inputs.installed_build_run_id }}
     # The public example must not wait for the 40+ minute vcpkg/full GUI build.
     # Use official binary SDKs, with the same ORT/OpenCV versions as that build.
     runs-on: windows-2022
@@ -234,6 +246,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Encrypted example batch helper failed" }
 
   csharp-sdk:
+    if: ${{ !inputs.installed_build_run_id }}
     runs-on: windows-latest
     defaults:
       run:
@@ -252,6 +265,7 @@ jobs:
         run: dotnet build example/csharp/encrypted/EncryptedExample.csproj --configuration Release --artifacts-path example/dotnet-encrypted
 
   payload-contracts:
+    if: ${{ !inputs.installed_build_run_id }}
     runs-on: windows-latest
     defaults:
       run:

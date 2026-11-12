@@ -36,6 +36,8 @@
 - PowerShell 자체로 이름 있는 인자 전달·원래 오류 보존·GitHub 환경 없는 manifest 수집/검증을 실행하는 검사 3개 추가. WiX 컴파일만 대역을 사용하며 실제 MSI 검증은 별도 Windows job에서 수행한다. 기존 설치 계약과 합계 36개 통과.
 - [43df2b9 전체 CI](https://github.com/dmjeong/DeepStudio/actions/runs/43194536794) 성공. Windows 전체 회귀 1,652개 통과 / 77개 조건부 생략 / 236개 하위 검사. Linux·Windows C++ 및 기타 job도 성공.
 - 3f587c7의 Qt 수집 범위를 바꾼 최종 EXE도 Windows 실제 실행을 통과했다. d8bacc5의 Windows payload 계약 107개도 통과했다. MSI 설치·실행·제거 검증은 별도로 진행한다.
+- [e5febcf 전체 CI](https://github.com/dmjeong/DeepStudio/actions/runs/43200440826) 성공. 같은 소스의 작은 실제 Setup과 외부 CAB/ZIP Setup은 [Windows SDK 검사](https://github.com/dmjeong/DeepStudio/actions/runs/43200143779)에서 각각 설치·제거까지 통과했다. ZIP은 다른 폴더로 옮긴 뒤 원래 빌드 폴더를 삭제하고 검사했다.
+- 설치본 실행 검사의 PATH에 빌드 PC의 Python/native SDK 디렉터리가 남는 것을 제거했다. 환경 변수로 지정된 Python·Qt·모델/SDK 경로도 제외한다. 완성한 MSI/CAB를 새 runner에 가져와 학습 라이브러리를 pip 설치하지 않고 설치·추론·생성·제거를 반복하는 재검증 경로를 추가했다. 원본 installer run ID를 결과에 기록한다.
 
 ## 원격 C++ 검증
 
