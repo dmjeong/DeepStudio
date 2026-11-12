@@ -48,6 +48,12 @@ BUILTIN_ADAPTER_IDS = frozenset({
 # 사전학습 가중치가 없는 기본 모델 (python/builtin_models.SCRATCH_ONLY_MODELS와 같은 목록)
 BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite"})
 
+# These models use the full-resolution inference contract, including the SDK.
+ORIGINAL_SIZE_SEGMENT_IDS = frozenset({
+    "deeplabv3plus_resnet34", "unet_resnet18", "unet_lite", "unet_mobilenetv2",
+    "unet_mobilenetv4_small", "unet_shufflenetv2", "unet_efficientnet_b1", "bisenetv2", "stdc1",
+})
+
 UPSTREAM_ADAPTER_IDS = frozenset({
     "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",
     "libreyolo_classify_mobilenetv4_medium", "libreyolo_detect_dfine_nano",
@@ -98,6 +104,10 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
     return {
         "engine": engine,
         "patch_training": engine == "dinomaly" or (task == "segment" and engine != "sam2") or (engine == "upstream" and task in {"classify", "detect"}),
+        "original_size_training": task == "segment" and (
+            (engine == "custom" and not model_id) or
+            (engine in {"custom", "builtin"} and model_id in ORIGINAL_SIZE_SEGMENT_IDS)
+        ),
         "models": ["efficientnet_b0", "efficientnet_b1"] if engine == "efficientnet" else [],
         "resume": mode.endswith("_resume") and (task != "anomaly" or engine == "dinomaly"),
         "input_channels": [3] if engine in {"sam2", "upstream"} else [1, 3],
@@ -181,6 +191,14 @@ def validate_training_options(project, *, require_runnable=True):
                     raise ValueError("설치된 모델 팩 manifest.json을 읽을 수 없습니다.") from exc
                 if not isinstance(manifest, dict) or manifest.get("model_id") != model_id:
                     raise ValueError("프로젝트 모델 ID와 설치된 모델 팩이 일치하지 않습니다.")
+    original_size = getattr(cfg, "original_size_training", False)
+    if type(original_size) is not bool:
+        raise ValueError("원본 크기 학습 옵션은 boolean 필요")
+    if original_size:
+        if getattr(cfg, "patch_training", False):
+            raise ValueError("원본 크기 학습과 패치 학습은 함께 사용할 수 없습니다.")
+        if not capabilities.get("original_size_training", False):
+            raise ValueError("선택한 모델은 원본 크기 학습을 지원하지 않습니다.")
     if getattr(cfg, "patch_training", False):
         if not capabilities.get("patch_training", False):
             raise ValueError("이 모델의 학습 경로는 패치 학습을 지원하지 않습니다")

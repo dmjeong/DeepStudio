@@ -7,6 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 import numpy as np
 from PySide6.QtWidgets import QWidget, QFileDialog, QMessageBox
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtGui import QTextCursor
 
 from core.project import ProjectData, ProjectManager
@@ -495,15 +496,6 @@ class TrainingWidget(TrainingForm, QWidget):
         self.pc_weights_edit.setEnabled(is_pc and source != "imagenet")
         self.pc_weights_browse.setEnabled(is_pc and source != "imagenet")
         self.pc_append_check.setEnabled(is_pc and source == "patchcore")
-        self.pc_crop_check.setEnabled(not resume)
-        cropped = self.pc_crop_check.isChecked()
-        self.pc_crop_width_spin.setEnabled(cropped and not resume)
-        self.pc_crop_height_spin.setEnabled(cropped and not resume)
-        self.pc_crop_info.setVisible(True)
-        self.pc_crop_info.setText(
-            f"중앙 {self.pc_crop_width_spin.value()}×{self.pc_crop_height_spin.value()} px → 모델 입력 {self.input_size_spin.value()}×{self.input_size_spin.value()} px\n"
-            "모든 태스크의 학습과 추론에 적용합니다. 박스와 마스크도 함께 자릅니다. 분류와 이상 탐지는 크롭 안의 내용에 맞는 이미지 라벨이 필요합니다."
-            if cropped else "전체 이미지를 모델 입력 크기로 리사이즈합니다.")
         for control in (self.pc_source_combo, self.pc_sampling_spin, self.pc_neighbors_spin,
                         self.pc_candidates_spin, self.pc_bank_spin, self.pc_seed_spin):
             control.setEnabled(is_pc)
@@ -520,7 +512,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self.pc_aug_info.setText(
             (f"원본 1장 + 증강 {views}장으로 특징 수집. " if views else "현재 증강 꺼짐: 추가 증강 수를 1 이상으로 설정하세요. ")
             + "반전·회전이 불량에 해당하면 아래 값을 0으로 두세요. 증강도 정상으로 저장됩니다.")
-        for control in (self.batch_spin, self.input_size_spin, self.class_weight_combo):
+        for control in (self.batch_spin, self.class_weight_combo):
             control.setEnabled(not resume)
         # SAM2는 자체 prompt 손실을 쓰므로 분할 손실·가중치 선택이 적용되지 않는다.
         sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
@@ -536,61 +528,10 @@ class TrainingWidget(TrainingForm, QWidget):
 
         if self.project and self.project.task == "segment" and sam2:
             self.class_weight_combo.setEnabled(False)
-        # 분할(SAM2 제외), native 탐지와 분류의 패치 계약을 구분한다.
-        segment = self.project is not None and self.project.task == "segment"
-        self.advise_btn.setVisible(segment)
-        self.advise_btn.setEnabled(segment and not resume and getattr(self, "_advice_scan", None) is None)
-        native = self.project is not None and self.project.task in {"classify", "detect"} and str(self.mode_combo.currentData()).startswith("upstream")
-        available = (segment and not sam2) or native or is_dinomaly
-        self.patch_check.setVisible(segment or native or is_dinomaly)
-        self.patch_check.setEnabled(available and not resume)
-        patch = available and self.patch_check.isChecked()
-        if native:
-            from upstream_models import get_upstream_spec
-            size = get_upstream_spec(self.project.model.model_id).input_size
-            self.input_size_spin.setValue(size)
-            self.input_size_spin.setEnabled(False)
-        for control in (self.patch_count_label, self.patch_count_spin, self.patch_info,
-                        self.patch_scale_label, self.patch_scale_combo):
-            control.setVisible(patch)
-        self.patch_count_spin.setSpecialValueText("전체 패치" if native else "자동 (이미지 면적 ÷ 패치 면적)")
-        self.patch_count_spin.setToolTip("0=모든 격자 패치. 양수는 원본별 고정 표본 수. 검증은 항상 모든 패치." if native
-                                        else "한 epoch에 이미지마다 자르는 패치 수. 0=자동(최대 64).")
-        if native:
-            self.patch_check.setToolTip("25% 겹침 격자로 전체 영역을 자릅니다. 학습한 배율·패치 규칙을 추론과 배포에도 적용합니다.")
-        else:
-            self.patch_check.setToolTip("분할 학습: 결함 위치와 임의 위치에서 자릅니다. 추론은 모델에 저장한 영역 처리 방식을 따릅니다.")
-        self.patch_count_spin.setEnabled(patch and not resume and not (native and self.project.task == "classify"))
-        self.patch_scale_combo.setEnabled(patch and not resume)
-        if patch:
-            size = self.input_size_spin.value()
-            scale = float(self.patch_scale_combo.currentData() or 1.0)
-            area, small = "원본" + (f" × {scale:.0%}" if scale != 1 else ""), False
-            if self.pc_crop_check.isChecked():
-                width = max(1, round(self.pc_crop_width_spin.value() * scale))
-                height = max(1, round(self.pc_crop_height_spin.value() * scale))
-                area, small = f"{width}×{height} px", size > min(width, height)
-            # 두 줄 이내 (폼 레이아웃은 긴 줄바꿈 라벨의 높이를 덜 잡아 겹친다)
-            self.patch_info.setText(
-                f"{area}에서 {size}px 패치로 학습 · 추론은 같은 배율로 한 번에(계산량 원본의 {scale * scale:.0%})"
-                + (f"\n⚠ 패치가 줄인 영역보다 큽니다. 입력 크기를 {min(width, height) // 32 * 32 or 32} 이하로 줄이세요."
-                   if small else ""))
-            self.patch_info.setStyleSheet("color: #E5A832;" if small else "")
-            if self.pc_crop_check.isChecked():  # 크롭 설명의 '→ 모델 입력 N×N'은 전체 축소일 때만 맞다
-                self.pc_crop_info.setText(
-                    f"중앙 {self.pc_crop_width_spin.value()}×{self.pc_crop_height_spin.value()} px를 자른 뒤 "
-                    "패치 학습합니다(위 설정). 박스와 마스크도 함께 자르고, 저장한 모델의 추론에도 같은 크롭을 적용합니다.")
-            if native:
-                self.patch_info.setStyleSheet("")
-                self.patch_info.setText(
-                    f"{size}px · 배율 {scale:g} · 겹침 25% · " +
-                    ("모든 패치를 합쳐 원본 한 장의 클래스 학습/판정 (배치=패치 묶음)"
-                     if self.project.task == "classify" else "박스도 함께 자름 · 추론 시 원본 좌표로 합침 · 검증 mAP는 패치 단위"))
-        elif segment and sam2:
-            self.patch_info.setText("SAM2는 패치 학습을 쓰지 않습니다.")
+        capabilities = self._training_capabilities()
+        self._update_image_settings(capabilities, resume, is_dinomaly)
         self.selection_combo.setEnabled(not is_pc and not resume)
         self._selection_changed()
-        capabilities = self._training_capabilities()
         for control in (self.debug_check, self.debug_patterns, self.debug_batches, self.debug_default):
             control.setEnabled(capabilities["layer_debug"])
         self.debug_info.setText("선택한 초기 배치만 관찰한 뒤 전체 학습을 계속합니다. Gradient는 AMP 배율을 제거합니다."
@@ -602,6 +543,85 @@ class TrainingWidget(TrainingForm, QWidget):
         self.amp_check.setEnabled(not is_pc and not resume and self._device_manager.cuda_available)
         self.tl_group.setVisible(not is_pc and self._selected_container_spec()[0] is None and
                                  (is_anomaly or self.mode_combo.currentData() == "custom"))
+
+    def _update_image_settings(self, capabilities, resume, is_dinomaly):
+        task = self.project.task if self.project is not None else ""
+        segment = task == "segment"
+        native = task in {"classify", "detect"} and capabilities.get("engine") == "upstream"
+        original_available = capabilities.get("original_size_training", False)
+        self.original_size_check.setVisible(original_available)
+        self.original_size_check.setEnabled(original_available and not resume)
+        if not original_available and self.original_size_check.isChecked():
+            with QSignalBlocker(self.original_size_check):
+                self.original_size_check.setChecked(False)
+        original = self.original_size_check.isChecked()
+        if original and self.patch_check.isChecked():
+            with QSignalBlocker(self.patch_check):
+                self.patch_check.setChecked(False)
+
+        patch_available = capabilities.get("patch_training", False)
+        patch = patch_available and self.patch_check.isChecked() and not original
+        self.patch_check.setVisible(segment or native or is_dinomaly)
+        self.patch_check.setEnabled(patch_available and not original and not resume)
+        if original:
+            self.patch_check.setToolTip("원본 크기로 학습을 해제하면 패치 학습을 선택할 수 있습니다.")
+        elif native:
+            self.patch_check.setToolTip("25% 겹침 격자로 전체 영역을 자릅니다. 학습한 배율과 패치 규칙을 추론과 배포에도 적용합니다.")
+        else:
+            self.patch_check.setToolTip("입력 크기만큼 잘라 학습합니다. 추론은 모델에 저장한 영역 처리 방식을 따릅니다.")
+
+        if native:
+            from upstream_models import get_upstream_spec
+            with QSignalBlocker(self.input_size_spin):
+                self.input_size_spin.setValue(get_upstream_spec(self.project.model.model_id).input_size)
+        self.input_size_spin.setEnabled(not original and not native and not resume)
+        self.advise_btn.setVisible(segment)
+        self.advise_btn.setEnabled(segment and not resume and getattr(self, "_advice_scan", None) is None)
+        for control in (self.patch_scale_combo, self.patch_count_spin, self.patch_info):
+            self.image_layout.setRowVisible(control, patch)
+        self.patch_count_spin.setSpecialValueText("전체 패치" if native else "자동 (이미지 면적 ÷ 패치 면적)")
+        self.patch_count_spin.setToolTip("0=모든 격자 패치. 양수는 원본별 고정 표본 수. 검증은 항상 모든 패치." if native
+                                        else "한 epoch에 이미지마다 자르는 패치 수. 0=자동(최대 64).")
+        self.patch_count_spin.setEnabled(patch and not resume and not (native and task == "classify"))
+        self.patch_scale_combo.setEnabled(patch and not resume)
+
+        self.pc_crop_check.setEnabled(not resume)
+        cropped = self.pc_crop_check.isChecked()
+        for control in (self.pc_crop_width_spin, self.pc_crop_height_spin):
+            self.image_layout.setRowVisible(control, cropped)
+            control.setEnabled(cropped and not resume)
+        self.image_layout.setRowVisible(self.pc_crop_info, original or cropped)
+        width, height = self.pc_crop_width_spin.value(), self.pc_crop_height_spin.value()
+        size = self.input_size_spin.value()
+        if original:
+            area = f"중앙 {width}×{height} px" if cropped else "이미지 전체"
+            self.pc_crop_info.setText(f"{area}를 원본 해상도로 학습합니다. 메모리가 부족하면 배치 크기를 줄이세요.")
+        elif cropped:
+            if patch:
+                self.pc_crop_info.setText(f"중앙 {width}×{height} px 안에서 패치를 만듭니다.")
+            else:
+                self.pc_crop_info.setText(f"중앙 {width}×{height} px를 잘라 입력 크기 {size}×{size} px에 맞춥니다.")
+
+        if not patch:
+            return
+        scale = float(self.patch_scale_combo.currentData() or 1.0)
+        self.patch_info.setStyleSheet("")
+        if native:
+            self.patch_info.setText(
+                f"{size}px · 배율 {scale:g} · 겹침 25% · "
+                + ("모든 패치를 합쳐 원본 한 장의 클래스 학습/판정 (배치=패치 묶음)"
+                   if task == "classify" else "박스도 함께 자름 · 추론 시 원본 좌표로 합침 · 검증 mAP는 패치 단위"))
+            return
+        area = "원본" + (f" × {scale:.0%}" if scale != 1 else "")
+        if cropped:
+            width, height = max(1, round(width * scale)), max(1, round(height * scale))
+            area = f"{width}×{height} px"
+        small = cropped and size > min(width, height)
+        self.patch_info.setText(
+            f"{area}에서 {size}px 패치로 학습 · 배율 적용 면적은 원본의 {scale * scale:.0%}"
+            + (f"\n⚠ 패치가 줄인 영역보다 큽니다. 입력 크기를 {min(width, height) // 32 * 32 or 32} 이하로 줄이세요."
+               if small else ""))
+        self.patch_info.setStyleSheet("color: #E5A832;" if small else "")
 
     def _update_selection_options(self):
         if not hasattr(self, "selection_combo") or not self.project:
@@ -709,7 +729,15 @@ class TrainingWidget(TrainingForm, QWidget):
         self.teacher_edit.setText(cfg.teacher_checkpoint)
         self.kd_alpha.setValue(cfg.distillation_alpha)
         self.kd_temperature.setValue(cfg.distillation_temperature)
-        self.patch_check.setChecked(bool(getattr(cfg, "patch_training", False)))
+        original = bool(getattr(cfg, "original_size_training", False))
+        self.original_size_check.blockSignals(True)
+        self.patch_check.blockSignals(True)
+        try:
+            self.original_size_check.setChecked(original)
+            self.patch_check.setChecked(not original and bool(getattr(cfg, "patch_training", False)))
+        finally:
+            self.original_size_check.blockSignals(False)
+            self.patch_check.blockSignals(False)
         self.patch_count_spin.setValue(int(getattr(cfg, "patches_per_image", 0)))
         scale_index = self.patch_scale_combo.findData(float(getattr(cfg, "patch_scale", 1.0)))
         if scale_index < 0:  # 목록에 없는 값(직접 편집한 프로젝트)도 그대로 보여 준다
@@ -857,7 +885,8 @@ class TrainingWidget(TrainingForm, QWidget):
         cfg.training_mode = "custom" if self.project.task == "anomaly" and self.model_id_combo.currentData() != "dinomaly_vits14" else self.mode_combo.currentData()
         cfg.efficientnet_model = self.efficientnet_model_combo.currentData() or "efficientnet_b0"
         cfg.efficientnet_no_decay = self.efficientnet_no_decay_check.isChecked()
-        cfg.layer_debug_enabled = self.debug_check.isChecked() and self._training_capabilities()["layer_debug"]
+        capabilities = self._training_capabilities()
+        cfg.layer_debug_enabled = self.debug_check.isChecked() and capabilities["layer_debug"]
         cfg.layer_debug_patterns = self.debug_patterns.text().strip()
         cfg.layer_debug_batches = self.debug_batches.value()
 
@@ -916,9 +945,11 @@ class TrainingWidget(TrainingForm, QWidget):
                                   if self.project.task == "segment" and mcfg.model_id in BUILTIN_ADAPTER_IDS else "")
         cfg.distillation_alpha = self.kd_alpha.value()
         cfg.distillation_temperature = self.kd_temperature.value()
-        sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
-        native = self.project.task in {"classify", "detect"} and str(self.mode_combo.currentData()).startswith("upstream")
-        cfg.patch_training = ((self.project.task == "segment" and not sam2 or native or mcfg.model_id == "dinomaly_vits14") and self.patch_check.isChecked())
+        native = self.project.task in {"classify", "detect"} and capabilities.get("engine") == "upstream"
+        cfg.original_size_training = (capabilities.get("original_size_training", False)
+                                      and self.original_size_check.isChecked())
+        cfg.patch_training = (capabilities.get("patch_training", False)
+                              and self.patch_check.isChecked() and not cfg.original_size_training)
         cfg.patches_per_image = 0 if native and self.project.task == "classify" else self.patch_count_spin.value()
         cfg.patch_scale = float(self.patch_scale_combo.currentData() or 1.0)
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
@@ -1017,6 +1048,8 @@ class TrainingWidget(TrainingForm, QWidget):
         if "input_size" in settings:
             self.input_size_spin.setValue(int(settings["input_size"]))
         if "patch_training" in settings:
+            if settings["patch_training"]:
+                self.original_size_check.setChecked(False)
             self.patch_check.setChecked(bool(settings["patch_training"]))
         if "patch_scale" in settings:
             choose(self.patch_scale_combo, float(settings["patch_scale"]))

@@ -343,12 +343,17 @@ class ExportWidget(QWidget):
         self._show_deploy_preview()
 
     def _show_deploy_preview(self):
-        """체크포인트를 고르면: 패치 학습 모델은 판정 영역 입력을 보이고, 함께 담길 판정 기준을 알린다."""
+        """체크포인트의 판정 영역과 함께 담길 판정 기준을 보여 준다."""
         preview = self._deploy_preview
         patch = bool(preview.get("patch")) and not preview.get("vit")
         self.region_row.setVisible(patch)
         lines = []
-        if patch:
+        if preview.get("region_error"):
+            lines.append(f"<b>판정 영역 오류</b>: {preview['region_error']}")
+        elif preview.get("original_size_region"):
+            width, height = preview["original_size_region"]
+            lines.append(f"원본 크기 학습 모델 · 고정 판정 영역 {width}×{height} px")
+        elif patch:
             region = preview.get("region") or [0, 0]
             self.region_w.setValue(int(region[0]))
             self.region_h.setValue(int(region[1]))

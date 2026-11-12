@@ -11,6 +11,7 @@ import tempfile
 os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
 
 import numpy as np
+from checkpoint import checkpoint_original_size_region, padded_region_size
 
 OUTPUT_NAMES = {
     "classify": "class_logits", "segment": "seg_mask",
@@ -189,18 +190,23 @@ def _positive_int(value, name):
     return int(value)
 
 
-WHOLE_IMAGE_MULTIPLE = 32  # 분할 백본의 최대 보폭: 판정 영역을 이 배수로 채워 넣는다 (데스크톱 엔진과 같은 규칙)
-
-
 def whole_image_contract(spec, model, region=None):
-    """패치 학습 분할 모델 → C++ 고정 입력 계약: 판정 영역 전체를 한 번에 넣는다 (데스크톱 엔진과 같은 계산).
+    """분할 모델의 C++ 고정 입력 계약. 데스크톱과 같은 판정 영역을 한 번에 넣는다.
 
         판정 영역 W×H ─▶ 배율 s로 축소(학습과 같은 보간) ─▶ 오른쪽·아래를 0으로 채워 32의 배수 ─▶ 모델
                                                                        ─▶ 채운 부분을 잘라 내고 W×H로 확대
 
-    ViT(DINOv2)는 주의가 입력 전체를 봐서 한 번에 넣으면 학습과 다른 함수가 된다 → None (C++ 배포 미지원).
-    region: (가로, 세로). 없으면 학습 때 기록한 영상 크기.
+    패치 학습에서 전역 문맥 모델은 타일로 배포한다. 원본 크기 학습은 저장된 판정 영역을 사용한다.
     """
+    original_size_region = spec.get("original_size_region")
+    if original_size_region is not None:
+        if region is not None and (not isinstance(region, (list, tuple))
+                                   or tuple(region) != original_size_region):
+            width, height = original_size_region
+            raise ValueError(f"원본 크기 학습 모델의 판정 영역은 {width}×{height} px로 고정되어 있습니다.")
+        return {"region": list(original_size_region), "scaled": list(original_size_region),
+                "interpolation": "INTER_LINEAR_EXACT", "pad": "zero_after_normalize",
+                "input": list(padded_region_size(original_size_region))}
     tiling = (spec.get("preprocessing") or {}).get("tiling")
     if spec["task"] != "segment" or not tiling or getattr(model, "global_attention", False):
         return None
@@ -211,10 +217,9 @@ def whole_image_contract(spec, model, region=None):
     width, height = (_positive_int(v, "region") for v in region)
     from dataset import scaled_size
     scaled_w, scaled_h = scaled_size(width, height, float(tiling.get("scale", 1.0)))
-    multiple = WHOLE_IMAGE_MULTIPLE
     return {"region": [width, height], "scaled": [scaled_w, scaled_h],
             "interpolation": tiling.get("interpolation", "INTER_LINEAR_EXACT"), "pad": "zero_after_normalize",
-            "input": [-(-scaled_h // multiple) * multiple, -(-scaled_w // multiple) * multiple]}
+            "input": list(padded_region_size((scaled_w, scaled_h)))}
 
 
 def deployment_defect_rules(checkpoint_path, class_names):
@@ -247,7 +252,7 @@ def deployment_defect_rules(checkpoint_path, class_names):
 
 
 def deployment_preview(checkpoint_path):
-    """내보내기 화면의 'C++ 배포' 안내: 패치 학습 여부·판정 영역·함께 담길 판정 기준. 실패하면 빈 사전."""
+    """내보내기 화면의 판정 영역과 함께 담길 판정 기준을 읽는다."""
     import torch
     try:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -262,6 +267,10 @@ def deployment_preview(checkpoint_path):
     preview = {"task": task, "patch": bool(tiling) and task == "segment", "vit": str(model_id).startswith("dinov2_") or model_id in {"efficientvit_b0_seg", "efficientvit_b1_seg", "sctnet_s", "eomt_dinov2_small"},
                "region": tiling.get("region"), "scale": float(tiling.get("scale", 1.0)), "rules": None}
     if task == "segment":
+        try:
+            preview["original_size_region"] = checkpoint_original_size_region(checkpoint)
+        except ValueError as exc:
+            preview["region_error"] = str(exc)
         try:
             preview["rules"] = deployment_defect_rules(checkpoint_path, list(checkpoint.get("class_names") or []))
         except ValueError as exc:
@@ -345,6 +354,9 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
     if not isinstance(size, (list, tuple)) or len(size) != 2:
         raise ValueError("input_size: 정수 또는 [높이, 너비] 필요")
     height, width = (_positive_int(v, "input_size") for v in size)
+    original_size_region = checkpoint_original_size_region(checkpoint)
+    if original_size_region is not None and backend not in {"custom", "builtin"}:
+        raise ValueError("원본 크기로 학습한 분할 모델의 체크포인트가 필요합니다.")
     mean_default = [0.449] if channels == 1 else [0.485, 0.456, 0.406]
     std_default = [0.226] if channels == 1 else [0.229, 0.224, 0.225]
     mean = preprocessing.get("normalize_mean", preprocessing.get("mean", mean_default))
@@ -362,7 +374,8 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
                           "color_order": "GRAY" if channels == 1 else "RGB"})
     return {"task": task, "num_classes": num_classes, "in_channels": channels,
             "input_height": height, "input_width": width, "model_config": model_config,
-            "preprocessing": preprocessing, "class_names": list(names)}
+            "preprocessing": preprocessing, "class_names": list(names),
+            "original_size_region": original_size_region}
 
 
 def load_custom_model(checkpoint, spec=None):
@@ -375,9 +388,6 @@ def load_custom_model(checkpoint, spec=None):
         if not isinstance(model, nn.Module):
             raise ValueError("Re-DETR checkpoint는 export 가능한 nn.Module을 model 필드에 포함해야 합니다.")
         return model.cpu().eval()
-    if backend == "builtin":
-        from builtin_models import load_builtin_checkpoint
-        return load_builtin_checkpoint(checkpoint)
     if backend == "efficientnet":
         from efficientnet import EfficientNet, VARIANTS
         from efficientnet_contract import checkpoint_input_contract, LEGACY_GRAY_INPUT, channel_description
@@ -393,15 +403,24 @@ def load_custom_model(checkpoint, spec=None):
             warnings.warn(channel_description(contract) + ": 기존 판정을 유지하는 호환 모드입니다. "
                           "새 1ch Conv 학습은 ImageNet 사전학습 모드를 선택하세요.", UserWarning, stacklevel=2)
         return model.cpu().eval()
-    from model import CustomCSP
-    kwargs = {key: config[key] for key in ("backbone_channels", "csp_depth", "dropout") if key in config}
-    if spec["task"] == "detect":
-        # 구형 가중치를 새 좌표식으로 해석하지 않는다.
-        kwargs["detection_box_encoding"] = config.get("detection_box_encoding", "legacy_raw")
-    model = CustomCSP(task=spec["task"], in_channels=spec["in_channels"],
-                   num_classes=spec["num_classes"], **kwargs)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    return model.cpu().eval()
+    if backend == "builtin":
+        from builtin_models import load_builtin_checkpoint
+        model = load_builtin_checkpoint(checkpoint)
+    else:
+        from model import CustomCSP
+        kwargs = {key: config[key] for key in ("backbone_channels", "csp_depth", "dropout") if key in config}
+        if spec["task"] == "detect":
+            # 구형 가중치를 새 좌표식으로 해석하지 않는다.
+            kwargs["detection_box_encoding"] = config.get("detection_box_encoding", "legacy_raw")
+        model = CustomCSP(task=spec["task"], in_channels=spec["in_channels"],
+                          num_classes=spec["num_classes"], **kwargs)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        model.cpu().eval()
+    if spec.get("original_size_region") is not None:
+        if getattr(model, "global_attention", False):
+            raise ValueError("이 모델은 원본 크기 학습을 지원하지 않습니다.")
+        model.original_size_region = spec["original_size_region"]
+    return model
 
 
 def validate_outputs(expected, actual, atol=1e-4, rtol=1e-4):
@@ -778,8 +797,11 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             if whole is not None:
                 spec = {**spec, "input_height": whole["input"][0], "input_width": whole["input"][1],
                         "preprocessing": {**spec["preprocessing"], "whole_image": whole}}
-                log(f"패치 학습 모델: 판정 영역 {whole['region'][0]}×{whole['region'][1]}을 한 번에 넣는 고정 입력"
-                    f" {whole['input'][1]}×{whole['input'][0]}로 내보냅니다 (배율 {whole['scaled'][0]}×{whole['scaled'][1]})")
+                mode = "원본 크기 학습 모델" if spec["original_size_region"] is not None else "패치 학습 모델"
+                region_label = f"{whole['region'][0]}×{whole['region'][1]} px"
+                if whole["scaled"] != whole["region"]:
+                    region_label += f" → {whole['scaled'][0]}×{whole['scaled'][1]} px"
+                log(f"{mode}: 판정 영역 {region_label} · ONNX 입력 {whole['input'][1]}×{whole['input'][0]} px")
             defect_rules = (deployment_defect_rules(checkpoint_path, list(spec["class_names"]))
                             if spec["task"] == "segment" else None)
             if defect_rules is not None:

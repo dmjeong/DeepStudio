@@ -268,7 +268,7 @@ class TrainingForm:
         self.pc_seed_spin.setValue(0)
         pc_layout.addRow("특징 선택 시드:", self.pc_seed_spin)
         self.pc_crop_check = QCheckBox("중앙 크롭 사용")
-        self.pc_crop_check.setToolTip("원본 중앙을 지정한 픽셀 크기로 자른 뒤 모델 입력 크기로 리사이즈합니다. 저장한 모델의 추론에도 같은 크롭을 적용합니다.")
+        self.pc_crop_check.setToolTip("원본 중앙의 지정 영역만 학습합니다. 저장한 모델의 추론에도 같은 크롭을 적용합니다.")
         self.pc_crop_width_spin = NoWheelSpinBox()
         self.pc_crop_height_spin = NoWheelSpinBox()
         for spin, name in ((self.pc_crop_width_spin, "크롭 가로 (px)"), (self.pc_crop_height_spin, "크롭 세로 (px)")):
@@ -397,42 +397,36 @@ class TrainingForm:
         hp_layout.addRow(self.distillation_group)
 
 
-        # ── 입력 크기 (32~1024, 32배수 단위) ──
-        # 640 권장: 해상도 보존 vs 학습 속도 최적 밸런스
+        image_group = QGroupBox("학습 이미지")
+        self.image_layout = image_layout = QFormLayout(image_group)
+        image_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        image_layout.setSpacing(8)
+
+        self.original_size_check = QCheckBox("원본 크기로 학습")
+        self.original_size_check.setToolTip(
+            "판정 영역 전체를 리사이즈 없이 이미지 한 장씩 학습 데이터로 사용합니다. "
+            "중앙 크롭을 켜면 그 영역의 픽셀 크기를 그대로 사용합니다."
+        )
+        self.original_size_check.hide()
+        self.original_size_check.toggled.connect(self._on_patchcore_settings_changed)
+        self.patch_check = QCheckBox("패치 학습")
+        self.patch_check.toggled.connect(self._on_patchcore_settings_changed)
+
         self.input_size_spin = NoWheelSpinBox()
         self.input_size_spin.setRange(32, 1024)
         self.input_size_spin.setSingleStep(32)
         self.input_size_spin.setValue(224)
         self.input_size_spin.setToolTip(
-            "모델에 입력되는 이미지 크기 (32의 배수)\n\n"
-            "패치 OFF: 원본 전체를 이 크기로 축소합니다.\n"
-            "패치 ON: 배율 적용 후 이 크기만큼 잘라 넣습니다.\n"
-            "예: 입력 640 / 배율 100% → 원본의 640×640 영역 사용.\n\n"
-            "  224  — 빠른 학습, 기본 분류에 적합\n"
-            "  416  — 디텍션 기본값\n"
-            "  512  — 세밀한 분류/세그멘테이션\n"
-            "  640  — 권장: 해상도↔속도 최적 밸런스\n"
-            "  1024 — 최고 해상도 (batch_size 1~2 필요)\n\n"
-            "클수록 GPU 메모리 사용량 급증\n"
-            "  batch_size를 함께 줄여야 OOM 방지"
+            "전체 영상은 이 크기로 맞춥니다. 패치 학습에서는 이 값이 패치 한 변의 크기입니다."
         )
-        hp_layout.addRow("입력 크기:", self.input_size_spin)
         self.input_size_spin.valueChanged.connect(self._on_patchcore_settings_changed)
 
-        # ── 분할 패치 학습: 큰 이미지의 작은 결함을 줄이지 않고 원본 해상도로 학습 ──
-        self.patch_check = QCheckBox("패치 학습 (입력 크기 = 패치 크기, 끄면 전체 이미지 축소)")
-        self.patch_check.setToolTip(
-            "이미지를 입력 크기로 줄이지 않고, 원본(크롭 후) 해상도에서 입력 크기만큼 잘라 학습합니다.\n"
-            "패치의 절반은 결함 위치에서, 나머지는 임의 위치에서 자릅니다(epoch마다 새 위치).\n"
-            "추론은 겹치는 타일로 나눠 원본 해상도 마스크를 만듭니다. 3500×1504를 512로 줄이면\n"
-            "결함이 약 7배 작아져 1~2px 결함이 사라지는 문제를 피합니다.")
         self.patch_count_spin = NoWheelSpinBox()
         self.patch_count_spin.setRange(0, 256)
         self.patch_count_spin.setSpecialValueText("자동 (이미지 면적 ÷ 패치 면적)")
         self.patch_count_spin.setToolTip("한 epoch에 이미지마다 자르는 패치 수. 0 = 자동(최대 64).")
         self.patch_info = QLabel()
         self.patch_info.setWordWrap(True)
-        self.patch_check.toggled.connect(self._on_patchcore_settings_changed)
         self.patch_count_spin.valueChanged.connect(self._on_patchcore_settings_changed)
         self.patch_count_label = QLabel("이미지당 패치:")
         # 패치 배율: 추론 속도와 작은 결함 크기의 교환. 계산량은 배율²에 비례한다.
@@ -450,15 +444,18 @@ class TrainingForm:
             "라벨된 결함의 굵기와 이미지 크기를 분석해, 가는 결함(미세 크랙 등)이 학습 해상도에서\n"
             "사라지지 않는 패치·배율·모델·가중치를 추천합니다. 항목을 골라 적용합니다.")
         self.advise_btn.clicked.connect(self._open_advisor)
-        hp_layout.addRow("", self.advise_btn)
-        hp_layout.addRow("", self.patch_check)
-        hp_layout.addRow(self.patch_scale_label, self.patch_scale_combo)
-        hp_layout.addRow(self.patch_count_label, self.patch_count_spin)
-        hp_layout.addRow(self.patch_info)
-        hp_layout.addRow("", self.pc_crop_check)
-        hp_layout.addRow("크롭 가로 (px):", self.pc_crop_width_spin)
-        hp_layout.addRow("크롭 세로 (px):", self.pc_crop_height_spin)
-        hp_layout.addRow(self.pc_crop_info)
+        image_layout.addRow(self.original_size_check)
+        image_layout.addRow(self.patch_check)
+        image_layout.addRow("입력 크기 (px)", self.input_size_spin)
+        image_layout.addRow(self.patch_scale_label, self.patch_scale_combo)
+        image_layout.addRow(self.patch_count_label, self.patch_count_spin)
+        image_layout.addRow(self.patch_info)
+        image_layout.addRow(self.pc_crop_check)
+        image_layout.addRow("크롭 가로 (px)", self.pc_crop_width_spin)
+        image_layout.addRow("크롭 세로 (px)", self.pc_crop_height_spin)
+        image_layout.addRow(self.pc_crop_info)
+        image_layout.addRow(self.advise_btn)
+        left_layout.addWidget(image_group)
 
         # ── 디바이스 선택 (GPU/CPU) ──
         from core.device_manager import get_device_manager

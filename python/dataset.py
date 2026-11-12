@@ -35,7 +35,7 @@ import torchvision.transforms as T
 import numpy as np
 from PIL import Image
 from opencv_preprocess import OpenCVResize, read_image, resize
-from checkpoint import PATCH_SCALE_INTERPOLATION
+from checkpoint import PATCH_SCALE_INTERPOLATION, padded_region_size
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -435,7 +435,8 @@ class SegmentationDataset(Dataset):
         cached = self._mask_cache.get(key)
         if cached is None:
             original, size = load_semantic_mask(image_path or mask_path, mask_path, self.num_classes)
-            cached = (resize_label_mask(original, self.input_size), size)
+            mask = original if original.shape == tuple(self.input_size) else resize_label_mask(original, self.input_size)
+            cached = (mask, size)
             nbytes = cached[0].nbytes
             if nbytes <= self._mask_cache_limit:
                 while self._mask_cache and self._mask_cache_bytes + nbytes > self._mask_cache_limit:
@@ -461,18 +462,22 @@ class SegmentationDataset(Dataset):
     def __len__(self) -> int:
         return len(self.pairs)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _load_pair(self, idx):
         img_path, mask_path = self.pairs[idx]
 
         # 이미지 로드 — 채널 수에 따라 RGB 또는 Grayscale 변환
-        image = Image.fromarray(read_image(img_path, self.in_channels))
+        image = read_image(img_path, self.in_channels)
         mask_array, mask_size = self._resized_mask(mask_path, img_path)
-        if image.size != mask_size:
-            raise ValueError(f"이미지/마스크 원본 크기 불일치: {img_path} {image.size}, {mask_path} {mask_size}")
+        image_size = (image.shape[1], image.shape[0])
+        if image_size != mask_size:
+            raise ValueError(f"이미지/마스크 원본 크기 불일치: {img_path} {image_size}, {mask_path} {mask_size}")
+        return image, mask_array, mask_path
 
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        image, mask_array, mask_path = self._load_pair(idx)
         # 리사이즈 (이미지: 픽셀 중심 기준 bilinear, 마스크: 픽셀 중심 기준 nearest
         # + 축소로 사라지는 작은 결함 보존). resize_label_mask 설명 참고.
-        image = Image.fromarray(resize(np.asarray(image), self.input_size))
+        image = Image.fromarray(resize(image, self.input_size))
         return self._augment_to_tensors(image, Image.fromarray(mask_array), mask_path)
 
     def _augment_to_tensors(self, image: Image.Image, mask: Image.Image, mask_path) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -510,6 +515,43 @@ class SegmentationDataset(Dataset):
                            (self.num_classes is not None and valid.max() >= self.num_classes)):
             raise ValueError(f"정답 마스크 클래스 범위 오류: {mask_path}")
         mask = torch.from_numpy(mask_array)
+        return image, mask
+
+
+class OriginalSizeSegmentationDataset(SegmentationDataset):
+    """판정 영역 전체를 원본 픽셀 크기로 사용하고 오른쪽·아래만 채운다."""
+
+    def __init__(self, img_dir: str, mask_dir: str, *, expected_size=None, **kwargs):
+        super().__init__(img_dir, mask_dir, **kwargs)
+        original_size = expected_size
+        for image_path, _ in self.pairs:
+            with Image.open(image_path) as image:
+                size = (image.height, image.width)
+            if original_size is None:
+                original_size = size
+            if size != original_size:
+                height, width = original_size
+                raise ValueError(
+                    f"원본 크기 학습에는 학습·검증 이미지 크기가 모두 같아야 합니다. "
+                    f"기준 {width}×{height}, {image_path}: {size[1]}×{size[0]}. "
+                    "크기가 다른 이미지에는 공통 중앙 크롭을 설정해 주세요."
+                )
+        self.original_size = self.input_size = original_size
+        height, width = self.original_size
+        self.padded_size = padded_region_size((width, height))
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        image, mask, mask_path = self._load_pair(idx)
+        if image.shape[:2] != self.original_size:
+            raise ValueError(f"학습 중 이미지 크기가 변경되었습니다: {self.pairs[idx][0]}")
+        image, mask = self._augment_to_tensors(Image.fromarray(image), Image.fromarray(mask), mask_path)
+        height, width = self.original_size
+        padded_height, padded_width = self.padded_size
+        if self.padded_size != self.original_size:
+            # 배포 추론과 같은 위치에 정규화 후 0을 채우고, 정답에서는 그 픽셀을 제외한다.
+            padding = (0, padded_width - width, 0, padded_height - height)
+            image = torch.nn.functional.pad(image, padding, value=0)
+            mask = torch.nn.functional.pad(mask, padding, value=255)
         return image, mask
 
 
@@ -1082,12 +1124,15 @@ def create_segmentation_loaders(
     patch_size: int = 0,
     patches_per_image: int = 0,
     patch_scale: float = 1.0,
+    *,
+    original_size: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Segmentation 데이터 로더 생성
 
     patch_size > 0이면 패치 학습(PatchSegmentationDataset). input_size는 무시하고 패치 크기를 쓴다.
     patch_scale < 1이면 이미지를 그 배율로 줄인 뒤 자른다 (1 = 원본 해상도).
+    original_size=True이면 학습·검증 이미지의 해상도를 유지하며, 패치 학습과 함께 쓸 수 없다.
 
     필요 구조:
         data_root/images/train/, data_root/images/val/
@@ -1099,7 +1144,12 @@ def create_segmentation_loaders(
     Returns:
         train_loader, val_loader
     """
-    if patch_size:
+    if original_size and patch_size:
+        raise ValueError("원본 크기 학습과 패치 학습을 동시에 사용할 수 없습니다.")
+    if original_size:
+        common = {}
+        dataset_type = OriginalSizeSegmentationDataset
+    elif patch_size:
         common = {"patch_size": int(patch_size), "patches_per_image": int(patches_per_image),
                   "scale": float(patch_scale)}
         dataset_type = PatchSegmentationDataset
@@ -1117,6 +1167,8 @@ def create_segmentation_loaders(
         num_classes=num_classes,
         **common,
     )
+    if original_size:
+        common["expected_size"] = train_dataset.original_size
     val_dataset = dataset_type(
         img_dir=os.path.join(data_root, "images", "val"),
         mask_dir=os.path.join(data_root, "masks", "val"),

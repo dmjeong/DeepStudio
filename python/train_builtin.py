@@ -217,7 +217,8 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
                             scheduler=None, metric: float | None = None,
                             training_config: dict | None = None,
                             metrics_history: list[dict] | None = None,
-                            tiling: dict | None = None, center_crop: dict | None = None) -> None:
+                            tiling: dict | None = None, center_crop: dict | None = None,
+                            original_size_region: tuple[int, int] | None = None) -> None:
     model.eval()
     state = make_builtin_checkpoint(model_id, model, num_classes=num_classes,
                                     input_size=input_size, in_channels=in_channels,
@@ -228,6 +229,8 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
         from center_crop import validate_center_crop
         state["center_crop"] = validate_center_crop(center_crop)
         state["preprocessing"]["center_crop"] = state["center_crop"]
+    from checkpoint import record_original_size_training
+    record_original_size_training(state, original_size_region)
     state["epoch"] = int(epoch)
     state["metric"] = None if metric is None else float(metric)
     if optimizer is not None:
@@ -286,7 +289,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   patch_training: bool = False, patches_per_image: int = 0, patch_scale: float = 1.0,
                   class_report: bool = False, should_stop=lambda: False,
                   center_crop: dict | None = None, teacher_checkpoint=None,
-                  distillation_alpha=.3, distillation_temperature=2.) -> Path:
+                  distillation_alpha=.3, distillation_temperature=2.,
+                  original_size_training: bool = False) -> Path:
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
     if gui_path not in sys.path:
@@ -314,7 +318,15 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         raise ValueError("resume and initial_weights are mutually exclusive")
     if pretrained and (resume is not None or initial_weights is not None):
         raise ValueError("ImageNet, resume and initial_weights are mutually exclusive")
-    if input_size is None:
+    if type(original_size_training) is not bool:
+        raise ValueError("원본 크기 학습 옵션은 boolean 필요")
+    if original_size_training:
+        from core.training_modes import ORIGINAL_SIZE_SEGMENT_IDS
+        if patch_training:
+            raise ValueError("원본 크기 학습과 패치 학습은 함께 사용할 수 없습니다.")
+        if model_id not in ORIGINAL_SIZE_SEGMENT_IDS:
+            raise ValueError("선택한 모델은 원본 크기 학습을 지원하지 않습니다.")
+    if input_size is None or original_size_training:
         input_size = spec.default_size
     if isinstance(input_size, int):
         input_size = (input_size, input_size)
@@ -325,8 +337,9 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         raise ValueError("패치 학습은 분할 모델만 지원합니다")
     if patch_training and input_size[0] != input_size[1]:
         raise ValueError("패치 학습은 정사각형 입력 크기(= 패치 크기)가 필요합니다")
-    from checkpoint import tiling_contract
+    from checkpoint import checkpoint_original_size_region, tiling_contract
     region = None
+    original_size_region = None
     if patch_training:
         from dataset import common_image_size
         region = common_image_size(Path(data_root) / "images" / "train")  # C++ 고정 입력 내보내기의 판정 영역
@@ -363,7 +376,14 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             in_channels=in_channels, num_classes=num_classes,
             flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter,
             patch_size=input_size[0] if patch_training else 0, patches_per_image=patches_per_image,
-            patch_scale=patch_scale if patch_training else 1.0)
+            patch_scale=patch_scale if patch_training else 1.0,
+            original_size=original_size_training)
+        if original_size_training:
+            height, width = train_loader.dataset.original_size
+            input_size = train_loader.dataset.padded_size
+            original_size_region = (width, height)
+            log(f"원본 크기 학습: {width}×{height} px → 모델 입력 "
+                f"{input_size[1]}×{input_size[0]} px (가장자리 채움)")
         from dataset import unlabeled_message
         if unlabeled_message(train_loader, val_loader):
             log(unlabeled_message(train_loader, val_loader))
@@ -495,6 +515,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         "patch_training": ({"patch_size": input_size[0], "scale": tiling["scale"],
                             "patches_per_image": train_loader.dataset.patches_per_image, "tiling": tiling}
                            if tiling else None),
+        "original_size_training": original_size_training,
+        "original_size_region": list(original_size_region) if original_size_region else None,
         **loss_details,
     }
     if spec.task == "segment":
@@ -512,6 +534,10 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         checkpoint = resume_checkpoint
         if checkpoint.get("model_id") != model_id:
             raise ValueError("resume checkpoint model_id does not match the requested adapter")
+        if checkpoint_original_size_region(checkpoint) != original_size_region or (
+            original_size_region is not None and checkpoint.get("center_crop") != center_crop
+        ):
+            raise ValueError("재개하려면 원본 크기 학습 설정과 판정 영역을 유지해야 합니다.")
         if checkpoint.get("training_config", {}).get("distillation") != training_config["distillation"]:
             raise ValueError("재개할 때 교사 가중치와 증류 설정을 유지해야 합니다")
         saved_metric = checkpoint.get("training_config", {}).get("selection_metric", "engine_default")
@@ -539,6 +565,10 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             )
             if resume_best_checkpoint.get("model_id") != model_id:
                 raise ValueError("best checkpoint model_id does not match the resume adapter")
+            if checkpoint_original_size_region(resume_best_checkpoint) != original_size_region or (
+                original_size_region is not None and resume_best_checkpoint.get("center_crop") != center_crop
+            ):
+                raise ValueError("Best 체크포인트의 원본 크기 학습 설정이 재개 설정과 다릅니다.")
         else:
             resume_best_checkpoint = checkpoint
         if resume_best_checkpoint.get("metric") is not None:
@@ -620,7 +650,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                 in_channels=in_channels, class_names=class_names,
                                 epoch=epoch, optimizer=optimizer, scheduler=scheduler,
                                 metric=selected_value, training_config=training_config,
-                                metrics_history=history, tiling=tiling, center_crop=center_crop)
+                                metrics_history=history, tiling=tiling, center_crop=center_crop,
+                                original_size_region=original_size_region)
         improved = selected_value < best_metric if policy.direction == "min" else selected_value > best_metric
         if improved:
             best_metric = selected_value
@@ -631,7 +662,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                     in_channels=in_channels, class_names=class_names,
                                     epoch=epoch, optimizer=optimizer, scheduler=scheduler,
                                     metric=selected_value, training_config=training_config,
-                                    metrics_history=history, tiling=tiling, center_crop=center_crop)
+                                    metrics_history=history, tiling=tiling, center_crop=center_crop,
+                                    original_size_region=original_size_region)
             log({"event": "best_epoch_updated", "epoch": completed_epochs,
                  "train_loss": train_loss, "val_loss": val_loss, "metrics": validation_metrics})
         else:

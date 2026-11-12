@@ -101,9 +101,11 @@ def _train_builtin_project(context, project, device, *, class_report=False):
     if spec is None or spec.task != project.task:
         return None
     cfg, data = project.training, project.data
+    original_size = bool(getattr(cfg, "original_size_training", False))
     run_id = ProjectManager.new_run_id(task=project.task, model_name=model_id,
                                        input_size=cfg.input_size,
-                                       project_dir=project.project_dir)
+                                       project_dir=project.project_dir,
+                                       original_size=original_size)
     run_dir = Path(project.project_dir) / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     context.emit("log_message", [f"기본 모델 학습: {model_id}"])
@@ -172,11 +174,12 @@ def _train_builtin_project(context, project, device, *, class_report=False):
                          patch_training=bool(getattr(cfg, "patch_training", False)) and project.task == "segment",
                          patches_per_image=int(getattr(cfg, "patches_per_image", 0)),
                          patch_scale=float(getattr(cfg, "patch_scale", 1.0)),
+                         original_size_training=original_size,
                          # 데스크톱 요청만: 결함 클래스별 IoU와 '전부 배경' 경고를 로그에 (웹 로그는 그대로)
                          class_report=bool(class_report) and project.task == "segment",
                          # 데스크톱 요청만: 학습한 중앙 크롭을 체크포인트에 남겨 추론·내보내기가 같은 영역을 본다
                          # (이전에는 크롭 데이터로 학습하고 원본 전체를 추론했다). 웹 동작은 그대로.
-                         center_crop=crop if class_report else None,
+                         center_crop=crop if class_report or original_size else None,
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
@@ -226,6 +229,7 @@ def _train_builtin_project(context, project, device, *, class_report=False):
         hyperparameters=training_hyperparameters(
             project, engine="builtin",
             effective={"device": str(device), "model_id": model_id,
+                       "input_size": training_state.get("input_size", cfg.input_size),
                        "center_crop": list(crop) if crop else None},
             applied=training_state.get("training_config", {}),
         ))

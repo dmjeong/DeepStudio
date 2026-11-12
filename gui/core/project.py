@@ -161,6 +161,8 @@ class TrainingConfig:
     patches_per_image: int = 0
     # 패치 학습 배율: 1.0 = 원본 해상도. 0.5면 이미지를 절반으로 줄인 뒤 자른다 (추론 계산량 1/4).
     patch_scale: float = 1.0
+    # 원본 판정 영역 전체를 축소·분할 없이 분할 모델에 입력.
+    original_size_training: bool = False
     device: str = "auto"  # auto, cpu, cuda, cuda:0, cuda:1
     use_amp: bool = True              # Mixed Precision (GPU 시 자동 활성화)
     # ── 학습 모드 ──
@@ -589,9 +591,10 @@ class ProjectManager:
     def new_run_id(
         task: str = "",
         model_name: str = "",
-        input_size: int = 0,
+        input_size: int | tuple[int, int] = 0,
         *,
         project_dir: str = "",
+        original_size: bool = False,
     ) -> str:
         """초 단위 폴더명 생성. 실제 저장 시 폴더를 예약하고 중복에만 순번 추가.
 
@@ -614,7 +617,13 @@ class ProjectManager:
             clean_name = os.path.splitext(model_name)[0] if model_name else "custom"
             clean_name = clean_name.replace("-", "").replace("_", "")
             clean_name = re.sub(r"[^\w-]", "", clean_name) or "custom"
-            size_str = str(int(input_size)) if input_size else "224"
+            if original_size:
+                size_str = "original"
+            elif isinstance(input_size, (tuple, list)):
+                height, width = input_size
+                size_str = f"{int(width)}x{int(height)}"
+            else:
+                size_str = str(int(input_size)) if input_size else "224"
             time_str = now.strftime("%y%m%d_%Hh%Mm%Ss")
             base_name = f"{task_label}_{clean_name}_{size_str}_{time_str}"
 

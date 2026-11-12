@@ -10,6 +10,7 @@ from core.inference_timing import StageTimer
 from core.inference_types import InferenceResult, make_anomaly_result
 ensure_python_path()
 from center_crop import center_crop_box, restore_detections, paste_crop_preview
+from checkpoint import padded_region_size
 
 
 def _out_of_memory(exc):
@@ -141,14 +142,9 @@ class InferenceOperations:
             # 모델의 in_channels 확인 (체크포인트에서 로드된 값)
             in_channels = getattr(self.model, 'in_channels', 3)
 
-            # 전처리 (학습과 동일 — 채널 수에 맞게)
+            task = self.model.task
             input_size = self._input_size
             mean, std = self._normalization or get_normalize_params(in_channels)
-            transform = transforms.Compose([
-                OpenCVResize(input_size),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=mean, std=std),
-            ])
 
             device = self._infer_device
             # 실행 시작 시 선택한 경우에만 계산한다. 결과 탐색은 저장된 맵만 사용한다.
@@ -169,12 +165,26 @@ class InferenceOperations:
 
             onnx = getattr(self, "_onnx_runtime", None)
             # 패치 학습 모델: 줄이지 않고 원본 해상도 타일로 나눠 추론한다 (checkpoint의 tiling 규칙).
-            tiling = getattr(self, "_tiling", None) if getattr(self.model, "task", "") == "segment" else None
-            if tiling:
+            tiling = getattr(self, "_tiling", None) if task == "segment" else None
+            original_size = getattr(self.model, "original_size_region", None) if task == "segment" else None
+            if original_size is not None:
+                width, height = original_size
+                if img.shape[:2] != (height, width):
+                    raise ValueError(f"이 모델은 {width}×{height} px 판정 영역이 필요합니다. "
+                                     f"현재 영역: {img.shape[1]}×{img.shape[0]} px.")
+                input_tensor = None
+                prepared = time.perf_counter()
+                output = self._whole_probabilities(img, mean, std, device).unsqueeze(0)
+            elif tiling:
                 input_tensor = None
                 prepared = time.perf_counter()
                 output = self._patch_probabilities(img, tiling, mean, std, device).unsqueeze(0)
             else:
+                transform = transforms.Compose([
+                    OpenCVResize(input_size),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=mean, std=std),
+                ])
                 # 입력 텐서를 선택된 디바이스로 전송
                 input_tensor = transform(img).unsqueeze(0).to(device)
                 prepared = time.perf_counter()
@@ -186,8 +196,6 @@ class InferenceOperations:
                 raise ValueError("모델 출력이 유한하지 않습니다")
             target_tensor = None
             detections = None
-
-            task = self.model.task
 
             if task == "classify":
                 # 결과를 CPU로 가져와서 numpy 변환
@@ -209,10 +217,10 @@ class InferenceOperations:
                     pred_mask = pred_mask.astype(np.uint8)  # 원본 해상도 타일 결과도 가볍게 다룬다
                 review = getattr(self, "segment_review", None)
                 # 결함 점수용 클래스 확률 (모델 해상도, 타일이면 원본 해상도). 결함 분석을 켠 경우에만 만든다.
-                # 타일 추론 출력은 이미 확률(겹친 타일 softmax 평균)이다.
+                # 원본 크기와 타일 추론은 이미 softmax 확률을 반환한다.
                 probabilities = None
                 if review is not None:
-                    probabilities = (output[0].float().cpu().numpy() if tiling
+                    probabilities = (output[0].float().cpu().numpy() if tiling or original_size is not None
                                      else F.softmax(output.detach().float(), dim=1)[0].cpu().numpy())
                 histogram = _histogram(pred_mask)
                 pixel_counts = {int(i): int(histogram[i]) for i in np.flatnonzero(histogram)}
@@ -222,6 +230,8 @@ class InferenceOperations:
                 if tiling:
                     prediction.details["tiling"] = {**tiling, "tiles": self._tile_count, "run": self._patch_run,
                                                     "inference_size": list(pred_mask.shape[::-1])}
+                if original_size is not None:
+                    prediction.details["original_size_region"] = list(original_size)
 
             elif task == "detect":
                 from detection import postprocess_detections
@@ -339,7 +349,9 @@ class InferenceOperations:
 
         if crop:
             self._set_info((getattr(self, "info", "") or "") + f" | 판정 범위: 중앙 {crop['width']}×{crop['height']} px")
-        if task == "segment" and tiling:
+        if original_size is not None:
+            self._set_info((getattr(self, "info", "") or "") + f" | 원본 크기 학습 모델 · {width}×{height} px")
+        elif task == "segment" and tiling:
             scale = float(tiling.get("scale", 1.0))
             size = "×".join(str(v) for v in pred_mask.shape[::-1])
             how = ("이미지 한 번에" if self._patch_run == "whole" else
@@ -406,12 +418,11 @@ class InferenceOperations:
             self._patch_run = "tiles"
         return self._tiled_probabilities(image, tiling, mean, std, device)
 
-    def _whole_probabilities(self, image, mean, std, device, multiple=32):
-        """판정 영역 전체를 한 번에. 백본의 최대 보폭(32)의 배수가 되게 오른쪽·아래를 0으로 채우고 잘라 낸다
-        (학습 패치가 이미지 밖으로 나갈 때와 같은 채움)."""
+    def _whole_probabilities(self, image, mean, std, device):
+        """정규화한 영상의 오른쪽과 아래를 0으로 채워 추론한 뒤 채운 부분을 제거한다."""
         height, width = image.shape[:2]
         pixels = self._normalized_pixels(image, mean, std)
-        padded_h, padded_w = -(-height // multiple) * multiple, -(-width // multiple) * multiple
+        padded_h, padded_w = padded_region_size((width, height))
         if (padded_h, padded_w) != (height, width):
             filled = torch.zeros(pixels.shape[0], padded_h, padded_w)
             filled[:, :height, :width] = pixels

@@ -5,6 +5,48 @@
 # 25%면 픽셀 4개 중 2개만 쓰고 2개를 버려, 버려지는 자리에 놓인 1px 크랙이 영상에서 사라졌다(마스크에는 남음).
 # INTER_AREA는 모든 픽셀을 평균하므로 1px 크랙이 어느 위치에 있어도 1/4 대비의 선으로 남는다.
 PATCH_SCALE_INTERPOLATION = "INTER_AREA"
+WHOLE_IMAGE_MULTIPLE = 32
+
+
+def padded_region_size(region):
+    """Return padded (H, W) for a native region stored as (W, H)."""
+    if (not isinstance(region, (tuple, list)) or len(region) != 2
+            or any(type(value) is not int or value < 1 for value in region)):
+        raise ValueError("원본 학습 영역에는 양의 정수 [가로, 세로]가 필요합니다.")
+    width, height = region
+    step = WHOLE_IMAGE_MULTIPLE
+    return ((height + step - 1) // step * step, (width + step - 1) // step * step)
+
+
+def checkpoint_original_size_region(checkpoint):
+    """Read and validate the unpadded region of a native-size checkpoint."""
+    enabled = checkpoint.get("original_size_training", False)
+    region = checkpoint.get("original_size_region")
+    if enabled is False and region is None:
+        return None
+    if enabled is not True or checkpoint.get("task") != "segment":
+        raise ValueError("원본 크기 학습 체크포인트 설정이 올바르지 않습니다.")
+    preprocessing = checkpoint.get("preprocessing") or {}
+    if checkpoint.get("tiling") or preprocessing.get("tiling"):
+        raise ValueError("원본 크기 학습 체크포인트에 타일 설정을 함께 저장할 수 없습니다.")
+    size = checkpoint.get("input_size")
+    size = (size, size) if type(size) is int else size
+    if not isinstance(size, (tuple, list)) or tuple(size) != padded_region_size(region):
+        raise ValueError("원본 학습 영역과 체크포인트 입력 크기가 일치하지 않습니다.")
+    crop = checkpoint.get("center_crop") or preprocessing.get("center_crop")
+    if crop:
+        from center_crop import validate_center_crop
+        crop = validate_center_crop(crop)
+        if (crop["width"], crop["height"]) != tuple(region):
+            raise ValueError("원본 학습 영역과 저장된 중앙 크롭 크기가 일치하지 않습니다.")
+    return tuple(region)
+
+
+def record_original_size_training(checkpoint, region):
+    if region is not None:
+        checkpoint["original_size_training"] = True
+        checkpoint["original_size_region"] = list(region)
+        checkpoint_original_size_region(checkpoint)
 
 
 def previous_best_path(resume_path):
@@ -57,7 +99,8 @@ def tiling_contract(patch_size, scale=1.0, region=None):
 
 
 def make_checkpoint_metadata(task, num_classes, class_names, input_size,
-                             in_channels, model_config=None, center_crop=None, tiling=None):
+                             in_channels, model_config=None, center_crop=None, tiling=None,
+                             original_size_region=None):
     """기존 키를 유지하면서 모델 구조와 전처리 규칙을 함께 저장한다."""
     from center_crop import validate_center_crop
     center_crop = validate_center_crop(center_crop)
@@ -106,4 +149,5 @@ def make_checkpoint_metadata(task, num_classes, class_names, input_size,
     if center_crop is not None:
         result["center_crop"] = center_crop
         result["preprocessing"]["center_crop"] = center_crop
+    record_original_size_training(result, original_size_region)
     return result

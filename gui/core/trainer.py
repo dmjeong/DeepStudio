@@ -139,6 +139,8 @@ class TrainWorker(TrainingEngine):
         if cfg.epochs < 1 or cfg.batch_size < 1:
             raise ValueError("에폭과 배치 크기는 1 이상 필요")
         # 실제 클래스 목록을 확정한 뒤 출력 헤드를 생성한다.
+        self._original_size_region = None
+        self._padded_input_size = None
         num_workers = getattr(self, "debug_num_workers", dm.get_optimal_num_workers(device))
         pin_memory = getattr(device, "type", str(device).split(":", 1)[0]) == "cuda"
         train_loader, val_loader = self._create_dataloaders(
@@ -209,7 +211,7 @@ class TrainWorker(TrainingEngine):
         run_id = ProjectManager.new_run_id(
             task=task,
             model_name=pretrained_name,
-            input_size=cfg.input_size,
+            input_size=self._padded_input_size or cfg.input_size,
             project_dir=self.project.project_dir,
         )
         run_dir = os.path.join(self.project.project_dir, "runs", run_id)
@@ -231,6 +233,8 @@ class TrainWorker(TrainingEngine):
 
         if getattr(self, "_class_weight_details", None) is not None:
             run_record.config_snapshot["class_weight_details"] = self._class_weight_details
+        if self._original_size_region is not None:
+            run_record.config_snapshot["original_size_region"] = list(self._original_size_region)
         self._run_record = run_record
         self.project.runs.append(run_record)
         self._layer_debug_session = None
@@ -442,7 +446,9 @@ class TrainWorker(TrainingEngine):
             self.project, engine=self.engine_name,
             effective={"device": str(device), "use_amp": use_amp,
                        "num_workers": num_workers, "pin_memory": pin_memory,
-                       "pretrained_loaded": pretrained_loaded},
+                       "pretrained_loaded": pretrained_loaded,
+                       "input_size": self._padded_input_size or cfg.input_size,
+                       "original_size_region": self._original_size_region},
             applied={"class_weight_details": getattr(self, "_class_weight_details", None)},
         )
         ckpt_path, selection = publish_best(
@@ -497,10 +503,11 @@ class TrainWorker(TrainingEngine):
                 # 크롭한 데이터로 학습했으니 판정 영역도 크롭 크기다 (원본 크기를 쓰면 내보낸 고정 입력이 어긋난다)
                 region = [crop["width"], crop["height"]]
         return make_checkpoint_metadata(self.project.task, data.num_classes, data.class_names,
-            cfg.input_size, cfg.in_channels,
+            getattr(self, "_padded_input_size", None) or cfg.input_size, cfg.in_channels,
             {"backbone_channels": list(model.backbone_channels),
              "csp_depth": list(model.csp_depth), "dropout": model.dropout},
             center_crop=configured_center_crop(cfg),
+            original_size_region=getattr(self, "_original_size_region", None),
             tiling=tiling_contract(cfg.input_size if patch else 0,
                                    float(getattr(cfg, "patch_scale", 1.0)) if patch else 1.0, region))
 
@@ -817,10 +824,10 @@ class TrainWorker(TrainingEngine):
             flip_prob = getattr(aug, "horizontal_flip", 0.5) if aug else 0.5
             rotation = getattr(aug, "rotation", 15.0) if aug else 15.0
             color_jitter = getattr(aug, "color_jitter", 0.2) if aug else 0.2
+            original_size = bool(getattr(cfg, "original_size_training", False))
+            size_label = "원본 크기" if original_size else f"{input_size[1]}×{input_size[0]}"
             self.signals.log_message.emit(
-                f"  입력 크기: {input_size[0]}×{input_size[1]} | "
-                f"증강 — 좌우반전 {flip_prob}, 회전 {rotation}°, 색상 {color_jitter}"
-            )
+                f"  입력 크기: {size_label} | 증강 — 좌우반전 {flip_prob}, 회전 {rotation}°, 색상 {color_jitter}")
 
             if task == "classify":
                 result = create_classification_loaders(
@@ -880,7 +887,15 @@ class TrainWorker(TrainingEngine):
                     patch_size=input_size[0] if patch else 0,
                     patches_per_image=int(getattr(cfg, "patches_per_image", 0)),
                     patch_scale=float(getattr(cfg, "patch_scale", 1.0)) if patch else 1.0,
+                    original_size=original_size,
                 )
+                if original_size:
+                    height, width = loaders[0].dataset.original_size
+                    self._original_size_region = (width, height)
+                    self._padded_input_size = loaders[0].dataset.padded_size
+                    pad_h, pad_w = self._padded_input_size
+                    self.signals.log_message.emit(
+                        f"  원본 크기 학습: {width}×{height} px → 모델 입력 {pad_w}×{pad_h} px (가장자리 채움)")
                 from dataset import unlabeled_message
                 if unlabeled_message(*loaders):
                     self.signals.log_message.emit("  " + unlabeled_message(*loaders))
