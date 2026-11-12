@@ -279,7 +279,7 @@ jobs:
         with:
           dotnet-version: "8.0.x"
       - name: Install contract test dependencies
-        run: python -m pip install pytest cryptography numpy
+        run: python -m pip install pytest cryptography numpy psutil
       - name: Run Windows packaging and worker contracts
         run: python -m pytest -q tests/test_windows_packaging_contracts.py tests/test_installer_powershell.py tests/test_model_pack_template.py tests/test_worker_runtime.py tests/test_model_pack_worker.py tests/test_model_registry.py tests/test_asset_resolver.py tests/test_deployment_bundle.py -k "not emit_sdk_bundle"
       - name: Compile frozen GUI builder
@@ -301,6 +301,11 @@ jobs:
           pwsh packaging/windows/build_simple_installer.ps1 -AppRoot $app -ExternalPayload `
             -OutputDirectory (Join-Path $env:RUNNER_TEMP "installer-toolchain-external") -Version 1.0.0
           if ($LASTEXITCODE -ne 0) { throw "External cabinet/ZIP toolchain smoke failed" }
+      - name: Install the real MSI using Unicode paths with spaces
+        timeout-minutes: 3
+        env:
+          DVS_TEST_INSTALLER_MSI: ${{ runner.temp }}/installer-toolchain-release/DeepVisionStudio-1.0.0.msi
+        run: python -m pytest -q -s tests/test_windows_installer_execution.py
       - name: Install and uninstall both real Setup layouts
         shell: pwsh
         run: |
@@ -583,18 +588,19 @@ jobs:
           pwsh @releaseArgs
           Get-ChildItem $output | Format-Table Name,Length
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: deepvisionstudio-wix-contract
           path: |
             ${{ runner.temp }}/studio-release/*.msi
             ${{ runner.temp }}/studio-release/*.exe
             ${{ runner.temp }}/studio-release/*.cab
-            ${{ runner.temp }}/studio-release/*.zip
             ${{ runner.temp }}/studio-simple-release/*.msi
             ${{ runner.temp }}/studio-simple-release/*.exe
             ${{ runner.temp }}/studio-simple-release/*.cab
-            ${{ runner.temp }}/studio-simple-release/*.zip
           if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
     env:
       REQUIRE_OFFLINE_WSL: ${{ inputs.require_offline_wsl || false }}
       REQUIRE_RELEASE_READY_MODELS: ${{ inputs.require_release_ready_models || false }}

@@ -22,6 +22,7 @@ def clean_app_environment(source):
 
 
 def checked(command, *, timeout=900, env=None, cwd=None):
+    print("EXECUTE:", command if isinstance(command, str) else subprocess.list2cmdline(command), flush=True)
     process = subprocess.Popen(command, env=env, cwd=cwd)
     try:
         code = process.wait(timeout=timeout)
@@ -34,7 +35,27 @@ def checked(command, *, timeout=900, env=None, cwd=None):
         process.wait()
         raise
     if code not in (0, 3010):
-        raise RuntimeError(f"실행 실패 ({code}): {command[0]}")
+        raise RuntimeError(f"실행 실패 ({code}): {command}")
+
+
+def run_msi(msi, log, *, install=None):
+    """MSI properties need VALUE quotes, not CRT quotes around NAME=VALUE.
+
+    Passing a list to Popen quotes the entire INSTALLFOLDER=... argument when
+    it contains spaces. msiexec parses properties itself and then displays its
+    usage dialog instead of installing, even with /qn. Pass the documented
+    PROPERTY="value" syntax directly, without cmd.exe or another shell.
+    https://learn.microsoft.com/en-us/windows/win32/msi/command-line-options
+    """
+    def quote(path):
+        value = str(Path(path).resolve())
+        if any(char in value for char in ('"', '\r', '\n', '\x00')):
+            raise ValueError("설치 경로에 사용할 수 없는 문자가 있습니다.")
+        return '"' + value + '"'
+    command = f'msiexec.exe /{"i" if install is not None else "x"} {quote(msi)} /qn /norestart /l*v {quote(log)}'
+    if install is not None:
+        command += " INSTALLFOLDER=" + quote(install)
+    checked(command)
 
 
 def run(output, *, app=None, msi=None):
@@ -51,8 +72,7 @@ def run(output, *, app=None, msi=None):
         installed = False
         try:
             if msi:
-                checked(["msiexec.exe", "/i", str(Path(msi).resolve()), "/qn", "/norestart",
-                         "INSTALLFOLDER=" + str(install), "/l*v", str(output.with_suffix(".install.log"))])
+                run_msi(msi, output.with_suffix(".install.log"), install=install)
                 installed = True
                 executable = install / "app" / "DeepVisionStudio.exe"
                 if not (install / "Examples" / "cpp").is_dir():
@@ -74,8 +94,7 @@ def run(output, *, app=None, msi=None):
             print(json.dumps(report, ensure_ascii=False, indent=2))
         finally:
             if installed:
-                checked(["msiexec.exe", "/x", str(Path(msi).resolve()), "/qn", "/norestart",
-                         "/l*v", str(output.with_suffix(".uninstall.log"))])
+                run_msi(msi, output.with_suffix(".uninstall.log"))
 
 
 if __name__ == "__main__":
