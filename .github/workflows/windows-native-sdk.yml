@@ -339,8 +339,10 @@ jobs:
           if ($opencvDlls.Count -eq 0) { throw "OpenCV runtime DLLs were not found" }
           Copy-Item $opencvDlls.FullName $native
           $env:PATH = "$native;$env:PATH"
-          & (Join-Path $build "Release/segment_probe.exe") --runtime-version
-          if ($LASTEXITCODE -ne 0) { throw "Native ONNX runtime could not start" }
+          $loadedOrt = & (Join-Path $build "Release/segment_probe.exe") --runtime-version
+          if ($LASTEXITCODE -ne 0 -or "$loadedOrt".Trim() -ne "1.29.0") {
+            throw "Wrong native ONNX Runtime loaded: $loadedOrt (expected 1.29.0)"
+          }
           ctest --test-dir $build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "Native all-task encryption contracts failed" }
           "VISION_NATIVE_RUNTIME_DIR=$native" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

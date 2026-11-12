@@ -281,3 +281,37 @@ if(BUILD_TESTING)
         add_test(NAME dinov2_deployment COMMAND dinov2_deployment "${VISION_DINOV2_FIXTURES}")
     endif()
 endif()
+
+# Windows searches the EXE directory and System32 before PATH. Stage the exact
+# SDK DLL beside every executable/shared library, as the public examples do;
+# a PATH-only setup can silently load Windows' incompatible onnxruntime.dll.
+if(WIN32)
+    get_filename_component(_vision_ort_lib_dir "${ONNXRUNTIME_LIB}" DIRECTORY)
+    unset(VISION_ORT_DLL CACHE)
+    find_file(VISION_ORT_DLL NAMES onnxruntime.dll
+        PATHS "${_vision_ort_lib_dir}" "${_vision_ort_lib_dir}/../bin"
+              "${ONNXRUNTIME_ROOT}/lib" "${ONNXRUNTIME_ROOT}/bin"
+        NO_DEFAULT_PATH)
+    if(NOT VISION_ORT_DLL)
+        message(FATAL_ERROR "Matching onnxruntime.dll not found beside the selected ONNX Runtime SDK library.")
+    endif()
+    get_property(_vision_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_target IN LISTS _vision_targets)
+        get_target_property(_type ${_target} TYPE)
+        if(_type STREQUAL "EXECUTABLE" OR _type STREQUAL "SHARED_LIBRARY")
+            add_custom_command(TARGET ${_target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VISION_ORT_DLL}"
+                    "$<TARGET_FILE_DIR:${_target}>/onnxruntime.dll")
+            foreach(_opencv_target IN LISTS OpenCV_LIBS)
+                if(TARGET ${_opencv_target})
+                    get_target_property(_opencv_type ${_opencv_target} TYPE)
+                    if(_opencv_type STREQUAL "SHARED_LIBRARY")
+                        add_custom_command(TARGET ${_target} POST_BUILD
+                            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                                "$<TARGET_FILE:${_opencv_target}>" "$<TARGET_FILE_DIR:${_target}>")
+                    endif()
+                endif()
+            endforeach()
+        endif()
+    endforeach()
+endif()

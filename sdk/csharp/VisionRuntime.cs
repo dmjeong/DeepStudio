@@ -95,7 +95,16 @@ public sealed class VisionSession : SafeHandle
                 foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
                 {
                     if (!File.Exists(candidate)) continue;
-                    try { return System.Runtime.InteropServices.NativeLibrary.Load(candidate); }
+                    try
+                    {
+                        // Resolve dependent ORT/OpenCV DLLs beside this selected
+                        // runtime before searching Windows' system directories.
+                        // Loading vision_runtime.dll by absolute path alone does
+                        // not guarantee the same choice for its dependencies.
+                        return System.Runtime.InteropServices.NativeLibrary.Load(
+                            Path.GetFullPath(candidate), assembly,
+                            DllImportSearchPath.UseDllDirectoryForDependencies | DllImportSearchPath.SafeDirectories);
+                    }
                     catch (DllNotFoundException) { }
                     catch (BadImageFormatException) { }
                 }
