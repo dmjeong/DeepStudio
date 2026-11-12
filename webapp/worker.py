@@ -809,7 +809,7 @@ def seg_synthesis(context, payload):
     store = SynthesisStore(restore_project(payload["project"]))
     values = {k: v for k, v in payload.items() if k not in {"project", "operation", "threads"}}
     operation = payload["operation"]
-    if operation not in {"analyze", "generate", "publish"}:
+    if operation not in {"analyze", "generate", "save_images", "publish"}:
         raise ValueError("SEG 합성 작업 종류 오류")
     try:
         result = getattr(store, operation)(context=context, **values)

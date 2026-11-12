@@ -24,6 +24,8 @@ def test_desktop_process_review_publish_restore(tmp_path, monkeypatch):
     monkeypatch.setattr(job_manager, "_manager", None)
     project = make_fixture(tmp_path / "project")
     widget = DefectGenWidget()
+    from main import load_stylesheet
+    widget.setStyleSheet(load_stylesheet())
     widget.set_project(project)
     widget.resize(1400, 950)
     widget.show()
@@ -47,9 +49,23 @@ def test_desktop_process_review_publish_restore(tmp_path, monkeypatch):
         wait()
         assert seg.profiles.count() == 1
         assert seg.classes.item(0, 1).text() == "1"
+        seg.variation_inputs["size_min"].setValue(80)
+        seg.variation_inputs["size_max"].setValue(180)
+        seg.variation_inputs["strength_min"].setValue(40)
+        seg.variation_inputs["strength_max"].setValue(170)
+        seg.shape_amount.setValue(90)
         seg.generate(True)
         wait()
         assert seg.samples.count() == 5
+        for row in range(seg.classes.rowCount()):
+            for column in (3, 4):
+                assert seg.classes.cellWidget(row, column).height() <= seg.classes.rowHeight(row)
+        assert seg.batch["variation"] == seg.variation()
+        assert {row["recipe"]["generator"] for row in seg.batch["samples"]} == {
+            "branched_crack_v1",
+            "irregular_material_v1",
+            "structure_affine_v1",
+        }
         assert seg.generated._source_pixmap.width() == 480
         seg.overlay.setChecked(False)
         seg.focus_defect()
@@ -93,10 +109,35 @@ def test_desktop_process_review_publish_restore(tmp_path, monkeypatch):
         folder = seg.store().directory("batches", seg.batch["id"])
         revised = np.array(Image.open(seg.store().file(folder, current["mask"])))
         assert revised[192, 305] == 2 and revised[202, 305] == 2
+        from PySide6.QtWidgets import QFileDialog
+        from webapp.storage import read_json
+
+        monkeypatch.setattr(
+            QFileDialog, "getExistingDirectory", lambda *_: str(tmp_path / "saved-png")
+        )
+        seg.overlay.setChecked(True)
+        seg.save_images_button.click()
+        wait()
+        saved = Path(seg.output_path)
+        report = read_json(saved)
+        assert len(report["samples"]) == 1
+        exported = report["samples"][0]
+        np.testing.assert_array_equal(
+            np.array(Image.open(saved.parent / exported["mask"]["path"])), revised
+        )
+        np.testing.assert_array_equal(
+            np.array(Image.open(saved.parent / exported["image"]["path"])),
+            np.array(Image.open(seg.store().file(folder, current["image"]))),
+        )
         assert widget.item_bar.isHidden() and widget.message.isHidden()
         for index in range(5):
             seg.samples.setCurrentRow(index)
             seg.review("approved")
+        seg.save_scope.setCurrentIndex(seg.save_scope.findData("approved"))
+        seg.save_images_button.click()
+        wait()
+        assert len(read_json(Path(seg.output_path))["samples"]) == 5
+        assert saved.is_file()  # A second save never replaces the first one.
         seg.publish()
         wait()
         assert seg.output_path and Path(seg.output_path).is_file()

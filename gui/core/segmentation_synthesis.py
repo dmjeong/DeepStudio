@@ -315,8 +315,14 @@ def synthesize(
     tolerance=0.12,
     allowed=None,
     cancel=lambda: False,
+    variation=None,
 ):
-    patch, mask, transform = transformed_patch(patch, mask, policy, rng)
+    if variation is None:
+        patch, mask, transform = transformed_patch(patch, mask, policy, rng)
+    else:
+        from core.synthesis_variation import varied_patch
+
+        patch, mask, transform = varied_patch(patch, mask, policy, rng, variation)
     error, x, y, offset = find_placement(
         target, labels, patch, mask, policy, rng, tolerance, allowed, cancel
     )
@@ -327,14 +333,20 @@ def synthesize(
         filled = cv2.inpaint(
             patch, foreground.astype(np.uint8) * 255, 3, cv2.INPAINT_TELEA
         )
-        strength = float(rng.uniform(0.85, 1.15))
+        strength = transform.get("strength_sample")
+        if strength is None:
+            strength = float(rng.uniform(0.85, 1.15))
         proposed = (
             original.astype(np.float32)
             + (patch.astype(np.float32) - filled.astype(np.float32)) * strength
         )
     else:
-        strength = 1.0
-        proposed = patch.astype(np.float32) + offset
+        strength = transform.get("strength_sample", 1.0)
+        proposed = (
+            original.astype(np.float32)
+            + (patch.astype(np.float32) + offset - original.astype(np.float32))
+            * strength
+        )
     if policy == "structure":
         edge_distance = np.minimum(
             np.minimum(np.arange(h)[:, None], np.arange(h - 1, -1, -1)[:, None]),

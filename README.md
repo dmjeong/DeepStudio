@@ -1,9 +1,11 @@
 # Deep Vision Studio
 
+16.89: [새 결함 형상 생성·PNG 저장](docs/RELEASE_16.89.md) — 균열 경로·가지, 이물 윤곽 생성; 크기·강도 범위 조절; 생성 사진과 정답을 새 파일로 개별/일괄 저장.
+
 15.89: [회귀 오류 수정](docs/RELEASE_15.89.md) — EoMT 학습 마스크 좌표, 재개 화면, Windows·배포 검사 환경 수정.
 [최신 분할·Dinomaly 모델과 증류](docs/MODERN_DENSE_MODELS.md) — EfficientViT B0/B1, SCTNet-S, EoMT, Dinomaly. FP32/INT8 ONNX·C++ 고정 타일·암호화·원본 비교·증강/패치 학습.
 
-14.86: [SEG 정답으로 가상 불량 생성](docs/SEGMENTATION_SYNTHESIS.md) — crack·이물·shift·double·flip, 원본 크기 이미지와 정답 마스크, 검수 후 새 학습 프로젝트 저장.
+[SEG 가상 불량 사용법](docs/SEGMENTATION_SYNTHESIS.md) — crack·이물·shift·double·flip, 원본 크기 이미지와 정답 마스크, 검수 후 새 학습 프로젝트 저장.
 
 로컬 환경에서 이미지 데이터 편집, 학습, 추론과 결과 검토를 수행하는 도구입니다.
 이 저장소의 루트가 애플리케이션 소스 루트입니다.

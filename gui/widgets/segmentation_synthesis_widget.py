@@ -7,6 +7,7 @@ from core.desktop_jobs import DesktopJob
 from core.mask_annotations import MaskDocument
 from core.segmentation_synthesis import POLICIES, default_policy
 from core.segmentation_synthesis_store import SynthesisStore, format_analysis_report
+from core.synthesis_variation import DEFAULT_VARIATION, variation_settings
 from PIL import Image
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QImage, QPixmap
@@ -65,8 +66,8 @@ class SegmentationSynthesisWidget(QWidget):
         self._notice.setWindowModality(Qt.WindowModality.NonModal)
         layout = QVBoxLayout(self)
         note = QLabel(
-            "실제 SEG 정답으로 가상 불량 만들기 · 원본 해상도 유지 · 별도 학습 모델/인터넷 불필요\n"
-            "Train → 학습 후보 / Val → 검수 후보. shift·double·flip은 주변 배치를 보존합니다. 생성 결과는 반드시 검수하세요."
+            "SEG 가상 불량 · 균열 경로·가지 / 이물 윤곽을 새로 생성 · 크기·강도 조절 · 원본 해상도 유지\n"
+            "참조에서 색·질감을 가져옵니다. shift·double·flip은 물체 배치를 함께 변형합니다. Train → 학습 후보 / Val → 검수 후보."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -87,6 +88,12 @@ class SegmentationSynthesisWidget(QWidget):
         row.addWidget(self.unlabelled)
         controls.addLayout(row)
         self.classes = QTableWidget(0, 5)
+        self.classes.setStyleSheet("""
+            QTableWidget QComboBox, QTableWidget QSpinBox {
+                min-height: 22px; padding: 1px 20px 1px 5px;
+            }
+        """)
+        self.classes.verticalHeader().setDefaultSectionSize(32)
         self.classes.setHorizontalHeaderLabels(
             [
                 "생성 클래스",
@@ -101,6 +108,42 @@ class SegmentationSynthesisWidget(QWidget):
         )
         self.classes.setMaximumHeight(210)
         controls.addWidget(self.classes)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("생성 방식"))
+        self.variation_mode = QComboBox()
+        self.variation_mode.addItem("새 형상 생성 (균열·이물)", "new_shape")
+        self.variation_mode.addItem("참조 형상 회전·크기 변형", "deform")
+        self.variation_mode.addItem("참조 형상 유지 (강도만 조절)", "reference")
+        row.addWidget(self.variation_mode, 1)
+        self.variation_inputs = {}
+        for title, low, high, minimum, maximum in (
+            ("크기", "size_min", "size_max", 35, 300),
+            ("강도", "strength_min", "strength_max", 20, 300),
+        ):
+            row.addWidget(QLabel(title))
+            for index, key in enumerate((low, high)):
+                if index:
+                    row.addWidget(QLabel("~"))
+                spin = QSpinBox()
+                spin.setRange(minimum, maximum)
+                spin.setSuffix("%")
+                spin.setValue(round(DEFAULT_VARIATION[key] * 100))
+                spin.setToolTip(
+                    "100%는 참조 결함 기준입니다. 범위 안에서 후보마다 무작위로 선택합니다."
+                )
+                self.variation_inputs[key] = spin
+                row.addWidget(spin)
+        row.addWidget(QLabel("형상 변화"))
+        self.shape_amount = QSpinBox()
+        self.shape_amount.setRange(0, 100)
+        self.shape_amount.setSuffix("%")
+        self.shape_amount.setValue(round(DEFAULT_VARIATION["shape_amount"] * 100))
+        self.shape_amount.setToolTip(
+            "높일수록 균열 굽음·가지와 이물 윤곽의 불규칙성이 커집니다."
+        )
+        row.addWidget(self.shape_amount)
+        self.variation_mode.currentIndexChanged.connect(self.variation_mode_changed)
+        controls.addLayout(row)
         row = QHBoxLayout()
         self.split = QComboBox()
         self.split.addItem("Train — 학습용 후보", "train")
@@ -180,16 +223,27 @@ class SegmentationSynthesisWidget(QWidget):
         self.details.setWordWrap(True)
         layout.addWidget(self.details)
         self.review_controls = QWidget()
-        row = QHBoxLayout(self.review_controls)
-        row.setContentsMargins(0, 0, 0, 0)
+        review_layout = QVBoxLayout(self.review_controls)
+        review_layout.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout()
         row.addWidget(self.button("정답 마스크 수정", self.edit_mask))
         row.addWidget(self.button("3. 이 후보 승인", lambda: self.review("approved")))
         row.addWidget(self.button("제외", lambda: self.review("rejected")))
         row.addWidget(self.button("미검수로 되돌리기", lambda: self.review("pending")))
+        review_layout.addLayout(row)
+        row = QHBoxLayout()
+        self.save_scope = QComboBox()
+        self.save_scope.addItem("선택 후보", "selected")
+        self.save_scope.addItem("승인 후보 전체", "approved")
+        self.save_scope.addItem("제외하지 않은 후보 전체", "active")
+        row.addWidget(self.save_scope)
+        self.save_images_button = self.button("이미지·정답 PNG 저장", self.save_images)
+        row.addWidget(self.save_images_button)
         self.publish_button = self.button(
             "4. 승인본 포함 새 학습 프로젝트 저장", self.publish
         )
         row.addWidget(self.publish_button)
+        review_layout.addLayout(row)
         layout.addWidget(self.review_controls)
         self.progress = QProgressBar()
         layout.addWidget(self.progress)
@@ -205,7 +259,7 @@ class SegmentationSynthesisWidget(QWidget):
         )
         self.stop.setEnabled(False)
         row.addWidget(self.stop)
-        self.open_button = self.button("저장된 프로젝트 폴더 열기", self.open_output)
+        self.open_button = self.button("저장 폴더 열기", self.open_output)
         self.open_button.setEnabled(False)
         row.addWidget(self.open_button)
         layout.addLayout(row)
@@ -458,6 +512,24 @@ class SegmentationSynthesisWidget(QWidget):
             },
         )
 
+    def variation_mode_changed(self):
+        enabled = self.variation_mode.currentData() != "reference"
+        for key in ("size_min", "size_max"):
+            self.variation_inputs[key].setEnabled(enabled)
+        self.shape_amount.setEnabled(enabled)
+
+    def variation(self):
+        return variation_settings(
+            {
+                "mode": self.variation_mode.currentData(),
+                **{
+                    key: spin.value() / 100
+                    for key, spin in self.variation_inputs.items()
+                },
+                "shape_amount": self.shape_amount.value() / 100,
+            }
+        )
+
     def generate(self, preview=False):
         key = self.profiles.currentData()
         if not key:
@@ -488,6 +560,7 @@ class SegmentationSynthesisWidget(QWidget):
                 "seed": self.seed.value(),
                 "tolerance": self.tolerance.value(),
                 "allowed_path": self.allowed.text(),
+                "variation": self.variation(),
             },
         )
 
@@ -528,6 +601,7 @@ class SegmentationSynthesisWidget(QWidget):
         self.publish_button.setEnabled(
             bool(self.batch and self.batch["split"] == "train")
         )
+        self.save_images_button.setEnabled(bool(self.batch and self.batch["samples"]))
         self.show_sample()
 
     def selected(self):
@@ -565,9 +639,16 @@ class SegmentationSynthesisWidget(QWidget):
         self.original.setPixmap(pixmap(images["original"]))
         self.generated.setPixmap(pixmap(generated))
         self.reference.setPixmap(pixmap(images["reference"]))
+        variation = row["recipe"].get("variation")
+        varied = (
+            f"크기 {row['recipe']['scale']:.0%} · 강도 {row['recipe']['strength_sample']:.0%} · "
+            if variation
+            else ""
+        )
         self.details.setText(
             f"{self.batch['split']} · {self.batch['classes'][row['class_id']]} · {POLICIES[row['policy']]} · "
-            f"표면 차이 {row['recipe']['context_rmse']:.4f} · 위치 {row['recipe']['box']} · "
+            + varied
+            + f"표면 차이 {row['recipe']['context_rmse']:.4f} · 위치 {row['recipe']['box']} · "
             f"원본 {images['image'].shape[1]}×{images['image'].shape[0]} / 휠 확대, 드래그 이동"
         )
 
@@ -616,6 +697,35 @@ class SegmentationSynthesisWidget(QWidget):
         )
         dialog.exec()
         self.load_batch()
+
+    def save_images(self):
+        row = self.selected()
+        scope = self.save_scope.currentData()
+        ids = (
+            [row["id"]]
+            if scope == "selected"
+            else [
+                sample["id"]
+                for sample in self.batch["samples"]
+                if (
+                    sample["status"] == "approved"
+                    if scope == "approved"
+                    else sample["status"] != "rejected"
+                )
+            ]
+        )
+        if not ids:
+            raise ValueError("선택한 저장 범위에 후보가 없습니다.")
+        folder = QFileDialog.getExistingDirectory(self, "새 이미지·정답 저장 폴더")
+        if folder:
+            self.launch(
+                "save_images",
+                {
+                    "batch_id": self.batch["id"],
+                    "sample_ids": ids,
+                    "output_dir": folder,
+                },
+            )
 
     def publish(self):
         self.launch("publish", {"batch_id": self.batch["id"]})
@@ -728,6 +838,13 @@ class SegmentationSynthesisWidget(QWidget):
             self.open_button.setEnabled(True)
             self.message.setText(
                 f"학습 프로젝트 저장 완료: {self.output_path}\n앱의 ‘프로젝트 열기’에서 이 파일을 선택하세요. 원본 프로젝트는 그대로입니다."
+            )
+        elif "saved_images" in output:
+            self.output_path = output["manifest_path"]
+            self.open_button.setEnabled(True)
+            self.message.setText(
+                f"새 이미지 {output['saved_images']}장과 정답 PNG 저장 완료: {output['export_dir']}\n"
+                "images에는 합성 사진, masks에는 클래스 번호 정답이 저장됩니다. 원본 파일은 그대로입니다."
             )
         elif "generated" in output:
             message = f"후보 {output['generated']}장 생성, {len(output['failures'])}장 제외. 결과와 정답을 검수한 뒤 승인하세요."

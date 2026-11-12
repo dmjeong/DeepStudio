@@ -274,6 +274,7 @@ def build():
         "--hidden-import", "core.defect_generator",
         "--hidden-import", "core.segmentation_synthesis",
         "--hidden-import", "core.segmentation_synthesis_store",
+        "--hidden-import", "core.synthesis_variation",
         "--hidden-import", "widgets.segmentation_synthesis_widget",
 
         # OpenCV (합성 불량 + 이미지 전처리)

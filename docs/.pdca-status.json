@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-11-11T04:54:30.757125+00:00",
+  "lastUpdated": "2026-11-12T00:18:00.998900+00:00",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -25,9 +25,10 @@
     "inference-compare-concurrency",
     "segmentation-reference-synthesis",
     "modern-dense-models",
-    "modern-dense-regression"
+    "modern-dense-regression",
+    "segmentation-synthesis-variation"
   ],
-  "primaryFeature": "modern-dense-regression",
+  "primaryFeature": "segmentation-synthesis-variation",
   "features": {
     "efficientnet-cpu-latency": {
       "phase": "completed",
@@ -722,6 +723,22 @@
       "validation": {
         "local_modern_and_ui": "65 passed; native CTest 7 passed",
         "eomt_padding_regression": "3 failed before / 3 passed after",
+        "remote": "pending",
+        "local_full": "1576 passed, 78 skipped",
+        "followup": "65 passed; Windows annotation, synthesis UI and verified HTTPS mirror tests"
+      }
+    },
+    "segmentation-synthesis-variation": {
+      "phase": "check",
+      "status": "in_progress",
+      "version": "16.89",
+      "documents": {
+        "design": "docs/SEGMENTATION_SYNTHESIS.md",
+        "report": "docs/RELEASE_16.89.md"
+      },
+      "validation": {
+        "synthesis": "47 passed incl. native shapes, edited PNG export and GUI subprocess",
+        "tray": "3504x1504; 5/5 synthetic defect types generated",
         "remote": "pending"
       }
     }

@@ -425,7 +425,11 @@ class SynthesisStore:
         tolerance=0.12,
         allowed_path="",
         context=None,
+        variation=None,
     ):
+        from core.synthesis_variation import variation_settings
+
+        variation = variation_settings({} if variation is None else variation)
         if split not in ("train", "val"):
             raise ValueError("합성은 Train 또는 Val만 사용합니다.")
         if (
@@ -484,6 +488,7 @@ class SynthesisStore:
                 "seed": seed,
                 "requested": counts,
                 "tolerance": tolerance,
+                "variation": variation,
                 "samples": [],
                 "failures": [],
                 "synthetic": True,
@@ -524,6 +529,7 @@ class SynthesisStore:
                                 rng,
                                 tolerance=tolerance,
                                 allowed=allowed,
+                                variation=variation,
                                 cancel=(
                                     context.cancelled if context else lambda: False
                                 ),
@@ -610,6 +616,91 @@ class SynthesisStore:
             row.update(status=status, revision=row["revision"] + 1)
             write_json(directory / "manifest.json", batch)
         return row
+
+    def save_images(self, batch_id, sample_ids, output_dir, context=None):
+        """Save new, lossless image/mask pairs; never overwrite source images.
+
+        The mask is the current reviewed/edited version, not a colored preview.
+        A complete export is committed in one rename. Val stays labelled as val.
+        """
+        if (
+            not isinstance(sample_ids, list)
+            or not sample_ids
+            or any(not isinstance(value, str) for value in sample_ids)
+        ):
+            raise ValueError("저장할 생성 후보를 선택하세요.")
+        if len(set(sample_ids)) != len(sample_ids):
+            raise ValueError("저장 후보가 중복되었습니다.")
+        if not output_dir or not str(output_dir).strip():
+            raise ValueError("새 이미지 저장 폴더를 선택하세요.")
+        parent = Path(output_dir).expanduser().resolve()
+        parent.mkdir(parents=True, exist_ok=True)
+        directory = self.directory("batches", batch_id)
+        with exclusive_file(directory / "review.lock"):
+            batch = self.load("batches", batch_id)
+            samples = {row["id"]: row for row in batch["samples"]}
+            if any(key not in samples for key in sample_ids):
+                raise ValueError("저장할 생성 후보를 찾지 못했습니다.")
+            checked(context)
+            export_id = uuid.uuid4().hex
+            destination = parent / ("synthetic-" + export_id)
+            temporary = Path(tempfile.mkdtemp(prefix=".pending-synthetic-", dir=parent))
+            try:
+                report = {
+                    **self.metadata(export_id),
+                    "synthetic": True,
+                    "batch_id": batch_id,
+                    "seed": batch["seed"],
+                    "split": batch["split"],
+                    "variation": batch.get("variation"),
+                    "samples": [],
+                }
+                for index, sample_id in enumerate(sample_ids):
+                    checked(context)
+                    row = samples[sample_id]
+                    image_path = self.file(directory, row["image"])
+                    mask_path = self.file(directory, row["mask"])
+                    image, mask = read_image(image_path), read_image(mask_path)
+                    validate_pair(image, mask, len(batch["classes"]))
+                    item = {
+                        key: copy.deepcopy(row[key])
+                        for key in (
+                            "id",
+                            "class_id",
+                            "status",
+                            "revision",
+                            "recipe",
+                            "donor_id",
+                            "target_id",
+                        )
+                    }
+                    for field, subdir, source in (
+                        ("image", "images", image_path),
+                        ("mask", "masks", mask_path),
+                    ):
+                        relative = f"{subdir}/{batch['split']}/synthetic-{export_id[:8]}-{sample_id}.png"
+                        target = temporary / relative
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(source, target)
+                        item[field] = {"path": relative, "sha256": digest(target)}
+                    report["samples"].append(item)
+                    notify(
+                        context,
+                        f"새 이미지·정답 저장 {index + 1}/{len(sample_ids)}",
+                        index + 1,
+                        len(sample_ids),
+                    )
+                write_json(temporary / "manifest.json", report)
+                checked(context)
+                temporary.rename(destination)
+            finally:
+                if temporary.exists():
+                    shutil.rmtree(temporary)
+        return {
+            "saved_images": len(sample_ids),
+            "export_dir": str(destination),
+            "manifest_path": str(destination / "manifest.json"),
+        }
 
     def publish(self, batch_id, context=None):
         """Create an independent ready-to-open project; source data stays intact."""
