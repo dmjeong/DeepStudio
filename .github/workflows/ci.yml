@@ -283,6 +283,10 @@ jobs:
         run: python -m unittest tests.test_cpp_preprocessing -v
       - name: Test C++ inference contracts
         run: ctest --test-dir build --output-on-failure
+      - name: Verify bundle loading with a Windows-sized stack
+        run: |
+          ulimit -s 1024
+          build/c_api_contracts build/test-models
       - name: Verify actual PatchCore exports in C++
         env:
           ANOMALY_PROBE: ${{ github.workspace }}/build/anomaly_probe

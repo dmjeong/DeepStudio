@@ -271,6 +271,8 @@ shutil.rmtree(bundle, ignore_errors=True)
 bundle.mkdir()
 for name in ("classify.json", "classify.onnx"):
     (bundle / name).write_bytes((root / name).read_bytes())
+# Exercise full streaming chunks and a short final read in the native SHA256.
+(bundle / "checksum-boundary.bin").write_bytes(bytes(range(256)) * 512 + b"partial-read-tail")
 files = {}
 for path in sorted(bundle.iterdir()):
     files[path.name] = {"size": path.stat().st_size,
