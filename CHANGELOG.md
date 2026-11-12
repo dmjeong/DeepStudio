@@ -1,3 +1,11 @@
+# 17.90 — 프로젝트 클래스별 생성·Windows 배포 검증 (+1.0)
+
+- 등록한 클래스와 생성 기법을 분리. Classification, Segmentation, Object detection, OBB, Anomaly의 이미지·정답을 태스크별 저장.
+- 원본 비교/클래스 정답 표시, 승인본을 독립 프로젝트로 저장. 원본과 Val/Test 보존, 이상검출은 합성 평가 전용.
+- PyInstaller 모델 경로 수정, Windows EXE 작업 프로세스 실행 및 MSI 설치·제거 검증 추가.
+- 설치파일 빌드는 모든 기본 가중치를 요구하며 최소사양·사용법 README를 동봉.
+- [17.90 사용법·변경점](docs/RELEASE_17.90.md).
+
 # 15.88 — 최신 분할·Dinomaly·교사 증류 (+1.0)
 
 - 기본 모델에 EfficientViT B0/B1 + Detail, SCTNet-S + Detail, EoMT DINOv2-S + Detail, Dinomaly DINOv2-S/14 추가.

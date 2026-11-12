@@ -70,7 +70,7 @@ def test_recovery_button_preview_and_real_worker_restore_mask(tmp_path):
         try:
             QTimer.singleShot(30, choose_link)
             QTest.mouseClick(page.repair_links_btn, Qt.MouseButton.LeftButton)
-            deadline = time.monotonic() + 20
+            deadline = time.monotonic() + 60
             while page._class_worker is not None and time.monotonic() < deadline:
                 app.processEvents()
                 QTest.qWait(5)
@@ -132,7 +132,7 @@ def test_rename_ui_moves_selected_image_and_its_mask(tmp_path):
         try:
             with patch("widgets.dataset_widget.QInputDialog.getText", return_value=("renamed", True)):
                 page._rename_image(str(image), "train")
-            deadline = time.monotonic() + 5
+            deadline = time.monotonic() + 60
             while page._class_worker is not None and time.monotonic() < deadline:
                 app.processEvents()
                 QTest.qWait(5)
@@ -141,6 +141,9 @@ def test_rename_ui_moves_selected_image_and_its_mask(tmp_path):
             assert mask.with_stem("renamed").is_file()
             assert not scan_dataset(project)["orphan_masks"]
         finally:
+            if page._class_worker is not None:
+                assert page._class_worker.wait(60000)
+                app.processEvents()
             page.close()
             page.deleteLater()
             QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

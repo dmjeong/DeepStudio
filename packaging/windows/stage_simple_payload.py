@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import runpy
+import shutil
 
 
 _stage_api = runpy.run_path(str(Path(__file__).with_name("stage_payload.py")))
@@ -23,6 +24,7 @@ PayloadStageError = _stage_api["PayloadStageError"]
 _TOP_LEVEL = frozenset({"app", "Examples", "THIRD_PARTY_NOTICES.md"})
 _REQUIRED_FILES = frozenset({
     "app/DeepVisionStudio.exe",
+    "app/README.ko.md",
     "Examples/README.md",
     "Examples/ENCRYPTED_MODELS.md",
     "Examples/assets/test.dvsenc",
@@ -137,6 +139,7 @@ def stage_simple_payload(
         ],
         notice=notice,
     )
+    shutil.copyfile(Path(__file__).with_name("INSTALL.ko.md"), root / "app" / "README.ko.md")
     return validate_simple_payload(root)
 
 

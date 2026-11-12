@@ -390,6 +390,9 @@ jobs:
           $env:PATH = "$env:VISION_NATIVE_RUNTIME_DIR;$env:PATH"
           python -m pytest -q tests/test_cpp_patchcore_export.py
           if ($LASTEXITCODE -ne 0) { throw "PatchCore export -> C++ inference failed" }
+      - name: Launch the actual frozen GUI and its inference and generation workers
+        timeout-minutes: 18
+        run: python tools/windows_desktop_smoke.py --app gui/dist/DeepVisionStudio/DeepVisionStudio.exe --output desktop-smoke/frozen.json
       - name: Verify LibreYOLO full-frame export in native C++
         shell: pwsh
         run: |
@@ -448,7 +451,19 @@ jobs:
             throw "Minimal app/example Setup was not produced"
           }
       - name: Publish C# SDK into the payload source
+        # This remains a separate SDK payload; the simple installer contains examples.
         run: dotnet publish sdk/csharp/VisionRuntime.csproj --configuration Release --output "$env:RUNNER_TEMP\csharp-sdk"
+      - name: Install the simple MSI, run the installed app, then uninstall
+        timeout-minutes: 25
+        run: python tools/windows_desktop_smoke.py --msi "${{ runner.temp }}/studio-simple-release/DeepVisionStudio-1.0.0.msi" --output desktop-smoke/installed.json
+      - name: Preserve frozen and installed execution diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop-execution
+          path: desktop-smoke/
+          retention-days: 3
+          if-no-files-found: ignore
       - name: Stage deterministic offline payload
         shell: pwsh
         run: |

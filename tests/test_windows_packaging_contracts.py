@@ -358,6 +358,10 @@ def test_pyinstaller_checks_and_packages_the_same_asset_override(tmp_path, monke
 
     def capture(command, **kwargs):
         assert f"{root}{os.pathsep}builtin_assets" in command
+        search_paths = [command[i + 1] for i, value in enumerate(command[:-1]) if value == "--paths"]
+        assert namespace["PYTHON_DIR"] in search_paths
+        assert namespace["GUI_DIR"] in search_paths
+        assert namespace["PROJECT_ROOT"] in search_paths
         assert kwargs["env"]["DVS_BUILTIN_ASSETS_DIR"] == str(root)
         return SimpleNamespace(returncode=23)  # stop before looking for a built EXE
 
@@ -365,6 +369,21 @@ def test_pyinstaller_checks_and_packages_the_same_asset_override(tmp_path, monke
     monkeypatch.setattr(namespace["subprocess"], "run", capture)
     assert builder() == 23
     assert checked == [root]
+
+
+def test_offline_installer_cannot_continue_with_missing_pretrained_assets(tmp_path, monkeypatch):
+    import builtin_assets
+    builder = runpy.run_path(str(ROOT / "gui" / "build_exe.py"))["build"]
+    namespace = builder.__globals__
+    for name in ("check_pyinstaller", "check_runtime_dependencies", "check_training_accelerator"):
+        monkeypatch.setitem(namespace, name, lambda: True)
+    monkeypatch.setenv("DVS_BUILTIN_ASSETS_DIR", str(tmp_path / "weights"))
+    monkeypatch.setenv("DVS_REQUIRE_ALL_BUILTIN_ASSETS", "1")
+    monkeypatch.setattr(builtin_assets, "missing_assets", lambda **kwargs: ["resnet18"])
+    def unexpected_build(*args, **kwargs):
+        pytest.fail("An offline installer must not freeze incomplete model assets")
+    monkeypatch.setattr(namespace["subprocess"], "run", unexpected_build)
+    assert builder() == 1
 
 
 def test_payload_wrapper_scripts_collect_and_verify_exact_bytes(tmp_path):

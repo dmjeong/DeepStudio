@@ -30,7 +30,8 @@ def test_desktop_process_review_publish_restore(tmp_path, monkeypatch):
     widget.resize(1400, 950)
     widget.show()
     seg = widget.segmentation
-    assert widget.tabs.currentWidget() is seg
+    assert widget.tabs.currentWidget() is widget.project_generation
+    widget.tabs.setCurrentWidget(seg)
     assert seg.classes.rowCount() == 5
 
     def wait():
@@ -161,12 +162,12 @@ def test_desktop_process_review_publish_restore(tmp_path, monkeypatch):
         with pytest.raises(ValueError, match="다시"):
             seg.generate()
         seg.classes.cellWidget(0, 3).setCurrentIndex(0)
-        # A classification project retains the existing four tabs.
+        # Classification keeps the learned workflow and the new class generator.
         other = ProjectManager.create_new(
             "cls", "classify", str(tmp_path / "cls"), ["a", "b"]
         )
         restored.set_project(other)
-        assert restored.tabs.count() == 4
+        assert restored.tabs.count() == 5
         restored.close()
     finally:
         if seg._worker:

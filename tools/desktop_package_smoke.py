@@ -24,6 +24,14 @@ def run(output):
     QMessageBox.warning = failed_dialog
     QMessageBox.critical = failed_dialog
     stage("imports_ready")
+    import importlib
+    runtime_modules = ("timm", "scipy", "safetensors", "model_dependencies", "segmentation_models",
+                       "modern_segmentation", "eomt", "dinomaly", "dense_deployment",
+                       "quantize_dense", "dinov2_segmentation", "core.project_generation",
+                       "widgets.project_generation_widget")
+    for module in runtime_modules:
+        importlib.import_module(module)
+    stage("model_and_generation_imports_ready")
     if not torch.version.cuda:
         raise RuntimeError("GPU 지원 배포에 CPU 전용 PyTorch 포함됨")
     library = Path(torch.__file__).parent / "lib"
@@ -113,12 +121,31 @@ def run(output):
         if defect._job_result["status"] != "completed" or defect._job_result["output"].get("saved") != 1:
             raise RuntimeError("배포 EXE 합성 검수 저장 실패: " + defect.progress_label.text())
         stage("defect_review_saved")
+        stage("project_class_generation_start")
+        custom = defect.project_generation
+        defect.tabs.setCurrentWidget(custom)
+        custom.classes.item(1, 0).setCheckState(Qt.CheckState.Checked)
+        custom.classes.cellWidget(1, 2).setValue(1)
+        custom.generate()
+        wait(lambda: custom._worker is not None)
+        if custom._result["status"] != "completed" or custom.samples.count() != 1:
+            raise RuntimeError("배포 EXE 프로젝트 클래스 생성 실패: " + custom.message.text())
+        custom.samples.item(0).setCheckState(Qt.CheckState.Checked)
+        custom.publish()
+        wait(lambda: custom._worker is not None)
+        if custom._result["status"] != "completed" or not Path(custom.output_path).is_file():
+            raise RuntimeError("배포 EXE 생성 프로젝트 저장 실패: " + custom.message.text())
+        generated_project = ProjectManager.load(custom.output_path)
+        if not list((Path(generated_project.data.train_dir) / "NG").glob("generated-*.png")):
+            raise RuntimeError("배포 EXE 클래스 폴더 또는 생성 이미지 누락")
+        stage("project_class_generation_saved")
         screenshot = Path(output).with_suffix(".png")
         window.grab().save(str(screenshot))
         write_json(output, {"version": APP_VERSION, "frozen": bool(getattr(__import__('sys'), 'frozen', False)),
             "cuda_runtime": torch.version.cuda, "cuda_available": torch.cuda.is_available(),
             "gui_ticks": len(ticks) - before, "inference_status": result.status,
-            "gradcam_status": result.gradcam_status, "persistent_results": True, "defect_review_saved": True})
+            "gradcam_status": result.gradcam_status, "persistent_results": True, "defect_review_saved": True,
+            "runtime_modules": list(runtime_modules), "project_class_generation_saved": True})
         desktop_manager().close()
         window.project = None  # 종료 확인 대화상자는 자동 배포 검증에서 생략
         window.close()

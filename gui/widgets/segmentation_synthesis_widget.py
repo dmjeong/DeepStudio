@@ -67,7 +67,7 @@ class SegmentationSynthesisWidget(QWidget):
         layout = QVBoxLayout(self)
         note = QLabel(
             "SEG 가상 불량 · 균열 경로·가지 / 이물 윤곽을 새로 생성 · 크기·강도 조절 · 원본 해상도 유지\n"
-            "참조에서 색·질감을 가져옵니다. shift·double·flip은 물체 배치를 함께 변형합니다. Train → 학습 후보 / Val → 검수 후보."
+            "프로젝트 정답에서 클래스별 색·질감을 가져옵니다. 배치·형상 보존 방식은 주변 물체도 함께 변형합니다. Train → 학습 후보 / Val → 검수 후보."
         )
         note.setWordWrap(True)
         layout.addWidget(note)

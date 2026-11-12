@@ -72,6 +72,8 @@ if sys.stdout is None or sys.stderr is None:
     _log = os.path.join(os.path.expanduser("~"), "deep-studio-desktop.log")
     if len(sys.argv) > 2 and sys.argv[1] == "--studio-worker":
         _log = os.path.join(os.path.dirname(sys.argv[2]), "console.log")
+    elif len(sys.argv) > 2 and sys.argv[1] == "--smoke-test":
+        _log = os.path.splitext(sys.argv[2])[0] + ".log"
     _stream = open(_log, "a", encoding="utf-8", buffering=1)
     sys.stdout = sys.stdout or _stream
     sys.stderr = sys.stderr or _stream

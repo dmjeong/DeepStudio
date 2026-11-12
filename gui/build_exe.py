@@ -164,6 +164,10 @@ def build():
     asset_root = builtin_asset_root()
     asset_root.mkdir(parents=True, exist_ok=True)
     missing = missing_assets(bundle_only=True)
+    if missing and os.environ.get("DVS_REQUIRE_ALL_BUILTIN_ASSETS") == "1":
+        print("오프라인 설치본에 필요한 사전학습 가중치가 누락되었습니다: " + ", ".join(missing))
+        print("build.bat weights로 준비를 완료한 뒤 installer를 다시 실행하세요.")
+        return 1
     if missing:
         print(f"[warning] 설치본에 넣지 못한 사전학습 가중치 {len(missing)}개 (빌드는 계속):")
         for model_id in missing:
@@ -284,11 +288,12 @@ def build():
         "--hidden-import", "core.segmentation_synthesis_store",
         "--hidden-import", "core.synthesis_variation",
         "--hidden-import", "widgets.segmentation_synthesis_widget",
+        "--hidden-import", "core.project_generation",
+        "--hidden-import", "widgets.project_generation_widget",
 
         # OpenCV (합성 불량 + 이미지 전처리)
         "--hidden-import", "cv2",
 
-        "--paths", PROJECT_ROOT,
         "--hidden-import", "webapp.worker",
         "--hidden-import", "webapp.jobs",
         "--hidden-import", "webapp.storage",

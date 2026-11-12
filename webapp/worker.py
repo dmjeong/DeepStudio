@@ -823,7 +823,22 @@ def seg_synthesis(context, payload):
         return {"status": "cancelled", "output": {}}
 
 
-OPERATIONS = {"seg_synthesis": seg_synthesis, "datagen_train": datagen_train, "datagen_generate": datagen_generate,
+def project_generation(context, payload):
+    from core.project_generation import ProjectGenerationStore
+    import cv2
+    cv2.setNumThreads(2)
+    store = ProjectGenerationStore(restore_project(payload["project"]))
+    operation = payload["operation"]
+    if operation not in {"generate", "publish"}:
+        raise ValueError("프로젝트 데이터 생성 작업 종류 오류")
+    values = {k: v for k, v in payload.items() if k not in {"project", "operation"}}
+    try:
+        return {"status": "completed", "output": getattr(store, operation)(context=context, **values)}
+    except InterruptedError:
+        return {"status": "cancelled", "output": {}}
+
+
+OPERATIONS = {"project_generation": project_generation, "seg_synthesis": seg_synthesis, "datagen_train": datagen_train, "datagen_generate": datagen_generate,
               "train": train, "infer": infer, "export": export,
               "pack_train": pack_train, "pack_infer": pack_infer, "pack_export": pack_export,
               "defects": defects, "defect_publish": defect_publish, "delete_class": delete_class,

@@ -1,5 +1,7 @@
 # Deep Vision Studio
 
+17.90: [프로젝트 클래스 생성·Windows 배포](docs/RELEASE_17.90.md) — 등록한 클래스별 생성 기법 선택, 태스크에 맞는 이미지/정답 저장, EXE·설치 실행 검증. [패치 학습 그림·코드 설명](docs/PATCH_TRAINING_EXPLAINED.md).
+
 16.90: [이미지 이름 변경·모델 패키지 복구](docs/RELEASE_16.90.md) — 정답 연결 복구 및 정답 동반 이름 변경; `timm` 등 누락 시 `gui/repair_model_runtime.bat`으로 PyTorch/CUDA·가중치 재설치 없이 보완.
 
 16.89: [새 결함 형상 생성·PNG 저장](docs/RELEASE_16.89.md) — 균열 경로·가지, 이물 윤곽 생성; 크기·강도 범위 조절; 생성 사진과 정답을 새 파일로 개별/일괄 저장.
