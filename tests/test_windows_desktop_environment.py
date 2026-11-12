@@ -13,5 +13,5 @@ def test_frozen_app_cannot_borrow_python_qt_or_native_sdk_paths():
     result = clean(source)
     assert result == {"SystemRoot": r"C:\Windows", "TEMP": r"C:\Temp", "USERPROFILE": r"C:\Users\test",
                       "PATH": r"C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem",
-                      "QT_QPA_PLATFORM": "offscreen"}
+                      "QT_QPA_PLATFORM": "windows"}
     assert source["PYTHONPATH"] == r"C:\repo\python"

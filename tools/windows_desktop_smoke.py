@@ -17,7 +17,9 @@ def clean_app_environment(source):
     from pathlib import PureWindowsPath
     windows = PureWindowsPath(next((v for k, v in source.items() if k.upper() == "SYSTEMROOT"), r"C:\Windows"))
     environment["PATH"] = ";".join(map(str, (windows / "System32", windows, windows / "System32/Wbem")))
-    environment["QT_QPA_PLATFORM"] = "offscreen"
+    # Exercise the shipped Windows platform plugin and OS font fallback too.
+    # Qt's offscreen plugin can render tofu even for ASCII on Windows runners.
+    environment["QT_QPA_PLATFORM"] = "windows"
     return environment
 
 
