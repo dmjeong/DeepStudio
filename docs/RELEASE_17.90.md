@@ -17,9 +17,9 @@ build.bat installer gpu
 
 Python 패키지·CUDA PyTorch·사전학습 가중치를 준비하고 EXE와 설치 파일을 만듭니다. **installer 모드는 기본 가중치가 하나라도 누락되면 중단합니다.** 오류를 무시하고 배포한 뒤 대상 PC에서 다시 다운로드하게 되는 것을 막습니다. 받은 가중치는 재사용하므로 실패한 다운로드만 복구 후 다시 실행할 수 있습니다. 단순 개발용 `build.bat`은 기존처럼 누락 가중치를 경고하고 EXE를 만들 수 있습니다.
 
-배포할 것은 생성된 `DeepVisionStudio-Setup-17.90.0-win-x64.exe`입니다. EXE 파일 하나만 `dist/DeepVisionStudio` 폴더 밖으로 빼면 DLL/리소스가 누락됩니다. 설치 프로그램은 app과 C++/C# Examples 및 고지 파일을 포함합니다.
+작은 구성은 `DeepVisionStudio-Setup-17.90.0-win-x64.exe`를 배포합니다. CUDA·전체 가중치 등 원본 payload가 1.5 GiB를 넘으면 `DeepVisionStudio-Offline-17.90.0-win-x64.zip`으로 자동 묶습니다. ZIP 전체를 풀고 그 안의 Setup을 실행합니다. EXE 파일 하나만 `dist/DeepVisionStudio` 폴더 밖으로 빼면 DLL/리소스가 누락됩니다. 설치 프로그램은 app과 C++/C# Examples 및 고지 파일을 포함합니다.
 
-빌드 PC에는 Python, 설치 파일 제작용 .NET/WiX가 필요합니다. 앱을 쓰는 PC에는 Python을 별도로 설치할 필요가 없습니다. GPU 학습은 호환 NVIDIA GPU와 드라이버가 필요하며, CUDA DLL 포함과 실제 GPU 학습 가능 여부는 다릅니다. CPU 추론은 GPU 없이 가능합니다. 모델별 메모리·디스크 요구량은 데이터 크기와 사전학습 가중치 구성에 따라 달라집니다.
+빌드 PC에는 Python, 설치 파일 제작용 .NET 8 SDK/WiX 5.0.2가 필요합니다. 앱을 쓰는 PC에는 Python을 별도로 설치할 필요가 없습니다. GPU 학습은 호환 NVIDIA GPU와 드라이버가 필요하며, CUDA DLL 포함과 실제 GPU 학습 가능 여부는 다릅니다. CPU 추론은 GPU 없이 가능합니다. 모델별 메모리·디스크 요구량은 데이터 크기와 사전학습 가중치 구성에 따라 달라집니다.
 
 ## 검증 범위
 

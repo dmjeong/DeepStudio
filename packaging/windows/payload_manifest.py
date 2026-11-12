@@ -16,7 +16,10 @@ from typing import Any
 
 
 MAX_SIGNED_PE_BYTES = 4 * 1024 * 1024 * 1024
-DEFAULT_BUDGET_BYTES = int(3.5 * 1024 * 1024 * 1024)
+# This is the uncompressed installed payload, not a single signed PE file.
+# CUDA plus all pretrained weights can exceed 4 GiB; the release builder then
+# uses external cabinets and one offline ZIP instead of an oversized Setup.exe.
+DEFAULT_BUDGET_BYTES = 64 * 1024 * 1024 * 1024
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
@@ -36,8 +39,8 @@ def collect_payload(root: str | Path, *, version: str, commit: str = "",
     base = root_path.resolve()
     if not base.is_dir():
         raise ValueError(f"payload root is not a directory: {base}")
-    if budget_bytes <= 0 or budget_bytes >= MAX_SIGNED_PE_BYTES:
-        raise ValueError("payload budget must be positive and below the signed PE limit")
+    if budget_bytes <= 0:
+        raise ValueError("payload budget must be positive")
     files: list[dict[str, Any]] = []
     total = 0
     for path in sorted(base.rglob("*")):

@@ -3,12 +3,13 @@ param(
     [Parameter(Mandatory = $true)] [string] $AppRoot,
     [Parameter(Mandatory = $true)] [string] $OutputDirectory,
     [string] $Version = "",
-    [string] $WixVersion = "7.0.0",
+    [string] $WixVersion = "5.0.2",
     [string] $CertificatePath = "",
     [string] $CertificatePassword = "",
     [string] $SignToolPath = "signtool.exe",
     [string] $TimestampUrl = "http://timestamp.digicert.com",
-    [switch] $RequireSignature
+    [switch] $RequireSignature,
+    [switch] $ExternalPayload
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,5 +60,6 @@ if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
     $releaseArgs.TimestampUrl = $TimestampUrl
 }
 if ($RequireSignature) { $releaseArgs.RequireSignature = $true }
+if ($ExternalPayload) { $releaseArgs.ExternalPayload = $true }
 & $release @releaseArgs
 if ($LASTEXITCODE -ne 0) { throw "Minimal installer build failed." }

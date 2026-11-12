@@ -273,7 +273,7 @@ jobs:
       - name: Build small installer with real WiX before the full GUI build finishes
         shell: pwsh
         run: |
-          dotnet tool install --global wix --version 7.0.0
+          dotnet tool install --global wix --version 5.0.2
           if ($LASTEXITCODE -ne 0) { throw "WiX tool installation failed" }
           $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
           $app = Join-Path $env:RUNNER_TEMP "installer-toolchain-app"
@@ -284,6 +284,9 @@ jobs:
           pwsh packaging/windows/build_simple_installer.ps1 -AppRoot $app `
             -OutputDirectory (Join-Path $env:RUNNER_TEMP "installer-toolchain-release") -Version 1.0.0
           if ($LASTEXITCODE -ne 0) { throw "Real installer toolchain smoke failed" }
+          pwsh packaging/windows/build_simple_installer.ps1 -AppRoot $app -ExternalPayload `
+            -OutputDirectory (Join-Path $env:RUNNER_TEMP "installer-toolchain-external") -Version 1.0.0
+          if ($LASTEXITCODE -ne 0) { throw "External cabinet/ZIP toolchain smoke failed" }
 
   wix-installer-contract:
     # The C++ ABI is built with the Visual Studio 2022 generator. Pin the image
@@ -453,7 +456,7 @@ jobs:
       - name: Install pinned WiX toolset
         shell: pwsh
         run: |
-          dotnet tool install --global wix --version 7.0.0
+          dotnet tool install --global wix --version 5.0.2
           $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
           "PATH=$env:PATH" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           wix --version
@@ -546,8 +549,12 @@ jobs:
           path: |
             ${{ runner.temp }}/studio-release/*.msi
             ${{ runner.temp }}/studio-release/*.exe
+            ${{ runner.temp }}/studio-release/*.cab
+            ${{ runner.temp }}/studio-release/*.zip
             ${{ runner.temp }}/studio-simple-release/*.msi
             ${{ runner.temp }}/studio-simple-release/*.exe
+            ${{ runner.temp }}/studio-simple-release/*.cab
+            ${{ runner.temp }}/studio-simple-release/*.zip
           if-no-files-found: error
     env:
       REQUIRE_OFFLINE_WSL: ${{ inputs.require_offline_wsl || false }}

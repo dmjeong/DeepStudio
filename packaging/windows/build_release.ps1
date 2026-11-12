@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $PayloadRoot,
     [Parameter(Mandatory = $true)] [string] $Version,
     [Parameter(Mandatory = $true)] [string] $OutputDirectory,
-    [string] $WixVersion = "7.0.0",
+    [string] $WixVersion = "5.0.2",
     [string] $CertificatePath = "",
     [string] $CertificatePassword = "",
     [string] $SignToolPath = "signtool.exe",
@@ -12,7 +12,8 @@ param(
     [switch] $RequireSignature,
     [switch] $RequireOfflineWsl,
     [switch] $RequireReleaseReadyModels,
-    [switch] $Simple
+    [switch] $Simple,
+    [switch] $ExternalPayload
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,13 +53,14 @@ if (-not (Test-Path -LiteralPath $notice -PathType Leaf)) {
 $manifest = Join-Path $output "release-manifest.json"
 $msi = Join-Path $output "DeepVisionStudio-$Version.msi"
 $setup = Join-Path $output "DeepVisionStudio-Setup-$Version-win-x64.exe"
+$archive = Join-Path $output "DeepVisionStudio-Offline-$Version-win-x64.zip"
 $releaseSucceeded = $false
 trap {
     $failure = $_
     if (-not $releaseSucceeded) {
         # WiX and signtool can leave a partial MSI/EXE behind.  Never let a
         # failed build be mistaken for a usable installer artifact.
-        foreach ($artifact in @($msi, $setup)) {
+        foreach ($artifact in @($msi, $setup, $archive)) {
             if (-not [string]::IsNullOrWhiteSpace($artifact) -and (Test-Path -LiteralPath $artifact -PathType Leaf)) {
                 Remove-Item -LiteralPath $artifact -Force -ErrorAction SilentlyContinue
             }
@@ -67,7 +69,7 @@ trap {
     throw $failure
 }
 $wix = Get-Command wix -ErrorAction SilentlyContinue
-if (-not $wix) { throw "WiX 7 'wix' command is required on the locked Windows build image." }
+if (-not $wix) { throw "WiX 5 'wix' command is required on the locked Windows build image." }
 $wixVersionOutput = & $wix.Source --version 2>&1
 $wixExitCode = $LASTEXITCODE
 $wixVersionText = ($wixVersionOutput -join "`n").Trim()
@@ -96,6 +98,18 @@ $commitArgs = @()
 if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_SHA)) { $commitArgs = @("--commit", $env:GITHUB_SHA) }
 python $collector $root --manifest $manifest --version $Version @commitArgs
 if ($LASTEXITCODE -ne 0) { throw "Payload manifest collection failed." }
+$payloadInfo = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+# Keep embedded MSIs well below their 2 GiB compound-file limit. Large builds
+# stay entirely offline; a ZIP contains Setup, MSI and external cabinets.
+$external = $ExternalPayload -or [long]$payloadInfo.payload_bytes -gt 1610612736
+$embedCab = if ($external) { "no" } else { "yes" }
+$hasher = [Security.Cryptography.SHA256]::Create()
+try {
+    $digest = $hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($Version))
+    $cabinetPrefix = "d" + ([BitConverter]::ToString($digest)).Replace("-", "").Substring(0, 4).ToLowerInvariant()
+} finally { $hasher.Dispose() }
+# Do not package cabinets left over from an earlier build of this version.
+Get-ChildItem -LiteralPath $output -Filter "$cabinetPrefix*.cab" | Remove-Item -Force
 if ($Simple) {
     $simpleStager = Join-Path $scriptRoot "stage_simple_payload.py"
     python $simpleStager --validate $root
@@ -136,6 +150,7 @@ if ($RequireOfflineWsl) {
 $requireWslValue = if ($RequireOfflineWsl) { "1" } else { "0" }
 $common = @("-arch", "x64", "-ext", $utilExtension,
     "-d", "Version=$Version", "-d", "PayloadRoot=$root",
+    "-d", "EmbedCab=$embedCab", "-d", "CabinetPrefix=$cabinetPrefix",
     "-d", "RequireOfflineWsl=$requireWslValue")
 $msiArgs = @("build") + $common + @("-o", $msi, (Join-Path $scriptRoot "bootstrapper\DeepVisionStudio.msi.wxs"))
 & $wix.Source @msiArgs
@@ -161,6 +176,7 @@ Sign-AndVerify $msi
 
 $bundleArgs = @("build", "-arch", "x64", "-ext", $bootstrapperExtension,
     "-d", "Version=$Version", "-d", "RequireOfflineWsl=$requireWslValue",
+    "-d", "BundleCompressed=$embedCab",
     "-d", "MsiPath=$msi")
 if ($RequireOfflineWsl) {
     $bundleArgs += @("-d", "WslMsiPath=$(Join-Path $root 'runtime\wsl\wsl-offline.msi')")
@@ -169,5 +185,15 @@ $bundleArgs += @("-o", $setup, (Join-Path $scriptRoot "bootstrapper\DeepVisionSt
 & $wix.Source @bundleArgs
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $setup)) { throw "WiX Burn bundle build failed." }
 Sign-AndVerify $setup
+if ((Get-Item -LiteralPath $setup).Length -ge 4294967296) {
+    throw "Setup exceeds the signed executable size limit. Rebuild with -ExternalPayload."
+}
+if ($external) {
+    $archiveArgs = @("--root", $output, "--version", $Version, "--cabinet-prefix", $cabinetPrefix,
+        "--notice", $notice)
+    if ($RequireOfflineWsl) { $archiveArgs += @("--extra", (Join-Path $root "runtime\wsl\wsl-offline.msi")) }
+    python (Join-Path $scriptRoot "package_installer.py") @archiveArgs
+    if ($LASTEXITCODE -ne 0) { throw "Offline installer archive failed." }
+}
 $releaseSucceeded = $true
-Write-Output $setup
+if ($external) { Write-Output $archive } else { Write-Output $setup }

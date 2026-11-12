@@ -12,6 +12,8 @@
 - Windows PyInstaller 로그에서 미사용 Qt3D/QML 모듈의 분석으로 빌드가 지연되는 것을 확인했다. 실제 사용하는 QtCore/QtGui/QtWidgets를 분석하고 PySide6의 DLL·리소스는 계속 수집한다. 미사용 Python 모듈까지 강제로 import하던 `collect-all`만 분리했다.
 - 설치 스크립트가 PowerShell 배열을 이름 있는 옵션으로 전달한다고 가정해 실제로는 위치 인자로 잘못 전달했다. 해시테이블 splatting으로 고쳤다. 초기에 실패해 산출물 경로가 비어 있어도 정리 코드가 원래 오류를 덮어쓰지 않게 했다. 일반 PC에서 GITHUB_SHA가 없어도 빌드할 수 있도록 선택적 메타데이터 인자도 정리했다.
 - WiX CLI 설치만으로는 확장 모듈이 설치되지 않는다. 사용 버전과 같은 확장을 준비하고, CLI에서 이름이 변경된 BootstrapperApplications 확장을 사용하도록 수정했다. 긴 GUI 빌드와 별도로 작은 실제 MSI/Setup 컴파일을 먼저 검사한다. 근거: [WiX 확장 준비](https://docs.firegiant.com/wix/tools/wixext/), [Bootstrapper 패키지 이름 변경](https://docs.firegiant.com/wix/whatsnew/oopbas/).
+- 실제 작은 Windows 빌드에서 WiX 7의 OSMF EULA 미수락 오류를 확인했다. 유료 조건을 자동 수락하지 않고 MS-RL로 배포된 WiX 5.0.2로 빌드 도구를 고정했다. 라이선스 사본과 원본 소스 링크를 고지에 포함한다.
+- 기본 가중치·CUDA를 모두 포함할 수 있도록 원본 payload 예산과 단일 서명 EXE 용량 제한을 분리했다. 1.5 GiB 초과는 외부 CAB + MSI + Setup의 ZIP64 오프라인 묶음이다. 작은 배포는 단일 Setup을 유지한다. 파일 해시 검증을 생략하거나 가중치를 제외하지 않는다.
 
 ## 로컬 확인
 

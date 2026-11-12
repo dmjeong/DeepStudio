@@ -50,7 +50,7 @@ def test_release_script_verifies_payload_before_wix_build():
     assert '$wix.Source --version' in script
     assert '$WixVersion -notmatch' in script
     assert 'WiX version mismatch' in script
-    assert '[string] $WixVersion = "7.0.0"' in script
+    assert '[string] $WixVersion = "5.0.2"' in script
 
 
 def test_third_party_notice_names_optional_model_sources():

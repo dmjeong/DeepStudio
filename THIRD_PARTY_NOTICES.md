@@ -9,6 +9,7 @@ release-specific SBOM.
 
 | Component | Use | Upstream license / source |
 |---|---|---|
+| WiX Toolset 5.0.2 | Windows MSI/Setup build and Burn bootstrapper | MS-RL; `licenses/WiX-5.0.2-LICENSE.txt`; source: https://github.com/wixtoolset/wix/tree/v5.0.2 |
 | PyTorch / torchvision | Python training and built-in model adapters | BSD-style license; https://github.com/pytorch/pytorch/blob/main/LICENSE |
 | OpenCV | image conversion and C++ preprocessing | Apache-2.0; https://github.com/opencv/opencv/blob/4.x/LICENSE |
 | ONNX Runtime | Python and C++ CPU inference | MIT; https://github.com/microsoft/onnxruntime/blob/main/LICENSE |

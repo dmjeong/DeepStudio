@@ -15,9 +15,12 @@
 별도 모델 팩 디렉터리가 포함되지 않는다. `app/`에는 프로그램 실행에 필요한 Python
 런타임과 기본 제공 자산이 PyInstaller 형태로 포함된다. PyInstaller의 onedir 실행 파일은
 `DeepVisionStudio.exe` 하나만 복사해서 실행할 수 없으므로 `app/` 폴더 전체가 함께
-설치된다. 생성 결과는 `release/DeepVisionStudio-Setup-<version>-win-x64.exe`다.
+설치된다. 작은 구성은 `release/DeepVisionStudio-Setup-<version>-win-x64.exe`로 생성한다.
+CUDA·전체 가중치 등 설치 원본이 1.5 GiB를 넘으면 MSI/CAB/Setup을
+`DeepVisionStudio-Offline-<version>-win-x64.zip` 하나로 묶는다. ZIP 전체를 풀고 Setup을
+실행하며, MSI·CAB를 삭제하지 않는다. 대상 PC에서 추가 다운로드는 하지 않는다.
 
-빌드 PC에는 Python 3.11+, WiX 7.0.0 (`wix`), 그리고 앱 빌드에 필요한 의존성이
+빌드 PC에는 Python 3.11+, WiX 5.0.2 (`wix`), 그리고 앱 빌드에 필요한 의존성이
 필요하다. C++/C# 예제 자체를 빌드하는 개발자에게만 Visual Studio, CMake, vcpkg,
 ONNX Runtime 1.29.0, .NET 8 SDK가 추가로 필요하다. 설치된 앱을 실행하는 사용자는
 이 개발 도구가 필요 없다.
@@ -221,7 +224,7 @@ Docker 추가가 자동으로 더 빠른 추론을 뜻하지 않는다.
 
 Windows 빌드 이미지는 먼저 `stage_payload.py`로 UI·worker·SDK·팩·고지·SBOM을 하나의 payload
 루트에 모은다. `collect_payloads.py`와 `validate_payloads.py`가 모든 파일의 크기·SHA-256과
-3.5 GiB 예산을 검사한 뒤에만 WiX MSI/Burn EXE를 생성한다. 이 단계는 인터넷 다운로드나 외부
+원본 payload 용량 예산(기본 64 GiB)을 검사한 뒤에만 WiX MSI/Burn EXE를 생성한다. 이 단계는 인터넷 다운로드나 외부
 모델 허브 호출을 수행하지 않는다.
 
 일반 push 계약은 개발 중인 카탈로그(`requested`, `export_verified` 등)를 포함할 수 있다.

@@ -1,8 +1,9 @@
-# WiX 7 오프라인 Setup 빌드
+# WiX 5 오프라인 Setup 빌드
 
 `build_release.ps1`는 이미 수집·해시 검증된 payload를 MSI에 넣고, 그 MSI 하나를
-Burn bundle EXE에 첨부한다. 배포된 설치파일은 실행 중 Python, 모델, WSL 또는 Docker를
-다운로드하지 않는다. 빌드 PC에는 WiX 7.0.0 CLI가 필요하며 빌드 스크립트가 같은 버전의
+작은 구성은 Burn bundle EXE에 첨부한다. 설치 원본이 1.5 GiB를 넘거나
+`-ExternalPayload`가 지정되면 외부 CAB와 MSI·Setup을 오프라인 ZIP 하나로 묶는다. 배포된 설치파일은 실행 중 Python, 모델, WSL 또는 Docker를
+다운로드하지 않는다. 빌드 PC에는 WiX 5.0.2 CLI가 필요하며 빌드 스크립트가 같은 버전의
 Util 및 BootstrapperApplications 확장을 준비한다. 최초 빌드에는 확장 다운로드를 위한
 인터넷 연결이 필요하고, 이후에는 버전을 고정한 캐시를 사용한다.
 
@@ -47,7 +48,7 @@ pwsh packaging/windows/build_release.ps1 `
 ```
 
 결과는 `DeepVisionStudio-Setup-1.0.0-win-x64.exe`와 payload manifest다. 스크립트는
-먼저 symlink·파일 hash·총 용량·3.5 GiB 예산을 검사하고, MSI와 Burn 빌드가 실패하면
+먼저 symlink·파일 hash·총 용량·원본 payload 64 GiB 예산을 검사하고, MSI와 Burn 빌드가 실패하면
 출력 파일을 남기지 않는다. 서명 옵션을 생략한 결과는 계약용 unsigned 산출물이다.
 Authenticode 서명과 Windows VM 오프라인 설치/제거 검사는 서명 인증서와 Windows runner에서
 실행해야 하며, macOS 개발 환경에서 성공으로 표시하지 않는다.

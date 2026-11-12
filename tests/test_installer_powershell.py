@@ -78,7 +78,8 @@ exit 2
     assert "null or an empty" not in result.stdout
 
 
-def test_release_collects_and_validates_payload_without_github_environment(tmp_path):
+@pytest.mark.parametrize("external", [False, True])
+def test_release_collects_and_validates_payload_without_github_environment(tmp_path, external):
     import runpy
     stage = runpy.run_path(str(ROOT / "packaging/windows/stage_simple_payload.py"))["stage_simple_payload"]
     app = tmp_path / "app-source"
@@ -91,32 +92,47 @@ def test_release_collects_and_validates_payload_without_github_environment(tmp_p
     compiler.write_text('''
 ConvertTo-Json -InputObject @($args) -Compress | Add-Content (Join-Path $PSScriptRoot "compiler-calls.jsonl")
 if ($args[0] -eq "--version") {
-    Write-Output "7.0.0"
+    Write-Output "5.0.2"
 } else {
     for ($i = 0; $i -lt $args.Count - 1; $i++) {
         if ($args[$i] -eq "-o") { Set-Content -LiteralPath $args[$i+1] -Value "compiler fixture" }
+    }
+    if ($args -contains "EmbedCab=no") {
+        $prefix = ($args | Where-Object { $_ -like "CabinetPrefix=*" }) -replace "^CabinetPrefix=", ""
+        $destination = $args[[Array]::IndexOf($args, "-o") + 1]
+        Set-Content (Join-Path (Split-Path $destination) ($prefix + "1.cab")) "cabinet fixture"
     }
 }
 $global:LASTEXITCODE = 0
 ''', encoding="utf-8")
     wrapper = tmp_path / "release.ps1"
     wrapper.write_text('''
-param([string] $Builder, [string] $Payload, [string] $Output, [string] $Python, [string] $Compiler)
+param([string] $Builder, [string] $Payload, [string] $Output, [string] $Python, [string] $Compiler, [switch] $External)
 $ErrorActionPreference = "Stop"
 $env:OS = "Windows_NT"
 $env:GITHUB_SHA = ""
 function Get-Command { [pscustomobject]@{ Source = $Compiler } }
 function python { & $Python @args; $global:LASTEXITCODE = $LASTEXITCODE }
-& $Builder -PayloadRoot $Payload -Version "17.90.0" -OutputDirectory $Output -Simple
+& $Builder -PayloadRoot $Payload -Version "17.90.0" -OutputDirectory $Output -Simple -ExternalPayload:$External
 ''', encoding="utf-8")
     output = tmp_path / "release"
     result = invoke(wrapper, "-Builder", ROOT / "packaging/windows/build_release.ps1",
-                    "-Payload", payload, "-Output", output, "-Python", sys.executable, "-Compiler", compiler)
+                    "-Payload", payload, "-Output", output, "-Python", sys.executable, "-Compiler", compiler,
+                    *(["-External"] if external else []))
     assert result.returncode == 0, result.stdout + result.stderr
     assert (output / "release-manifest.json").is_file()
     assert (output / "DeepVisionStudio-17.90.0.msi").read_text().strip() == "compiler fixture"
     assert (output / "DeepVisionStudio-Setup-17.90.0-win-x64.exe").is_file()
     calls = [json.loads(line) for line in (tmp_path / "compiler-calls.jsonl").read_text().splitlines()]
-    for extension in ("WixToolset.Util.wixext/7.0.0", "WixToolset.BootstrapperApplications.wixext/7.0.0"):
+    for extension in ("WixToolset.Util.wixext/5.0.2", "WixToolset.BootstrapperApplications.wixext/5.0.2"):
         assert ["extension", "add", "--global", extension] in calls
         assert any(call[0] == "build" and extension in call for call in calls)
+    archive = output / "DeepVisionStudio-Offline-17.90.0-win-x64.zip"
+    assert archive.is_file() == external
+    if external:
+        import zipfile
+        with zipfile.ZipFile(archive) as bundle:
+            assert bundle.testzip() is None
+            assert "INSTALL.ko.txt" in bundle.namelist()
+            assert any(name.endswith(".cab") for name in bundle.namelist())
+            assert not any(".simple-payload" in name for name in bundle.namelist())
