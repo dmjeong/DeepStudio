@@ -2,9 +2,31 @@
 # Pinned d4bd6d8073a59831d69f303fc5b39c70023e2719.
 # Port: remove MMCV registration/loading; ordinary BatchNorm on one device.
 import torch
-from timm.layers import DropPath
 from torch import nn
 from torch.nn import functional as F
+
+
+class DropPath(nn.Module):
+    """Per-sample stochastic depth using only torch; no parameters in checkpoints.
+
+    SCTNet used timm for this one operation. Keep the same Bernoulli mask,
+    keep-probability scaling and eval identity without importing a model zoo.
+    """
+
+    def __init__(self, drop_prob=0.0):
+        super().__init__()
+        if not 0 <= drop_prob <= 1:
+            raise ValueError("drop_prob must be between 0 and 1")
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+        if not self.training or self.drop_prob == 0:
+            return x
+        keep = 1 - self.drop_prob
+        mask = x.new_empty((x.shape[0],) + (1,) * (x.ndim - 1)).bernoulli_(keep)
+        if keep > 0:
+            mask.div_(keep)
+        return x * mask
 
 
 def trunc_normal_init(tensor, std=0.02):

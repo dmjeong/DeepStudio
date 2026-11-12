@@ -3,11 +3,7 @@ setlocal
 cd /d "%~dp0"
 echo Updating segmentation model support...
 REM Keep the installed CUDA/CPU torch and torchvision packages unchanged.
-python -m pip install --no-deps timm==1.0.31
-if errorlevel 1 goto :failed
-python -m pip install "scipy>=1.13,<2"
-if errorlevel 1 goto :failed
-python -c "import timm, torch, torchvision, scipy.optimize"
+python repair_model_runtime.py
 if errorlevel 1 goto :failed
 python ..\python\prepare_builtin_assets.py --only mobilenetv4_small_encoder,efficientnet_b1_encoder,shufflenet_v2_x1_0,bisenetv2_backbone,stdc1_backbone,efficientvit_b0,efficientvit_b1,sctnet_s_backbone,dinov2_vits14 --strict
 if errorlevel 1 goto :failed

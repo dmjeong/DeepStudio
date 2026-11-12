@@ -563,6 +563,18 @@ class DatasetWidget(QWidget):
         self.class_issue_label.hide()
         add_outer.addWidget(self.class_issue_label)
 
+        self.link_issue_row = QWidget()
+        link_layout = QHBoxLayout(self.link_issue_row)
+        link_layout.setContentsMargins(0, 0, 0, 0)
+        self.link_issue_label = QLabel()
+        self.link_issue_label.setWordWrap(True)
+        link_layout.addWidget(self.link_issue_label, 1)
+        self.repair_links_btn = QPushButton("정답 연결 복구")
+        self.repair_links_btn.clicked.connect(self._repair_annotation_links)
+        link_layout.addWidget(self.repair_links_btn)
+        add_outer.addWidget(self.link_issue_row)
+        self.link_issue_row.hide()
+
         # 드래그&드롭 안내
         drop_label = QLabel(
             "파일을 끌어다 놓아 추가  ·  우클릭 또는 드래그로 분할 간 이동"
@@ -776,6 +788,7 @@ class DatasetWidget(QWidget):
             self._class_filter = "전체"
         self._filter_project_key = project_key
         self.project = project
+        self.link_issue_row.hide()
         needs_repair = needs_first_class_repair(project)
         self.repair_class_btn.setVisible(needs_repair)
         self.class_issue_label.setText(
@@ -996,8 +1009,8 @@ class DatasetWidget(QWidget):
         error, result = worker.error, worker.result
         worker.deleteLater()
         if error is not None:
-            QMessageBox.warning(self, "클래스 변경 실패", error)
-            self.summary_label.setText("클래스 변경 실패. 오류 내용 확인 필요")
+            QMessageBox.warning(self, "데이터 변경 실패", error)
+            self.summary_label.setText("데이터 변경 실패. 오류 내용 확인 필요")
             return
         callback(result)
 
@@ -1199,6 +1212,11 @@ class DatasetWidget(QWidget):
         self._dataset_index = index
         self._dataset_thumbnails = thumbnails
         self._dataset_overlays = index.get("overlays", {})
+        orphan_count = len(index.get("orphan_masks", []))
+        self.link_issue_label.setText(
+            f"이미지와 연결이 끊긴 정답 {orphan_count}개. 탐색기에서 이미지 이름을 바꿨다면 "
+            "[정답 연결 복구]를 누르세요. 프로젝트 저장만으로 정답 이름은 바뀌지 않습니다.")
+        self.link_issue_row.setVisible(bool(orphan_count))
         total = len(index["images"])
         if self.project.task in OBJECT_TASKS:
             self._update_region_table(index)
@@ -1470,6 +1488,51 @@ class DatasetWidget(QWidget):
             QMessageBox.information(self, "데이터 티칭", "편집할 이미지를 한 장 선택하세요.")
             return
         self._open_image_preview(next(iter(self._selected_paths)))
+
+    def _rename_image(self, image_path, split):
+        if not self._ensure_idle():
+            return
+        from pathlib import Path
+        from core.dataset_links import rename_image
+
+        stem, accepted = QInputDialog.getText(
+            self, "이미지 이름 변경", "새 이름 (확장자는 유지, 정답도 함께 변경):",
+            text=Path(image_path).stem)
+        if not accepted or stem == Path(image_path).stem:
+            return
+        self.about_to_change.emit()
+        self._start_class_operation(
+            lambda: rename_image(self.project, image_path, stem, split),
+            lambda result: self._links_updated(f"이미지·정답 이름 변경 완료. 원본 보관: {result['backup_path']}"),
+            "이미지와 정답 이름을 함께 변경하는 중...")
+
+    def _links_updated(self, message):
+        self._clear_selection()
+        self._classes_updated(message)
+
+    def _repair_annotation_links(self):
+        if not self._ensure_idle():
+            return
+        from core.dataset_links import relink_mask
+        from widgets.dataset_link_dialog import DatasetLinkDialog
+
+        try:
+            dialog = DatasetLinkDialog(self.project, self)
+            try:
+                accepted = dialog.exec()
+                selection = dialog.selection if accepted else None
+            finally:
+                dialog.deleteLater()
+            if not selection:
+                return
+            self.about_to_change.emit()
+            image, mask, split = selection
+            self._start_class_operation(
+                lambda: relink_mask(self.project, image, mask, split),
+                lambda result: self._links_updated(f"정답 연결 복구 완료. 원본 보관: {result['backup_path']}"),
+                "원본 정답을 백업하고 새 이미지에 연결하는 중...")
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, "정답 연결 복구", str(exc))
 
     def _open_image_preview(self, image_path: str, focus=None):
         """데이터셋 격자의 썸네일을 원본 해상도로 확인한다.
@@ -1788,6 +1851,10 @@ class DatasetWidget(QWidget):
         header = menu.addAction(f"{len(items)}장 선택됨")
         header.setEnabled(False)
         menu.addSeparator()
+
+        if len(items) == 1:
+            rename_action = menu.addAction("이름 변경 (정답 함께)")
+            rename_action.triggered.connect(lambda: self._rename_image(thumb.image_path, thumb.split))
 
         if task in ("detect", "segment", "obb"):
             edit_action = menu.addAction("데이터 티칭 / 정답 그리기")

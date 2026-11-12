@@ -353,6 +353,10 @@ class MainWindow(QMainWindow):
         try:
             filepath = self._save_current_project()
             self.status_label.setText(f"Saved: {filepath}")
+            if self.project.task == "segment" and not self.has_active_jobs():
+                # Ctrl+S cannot infer an external rename. Refresh the dataset
+                # so orphan masks and the explicit recovery action are visible.
+                self.dataset_page._scan_all()
         except Exception as e:
             QMessageBox.critical(
                 self, "오류", f"저장 실패:\n{str(e)}"

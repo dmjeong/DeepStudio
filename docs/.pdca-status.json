@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-11-12T01:33:09.306Z",
+  "lastUpdated": "2026-11-12T02:08:11.089Z",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -26,7 +26,8 @@
     "segmentation-reference-synthesis",
     "modern-dense-models",
     "modern-dense-regression",
-    "segmentation-synthesis-variation"
+    "segmentation-synthesis-variation",
+    "dataset-rename-links"
   ],
   "primaryFeature": "segmentation-synthesis-variation",
   "features": {
@@ -757,6 +758,46 @@
       "matchRate": 100,
       "matchRateScope": "Implemented source/SDK checklist and regression gates; not private-data accuracy, zero-bug certification, or full installer certification",
       "completedAt": "2026-11-12T01:33:09.306Z"
+    },
+    "dataset-rename-links": {
+      "phase": "check",
+      "matchRate": null,
+      "iterationCount": 0,
+      "documents": {},
+      "taskChain": [
+        {
+          "phase": "plan",
+          "status": "completed",
+          "createdAt": "2026-11-12T01:57:34.174Z",
+          "completedAt": "2026-11-12T01:57:34.185Z"
+        },
+        {
+          "phase": "design",
+          "status": "completed",
+          "createdAt": "2026-11-12T01:57:34.174Z",
+          "completedAt": "2026-11-12T01:57:34.192Z"
+        },
+        {
+          "phase": "do",
+          "status": "completed",
+          "createdAt": "2026-11-12T01:57:34.174Z",
+          "completedAt": "2026-11-12T02:08:11.089Z"
+        },
+        {
+          "phase": "check",
+          "status": "active",
+          "createdAt": "2026-11-12T01:57:34.174Z"
+        },
+        {
+          "phase": "report",
+          "status": "pending",
+          "createdAt": "2026-11-12T01:57:34.174Z"
+        }
+      ],
+      "timestamps": {
+        "started": "2026-11-12T01:57:34.174Z",
+        "lastUpdated": "2026-11-12T02:08:11.089Z"
+      }
     }
   },
   "pipeline": {
@@ -767,7 +808,7 @@
   "session": {
     "startedAt": "2026-09-17T12:14:10.629Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-11-12T01:33:09.306Z"
+    "lastActivity": "2026-11-12T02:08:11.089Z"
   },
   "history": [
     {
@@ -1255,6 +1296,45 @@
       "phase": "report",
       "nextPhase": "completed",
       "timestamp": "2026-11-12T01:33:09.306Z"
+    },
+    {
+      "feature": "dataset-rename-links",
+      "from": "plan",
+      "to": "design",
+      "timestamp": "2026-11-12T01:57:34.184Z"
+    },
+    {
+      "feature": "dataset-rename-links",
+      "action": "phase_complete",
+      "phase": "plan",
+      "nextPhase": "design",
+      "timestamp": "2026-11-12T01:57:34.185Z"
+    },
+    {
+      "feature": "dataset-rename-links",
+      "from": "design",
+      "to": "do",
+      "timestamp": "2026-11-12T01:57:34.191Z"
+    },
+    {
+      "feature": "dataset-rename-links",
+      "action": "phase_complete",
+      "phase": "design",
+      "nextPhase": "do",
+      "timestamp": "2026-11-12T01:57:34.192Z"
+    },
+    {
+      "feature": "dataset-rename-links",
+      "from": "do",
+      "to": "check",
+      "timestamp": "2026-11-12T02:08:11.088Z"
+    },
+    {
+      "feature": "dataset-rename-links",
+      "action": "phase_complete",
+      "phase": "do",
+      "nextPhase": "check",
+      "timestamp": "2026-11-12T02:08:11.089Z"
     }
   ]
 }

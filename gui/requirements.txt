@@ -31,7 +31,7 @@ matplotlib>=3.7.0           # 학습 Loss/Metric 차트
 torch>=2.0.0
 torchvision>=0.15.0
 scipy>=1.13,<2             # EoMT Hungarian query matching
-timm==1.0.31               # Native MobileNetV4 / EfficientNet-B1 segmentation encoders
+timm==1.0.31               # Native segmentation encoders and EoMT layers
 truststore==0.10.4          # Windows 시스템 인증서로 ImageNet 다운로드
 certifi>=2024.2.2           # 공개 CA 인증서 목록
 Pillow>=9.0.0

@@ -499,6 +499,8 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
         raise ValueError("num_classes must be a positive integer")
     if in_channels not in spec.input_channels:
         raise ValueError(f"{model_id} does not support {in_channels} input channels")
+    from model_dependencies import require_model_runtime
+    require_model_runtime(model_id)
     if spec.task == "classify":
         model = _classification_model(model_id, int(num_classes), in_channels,
                                       pretrained=pretrained, weights_path=backbone_weights)

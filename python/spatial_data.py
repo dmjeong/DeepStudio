@@ -1,5 +1,6 @@
 """검출 박스와 인스턴스 분할 폴리곤 라벨의 공통 검증."""
 from pathlib import Path
+
 import numpy as np
 
 EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff'}
@@ -11,6 +12,28 @@ def image_files(root):
                   and not any(part.startswith('.') for part in p.relative_to(root).parts))
 
 
+def semantic_file_index(root):
+    """Keep nested paths; reject two extensions claiming the same image identity."""
+    root = Path(root)
+    result = {}
+    for path in image_files(root):
+        key = path.relative_to(root).with_suffix('')
+        if key in result:
+            raise ValueError(f'이미지/마스크 이름 중복: {result[key]}, {path}')
+        result[key] = path
+    return result
+
+
+def orphan_mask_message(paths):
+    paths = sorted(map(str, paths))
+    shown = '\n'.join(paths[:3])
+    return (f'마스크에 대응하는 이미지 누락: {len(paths)}개\n{shown}\n'
+            '이미지 이름을 바꾸면 정답 마스크도 같은 이름으로 연결해야 합니다. '
+            '프로젝트 저장만으로 파일 이름은 동기화되지 않습니다. '
+            '데이터셋 화면의 [정답 연결 복구]에서 이전 정답과 새 이미지를 연결하세요. '
+            '이후 이름 변경은 이미지 우클릭 [이름 변경 (정답 함께)]을 사용하세요.')
+
+
 def labeled_semantic_pairs(image_root, mask_root):
     """Return only existing pairs and list missing masks, without choosing training policy.
 
@@ -19,17 +42,11 @@ def labeled_semantic_pairs(image_root, mask_root):
     """
     if Path(mask_root).exists() and not Path(mask_root).is_dir():
         raise ValueError(f'마스크 폴더 경로가 파일입니다: {mask_root}')
-    def indexed(root):
-        result = {}
-        for path in image_files(root):
-            key = path.relative_to(root).with_suffix('')
-            if key in result:
-                raise ValueError(f'이미지/마스크 이름 중복: {result[key]}, {path}')
-            result[key] = path
-        return result
-    images, masks = indexed(Path(image_root)), indexed(Path(mask_root)) if Path(mask_root).is_dir() else {}
-    for key in masks.keys() - images.keys():
-        raise ValueError(f'마스크에 대응하는 이미지 누락: {masks[key]}')
+    images = semantic_file_index(image_root)
+    masks = semantic_file_index(mask_root) if Path(mask_root).is_dir() else {}
+    orphans = [masks[key] for key in masks.keys() - images.keys()]
+    if orphans:
+        raise ValueError(orphan_mask_message(orphans))
     pairs = [(str(image), str(masks[key])) for key, image in images.items() if key in masks]
     unlabeled = sorted(str(image) for key, image in images.items() if key not in masks)
     return pairs, unlabeled
@@ -78,19 +95,12 @@ def load_semantic_mask(image_path, mask_path, num_classes=None):
 
 def semantic_pairs(image_root, mask_root):
     """동일 상대 경로의 이미지/마스크를 연결하고 누락과 중복을 알린다."""
-    def indexed(root):
-        result = {}
-        for path in image_files(root):
-            key = path.relative_to(root).with_suffix('')
-            if key in result:
-                raise ValueError(f'이미지/마스크 이름 중복: {result[key]}, {path}')
-            result[key] = path
-        return result
-    images, masks = indexed(Path(image_root)), indexed(Path(mask_root))
+    images, masks = semantic_file_index(image_root), semantic_file_index(mask_root)
     for key in images.keys() - masks.keys():
         raise ValueError(f'정답 마스크 누락: {images[key]}')
-    for key in masks.keys() - images.keys():
-        raise ValueError(f'마스크에 대응하는 이미지 누락: {masks[key]}')
+    orphans = [masks[key] for key in masks.keys() - images.keys()]
+    if orphans:
+        raise ValueError(orphan_mask_message(orphans))
     return [(str(image), str(masks[key])) for key, image in images.items()]
 
 

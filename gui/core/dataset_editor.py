@@ -213,6 +213,16 @@ def scan_dataset(project, cancelled=lambda: False, overlay_limit=0):
         "root": project.data.root,
         "images": records,
     }
+    if project.task == "segment":
+        from core.dataset_links import orphan_masks
+
+        result["orphan_masks"] = orphan_masks(project)
+        affected_splits = {row["split"] for row in result["orphan_masks"]}
+        for record in records:
+            if record["split"] in affected_splits and not record["annotated"]:
+                # An external rename must not look like a confirmed background.
+                record["training_target"] = "unresolved_annotation"
+                record["error"] = "이름 변경 여부 확인 필요: [정답 연결 복구]"
     if overlays is not None:
         result["overlays"] = overlays
     return result
