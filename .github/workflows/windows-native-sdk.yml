@@ -261,12 +261,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
       - name: Install contract test dependencies
         run: python -m pip install pytest cryptography numpy
       - name: Run Windows packaging and worker contracts
         run: python -m pytest -q tests/test_windows_packaging_contracts.py tests/test_installer_powershell.py tests/test_model_pack_template.py tests/test_worker_runtime.py tests/test_model_pack_worker.py tests/test_model_registry.py tests/test_asset_resolver.py tests/test_deployment_bundle.py -k "not emit_sdk_bundle"
       - name: Compile frozen GUI builder
         run: python -m py_compile gui/build_exe.py
+      - name: Build small installer with real WiX before the full GUI build finishes
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 7.0.0
+          if ($LASTEXITCODE -ne 0) { throw "WiX tool installation failed" }
+          $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+          $app = Join-Path $env:RUNNER_TEMP "installer-toolchain-app"
+          New-Item -ItemType Directory -Force $app | Out-Null
+          # Only tests the real MSI/Burn compiler. The other job freezes,
+          # installs, and executes the actual application.
+          Copy-Item "$env:WINDIR\System32\where.exe" (Join-Path $app "DeepVisionStudio.exe")
+          pwsh packaging/windows/build_simple_installer.ps1 -AppRoot $app `
+            -OutputDirectory (Join-Path $env:RUNNER_TEMP "installer-toolchain-release") -Version 1.0.0
+          if ($LASTEXITCODE -ne 0) { throw "Real installer toolchain smoke failed" }
 
   wix-installer-contract:
     # The C++ ABI is built with the Visual Studio 2022 generator. Pin the image

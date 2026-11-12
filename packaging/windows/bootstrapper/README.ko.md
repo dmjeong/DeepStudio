@@ -1,9 +1,10 @@
 # WiX 7 오프라인 Setup 빌드
 
 `build_release.ps1`는 이미 수집·해시 검증된 payload를 MSI에 넣고, 그 MSI 하나를
-Burn bundle EXE에 첨부한다. 실행 중에 WiX extension, Python, 모델, WSL 또는 Docker를
-다운로드하지 않는다. WiX 7과 `WixToolset.Bal.wixext`는 Windows 빌드 이미지에
-미리 설치하고 버전을 잠근다.
+Burn bundle EXE에 첨부한다. 배포된 설치파일은 실행 중 Python, 모델, WSL 또는 Docker를
+다운로드하지 않는다. 빌드 PC에는 WiX 7.0.0 CLI가 필요하며 빌드 스크립트가 같은 버전의
+Util 및 BootstrapperApplications 확장을 준비한다. 최초 빌드에는 확장 다운로드를 위한
+인터넷 연결이 필요하고, 이후에는 버전을 고정한 캐시를 사용한다.
 
 ```powershell
 pwsh packaging/windows/build_release.ps1 `

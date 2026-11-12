@@ -40,7 +40,7 @@ def test_release_script_verifies_payload_before_wix_build():
     script = (WINDOWS / "build_release.ps1").read_text(encoding="utf-8")
     assert "collect_payloads.py" in script and "validate_payloads.py" in script
     assert "--manifest" in script
-    assert "WixToolset.Bal.wixext" in script
+    assert 'WixToolset.BootstrapperApplications.wixext/$WixVersion' in script
     assert "THIRD_PARTY_NOTICES.md" in script
     assert "external_downloads" not in script
     assert "WixToolset.Util.wixext" in script

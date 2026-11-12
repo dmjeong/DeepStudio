@@ -89,6 +89,7 @@ def test_release_collects_and_validates_payload_without_github_environment(tmp_p
                     notice=ROOT / "THIRD_PARTY_NOTICES.md")
     compiler = tmp_path / "compiler.ps1"
     compiler.write_text('''
+ConvertTo-Json -InputObject @($args) -Compress | Add-Content (Join-Path $PSScriptRoot "compiler-calls.jsonl")
 if ($args[0] -eq "--version") {
     Write-Output "7.0.0"
 } else {
@@ -115,3 +116,7 @@ function python { & $Python @args; $global:LASTEXITCODE = $LASTEXITCODE }
     assert (output / "release-manifest.json").is_file()
     assert (output / "DeepVisionStudio-17.90.0.msi").read_text().strip() == "compiler fixture"
     assert (output / "DeepVisionStudio-Setup-17.90.0-win-x64.exe").is_file()
+    calls = [json.loads(line) for line in (tmp_path / "compiler-calls.jsonl").read_text().splitlines()]
+    for extension in ("WixToolset.Util.wixext/7.0.0", "WixToolset.BootstrapperApplications.wixext/7.0.0"):
+        assert ["extension", "add", "--global", extension] in calls
+        assert any(call[0] == "build" and extension in call for call in calls)

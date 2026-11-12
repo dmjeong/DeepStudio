@@ -77,6 +77,19 @@ if ($wixExitCode -ne 0 -or $wixVersionText -notmatch "(?<!\d)$expectedWixVersion
 }
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
+# Installing the wix .NET tool does not install its compiler extensions.
+# Pin both acquisition and use so another cached major version cannot win.
+$utilExtension = "WixToolset.Util.wixext/$WixVersion"
+$bootstrapperExtension = "WixToolset.BootstrapperApplications.wixext/$WixVersion"
+foreach ($extension in @($utilExtension, $bootstrapperExtension)) {
+    $cached = & $wix.Source extension list --global $extension 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "WiX extension cache inspection failed: $extension ($cached)" }
+    if ([string]::IsNullOrWhiteSpace(($cached -join "`n"))) {
+        & $wix.Source extension add --global $extension
+        if ($LASTEXITCODE -ne 0) { throw "WiX extension download failed: $extension" }
+    }
+}
+
 $collector = Join-Path $scriptRoot "collect_payloads.py"
 $validator = Join-Path $scriptRoot "validate_payloads.py"
 $commitArgs = @()
@@ -121,7 +134,7 @@ if ($RequireOfflineWsl) {
 }
 
 $requireWslValue = if ($RequireOfflineWsl) { "1" } else { "0" }
-$common = @("-arch", "x64", "-ext", "WixToolset.Util.wixext",
+$common = @("-arch", "x64", "-ext", $utilExtension,
     "-d", "Version=$Version", "-d", "PayloadRoot=$root",
     "-d", "RequireOfflineWsl=$requireWslValue")
 $msiArgs = @("build") + $common + @("-o", $msi, (Join-Path $scriptRoot "bootstrapper\DeepVisionStudio.msi.wxs"))
@@ -146,7 +159,7 @@ function Sign-AndVerify([string] $Path) {
 
 Sign-AndVerify $msi
 
-$bundleArgs = @("build", "-arch", "x64", "-ext", "WixToolset.Bal.wixext",
+$bundleArgs = @("build", "-arch", "x64", "-ext", $bootstrapperExtension,
     "-d", "Version=$Version", "-d", "RequireOfflineWsl=$requireWslValue",
     "-d", "MsiPath=$msi")
 if ($RequireOfflineWsl) {

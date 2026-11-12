@@ -11,6 +11,7 @@
 - Windows 전체 검사에서 같은 크기로 빠르게 덮어쓴 가중치의 수정 시각이 같아져 무결성 캐시가 잘못 재사용되는 결함을 확인했다. Windows는 파일 시각 캐시 대신 실제 SHA-256을 재검사한다. 사전학습 가중치를 찾는 경로에만 적용하며 이미지별 추론 경로는 바뀌지 않는다. POSIX 캐시에는 파일 식별자와 변경 시각도 포함한다.
 - Windows PyInstaller 로그에서 미사용 Qt3D/QML 모듈의 분석으로 빌드가 지연되는 것을 확인했다. 실제 사용하는 QtCore/QtGui/QtWidgets를 분석하고 PySide6의 DLL·리소스는 계속 수집한다. 미사용 Python 모듈까지 강제로 import하던 `collect-all`만 분리했다.
 - 설치 스크립트가 PowerShell 배열을 이름 있는 옵션으로 전달한다고 가정해 실제로는 위치 인자로 잘못 전달했다. 해시테이블 splatting으로 고쳤다. 초기에 실패해 산출물 경로가 비어 있어도 정리 코드가 원래 오류를 덮어쓰지 않게 했다. 일반 PC에서 GITHUB_SHA가 없어도 빌드할 수 있도록 선택적 메타데이터 인자도 정리했다.
+- WiX CLI 설치만으로는 확장 모듈이 설치되지 않는다. 사용 버전과 같은 확장을 준비하고, CLI에서 이름이 변경된 BootstrapperApplications 확장을 사용하도록 수정했다. 긴 GUI 빌드와 별도로 작은 실제 MSI/Setup 컴파일을 먼저 검사한다. 근거: [WiX 확장 준비](https://docs.firegiant.com/wix/tools/wixext/), [Bootstrapper 패키지 이름 변경](https://docs.firegiant.com/wix/whatsnew/oopbas/).
 
 ## 로컬 확인
 
@@ -18,6 +19,7 @@
 - 실제 Qt 작업 프로세스: 5개 태스크 모두 생성 → 원본 비교 → 정답 표시 → 승인 → 새 프로젝트 저장 → 재열기 통과.
 - 기존 Data Gen/SEG 참조 생성/정답 연결과 함께 11개 통과.
 - 9f42cfd 전체 회귀 **1,650개 통과 / 78개 조건부 생략**, 247.85초, 정상 종료. 소스 패키지 실행 검사와 중앙 Crop 회귀를 포함한다. 이 결과는 macOS CPU이며 Windows 설치 성공을 뜻하지 않는다.
+- d8bacc5 전체 회귀 **1,654개 통과 / 78개 조건부 생략**, 248.54초, 정상 종료. 실제 PowerShell 호출 검사 3개를 포함한다.
 - 소스 패키지 실행·5개 태스크 Qt 생성·중앙 Crop·설치 계약을 함께 실행한 집중 검사 **56개 통과**.
 - 추가된 오프라인 가중치 누락 차단, 설치 payload README 및 모델 검색 경로 검사 통과.
 - 저장소 CI 규칙 Ruff E/F/W (E501/E402 제외) 통과. 실제 UI 스크린샷 확인 및 작은 화면 스크롤 보완.
@@ -29,6 +31,8 @@
 - 9f42cfd에서 실제 frozen EXE 실행 통과: version 17.90, CUDA 13.0 DLL 포함, CPU 추론 ok, Grad-CAM completed, 결과 복원, 기존 생성·새 클래스 생성 저장 확인.
 - 같은 Windows 실행에서 modern dense FP32/INT8/암호화/C++ parity 35개 통과(316.09초). 이후 installer 인자 전달 오류를 발견해 위와 같이 수정.
 - PowerShell 자체로 이름 있는 인자 전달·원래 오류 보존·GitHub 환경 없는 manifest 수집/검증을 실행하는 검사 3개 추가. WiX 컴파일만 대역을 사용하며 실제 MSI 검증은 별도 Windows job에서 수행한다. 기존 설치 계약과 합계 36개 통과.
+- [43df2b9 전체 CI](https://github.com/dmjeong/DeepStudio/actions/runs/43194536794) 성공. Windows 전체 회귀 1,652개 통과 / 77개 조건부 생략 / 236개 하위 검사. Linux·Windows C++ 및 기타 job도 성공.
+- 3f587c7의 Qt 수집 범위를 바꾼 최종 EXE도 Windows 실제 실행을 통과했다. d8bacc5의 Windows payload 계약 107개도 통과했다. MSI 설치·실행·제거 검증은 별도로 진행한다.
 
 ## 원격 C++ 검증
 
