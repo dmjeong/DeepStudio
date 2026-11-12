@@ -120,6 +120,9 @@ jobs:
         run: python -m pip freeze > test-environment.txt
       - name: Capture and verify real training UI with synthetic projects
         run: python tools/training_ui_proof.py
+      - name: Check Windows layout, image processing and synthesis before the model matrix
+        if: runner.os == 'Windows'
+        run: python -m pytest tests/test_inference_review.py tests/test_segment_defects.py tests/test_segmentation_result_display.py tests/test_segmentation_inference_metrics.py tests/test_training_advisor.py tests/test_detection_annotation.py tests/test_segmentation_annotation.py tests/test_synthesis_variation.py tests/test_segmentation_synthesis_ui.py --timeout=180 -q -o tmp_path_retention_policy=failed
       - name: Run regression tests
         if: runner.os != 'Linux'
         run: python -m pytest tests/ --timeout=180 --timeout-method=thread --capture=tee-sys -o tmp_path_retention_policy=failed -v --tb=short --junitxml=test-results.xml

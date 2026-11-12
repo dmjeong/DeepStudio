@@ -66,6 +66,10 @@ class InferenceReview(QWidget):
         self.value.setRange(-1e12, 1e12)
         self.value.setSingleStep(.01)
         self.value.setKeyboardTracking(False)
+        # QDoubleSpinBox sizes itself for the longest allowed number, not the
+        # current threshold. That forces the whole page wider on Windows.
+        self.value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.value.setMinimumWidth(115)
         self.reset = QPushButton("저장된 임계값 복원")
         line.addWidget(self.override)
         line.addWidget(self.value, 1)

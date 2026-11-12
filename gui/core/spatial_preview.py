@@ -55,7 +55,12 @@ def segmentation_preview(mask, original, num_classes, *, class_names=(), details
     if labels is None:
         labels = segmentation_labels(mask, width, height)
     overlay = np.asarray(original, dtype=np.uint8).copy()
-    ids, counts = np.unique(labels, return_counts=True)
+    # Sorting every original-resolution pixel dominated the Windows preview
+    # path (12MP), although the model's mask has only a few class IDs.
+    from core.segment_defects import _histogram
+    histogram = _histogram(labels)
+    ids = np.flatnonzero(histogram)
+    counts = histogram[ids]
     regions, region_counts = [], {}
     kernel = np.ones((3, 3), dtype=np.uint8)
     for class_id in ids:
@@ -63,9 +68,12 @@ def segmentation_preview(mask, original, num_classes, *, class_names=(), details
         if class_id == 0:  # Reserved background is not a found object.
             continue
         selected = (labels == class_id).astype(np.uint8)
-        foreground = selected.astype(bool)
         color = np.asarray(class_color(class_id), dtype=np.float32)
-        overlay[foreground] = (.75 * overlay[foreground] + .25 * color).astype(np.uint8)
+        # Integer RGB lookup is exactly floor(.75 * pixel + .25 * color).
+        # Masked native copying avoids repeatedly gathering/scattering RGB
+        # pixels through a 12MP numpy boolean array. Background stays untouched.
+        lookup = ((3 * np.arange(256, dtype=np.uint16)[:, None] + color.astype(np.uint16)) // 4).astype(np.uint8)
+        cv2.copyTo(cv2.LUT(overlay, lookup.reshape(256, 1, 3)), selected, overlay)
         inner = cv2.erode(selected, kernel, borderType=cv2.BORDER_CONSTANT, borderValue=0)
         edge = (selected != 0) & (inner == 0)
         overlay[edge] = color.astype(np.uint8)

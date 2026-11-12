@@ -52,7 +52,7 @@ def test_known_metrics_and_json_roundtrip(dataset):
     assert row['per_class'][2]['iou'] is None
     assert row['mIoU'] == pytest.approx(7 / 12)
     assert row['pixel_accuracy'] == .75
-    assert row['sources'][0].endswith('masks/val/lot/one.png')
+    assert Path(row['sources'][0]).parts[-4:] == ('masks', 'val', 'lot', 'one.png')
     assert json.loads(json.dumps(row, allow_nan=False)) == row
 
 

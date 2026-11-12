@@ -147,8 +147,8 @@ def test_dataset_teaching_button_opens_segment_editor(tmp_path):
         page.set_project(project)
         assert not page.annotation_row.isHidden()
         page._selected_paths = {str(image)}
-        with patch("widgets.segmentation_annotation.SegmentationAnnotationDialog") as dialog:
-            dialog.return_value.navigation_delta = 0
+        with patch("widgets.segmentation_annotation.SegmentationAnnotationDialog", wraps=SegmentationAnnotationDialog) as dialog, \
+                patch("widgets.annotation_navigation.AnnotationWindow.exec", return_value=QDialog.DialogCode.Rejected):
             page.annotate_btn.click()
             assert dialog.call_args.args[0] == str(image)
         page.close()

@@ -55,7 +55,14 @@ def _histogram(values):
     values = np.asarray(values)
     if values.dtype == np.uint8:
         import cv2
-        return cv2.calcHist([np.ascontiguousarray(values)], [0], None, [256], [0, 256]).ravel().astype(np.int64)
+        # OpenCV returns float32 counts. Sum bounded chunks as int64 so counts
+        # stay exact even above float32's 2**24 consecutive integer range.
+        flat = np.ascontiguousarray(values).reshape(-1)
+        result = np.zeros(256, np.int64)
+        for start in range(0, flat.size, 1 << 23):
+            block = flat[start:start + (1 << 23)]
+            result += cv2.calcHist([block], [0], None, [256], [0, 256]).ravel().astype(np.int64)
+        return result
     return np.bincount(values.ravel().astype(np.int64), minlength=256)
 
 

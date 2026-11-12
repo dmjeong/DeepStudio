@@ -186,7 +186,7 @@ def test_inference_validation_button_selects_val_images_and_runs(tmp_path):
         widget.infer_btn.setEnabled(False)
         widget._evaluate_validation()
         run.assert_not_called()  # 모델이 없으면 고르기만 한다
-        assert [p.rsplit("/", 1)[-1] for p in widget._batch_images] == ["a.png", "b.png"]
+        assert [Path(p).name for p in widget._batch_images] == ["a.png", "b.png"]
         assert "2장" in widget.batch_time_label.text()
         widget.infer_btn.setEnabled(True)
         widget._evaluate_validation()

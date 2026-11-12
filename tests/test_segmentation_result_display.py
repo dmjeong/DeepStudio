@@ -17,6 +17,20 @@ from core.inference_cache import InferencePreviewCache
 NAMES = ['background', '스크래치', '찍힘']
 
 
+@pytest.mark.parametrize("class_id", [1, 2, 5])
+def test_foreground_blend_keeps_previous_truncation_for_every_byte(class_id):
+    from core.spatial_preview import class_color
+    # All 256 channel values occur inside the region, away from its outline.
+    values = np.pad(np.arange(256, dtype=np.uint8), 1, mode="edge")
+    original = np.broadcast_to(values[None, :, None], (4, 258, 3)).copy()
+    original[..., 1] = 255 - original[..., 1]
+    mask = np.full((4, 258), class_id, np.uint8)
+    preview, counts = segmentation_preview(mask, original, class_id + 1)
+    expected = (.75 * original[1:-1, 1:-1] + .25 * np.array(class_color(class_id))).astype(np.uint8)
+    np.testing.assert_array_equal(preview[1:-1, 1:-1], expected)
+    assert counts == {class_id: mask.size}
+
+
 @pytest.fixture
 def app():
     from PySide6.QtWidgets import QApplication
