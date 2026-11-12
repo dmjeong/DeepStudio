@@ -6,6 +6,9 @@
 - Windows 검사: CMake가 설치된 패키지가 없는 다른 Python을 선택하지 않도록 검사 인터프리터를 명시한다. 예제·수치 검사 환경의 OpenCV/SciPy 누락을 보완한다.
 - 웹 배포: 새 모델의 timm/SciPy 의존성을 포함한다. Playwright 검사는 지원되는 Ubuntu 24.04에서 실행한다.
 - 화면 검사에도 앱과 같은 스타일시트를 사용해 화살표 아이콘을 표시한다.
+- Windows 라벨링 표를 글꼴 크기에 맞추고, 원본이 같은 크기·시각으로 교체되어도 정답 저장 충돌을 감지한다.
+- DINOv2 원본 다운로드 서버의 인증서 오류 시 고정 revision의 HTTPS 미러를 사용한다. 원본 전체 SHA-256 일치는 필수이며 TLS 검증은 유지한다.
+- PatchCore 사전학습 검사는 앱과 같은 공식 가중치 버전을 준비한다. ResNet50 V1 파일을 V2 이름의 manifest에 잘못 등록하던 검사 스크립트를 수정했다.
 
 검증 결과는 [회귀 검사 보고서](03-analysis/modern-dense-regression.md)에 기록한다. 합성 데이터 검사는 실제 불량 검출 정확도나 Windows 검사 PC 속도 보증이 아니다.
 

@@ -882,6 +882,10 @@ class AnnotationWorkspace(AnnotationWorkspaceState, AnnotationWorkspaceUI, QDial
         self.selected_indices.intersection_update(self._visible_indices)
         self.view.selected_set = set(self.selected_indices)
         self.table.setRowCount(len(self._visible_indices))
+        self.table.ensurePolished()
+        metrics = self.table.fontMetrics()
+        self.table.setColumnWidth(0, max(78, metrics.horizontalAdvance("R16 C08") + 12))
+        self.table.verticalHeader().setDefaultSectionSize(max(32, metrics.height() + 10))
         for row, index in enumerate(self._visible_indices):
             key = self._key(index)
             meta = self.object_meta.get(key, {})

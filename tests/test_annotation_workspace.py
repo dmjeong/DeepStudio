@@ -857,16 +857,20 @@ def test_grid_can_copy_a_locked_seed_without_overwriting_or_duplicating_it(works
 
 
 def test_original_image_change_is_included_in_save_revision(tmp_path):
+    import os
     from core.dataset_editor import annotation_revision, edit_dataset
     from core.project import ProjectManager
 
     p = ProjectManager.create_new(
         "image-revision", "detect", str(tmp_path / "project"), ["part"]
     )
-    path = Path(p.data.train_dir) / "part.png"
+    path = Path(p.data.train_dir) / "part.bmp"
     Image.new("RGB", (30, 20), "gray").save(path)
+    stat = path.stat()
     old = annotation_revision(p, path, "train")
     Image.new("RGB", (30, 20), "white").save(path)
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert path.stat().st_size == stat.st_size
     with pytest.raises(ValueError, match="다른 곳에서 변경"):
         edit_dataset(
             p, "annotations", [str(path)], annotations=[], expected_revision=old

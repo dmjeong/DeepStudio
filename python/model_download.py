@@ -109,6 +109,23 @@ def cached_imagenet_weights(url, cache, *, sha256=None):
     return cached_https_weights(url, destination, expected)
 
 
+def cached_https_weights_from_sources(urls, destination, expected_sha256):
+    """Retry known HTTPS sources only for transport errors, with a full hash.
+
+    Invalid bytes/local cache errors are fatal; no SSL verification is disabled.
+    Mirrors supply the exact original file, not a converted checkpoint.
+    """
+    if not urls or not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
+        raise ValueError("가중치 대체 다운로드는 전체 SHA256 고정값이 필요합니다.")
+    for index, url in enumerate(urls):
+        try:
+            return cached_https_weights(url, destination, expected_sha256)
+        except (URLError, ssl.SSLError, TimeoutError):
+            if index + 1 == len(urls):
+                raise
+            print(f"[download] {Path(destination).name}: 서버 연결 실패, 동일 SHA256의 HTTPS 대체 주소 재시도", flush=True)
+
+
 def cached_https_weights(url, destination, expected_sha256):
     """Download a pinned official file atomically, preserving TLS/hash checks."""
     if urlparse(url).scheme != "https" or not re.fullmatch(r"[a-f0-9]{8,64}", expected_sha256):

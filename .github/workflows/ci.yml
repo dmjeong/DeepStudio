@@ -120,7 +120,7 @@ jobs:
       - name: Capture and verify real training UI with synthetic projects
         run: python tools/training_ui_proof.py
       - name: Run regression tests
-        run: python -m pytest tests/ --timeout=180 --timeout-method=thread -v --tb=short --junitxml=test-results.xml
+        run: python -m pytest tests/ --timeout=180 --timeout-method=thread --capture=tee-sys -v --tb=short --junitxml=test-results.xml
       - name: Verify shipped LibreYOLO full-frame training, export and Grad-CAM
         run: |
           python -m pip install libreyolo==1.5.0 pycocotools==2.0.11

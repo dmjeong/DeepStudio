@@ -102,6 +102,18 @@ SOURCE_URLS = {
 }
 
 
+# Byte-identical, revision-pinned mirrors for a publisher network/TLS outage.
+# These do not replace the original model license or its full SHA-256 pin.
+SOURCE_MIRRORS = {
+    "dinov2_vits14": (
+        "https://huggingface.co/WiserZhou/DINOv2/resolve/9dfd89f8766edfe1343cb764c28b285be7779157/dinov2_vits14_pretrain.pth",
+    ),
+    "dinov2_vitb14": (
+        "https://huggingface.co/CuteGenie/dinov2-vit-b-14-distilled/resolve/290640f12c1f34a55927ffaaabe765c83db251bd/dinov2_vitb14_pretrain.pth",
+    ),
+}
+
+
 # 공식 파일 이름에 해시가 없는 가중치의 전체 SHA-256 (공식 주소에서 받은 파일, 2026-10 확인).
 # manifest가 없어도(직접 받은 파일) 이 값과 같아야 쓴다.
 PINNED_SHA256 = {

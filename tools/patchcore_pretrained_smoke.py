@@ -24,13 +24,11 @@ def check_backbone(backbone_name):
         hub.return_value = str(root / "fresh-torch-cache")
         # The app now requires bundled weights. Prepare a verified temporary
         # bundle here; runtime inference must still work without downloads.
-        from torchvision import models
-        from builtin_assets import ASSET_FILES
+        from builtin_assets import ASSET_FILES, official_torchvision_url
         from model_download import cached_imagenet_weights
-        from patchcore_weights import BACKBONES
-        weights = getattr(models, BACKBONES[backbone_name][2]).IMAGENET1K_V1
         relative = ASSET_FILES[backbone_name]
-        path = cached_imagenet_weights(weights.url, (root / relative).parent)
+        path = cached_imagenet_weights(official_torchvision_url(backbone_name), (root / relative).parent)
+        assert path.resolve() == (root / relative).resolve(), "Download and bundle asset must be the same checkpoint"
         manifest = {"schema_version": 1, "files": {relative: {
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": path.stat().st_size}}}
         (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")

@@ -70,8 +70,14 @@ def annotation_revision(project, image, split):
         sidecars(project, image, split), key=lambda row: str(row[1])
     ):
         values.append([kind, str(path), hashlib.sha256(path.read_bytes()).hexdigest()])
-    stat=Path(image).stat()
-    return fingerprint({"classes": project.data.class_names, "labels": values,'image':[stat.st_size,stat.st_mtime_ns]})
+    # Windows/SMB may preserve the same size and timestamp across a rewrite.
+    # Content identity must participate in the edit revision as well.
+    image_hash = hashlib.sha256()
+    with Path(image).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            image_hash.update(block)
+    return fingerprint({"classes": project.data.class_names, "labels": values,
+                        "image": image_hash.hexdigest()})
 
 
 def read_annotations(path, task, count):

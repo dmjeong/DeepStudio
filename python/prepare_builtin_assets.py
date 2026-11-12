@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 import tempfile
 
-from builtin_assets import (ASSET_FILES, PINNED_SHA256, SOURCE_URLS, SEGMENTATION_ASSET_IDS, _manifest, builtin_asset_root,
+from builtin_assets import (ASSET_FILES, PINNED_SHA256, SOURCE_URLS, SOURCE_MIRRORS, SEGMENTATION_ASSET_IDS, _manifest, builtin_asset_root,
                             file_sha256, official_torchvision_url, verify_local_asset)
 from model_download import cached_imagenet_weights, enable_requests_native_ca
 from sam2_assets import download_sam2_pretrained
@@ -84,9 +84,10 @@ def prepare(output: str | Path, only=None, *, register_existing: bool = False, s
                     if downloaded.resolve() != target.resolve():
                         raise RuntimeError(f"SAM2 가중치 경로가 예상과 다릅니다: {downloaded}")
                 elif target.name in PINNED_SHA256:
-                    from model_download import cached_https_weights
-                    cached_https_weights(SOURCE_URLS[model_id], target,
-                                         expected_sha256=PINNED_SHA256[target.name])
+                    from model_download import cached_https_weights_from_sources
+                    cached_https_weights_from_sources(
+                        (SOURCE_URLS[model_id], *SOURCE_MIRRORS.get(model_id, ())), target,
+                        expected_sha256=PINNED_SHA256[target.name])
                 elif model_id.startswith(("libreyolo_", "re_detr_")):
                     _download_upstream(model_id, target)
                 else:

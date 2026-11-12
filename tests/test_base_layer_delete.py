@@ -34,6 +34,14 @@ def dialog(tmp_path):
     app.processEvents()
     yield widget, app
     widget.close()
+    # close() writes an unsaved draft asynchronously. Deleting its owning
+    # dialog before that thread finishes aborts Qt on Windows.
+    from PySide6.QtTest import QTest
+    import time
+    deadline = time.monotonic() + 10
+    while widget.draft_worker is not None and time.monotonic() < deadline:
+        QTest.qWait(10)
+    assert widget.draft_worker is None and not widget.isVisible()
     widget.deleteLater()
 
 

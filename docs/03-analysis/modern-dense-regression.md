@@ -28,4 +28,13 @@
 - Linux 전체 검사에서 사전학습 파일 부재 예외가 `RuntimeError`에서 `FileNotFoundError`로 바뀐 것을 반영하지 못한 테스트 17개를 발견했다. 파일이 없는 일반 검사만 건너뛰며, 공식 가중치 필수 통합 단계에서는 여전히 실패시킨다. 손상된 가중치 오류는 무시하지 않는다.
 - Windows GUI 검사에서 스타일시트의 기본 문자 인코딩 사용을 제거했다. Qt 앱 수명은 세션 전체로 유지하고, 중간 네이티브 종료 시에도 첫 실패를 로그에 남긴다. Windows 전체 재실행으로 확인 중이다.
 
-최종 main 반영 전 남은 Windows/Linux 전체 검사와 설치 패키지 검사를 확인한다. 실제 검사 데이터 정확도·Windows i7 속도는 측정하지 않았다.
+## Windows 후속 실행에서 추가로 재현한 문제
+
+- 원본 파일을 같은 크기·수정 시각으로 바꾸면 정답 저장 충돌 검사가 놓쳤다. 파일 내용을 스트리밍 SHA-256으로 비교한다. 시각과 크기를 강제로 동일하게 만든 BMP 회귀 검사로 확인했다.
+- 라벨링 표 첫 열이 78px로 고정되어 Windows 글꼴에서 `R16 C08`이 잘렸다. 실제 글꼴 폭과 행 높이로 계산한다.
+- PNG 레이어 삭제 테스트가 `close()`의 비동기 초안 저장 도중 즉시 `deleteLater()`하여 QThread까지 파괴했다. 초안 완료/창 닫힘을 확인한 뒤 제거한다. CI에는 네이티브 오류도 보이는 출력 방식을 적용했다.
+- 새 x86 검사는 모델 비교 전에 DINOv2 발행 서버 인증서 만료로 다운로드가 실패했다. 로컬에서도 재현했다. 알려진 고정 revision의 HTTPS 미러만 재시도하며 원본 전체 SHA-256이 같은 파일만 받는다. TLS 검증을 끄거나 가중치를 변환하지 않는다.
+
+실제 검사 데이터 정확도·Windows i7 속도는 측정하지 않았다.
+
+후속 로컬 확인: 전체 1,576개 통과 / 78개 환경별 제외, 이후 Windows 라벨링·이미지 저장·다운로드 수정 관련 65개 통과. DINOv2 small/base 두 미러 파일을 실제 내려받아 원본 전체 SHA-256과 동일함을 확인했다. [small 미러](https://huggingface.co/WiserZhou/DINOv2/blob/9dfd89f8766edfe1343cb764c28b285be7779157/dinov2_vits14_pretrain.pth), [base 미러](https://huggingface.co/CuteGenie/dinov2-vit-b-14-distilled/blob/290640f12c1f34a55927ffaaabe765c83db251bd/dinov2_vitb14_pretrain.pth). 원본 가중치와 라이선스를 그대로 사용하며 미러의 별도 모델을 채택하지 않는다.
