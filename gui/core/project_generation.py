@@ -119,6 +119,8 @@ class ProjectGenerationStore:
 
     def generate(self, rules, source_class="", seed=0, size_min=.01, size_max=.08,
                  strength_min=.3, strength_max=.8, context=None):
+        from center_crop import center_crop_box, configured_center_crop
+        crop = configured_center_crop(self.project.training)
         available = dict(class_options(self.project))
         if not isinstance(rules, list) or not rules or len(rules) > 254:
             raise ValueError("생성할 프로젝트 클래스를 선택하세요.")
@@ -171,13 +173,22 @@ class ProjectGenerationStore:
                         roi = base == 0
                         roi[:2] = roi[-2:] = False
                         roi[:, :2] = roi[:, -2:] = False
-                        if not roi.any():
+                        left, top, right, bottom = center_crop_box((image.shape[1], image.shape[0]), crop)
+                        crop_roi = roi[top:bottom, left:right]
+                        if not crop_roi.any():
                             continue
                         sample_seed = int(rng.integers(2**32))
                         params = DefectParams(seed=sample_seed, types=[DefectType(rule["method"])],
                                               size_ratio=float(rng.uniform(size_min, size_max)),
                                               intensity=float(rng.uniform(strength_min, strength_max)))
-                        sample = generate_sample(image, params, roi_mask=roi)
+                        sample = generate_sample(image[top:bottom, left:right], params,
+                                                 roi_mask=crop_roi)
+                        if crop is not None:
+                            # Keep source coordinates and resolution in saved files.
+                            composed, changed = image.copy(), np.zeros(image.shape[:2], np.uint8)
+                            composed[top:bottom, left:right] = sample.image
+                            changed[top:bottom, left:right] = sample.mask
+                            sample.image, sample.mask = composed, changed
                         if np.count_nonzero(sample.mask) >= 4:
                             break
                     else:
@@ -205,7 +216,7 @@ class ProjectGenerationStore:
             from datetime import datetime, timezone
             manifest = {"schema_version": 1, "id": key, "created": datetime.now(timezone.utc).isoformat(),
                         "task": self.project.task, "classes": list(self.project.data.class_names), "seed": seed,
-                        "source_split": "train", "samples": samples, "failures": failures,
+                        "source_split": "train", "center_crop": crop, "samples": samples, "failures": failures,
                         "method_kind": "procedural_surface", "review_required": True}
             checked(context)
             write_json(temp / "manifest.json", manifest)
@@ -226,6 +237,9 @@ class ProjectGenerationStore:
 
     def publish(self, batch_id, sample_ids, context=None):
         batch = self.load(batch_id)
+        from center_crop import configured_center_crop
+        if batch.get("center_crop") != configured_center_crop(self.project.training):
+            raise ValueError("생성 후 중앙 크롭 설정이 변경되었습니다. 새 판정 영역에 맞게 다시 생성하세요.")
         index = scan_dataset(self.project)
         if index.get("orphan_masks") or any(row["error"] for row in index["images"]):
             raise ValueError("원본 데이터셋의 정답 오류를 먼저 해결하세요. 오류를 새 프로젝트에 복사하지 않았습니다.")

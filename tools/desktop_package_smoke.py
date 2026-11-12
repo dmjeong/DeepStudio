@@ -5,7 +5,7 @@ import tempfile
 import time
 
 
-def run(output):
+def run(output, *, require_cuda_runtime=True):
     from PySide6.QtWidgets import QApplication, QMessageBox
     from PySide6.QtCore import QTimer, Qt
     from PIL import Image
@@ -32,13 +32,14 @@ def run(output):
     for module in runtime_modules:
         importlib.import_module(module)
     stage("model_and_generation_imports_ready")
-    if not torch.version.cuda:
-        raise RuntimeError("GPU 지원 배포에 CPU 전용 PyTorch 포함됨")
-    library = Path(torch.__file__).parent / "lib"
-    for name in ("torch_cuda.dll", "c10_cuda.dll"):
-        if not (library / name).is_file():
-            raise RuntimeError(f"배포 CUDA DLL 누락: {name}")
-    stage("cuda_runtime_bundled")
+    if require_cuda_runtime:
+        if not torch.version.cuda:
+            raise RuntimeError("GPU 지원 배포에 CPU 전용 PyTorch 포함됨")
+        library = Path(torch.__file__).parent / "lib"
+        for name in ("torch_cuda.dll", "c10_cuda.dll"):
+            if not (library / name).is_file():
+                raise RuntimeError(f"배포 CUDA DLL 누락: {name}")
+        stage("cuda_runtime_bundled")
     import torchvision
     kept = torchvision.ops.nms(torch.tensor([[0., 0., 10., 10.], [0., 0., 10., 10.]]),
                                torch.tensor([.9, .8]), .5)
@@ -109,8 +110,10 @@ def run(output):
         stage("defect_preview_start")
         normal = Path(project.data.train_dir) / "OK" / "normal.png"
         Image.new("RGB", (96, 64), (128, 128, 128)).save(normal)
-        defect = window.defect_gen_page
-        window.content_stack.setCurrentWidget(defect)
+        generation_page = window.defect_gen_page
+        window.content_stack.setCurrentWidget(generation_page)
+        generation_page.show_legacy()
+        defect = generation_page.legacy
         defect._start_generation(preview=True)
         wait(lambda: defect._worker is not None)
         if not defect._job_result or defect._job_result["status"] != "completed" or defect.result_list.count() != 1:
@@ -122,8 +125,8 @@ def run(output):
             raise RuntimeError("배포 EXE 합성 검수 저장 실패: " + defect.progress_label.text())
         stage("defect_review_saved")
         stage("project_class_generation_start")
-        custom = defect.project_generation
-        defect.tabs.setCurrentWidget(custom)
+        custom = generation_page.project_generation
+        generation_page.tabs.setCurrentWidget(custom)
         custom.classes.item(1, 0).setCheckState(Qt.CheckState.Checked)
         custom.classes.cellWidget(1, 2).setValue(1)
         custom.generate()
@@ -139,6 +142,7 @@ def run(output):
         if not list((Path(generated_project.data.train_dir) / "NG").glob("generated-*.png")):
             raise RuntimeError("배포 EXE 클래스 폴더 또는 생성 이미지 누락")
         stage("project_class_generation_saved")
+        wait(lambda: getattr(window.dataset_page, "_scan_worker", None) is not None)
         screenshot = Path(output).with_suffix(".png")
         window.grab().save(str(screenshot))
         write_json(output, {"version": APP_VERSION, "frozen": bool(getattr(__import__('sys'), 'frozen', False)),
@@ -150,3 +154,6 @@ def run(output):
         window.project = None  # 종료 확인 대화상자는 자동 배포 검증에서 생략
         window.close()
     timer.stop()
+    from PySide6.QtCore import QCoreApplication, QEvent
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

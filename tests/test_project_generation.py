@@ -140,3 +140,42 @@ def test_detection_class_zero_is_foreground_and_seed_is_reproducible(tmp_path):
     a, b = [store.load(store.generate(rule, seed=3)["batch_id"]) for _ in range(2)]
     assert a["samples"][0]["hashes"] == b["samples"][0]["hashes"]
     assert [0, "정상"] == list(class_options(project)[0])
+
+
+def test_center_crop_preserves_source_size_and_excludes_unseen_defects(tmp_path):
+    project = make_project(tmp_path, "segment")
+    project.training.patchcore_crop_enabled = True
+    project.training.patchcore_crop_width = 64
+    project.training.patchcore_crop_height = 48
+    store = ProjectGenerationStore(project)
+    batch = store.load(generate(store)["batch_id"])
+    assert batch["center_crop"] == {"width": 64, "height": 48}
+    for row in batch["samples"]:
+        folder = store.verified_sample(batch["id"], row)
+        changed = np.array(Image.open(folder / "changed.png"))
+        assert changed.shape == (96, 128) and changed[24:72, 32:96].any()
+        changed[24:72, 32:96] = 0
+        assert not changed.any()
+    saved = store.publish(batch["id"], [batch["samples"][0]["id"]])
+    restored = ProjectManager.load(saved["project_path"])
+    assert restored.training.patchcore_crop_width == 64
+    project.training.patchcore_crop_width = 40
+    with pytest.raises(ValueError, match="중앙 크롭 설정"):
+        store.publish(batch["id"], [batch["samples"][0]["id"]])
+
+
+def test_fully_labeled_crop_is_skipped_without_modifying_labels(tmp_path):
+    project = make_project(tmp_path, "segment")
+    project.training.patchcore_crop_enabled = True
+    project.training.patchcore_crop_width = 64
+    project.training.patchcore_crop_height = 48
+    path = Path(project.data.root) / "masks/train/바탕.png"
+    mask = np.zeros((96, 128), np.uint8)
+    mask[24:72, 32:96] = 1
+    Image.fromarray(mask).save(path)
+    before = digest(path)
+    store = ProjectGenerationStore(project)
+    with pytest.raises(ValueError, match="생성 가능한 배경 영역"):
+        generate(store)
+    assert digest(path) == before
+    assert not store.batches()

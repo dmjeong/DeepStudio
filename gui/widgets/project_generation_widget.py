@@ -35,7 +35,7 @@ class ProjectGenerationWidget(QWidget):
         self.description.setWordWrap(True)
         layout.addWidget(self.description)
         hint = QLabel("검사 클래스와 생성 방식은 다릅니다. 등록한 클래스에 어울리는 방식을 직접 선택하세요.\n"
-                      "이름만으로 실제 결함을 학습하지는 않습니다. 원본과 새 이미지·정답을 확인한 뒤 승인하세요.")
+                      "중앙 크롭을 설정했다면 그 판정 영역 안에만 생성합니다. 원본과 새 이미지·정답을 확인한 뒤 승인하세요.")
         hint.setWordWrap(True)
         layout.addWidget(hint)
         self.controls = QWidget()
