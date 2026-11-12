@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-11-12T00:18:00.998900+00:00",
+  "lastUpdated": "2026-11-12T01:33:09.306Z",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -713,8 +713,8 @@
       "completedAt": "2026-11-11T21:22:41.015354+00:00"
     },
     "modern-dense-regression": {
-      "phase": "check",
-      "status": "in_progress",
+      "phase": "completed",
+      "status": "completed",
       "version": "15.89",
       "documents": {
         "analysis": "docs/03-analysis/modern-dense-regression.md",
@@ -723,14 +723,22 @@
       "validation": {
         "local_modern_and_ui": "65 passed; native CTest 7 passed",
         "eomt_padding_regression": "3 failed before / 3 passed after",
-        "remote": "pending",
-        "local_full": "1576 passed, 78 skipped",
-        "followup": "65 passed; Windows annotation, synthesis UI and verified HTTPS mirror tests"
-      }
+        "remote": "CI success: https://github.com/dmjeong/DeepStudio/actions/runs/43132786944",
+        "local_full": "1582 passed, 78 skipped; normal process exit",
+        "followup": "65 passed; Windows annotation, synthesis UI and verified HTTPS mirror tests",
+        "windows_full": "1583 passed, 77 skipped, 236 subtests; normal process exit; follow-up integrations passed",
+        "linux_full": "1582 passed, 78 skipped, 236 subtests; normal process exit; follow-up integrations passed",
+        "native": "Windows native 7/7 and C++/C# examples passed; VS2017 Debug/Release public examples passed",
+        "small_stack": "C ABI bundle verification: 1 MiB stack failed before (139), passed after (0); Linux CI gate passed",
+        "installer": "Separate full frozen installer workflow still running: https://github.com/dmjeong/DeepStudio/actions/runs/43132515261"
+      },
+      "matchRate": 100,
+      "matchRateScope": "Implemented source/SDK checklist and regression gates; not private-data accuracy, zero-bug certification, or full installer certification",
+      "completedAt": "2026-11-12T01:33:09.295Z"
     },
     "segmentation-synthesis-variation": {
-      "phase": "check",
-      "status": "in_progress",
+      "phase": "completed",
+      "status": "completed",
       "version": "16.89",
       "documents": {
         "design": "docs/SEGMENTATION_SYNTHESIS.md",
@@ -739,8 +747,16 @@
       "validation": {
         "synthesis": "47 passed incl. native shapes, edited PNG export and GUI subprocess",
         "tray": "3504x1504; 5/5 synthetic defect types generated",
-        "remote": "pending"
-      }
+        "remote": "CI success: https://github.com/dmjeong/DeepStudio/actions/runs/43132786944",
+        "windows_full": "1583 passed, 77 skipped, 236 subtests; normal process exit; follow-up integrations passed",
+        "linux_full": "1582 passed, 78 skipped, 236 subtests; normal process exit; follow-up integrations passed",
+        "local_full": "1582 passed, 78 skipped; normal process exit",
+        "saved_training_pairs": "5 standalone PNG/mask pairs loaded by actual patch dataset; classes 0..5",
+        "ui": "Windows and macOS real Qt subprocess: preview, edited masks, independent PNG saves and published project"
+      },
+      "matchRate": 100,
+      "matchRateScope": "Implemented source/SDK checklist and regression gates; not private-data accuracy, zero-bug certification, or full installer certification",
+      "completedAt": "2026-11-12T01:33:09.306Z"
     }
   },
   "pipeline": {
@@ -751,7 +767,7 @@
   "session": {
     "startedAt": "2026-09-17T12:14:10.629Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-11-10T00:00:19.275Z"
+    "lastActivity": "2026-11-12T01:33:09.306Z"
   },
   "history": [
     {
@@ -1173,6 +1189,72 @@
       "from": "report",
       "to": "completed",
       "timestamp": "2026-11-11T21:22:41.015354+00:00"
+    },
+    {
+      "feature": "modern-dense-regression",
+      "from": "check",
+      "to": "act",
+      "timestamp": "2026-11-12T01:32:57.184Z"
+    },
+    {
+      "feature": "modern-dense-regression",
+      "action": "phase_complete",
+      "phase": "check",
+      "nextPhase": "act",
+      "timestamp": "2026-11-12T01:32:57.185Z"
+    },
+    {
+      "feature": "segmentation-synthesis-variation",
+      "from": "check",
+      "to": "act",
+      "timestamp": "2026-11-12T01:32:57.189Z"
+    },
+    {
+      "feature": "segmentation-synthesis-variation",
+      "action": "phase_complete",
+      "phase": "check",
+      "nextPhase": "act",
+      "timestamp": "2026-11-12T01:32:57.189Z"
+    },
+    {
+      "feature": "modern-dense-regression",
+      "from": "act",
+      "to": "report",
+      "timestamp": "2026-11-12T01:33:09.284Z"
+    },
+    {
+      "feature": "modern-dense-regression",
+      "action": "phase_complete",
+      "phase": "act",
+      "nextPhase": "report",
+      "timestamp": "2026-11-12T01:33:09.285Z"
+    },
+    {
+      "feature": "modern-dense-regression",
+      "action": "phase_complete",
+      "phase": "report",
+      "nextPhase": "completed",
+      "timestamp": "2026-11-12T01:33:09.295Z"
+    },
+    {
+      "feature": "segmentation-synthesis-variation",
+      "from": "act",
+      "to": "report",
+      "timestamp": "2026-11-12T01:33:09.299Z"
+    },
+    {
+      "feature": "segmentation-synthesis-variation",
+      "action": "phase_complete",
+      "phase": "act",
+      "nextPhase": "report",
+      "timestamp": "2026-11-12T01:33:09.300Z"
+    },
+    {
+      "feature": "segmentation-synthesis-variation",
+      "action": "phase_complete",
+      "phase": "report",
+      "nextPhase": "completed",
+      "timestamp": "2026-11-12T01:33:09.306Z"
     }
   ]
 }

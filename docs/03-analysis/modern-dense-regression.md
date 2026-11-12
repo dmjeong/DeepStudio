@@ -1,4 +1,4 @@
-# 15.88 회귀 오류 조사 / 15.89 수정
+# 15.88 회귀 오류 조사 / 16.89 반영
 
 ## 확인한 실패
 
@@ -19,7 +19,7 @@
 3. EoMT 홀수·640 입력의 정답 좌표/기울기 및 기존 재개 화면을 별도로 검사한다.
 4. 검토 브랜치에서 Linux/Windows CI를 실행하고 실패 원인을 확인한 뒤 main에 반영한다.
 
-## 검토 브랜치 중간 검증
+## 초기 검증과 추가 조사
 
 - macOS 전체 회귀 1,555개 통과 / 76개 환경별 제외. 새 모델·화면 65개, Dinomaly 비패치 RGB/BW8 2개, EoMT 좌표 회귀 3개 통과.
 - C++ CTest 7개 통과, 실제 사전학습 가중치의 FP32/INT8/암호화 비교 통과. Linux x86 CI의 같은 비교도 통과했다.
@@ -38,3 +38,39 @@
 실제 검사 데이터 정확도·Windows i7 속도는 측정하지 않았다.
 
 후속 로컬 확인: 전체 1,576개 통과 / 78개 환경별 제외, 이후 Windows 라벨링·이미지 저장·다운로드 수정 관련 65개 통과. DINOv2 small/base 두 미러 파일을 실제 내려받아 원본 전체 SHA-256과 동일함을 확인했다. [small 미러](https://huggingface.co/WiserZhou/DINOv2/blob/9dfd89f8766edfe1343cb764c28b285be7779157/dinov2_vits14_pretrain.pth), [base 미러](https://huggingface.co/CuteGenie/dinov2-vit-b-14-distilled/blob/290640f12c1f34a55927ffaaabe765c83db251bd/dinov2_vitb14_pretrain.pth). 원본 가중치와 라이선스를 그대로 사용하며 미러의 별도 모델을 채택하지 않는다.
+
+## 전체 실행에서 확인한 Windows 회귀 수정
+
+Windows 전체 검사에서 4개 실패를 재현했다. 이때 1,575개 검사와 236개 하위 검사는 통과했고, 프로세스는 정상적으로 실패 코드를 반환했다.
+
+- 추론 화면: 임계값 입력란의 최대 숫자 폭 때문에 창이 1,100px를 넘었다. 입력 가능한 값은 유지하면서 최소 폭과 크기 정책을 조정했다.
+- 1,200만 화소 SEG 표시: `np.unique` 정렬과 NumPy 색상 혼합에 487ms가 걸려 기존 400ms 기준에 실패했다. 클래스 집계는 OpenCV 히스토그램, 혼합은 동일한 정수 결과의 LUT로 바꿨다. 큰 이미지의 집계는 2²³픽셀 단위로 합산해 float32 정수 표현 한계도 피했다. 전체 256개 밝기의 색상, 배경 보존, 2²⁴를 넘는 픽셀 개수와 무작위 비교에서 결과가 같음을 확인했다. macOS 자체 측정은 중앙값 207.1→96.7ms였으며 Windows 성능 수치로 사용하지 않는다.
+- Windows 경로 구분자: 클래스별 마스크 경로와 학습 조언 검사에서 `/`로 문자열을 나누던 부분을 `Path`로 바꿨다. 앱 동작을 완화한 것이 아니라 실제 플랫폼 경로를 검사한다.
+- 라벨링 검사: 창 전체를 가짜 객체로 바꿔 실제 Qt 부모 지정에서 예외가 나던 테스트 2개는 실제 편집창을 만들고 대화상자 실행만 대체한다.
+- 비동기 초안 저장: 테스트 종료 때 진행 중인 `AnnotationWrite`가 끝나기 전에 Qt 부모를 파괴하는 문제를 공통 정리 경로에서 처리한다. Linux는 gdb로 네이티브 종료 코드까지 검사하며, 비정상 종료를 통과로 숨기지 않는다.
+
+## Windows C++ DLL 충돌
+
+설치 패키지의 native 검사는 컴파일에 성공한 뒤 7개 중 5개가 즉시 충돌했다. 실제 실행 버전을 출력하자 **1.29.0 SDK로 빌드했지만 1.5.2 DLL이 로드**되고 있었다. PATH에 새 SDK를 추가하는 것만으로는 해결되지 않았다.
+
+- CMake가 선택한 ONNX Runtime DLL을 각 실행파일과 `vision_runtime.dll` 옆에 복사한다. OpenCV DLL도 선택한 SDK에서 배치한다.
+- DLL 배치는 병렬 빌드 전에 공유 작업에서 한 번 실행한다. 실행파일별 복사는 vcpkg의 종속 DLL 조회와 동시에 파일을 열어 Windows 접근 거부를 일으켰다.
+- C#은 `vision_runtime.dll`이 있는 디렉터리를 종속 DLL 탐색에 포함한다.
+- Windows CI는 추론 전 실제 로드된 버전이 1.29.0인지 검사한다.
+- 예제와 설치 패키지의 OpenCV는 공식 4.12.0 바이너리 SDK로 맞췄다. 이것만으로 충돌이 해결되지는 않았으며, 직접 확인한 원인은 위의 잘못된 ONNX Runtime 로드다.
+
+DLL 수정 후 7개 중 6개가 통과하고 모델 묶음 C API 검사만 계속 충돌했다. 추가 원인은 `sha256_file`의 **1MiB 지역 배열**이었다. Windows 실행파일의 기본 스택 예약량은 1MiB이므로 다른 호출 프레임까지 더해져 초과했다([MSVC 문서](https://learn.microsoft.com/en-us/cpp/build/reference/stack-stack-allocations)). macOS에서도 `ulimit -s 1024`로 같은 충돌(exit 139)을 재현했다.
+
+체크섬 버퍼를 64KiB 힙 메모리로 바꾸자 같은 제한에서 정상 종료했다. SHA-256 검증은 유지하며 전체 청크와 마지막 부분 읽기를 검증하는 파일을 추가했다. 스택 제한 재현을 Linux CI에도 넣었다. **Windows native 7개와 C++/C# 예제·모든 태스크 암호화 실행 단계가 통과**해 두 원인을 각각 확인했다. [수정 후 Windows 실행](https://github.com/dmjeong/DeepStudio/actions/runs/43132515261).
+
+## 최종 확인 기록
+
+- Linux 전체: **1,582개 통과 / 78개 환경별 제외 / 236개 하위 검사 통과**, 프로세스 정상 종료. 이어서 LibreYOLO 31개, 실제 사전학습 SEG 18개 통과. [최종 실행 로그](https://github.com/dmjeong/DeepStudio/actions/runs/43132786944).
+- 신규 불량 생성: 별도 47개 검사 통과, 자체 3504×1504 트레이에서 5개 결함 종류 생성. 새 PNG 5쌍을 실제 패치 데이터셋으로 다시 읽어 클래스 0~5 확인.
+- Linux 실제 사전학습 모델의 FP32/INT8/암호화/C++ 비교 35개 통과. C#의 모든 태스크 평문·암호화 결과도 바이트 단위로 일치했다.
+- Windows VS2017/C++17 공개 예제: OpenCV/BW8, 암호화·동시 추론, Debug BW8, 실제 SEG export→평가 7개 통과. dense SEG/anomaly 예제는 Debug/Release 빌드 통과. [실행 기록](https://github.com/dmjeong/DeepStudio/actions/runs/43132515261/job/130899847207).
+- macOS 전체 1,582개 통과 / 78개 환경별 제외, 종료 코드 0. native CTest 7개 통과. 최신 C# 로더 Release 컴파일 및 모든 태스크의 평문·암호화 결과 비교 통과. 기존 XML 주석 경고 73개는 남아 있다.
+- Windows 전체는 처음 1,583개 통과 후 인터프리터 종료 때 abort가 발생했다. 성공으로 처리하지 않고, 클래스 속성에 남아 있는 Qt 창을 Python·Qt가 살아 있는 시점에 정리하도록 수정했다. 최종 실행은 **1,583개 통과 / 77개 환경별 제외 / 236개 하위 검사 통과, 정상 종료**다. 후속 LibreYOLO 31개, 공식 사전학습 SEG 18개 및 나머지 smoke 검사도 통과했다. [전체 CI 성공](https://github.com/dmjeong/DeepStudio/actions/runs/43132786944).
+- 별도의 설치 EXE/MSI 전체 제작 단계는 [SDK 검사](https://github.com/dmjeong/DeepStudio/actions/runs/43132515261)에서 계속 실행한다. native 검사 통과와 전체 설치 파일 검증을 구분한다.
+
+15.89 버그 수정에 새 형상·PNG 저장 기능(+1.0)을 함께 반영해 배포 버전은 **16.89**다. 기능 범위와 사용법은 [16.89 변경 사항](../RELEASE_16.89.md)을 따른다. 실제 사용자 검사 데이터의 정확도 향상, 특정 Windows i7 지연시간, 모든 런타임 조합의 무결함을 이 검사 결과로 보장하지 않는다.

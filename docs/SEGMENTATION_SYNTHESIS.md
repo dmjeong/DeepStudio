@@ -94,4 +94,13 @@ python tools\segmentation_synthesis_demo.py --output runs\seg-synthesis-demo
 python -m pytest tests\test_segmentation_synthesis.py tests\test_synthesis_variation.py tests\test_segmentation_synthesis_ui.py tests\test_segmentation_synthesis_analysis_ui.py -q
 ```
 
-이 기능의 UI는 Windows 데스크톱 앱에 추가했다. React 웹 UI에는 새 화면을 추가하지 않았다. macOS에서 실제 Qt/작업 프로세스·학습·ONNX를 검증했으며 Windows EXE 실행은 로컬에서 검증하지 못했다. Windows 패키징 목록에 새 모듈을 포함했고 기존 Windows/Linux CI에서 회귀 테스트가 실행된다.
+이 기능의 UI는 Windows 데스크톱 앱에 추가했다. React 웹 UI에는 새 화면을 추가하지 않았다. macOS에서 실제 Qt/작업 프로세스·학습·ONNX를 검증했고, Windows CI에서도 새 형상·마스크 편집·독립 PNG 저장 UI 검사를 통과했다. Windows 패키징 목록에 새 모듈을 포함했다. 소스 실행과 설치 EXE 제작의 검증 범위는 [회귀 조사 보고서](03-analysis/modern-dense-regression.md)에 구분해 기록한다.
+
+| 확인 항목 | 확인 방식 |
+|---|---|
+| 새로운 균열·이물 윤곽 | 서로 다른 시드의 마스크 10개를 비교하고 동일 시드의 재현성 확인 |
+| 크기·강도가 실제 사진에 반영 | 길이·면적과 정상 표면 대비 픽셀 차이 비교, RGB/흑백 각각 검사 |
+| 정상 영역·기존 정답 보호 | 합성 허용 영역 밖의 사진, 기존 클래스·255 제외 영역의 픽셀 동일성 검사 |
+| 저장본과 미리보기 결과의 일치 | 마스크 표시를 켠 상태에서 저장 후 원본 사진 바이트 비교 |
+| 편집한 정답·반복 저장 | 마스크 수정 뒤 저장, 같은 후보 두 번 저장 후 별도 경로와 원본 보존 확인 |
+| 실제 학습 입력으로 사용 | 새 이미지·마스크 5쌍을 패치 데이터셋으로 로드해 클래스 0~5 확인 |
