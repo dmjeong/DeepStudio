@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-11-12T09:14:37.834Z",
+  "lastUpdated": "2026-11-12T11:51:45.064Z",
   "activeFeatures": [
     "efficientnet-cpu-latency",
     "studio-cleanup",
@@ -804,10 +804,15 @@
       "completedAt": "2026-11-12T02:11:56.337Z"
     },
     "project-generation-release": {
-      "phase": "check",
+      "phase": "completed",
       "matchRate": null,
       "iterationCount": 0,
-      "documents": {},
+      "documents": {
+        "plan": "docs/01-plan/features/project-generation-release.plan.md",
+        "design": "docs/02-design/features/project-generation-release.design.md",
+        "analysis": "docs/03-analysis/project-generation-release.md",
+        "report": "docs/04-report/project-generation-release.report.md"
+      },
       "taskChain": [
         {
           "phase": "plan",
@@ -829,19 +834,22 @@
         },
         {
           "phase": "check",
-          "status": "active",
-          "createdAt": "2026-11-12T08:54:28.996Z"
+          "status": "completed",
+          "createdAt": "2026-11-12T08:54:28.996Z",
+          "completedAt": "2026-11-12T11:51:40.008Z"
         },
         {
           "phase": "report",
-          "status": "pending",
-          "createdAt": "2026-11-12T08:54:28.996Z"
+          "status": "completed",
+          "createdAt": "2026-11-12T08:54:28.996Z",
+          "completedAt": "2026-11-12T11:51:45.064Z"
         }
       ],
       "timestamps": {
         "started": "2026-11-12T08:54:28.997Z",
-        "lastUpdated": "2026-11-12T09:14:37.834Z"
-      }
+        "lastUpdated": "2026-11-12T11:51:45.064Z"
+      },
+      "completedAt": "2026-11-12T11:51:45.063Z"
     }
   },
   "pipeline": {
@@ -852,7 +860,7 @@
   "session": {
     "startedAt": "2026-09-17T12:14:10.629Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-11-12T09:14:37.834Z"
+    "lastActivity": "2026-11-12T11:51:45.064Z"
   },
   "history": [
     {
@@ -1438,6 +1446,39 @@
       "phase": "do",
       "nextPhase": "check",
       "timestamp": "2026-11-12T09:14:37.831Z"
+    },
+    {
+      "feature": "project-generation-release",
+      "from": "check",
+      "to": "act",
+      "timestamp": "2026-11-12T11:51:40.006Z"
+    },
+    {
+      "feature": "project-generation-release",
+      "action": "phase_complete",
+      "phase": "check",
+      "nextPhase": "act",
+      "timestamp": "2026-11-12T11:51:40.007Z"
+    },
+    {
+      "feature": "project-generation-release",
+      "from": "act",
+      "to": "report",
+      "timestamp": "2026-11-12T11:51:45.055Z"
+    },
+    {
+      "feature": "project-generation-release",
+      "action": "phase_complete",
+      "phase": "act",
+      "nextPhase": "report",
+      "timestamp": "2026-11-12T11:51:45.056Z"
+    },
+    {
+      "feature": "project-generation-release",
+      "action": "phase_complete",
+      "phase": "report",
+      "nextPhase": "completed",
+      "timestamp": "2026-11-12T11:51:45.063Z"
     }
   ]
 }

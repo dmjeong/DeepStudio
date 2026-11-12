@@ -27,4 +27,4 @@ Windows Actions에 실제 frozen EXE 실행과 MSI 설치 → 설치된 EXE 실�
 
 CI의 설치 테스트용 패키지는 최소 자산으로 패키징 동작을 확인하며 모든 모델 가중치가 포함된 정식 배포물과 구분합니다. 실제 오프라인 배포는 위 `installer` 명령의 전체 가중치 검사를 통과해야 합니다. 검사 데이터의 실제 정확도, 모든 GPU/드라이버 조합은 CI 결과만으로 보장하지 않습니다.
 
-실행 결과와 남은 제한은 [검증 기록](03-analysis/project-generation-release.md)에 기록합니다.
+실제 Windows EXE·MSI 검사와 별도 Windows 환경의 설치본 재검사 모두 통과했습니다. 실행 결과와 확인 범위는 [완료 보고서](04-report/project-generation-release.report.md)와 [검증 기록](03-analysis/project-generation-release.md)에 기록합니다.
