@@ -35,7 +35,7 @@ def threads():
 def official(model_id):
     try:
         return builtin_asset_path(BUILTIN_BACKBONE_ASSETS[model_id])
-    except RuntimeError:
+    except FileNotFoundError:
         if os.environ.get("DVS_REQUIRE_SEGMENT_PRETRAINED") == "1":
             raise
         pytest.skip(

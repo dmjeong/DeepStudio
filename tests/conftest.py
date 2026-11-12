@@ -30,6 +30,29 @@ PYTHON_DIR = os.path.join(os.path.dirname(__file__), "..", "python")
 sys.path.insert(0, os.path.abspath(PYTHON_DIR))
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _retain_qt_application():
+    """Keep one QApplication alive across GUI fixtures, including on Windows.
+
+    Individual dialogs must not own/destruct the process-wide application.
+    Pure numerical environments that have not imported Qt remain Qt-free.
+    """
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    app = None
+    if widgets is not None:
+        app = widgets.QApplication.instance() or widgets.QApplication([])
+        app.setQuitOnLastWindowClosed(False)
+    yield app
+
+
+def pytest_runtest_logreport(report):
+    # Preserve the real first error even if a later native/Qt teardown exits
+    # before pytest can write its final summary or JUnit report.
+    if report.failed:
+        sys.__stderr__.write(f"\nFAILED {report.nodeid}\n{report.longreprtext}\n")
+        sys.__stderr__.flush()
+
+
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)
 def pytest_runtest_teardown(item, nextitem):
     """Finish deferred Qt destruction after *all* test fixture finalizers.

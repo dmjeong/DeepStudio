@@ -353,7 +353,8 @@ def test_distillation_same_view_ignore_labels_and_contract(tmp_path):
     reason="Official DINOv2 asset and native SDK required",
 )
 @pytest.mark.parametrize("channels", [1, 3])
-def test_dinomaly_train_export_int8_cpp_preview(channels, tmp_path):
+@pytest.mark.parametrize("patch_training", [True, False], ids=["tiles", "whole"])
+def test_dinomaly_train_export_int8_cpp_preview(channels, patch_training, tmp_path):
     import cv2
     from core.inference_loading import load_inference_engine
     from dense_deployment import predict_dense
@@ -385,7 +386,7 @@ def test_dinomaly_train_export_int8_cpp_preview(channels, tmp_path):
         in_channels=channels,
         epochs=1,
         batch_size=2,
-        patch_training=True,
+        patch_training=patch_training,
         patches_per_image=1,
         center_crop={"width": 80, "height": 64},
         log=lambda _: None,
@@ -441,7 +442,7 @@ def test_dinomaly_train_export_int8_cpp_preview(channels, tmp_path):
         assert process.returncode == 0, process.stderr
         actual = np.fromfile(target, np.float32).reshape(frame.shape[:2])
         truth = np.zeros(frame.shape[:2], np.float32)
-        truth[4:68, 5:85] = expected
+        truth[4:68, 5:85] = cv2.resize(expected, (80, 64), interpolation=cv2.INTER_LINEAR)
         np.testing.assert_allclose(actual, truth, atol=2e-5, rtol=2e-4, err_msg=config.name)
         info = json.loads(process.stdout.strip().splitlines()[-1])
         assert abs(info["score"] - float(expected.max())) < 2e-5

@@ -75,6 +75,8 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       MPLBACKEND: Agg
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
     defaults:
       run:
         working-directory: .

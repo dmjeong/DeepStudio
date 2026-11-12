@@ -922,8 +922,8 @@ def test_object_table_stays_readable_with_application_style(workspace):
     root = Path(__file__).resolve().parents[1]
     style = (
         (root / "gui/resources/styles/dark_theme.qss")
-        .read_text()
-        .replace("{ICON_DIR}", str(root / "gui/resources/icons"))
+        .read_text(encoding="utf-8")
+        .replace("{ICON_DIR}", (root / "gui/resources/icons").as_posix())
     )
     dialog.setStyleSheet(style)
     dialog._create_box([0.5, 0.5, 0.4, 0.4])

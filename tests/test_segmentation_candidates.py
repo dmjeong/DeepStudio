@@ -307,7 +307,9 @@ def test_official_pretrained_encoder_tensor_is_used(model_id, asset):
 
     try:
         path = builtin_asset_path(asset)
-    except RuntimeError:
+    except FileNotFoundError:
+        if os.environ.get("DVS_REQUIRE_SEGMENT_PRETRAINED") == "1":
+            raise
         pytest.skip(
             "Official backbone file not installed; build-time download smoke covers this separately"
         )

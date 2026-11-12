@@ -66,6 +66,9 @@ INT8은 출력 검증을 켜고 **실제 보정 영상 폴더**를 지정한다.
 고정 타일 배포는 JSON **schema 8**이다. 예전 SDK는 지원 버전 오류를 낼 수 있다.
 ONNX와 JSON을 같이 교체하고 `cpp/include`, `cpp/src` 전체로 런타임을 다시 빌드한다.
 새 파일 `dense_tiles.h`를 빠뜨리지 않는다. JSON의 타일 크기를 임의로 바꾸지 않는다.
+Python과 C++은 배포 검증에 사용하는 **ONNX Runtime 1.29.0**으로 맞춘다.
+다른 버전의 DLL로 바꾸면 같은 INT8 파일이라도 실행 커널이 달라질 수 있으므로 실제 검사 영상으로 다시 비교한다.
+Dinomaly FP32 및 고정 타일 INT8 JSON에는 내보내기에 쓴 Runtime 버전도 기록한다.
 
 [인자 없는 C++ 예제](../example/cpp/dense_models/README.ko.md)는 초기화·워밍업 후 `Segment(image)` 또는 `Anomaly(image)`를 호출한다.
 FP32/INT8 호출 코드는 같다. 암호화 파일은 `InitializeFromPackage`로 연다.
