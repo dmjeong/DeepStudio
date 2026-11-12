@@ -295,23 +295,39 @@ if(WIN32)
     if(NOT VISION_ORT_DLL)
         message(FATAL_ERROR "Matching onnxruntime.dll not found beside the selected ONNX Runtime SDK library.")
     endif()
+
+    # All native binaries share their configuration directory. Deploy once
+    # before linking: per-target POST_BUILD copies race with parallel copies
+    # and vcpkg's app-local dependency reader (Windows denies open DLL writes).
+    set(_vision_runtime_dir "${CMAKE_CURRENT_BINARY_DIR}")
+    if(CMAKE_CONFIGURATION_TYPES)
+        string(APPEND _vision_runtime_dir "/$<CONFIG>")
+    endif()
+    set(_vision_runtime_files "${VISION_ORT_DLL}")
+    foreach(_opencv_target IN LISTS OpenCV_LIBS)
+        if(TARGET ${_opencv_target})
+            get_target_property(_opencv_type ${_opencv_target} TYPE)
+            if(_opencv_type STREQUAL "SHARED_LIBRARY")
+                list(APPEND _vision_runtime_files "$<TARGET_FILE:${_opencv_target}>")
+            endif()
+        endif()
+    endforeach()
+    add_custom_target(vision_runtime_dlls
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_vision_runtime_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${_vision_runtime_files} "${_vision_runtime_dir}"
+        VERBATIM)
     get_property(_vision_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     foreach(_target IN LISTS _vision_targets)
         get_target_property(_type ${_target} TYPE)
         if(_type STREQUAL "EXECUTABLE" OR _type STREQUAL "SHARED_LIBRARY")
-            add_custom_command(TARGET ${_target} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VISION_ORT_DLL}"
-                    "$<TARGET_FILE_DIR:${_target}>/onnxruntime.dll")
-            foreach(_opencv_target IN LISTS OpenCV_LIBS)
-                if(TARGET ${_opencv_target})
-                    get_target_property(_opencv_type ${_opencv_target} TYPE)
-                    if(_opencv_type STREQUAL "SHARED_LIBRARY")
-                        add_custom_command(TARGET ${_target} POST_BUILD
-                            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                                "$<TARGET_FILE:${_opencv_target}>" "$<TARGET_FILE_DIR:${_target}>")
-                    endif()
-                endif()
+            set_target_properties(${_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${_vision_runtime_dir}")
+            foreach(_config IN LISTS CMAKE_CONFIGURATION_TYPES)
+                string(TOUPPER "${_config}" _config_upper)
+                set_target_properties(${_target} PROPERTIES
+                    "RUNTIME_OUTPUT_DIRECTORY_${_config_upper}" "${_vision_runtime_dir}")
             endforeach()
+            add_dependencies(${_target} vision_runtime_dlls)
         endif()
     endforeach()
 endif()
