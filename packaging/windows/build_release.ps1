@@ -59,7 +59,7 @@ trap {
         # WiX and signtool can leave a partial MSI/EXE behind.  Never let a
         # failed build be mistaken for a usable installer artifact.
         foreach ($artifact in @($msi, $setup)) {
-            if (Test-Path -LiteralPath $artifact -PathType Leaf) {
+            if (-not [string]::IsNullOrWhiteSpace($artifact) -and (Test-Path -LiteralPath $artifact -PathType Leaf)) {
                 Remove-Item -LiteralPath $artifact -Force -ErrorAction SilentlyContinue
             }
         }
@@ -79,7 +79,9 @@ New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 $collector = Join-Path $scriptRoot "collect_payloads.py"
 $validator = Join-Path $scriptRoot "validate_payloads.py"
-python $collector $root --manifest $manifest --version $Version --commit $env:GITHUB_SHA
+$commitArgs = @()
+if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_SHA)) { $commitArgs = @("--commit", $env:GITHUB_SHA) }
+python $collector $root --manifest $manifest --version $Version @commitArgs
 if ($LASTEXITCODE -ne 0) { throw "Payload manifest collection failed." }
 if ($Simple) {
     $simpleStager = Join-Path $scriptRoot "stage_simple_payload.py"

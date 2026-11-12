@@ -22,7 +22,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $app "DeepVisionStudio.exe") -PathTy
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $versionFile = Join-Path $repoRoot "gui\core\version.py"
-    $rawVersion = (& python -c "import runpy; print(runpy.run_path(r'$versionFile')['APP_VERSION'])").Trim()
+    $rawVersion = (& python -c "import runpy,sys; print(runpy.run_path(sys.argv[1])['APP_VERSION'])" $versionFile).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Could not read gui/core/version.py." }
     $Version = $rawVersion
 }
@@ -43,17 +43,21 @@ $stager = Join-Path $scriptRoot "stage_simple_payload.py"
 if ($LASTEXITCODE -ne 0) { throw "Minimal installer payload staging failed." }
 
 $release = Join-Path $scriptRoot "build_release.ps1"
-$releaseArgs = @(
-    "-PayloadRoot", $payload,
-    "-Version", $Version,
-    "-OutputDirectory", $output,
-    "-WixVersion", $WixVersion,
-    "-Simple"
-)
-if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
-    $releaseArgs += @("-CertificatePath", $CertificatePath, "-CertificatePassword", $CertificatePassword,
-                      "-SignToolPath", $SignToolPath, "-TimestampUrl", $TimestampUrl)
+# Array splatting into a PowerShell script passes these strings positionally.
+# Use named parameters so paths are not mistaken for parameter names/versions.
+$releaseArgs = @{
+    PayloadRoot = $payload
+    Version = $Version
+    OutputDirectory = $output
+    WixVersion = $WixVersion
+    Simple = $true
 }
-if ($RequireSignature) { $releaseArgs += "-RequireSignature" }
+if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
+    $releaseArgs.CertificatePath = $CertificatePath
+    $releaseArgs.CertificatePassword = $CertificatePassword
+    $releaseArgs.SignToolPath = $SignToolPath
+    $releaseArgs.TimestampUrl = $TimestampUrl
+}
+if ($RequireSignature) { $releaseArgs.RequireSignature = $true }
 & $release @releaseArgs
 if ($LASTEXITCODE -ne 0) { throw "Minimal installer build failed." }

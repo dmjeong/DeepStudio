@@ -177,7 +177,7 @@ def test_simple_installer_build_path_is_explicit_and_skips_model_catalog():
     assert "stage_simple_payload.py" in release
     assert "--skip-model-catalog" in release
     assert "stage_simple_payload.py" in simple
-    assert "-Simple" in simple
+    assert "Simple = $true" in simple
     assert '"installer"' in batch
     assert "build_simple_installer.ps1" in batch
     assert "--skip-model-catalog" in validator
