@@ -91,6 +91,10 @@ def test_release_collects_and_validates_payload_without_github_environment(tmp_p
     compiler = tmp_path / "compiler.ps1"
     compiler.write_text('''
 ConvertTo-Json -InputObject @($args) -Compress | Add-Content (Join-Path $PSScriptRoot "compiler-calls.jsonl")
+if ($args[0] -eq "extension" -and $args[1] -eq "list") {
+    $global:LASTEXITCODE = 2
+    return
+}
 if ($args[0] -eq "--version") {
     Write-Output "5.0.2"
 } else {

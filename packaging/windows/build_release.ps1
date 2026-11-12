@@ -85,8 +85,15 @@ $utilExtension = "WixToolset.Util.wixext/$WixVersion"
 $bootstrapperExtension = "WixToolset.BootstrapperApplications.wixext/$WixVersion"
 foreach ($extension in @($utilExtension, $bootstrapperExtension)) {
     $cached = & $wix.Source extension list --global $extension 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "WiX extension cache inspection failed: $extension ($cached)" }
-    if ([string]::IsNullOrWhiteSpace(($cached -join "`n"))) {
+    $cacheExit = $LASTEXITCODE
+    $cacheText = ($cached -join "`n").Trim()
+    # WiX returns 2 (not 0) when the requested extension is not cached yet.
+    # An actual diagnostic, EULA error, or other failure must still stop here.
+    $cacheMissing = $cacheExit -eq 2 -and [string]::IsNullOrWhiteSpace($cacheText)
+    if ($cacheExit -ne 0 -and -not $cacheMissing) {
+        throw "WiX extension cache inspection failed ($cacheExit): $extension ($cacheText)"
+    }
+    if ([string]::IsNullOrWhiteSpace($cacheText) -or $cacheText -match '\(damaged\)') {
         & $wix.Source extension add --global $extension
         if ($LASTEXITCODE -ne 0) { throw "WiX extension download failed: $extension" }
     }

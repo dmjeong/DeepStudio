@@ -287,8 +287,33 @@ jobs:
           pwsh packaging/windows/build_simple_installer.ps1 -AppRoot $app -ExternalPayload `
             -OutputDirectory (Join-Path $env:RUNNER_TEMP "installer-toolchain-external") -Version 1.0.0
           if ($LASTEXITCODE -ne 0) { throw "External cabinet/ZIP toolchain smoke failed" }
+      - name: Install and uninstall both real Setup layouts
+        shell: pwsh
+        run: |
+          $single = Join-Path $env:RUNNER_TEMP "installer-toolchain-release"
+          $external = Join-Path $env:RUNNER_TEMP "installer-toolchain-external"
+          $relocated = Join-Path $env:RUNNER_TEMP "relocated-offline-installer"
+          Expand-Archive -LiteralPath (Join-Path $external "DeepVisionStudio-Offline-1.0.0-win-x64.zip") -DestinationPath $relocated
+          Remove-Item -Recurse -Force $external
+          foreach ($folder in @($single, $relocated)) {
+            $setup = Join-Path $folder "DeepVisionStudio-Setup-1.0.0-win-x64.exe"
+            try {
+              $process = Start-Process -FilePath $setup -ArgumentList @("/quiet", "/norestart", "/log", (Join-Path $folder "install.log")) -PassThru -Wait
+              if ($process.ExitCode -notin @(0, 3010)) {
+                Get-Content (Join-Path $folder "install.log") -Tail 50
+                throw "Setup install failed: $($process.ExitCode)"
+              }
+              $installed = Join-Path $env:ProgramFiles "DeepVisionStudio\app\DeepVisionStudio.exe"
+              $expected = (Get-FileHash "$env:WINDIR\System32\where.exe").Hash
+              if ((Get-FileHash $installed).Hash -ne $expected) { throw "Installed payload mismatch" }
+            } finally {
+              $process = Start-Process -FilePath $setup -ArgumentList @("/uninstall", "/quiet", "/norestart") -PassThru -Wait
+              if ($process.ExitCode -notin @(0, 3010)) { throw "Setup uninstall failed: $($process.ExitCode)" }
+            }
+          }
 
   wix-installer-contract:
+    needs: payload-contracts
     # The C++ ABI is built with the Visual Studio 2022 generator. Pin the image
     # instead of following windows-latest when GitHub changes its VS toolchain.
     runs-on: windows-2022
