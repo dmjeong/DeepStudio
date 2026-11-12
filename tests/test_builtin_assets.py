@@ -8,6 +8,26 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
+
+def test_windows_same_size_and_timestamp_rewrite_is_rehashed(tmp_path, monkeypatch):
+    import builtin_assets
+
+    target = tmp_path / "weights.pt"
+    target.write_bytes(b"official")
+    (tmp_path / "manifest.json").write_text(json.dumps({"schema_version": 1, "files": {
+        target.name: {"sha256": hashlib.sha256(b"official").hexdigest(), "bytes": 8},
+    }}), encoding="utf-8")
+    # Reproduce the Windows metadata collision deterministically on every OS.
+    frozen_stat, real_stat = target.stat(), Path.stat
+    monkeypatch.setattr(Path, "stat", lambda path, *a, **kw: frozen_stat if path == target else real_stat(path, *a, **kw))
+    monkeypatch.setattr(builtin_assets, "sys", types.SimpleNamespace(platform="win32"))
+    builtin_assets._verify(target, tmp_path, target.name, target.name)
+    target.write_bytes(b"tampered")
+    with pytest.raises(RuntimeError, match="무결성"):
+        builtin_assets._verify(target, tmp_path, target.name, target.name)
+
 
 def test_packaged_asset_requires_manifest_hash_and_never_downloads(tmp_path, monkeypatch):
     import builtin_assets

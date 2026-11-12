@@ -195,7 +195,7 @@ def _sha256(path: Path) -> str:
     return digestor.hexdigest()
 
 
-_VERIFIED: dict = {}  # (경로, 크기, 수정 시각) → 이미 검증함 (큰 SAM2 파일을 매번 해시하지 않는다)
+_VERIFIED: dict = {}  # Stable POSIX file identity/metadata -> verified digest.
 
 
 def _check_file(path: Path, expected_name: str) -> None:
@@ -231,16 +231,22 @@ def _verify(path: Path, root: Path, relative: str, expected_name: str) -> None:
     """manifest 항목이 있으면 SHA-256이 같아야 하고(빌드한 묶음·가져온 파일), 없으면 파일 자체를 확인한다."""
     stat = path.stat()
     entry = _manifest_entry(root, relative)
-    key = (str(path), stat.st_size, stat.st_mtime_ns, json.dumps(entry, sort_keys=True))
-    if key in _VERIFIED:
+    key = (str(path), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns,
+           stat.st_ctime_ns, json.dumps(entry, sort_keys=True))
+    # Windows can retain the same mtime on rapid same-size writes; ctime is
+    # creation time there, not inode change time. Stat-only cache hits are not
+    # proof of unchanged bytes. Rehash on Windows instead of trusting that hit.
+    # This runs when resolving pretrained assets, never per inference image.
+    cacheable = sys.platform != "win32"
+    if cacheable and key in _VERIFIED:
         return
-    entry = _manifest_entry(root, relative)
     if entry is not None:
         if _sha256(path) != entry["sha256"] or entry.get("bytes", stat.st_size) != stat.st_size:
             raise RuntimeError(f"기본 모델 가중치 무결성 검증 실패: {relative}. 파일을 다시 받아 주세요.")
     else:
         _check_file(path, expected_name)
-    _VERIFIED[key] = True
+    if cacheable:
+        _VERIFIED[key] = True
 
 
 def official_torchvision_url(model_id: str) -> str | None:
