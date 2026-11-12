@@ -49,6 +49,12 @@ def test_desktop_process_review_publish_restore(tmp_path, monkeypatch):
         wait()
         assert seg.profiles.count() == 1
         assert seg.classes.item(0, 1).text() == "1"
+        seg.variation_inputs["size_min"].setValue(250)
+        seg.variation_mode.setCurrentIndex(seg.variation_mode.findData("reference"))
+        assert not seg.variation_inputs["size_min"].isEnabled()
+        assert seg.variation()["size_min"] == seg.variation()["size_max"] == 1
+        seg.variation_mode.setCurrentIndex(seg.variation_mode.findData("new_shape"))
+        assert seg.variation_inputs["size_min"].value() == 250
         seg.variation_inputs["size_min"].setValue(80)
         seg.variation_inputs["size_max"].setValue(180)
         seg.variation_inputs["strength_min"].setValue(40)

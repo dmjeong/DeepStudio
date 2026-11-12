@@ -519,16 +519,19 @@ class SegmentationSynthesisWidget(QWidget):
         self.shape_amount.setEnabled(enabled)
 
     def variation(self):
-        return variation_settings(
-            {
-                "mode": self.variation_mode.currentData(),
-                **{
-                    key: spin.value() / 100
-                    for key, spin in self.variation_inputs.items()
-                },
-                "shape_amount": self.shape_amount.value() / 100,
-            }
-        )
+        settings = {
+            "mode": self.variation_mode.currentData(),
+            **{
+                key: spin.value() / 100
+                for key, spin in self.variation_inputs.items()
+            },
+            "shape_amount": self.shape_amount.value() / 100,
+        }
+        if settings["mode"] == "reference":
+            # Disabled geometry controls must not prevent strength-only
+            # generation (e.g. an unfinished min/max edit in another mode).
+            settings.update(size_min=1.0, size_max=1.0, shape_amount=0.0)
+        return variation_settings(settings)
 
     def generate(self, preview=False):
         key = self.profiles.currentData()
