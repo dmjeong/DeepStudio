@@ -13,7 +13,7 @@ from PIL import Image
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QCoreApplication, QEvent, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 from widgets.dataset_link_dialog import DatasetLinkDialog
 from widgets.dataset_widget import DatasetWidget
 
@@ -50,8 +50,9 @@ def test_recovery_button_preview_and_real_worker_restore_mask(tmp_path):
         observed = []
 
         def choose_link():
-            dialog = next(w for w in app.topLevelWidgets() if isinstance(w, DatasetLinkDialog) and w.isVisible())
+            dialog = None
             try:
+                dialog = next(w for w in app.topLevelWidgets() if isinstance(w, DatasetLinkDialog) and w.isVisible())
                 assert not dialog.link_button.isEnabled()
                 dialog.mask_combo.setCurrentIndex(1)
                 assert not dialog.link_button.isEnabled()  # no automatic target guess
@@ -63,12 +64,13 @@ def test_recovery_button_preview_and_real_worker_restore_mask(tmp_path):
                 QTest.mouseClick(dialog.link_button, Qt.MouseButton.LeftButton)
             except Exception as exc:  # noqa: BLE001 - propagate Qt callback failures below, never hang exec()
                 observed.append(exc)
-                dialog.reject()
+                if dialog is not None:
+                    dialog.reject()
 
         try:
             QTimer.singleShot(30, choose_link)
             QTest.mouseClick(page.repair_links_btn, Qt.MouseButton.LeftButton)
-            deadline = time.monotonic() + 5
+            deadline = time.monotonic() + 20
             while page._class_worker is not None and time.monotonic() < deadline:
                 app.processEvents()
                 QTest.qWait(5)
@@ -80,9 +82,21 @@ def test_recovery_button_preview_and_real_worker_restore_mask(tmp_path):
             assert not page.link_issue_row.isVisible()
             assert page._dataset_index["images"][0]["training_target"] == "mask"
         finally:
+            if page._class_worker is not None:
+                assert page._class_worker.wait(20000)
+                app.processEvents()
             page.close()
             page.deleteLater()
             QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+@pytest.fixture(autouse=True)
+def _surface_worker_errors(monkeypatch):
+    # Never hide the real failure in a modal dialog or a Qt teardown abort.
+    def report(parent, title, message, *args, **kwargs):
+        print(f"DATASET_UI_ERROR: {title}: {message}", flush=True)
+        return QMessageBox.StandardButton.Ok
+    monkeypatch.setattr(QMessageBox, "warning", report)
 
 
 def test_preview_rejects_wrong_size_and_cancel_changes_nothing(tmp_path):

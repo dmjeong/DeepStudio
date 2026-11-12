@@ -127,6 +127,8 @@ jobs:
           python tools/detection_layout_smoke.py
       - name: Record environment
         run: python -m pip freeze > test-environment.txt
+      - name: Verify image rename recovery through the actual Qt worker
+        run: python -m pytest -q -s tests/test_dataset_link_ui.py
       - name: Capture and verify real training UI with synthetic projects
         run: python tools/training_ui_proof.py
       - name: Check Windows layout, image processing and synthesis before the model matrix

@@ -777,7 +777,12 @@ def test_dense_cpp_multitile_crop_scale_and_no_arguments(task, tmp_path):
         shutil.copy2(artifact, folder / artifact.name)
     binary = folder / example.name
     shutil.copy2(example, binary)
-    # Windows DLL lookup also uses the original executable directory.
+    # Deploy the runtime as well as the EXE. System32 precedes PATH and may
+    # contain an incompatible Microsoft onnxruntime.dll (access violation).
+    if os.name == "nt":
+        assert (example.parent / "onnxruntime.dll").is_file()
+        for library in example.parent.glob("*.dll"):
+            shutil.copy2(library, folder / library.name)
     environment = {
         **os.environ,
         "PATH": str(example.parent) + os.pathsep + os.environ.get("PATH", ""),

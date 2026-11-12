@@ -182,6 +182,11 @@ def build():
         "--name", APP_NAME,
         "--windowed",                    # 콘솔 창 없이 실행 (GUI)
         "--noconfirm",                   # 기존 빌드 덮어쓰기
+        # This is a new interpreter: the sys.path edits above do not reach
+        # PyInstaller's Analysis. Include dynamic model imports, not just .py data.
+        "--paths", GUI_DIR,
+        "--paths", PYTHON_DIR,
+        "--paths", PROJECT_ROOT,
         "--additional-hooks-dir", os.path.join(GUI_DIR, "pyinstaller_hooks"),
 
         # 아이콘 (있으면)
