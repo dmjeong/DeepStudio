@@ -15,7 +15,10 @@
 - 같은 복구 환경에서 EoMT DINOv2-S 1/3채널 공식 사전학습·FP32/INT8·C++·암호화·원본 좌표 통합도 **2 passed**.
 - rename/relink 실패 시 이미지·마스크·프로젝트 전체 복원. 기존 정답 충돌, 다른 확장자 이름 중복, Windows 예약 이름, 잘못된 크기·클래스·분할 거부. 기존 PNG 메타데이터/픽셀 및 동반 폴리곤 바이트 보존.
 
-전체 회귀 및 Windows CI 결과는 완료 후 기록한다. Windows CI에 timm을 제거한 뒤 배포 배치로 실제 복구하는 단계도 추가했다.
+- 전체 로컬 회귀(`bf448e5`): **1,624 passed, 78 skipped**, 정상 종료. 마지막 대소문자 이름 충돌·실패 복구 보강은 데이터셋 편집/실제 UI **34 passed**로 별도 확인했다.
+- CI와 동일한 E/F/W 린트, 신규 모듈 Ruff, `git diff --check` 통과. 복구 창을 실제 렌더링해 원본 위 정답과 경로·버튼 표시를 확인했다.
+
+Windows/Linux CI: [43139413048](https://github.com/dmjeong/DeepStudio/actions/runs/43139413048). 기록 시 실행 중이며 아직 전체 통과로 간주하지 않는다. Windows CI에 timm을 제거한 뒤 배포 배치로 실제 복구하는 단계도 추가했다.
 
 ## 범위
 

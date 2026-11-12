@@ -141,7 +141,7 @@ def test_relink_rejects_wrong_mask_without_losing_source(data, bad):
     assert mask.read_bytes() == before
 
 
-@pytest.mark.parametrize("operation", ["rename", "relink"])
+@pytest.mark.parametrize("operation", ["rename", "relink", "case_only"])
 def test_write_failure_restores_all_paths_and_project(data, operation):
     project, image, mask, _ = data
     if operation == "relink":
@@ -149,12 +149,21 @@ def test_write_failure_restores_all_paths_and_project(data, operation):
     before = {str(p): p.read_bytes() for p in Path(project.project_dir).rglob("*") if p.is_file()}
     with (patch.object(EditTransaction, "finish", side_effect=OSError("disk full")),
           pytest.raises(OSError, match="disk full")):
-        if operation == "rename":
-            rename_image(project, image, "new")
+        if operation in {"rename", "case_only"}:
+            rename_image(project, image, "OLD" if operation == "case_only" else "new")
         else:
             relink_mask(project, image, mask)
     after = {str(p): p.read_bytes() for p in Path(project.project_dir).rglob("*") if p.is_file()}
     assert after == before
+
+
+def test_unlabeled_image_cannot_be_renamed_onto_unrelated_case_variant_mask(data):
+    project, image, mask, _ = data
+    new_image = image.with_stem("background")
+    Image.new("RGB", (32, 24)).save(new_image)
+    with pytest.raises(FileExistsError):
+        rename_image(project, new_image, "OLD")
+    assert new_image.exists() and mask.exists()
 
 
 def test_detection_rename_keeps_box_label(tmp_path):

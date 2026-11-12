@@ -71,7 +71,15 @@ def _apply_moves(project, action, moves):
                 tx.copy(source, target, move=True)
         tx.finish()
     except BaseException:
-        tx.rollback()
+        # WindowsPath treats case-only names as the same journal key. Remove
+        # the alias we created before restoring the original spelling.
+        try:
+            for source, target in moves:
+                if (str(source) != str(target) and str(source).casefold() == str(target).casefold()
+                        and tx.paths.get(source) is not None and target.exists()):
+                    target.unlink()
+        finally:
+            tx.rollback()
         raise
     return {"changed": 1, "backup_path": str(tx.backup), "path": str(moves[-1][1])}
 
@@ -87,6 +95,14 @@ def rename_image(project, path, new_stem, split="train"):
     related = sidecars(project, image, split)
     # Reserve the destination even if this image currently has no annotation.
     occupied = sidecars(project, target, split)
+    if project.task in {"detect", "segment", "obb"}:
+        root = split_root(project, split)
+        base = root.parent.parent if root.parent.name == "images" else Path(project.data.root)
+        for kind in (("labels", "masks") if project.task == "segment" else ("labels",)):
+            directory = _plain_path(base / kind / split / target.relative_to(root).parent)
+            if directory.is_dir():
+                occupied.extend((kind, p) for p in directory.iterdir()
+                                if p.stem.casefold() == target.stem.casefold())
     if any(path not in [p for _, p in related] for _, path in occupied):
         raise FileExistsError("새 이름에 이미 정답 파일이 있습니다.")
     moves = [(path, path.with_stem(new_stem)) for _, path in related]
