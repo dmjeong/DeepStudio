@@ -65,6 +65,24 @@ def pytest_runtest_teardown(item, nextitem):
     yield
     qt = sys.modules.get("PySide6.QtCore")
     if qt is not None and qt.QCoreApplication.instance() is not None:
+        # Several legacy GUI fixtures queue deleteLater immediately after
+        # close(), while close() is still saving the draft asynchronously.
+        # In an offscreen test we must finish those IO threads before draining
+        # deferred deletion; otherwise Windows aborts the entire test process.
+        writers = sys.modules.get("widgets.annotation_io")
+        widgets = sys.modules.get("PySide6.QtWidgets")
+        if writers is not None and widgets is not None:
+            for _ in range(4):
+                running = [
+                    worker for window in widgets.QApplication.topLevelWidgets()
+                    for worker in window.findChildren(writers.AnnotationWrite)
+                    if worker.isRunning()
+                ]
+                for worker in running:
+                    assert worker.wait(10000), "Annotation draft IO did not finish before GUI teardown"
+                qt.QCoreApplication.sendPostedEvents(None, qt.QEvent.Type.MetaCall)
+                if not running:
+                    break
         qt.QCoreApplication.sendPostedEvents(None, qt.QEvent.Type.DeferredDelete)
 
 
