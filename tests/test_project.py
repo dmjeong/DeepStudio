@@ -167,3 +167,13 @@ class TestDefaults:
         assert tc.optimizer == "adamw"
         assert tc.scheduler == "cosine"
         assert tc.use_amp is True
+
+
+@pytest.mark.parametrize("criterion", ["mAP_50", "val_loss"])
+def test_legacy_upstream_detector_normalizes_unsupported_best_criterion(tmp_path, criterion):
+    project = ProjectManager.create_new("detect", "detect", str(tmp_path), ["crack"])
+    project.training.training_mode = "upstream_scratch"
+    project.training.selection_metric = criterion
+    loaded = ProjectManager.load(ProjectManager.save(project))
+    assert loaded.training.selection_metric == "engine_default"
+    assert loaded.training.training_mode == "upstream_scratch"

@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -137,12 +138,54 @@ def test_small_object_coverage_preserves_full_box_and_validation(tmp_path):
         }
 
 
+def test_resume_matches_the_actual_best_checkpoint_and_validation(tmp_path):
+    pytest.importorskip("libreyolo")
+    from native_detection_training import _resume_best_checkpoint
+
+    trainer = SimpleNamespace(best_epoch=2, best_mAP50_95=.4)
+    saved = {"epoch": 4, "best_epoch": 2, "best_metric_value": .4, "task": "detect",
+             "model_family": "yolo9", "size": "t", "nc": 1, "names": {0: "crack"}, "imgsz": 640}
+    current = tmp_path / "last.pt"
+    best = tmp_path / "best_mAP_50_95_0.4_epoch_2.pt"
+    report = {"epoch": 2, "metrics": {"mAP_50_95": .4}, "per_class": []}
+    best_data = {**saved, "epoch": 1, "studio_validation": report}
+    torch.save({**best_data, "epoch": 3}, best)
+    assert _resume_best_checkpoint(current, saved, trainer) == (None, None)
+    torch.save(best_data, best)
+    assert _resume_best_checkpoint(current, saved, trainer) == (best, report)
+    torch.save(best_data, tmp_path / "best_other_epoch_2.pt")
+    assert _resume_best_checkpoint(current, saved, trainer) == (None, None)
+    assert _resume_best_checkpoint(best, best_data, trainer) == (best, report)
+
+
+def test_native_operating_point_uses_the_coco_validator_predictions_and_images():
+    pytest.importorskip("libreyolo")
+    from native_detection_training import _operating_point_from_coco
+
+    truth = {"category_id": 7, "bbox": [10, 20, 5, 7]}
+    evaluator = SimpleNamespace(
+        _img_ids={2, 3, 4}, label_to_category_id={0: 7, 1: 9},
+        coco_gt=SimpleNamespace(imgToAnns={1: [truth], 2: [truth], 3: [truth]}),
+        results=[{**truth, "image_id": 2, "score": .9}, {**truth, "image_id": 2, "score": .8},
+                 {**truth, "image_id": 3, "score": .2}, {**truth, "image_id": 4, "score": .5, "category_id": 9}],
+    )
+    point = _operating_point_from_coco(evaluator, ["crack", "FM"])
+    assert (point["detection_tp"], point["detection_fp"], point["detection_fn"]) == (1, 2, 1)
+    assert point["precision"] == pytest.approx(1/3) and point["recall"] == .5
+    assert point["per_class"][1]["fp"] == 1 and point["per_class"][1]["recall"] is None
+    evaluator.results.clear()
+    empty = _operating_point_from_coco(evaluator, ["crack", "FM"])
+    assert empty["detection_support"] == empty["detection_fn"] == 2
+    assert empty["precision"] == empty["recall"] == 0
+
+
 @pytest.mark.parametrize("model_id", ["libreyolo_detect_9t", "re_detr_v4_small", "libreyolo_detect_dfine_nano"])
 def test_real_detector_training_settings_and_export(tmp_path, model_id):
     pytest.importorskip("libreyolo")
     from export_onnx import export_checkpoint
     from native_detection_training import train_detector
     from upstream_models import (
+        _ProgressCallback,
         build_upstream_model,
         load_upstream_checkpoint,
         write_detection_dataset_yaml,
@@ -155,14 +198,27 @@ def test_real_detector_training_settings_and_export(tmp_path, model_id):
     model = build_upstream_model(model_id, num_classes=2, device="cpu")
     from native_detection import DetectorValidationTransform
     assert isinstance(model._get_val_preprocessor(), DetectorValidationTransform)
+    events = []
     result = train_detector(model, data=str(data), augmentation=ZERO, patches=contract,
         small_object_coverage=True, train_patch_limit=1,
         epochs=1, batch=2, imgsz=640, workers=0, device="cpu", project=str(tmp_path), name="train",
-        exist_ok=True, amp=False, val_loss=True, eval_interval=1, seed=1, cuda_graph=False)
+        exist_ok=True, amp=False, val_loss=True, eval_interval=1, seed=1, cuda_graph=False,
+        callbacks=_ProgressCallback(events.append))
     saved = torch.load(result["best_checkpoint"], map_location="cpu", weights_only=False)
     assert saved["studio_augmentation"] == ZERO and saved["studio_patches"] == contract
     assert result["small_object_coverage"] and saved["studio_small_object_coverage"]
     assert saved["studio_train_patch_limit"] == 1
+    validation = saved["studio_validation"]
+    metrics = validation["metrics"]
+    assert result["best_validation"] == validation and validation["epoch"] == 1
+    assert metrics["mAP_50_95"] == result["best_metric"] == result["best_mAP50_95"]
+    assert metrics["detection_support"] == 1
+    assert metrics["detection_tp"] + metrics["detection_fn"] == 1
+    assert validation["per_class"][1]["support"] == 0 and validation["per_class"][1]["recall"] is None
+    epoch = next(event for event in events if event["event"] == "epoch_finished")
+    assert epoch["epoch"] == epoch["best_epoch"] == 1
+    assert epoch["metric_name"] == "mAP_50_95" and epoch["metrics"]["precision"] == metrics["precision"]
+    assert epoch["detection_per_class"] == validation["per_class"]
     if model_id == "libreyolo_detect_9t":
         resume = build_upstream_model(model_id, num_classes=2, device="cpu",
                                      weights=result["last_checkpoint"])

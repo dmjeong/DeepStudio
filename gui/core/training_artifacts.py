@@ -156,6 +156,7 @@ def publish_best(checkpoint, run_dir, history, *, epoch, metric, value,
     if not rows:
         rows = [{"epoch": epoch}]
     best_row = None
+    inherited = False
     for row in rows:
         row_epoch = int(float(row["epoch"]))
         row.update(by_epoch.get(row_epoch, {}))
@@ -175,12 +176,14 @@ def publish_best(checkpoint, run_dir, history, *, epoch, metric, value,
     if best_row is None:
         best_row = {"epoch": epoch, "is_best": 1, "selection_metric": metric,
                     "selection_direction": direction, "selection_value": value, **csv_context}
-        rows.insert(0, best_row.copy())
+        inherited = True
     best_row["checkpoint"] = named.name
     from core.best_metrics import scalar_metrics
     best_metrics = scalar_metrics({**(evaluation_metrics or {}), **by_epoch.get(epoch, {}),
                                    **({metric: value} if metric != "unavailable" else {})})
     best_row.update(best_metrics)
+    if inherited:
+        rows.insert(0, best_row)
     _write_csv(csv_path, rows)
     _write_csv(run_dir / "best_result.csv", [best_row])
     details = {"epoch": epoch, "metric": metric, "value": value, "direction": direction,

@@ -6,9 +6,9 @@ import numpy as np
 EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff'}
 
 
-def image_files(root):
+def image_files(root, *, extensions=EXTENSIONS):
     root = Path(root)
-    return sorted(p for p in root.rglob('*') if p.is_file() and p.suffix.lower() in EXTENSIONS
+    return sorted(p for p in root.rglob('*') if p.is_file() and p.suffix.lower() in extensions
                   and not any(part.startswith('.') for part in p.relative_to(root).parts))
 
 
@@ -143,7 +143,7 @@ def read_spatial_labels(path, task, num_classes):
     return rows
 
 
-def validate_spatial_dataset(root, task, num_classes):
+def validate_spatial_dataset(root, task, num_classes, *, extensions=EXTENSIONS):
     root = Path(root)
     if num_classes < 1:
         raise ValueError('검출/분할 클래스 목록 필요')
@@ -151,7 +151,7 @@ def validate_spatial_dataset(root, task, num_classes):
     seen = set()
     for split in ('train', 'val'):
         image_root, label_root = root / 'images' / split, root / 'labels' / split
-        images = image_files(image_root)
+        images = image_files(image_root, extensions=extensions)
         if not images:
             raise ValueError(f'{split} 이미지 없음: {image_root}')
         if not label_root.is_dir():

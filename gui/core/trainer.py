@@ -1073,7 +1073,7 @@ class TrainWorker(TrainingEngine):
         각 태스크별 적절한 메트릭을 계산하여 반환:
         - classify: accuracy, precision, recall, f1
         - segment: mIoU, dice, pixel accuracy
-        - detect: val_loss (전체 mAP는 학습 후 종합 평가에서)
+        - detect: mAP, 고정 점수·IoU에서의 Precision/Recall
         - anomaly: recon_loss, auroc (테스트셋 있을 때)
         """
         model.eval()
@@ -1171,11 +1171,12 @@ class TrainWorker(TrainingEngine):
                 "val_loss": avg_loss,
             }
         elif task == "detect":
+            operating_point = meter.operating_point()
+            operating_point.pop("per_class")
             metrics = {
                 "mAP_50": computed.get("mAP_50", 0.0),
                 "mAP_50_95": computed.get("mAP_50_95", 0.0),
-                "precision": computed.get("precision", 0.0),
-                "recall": computed.get("recall", 0.0),
+                **operating_point,
                 "val_loss": avg_loss,
             }
         elif task == "anomaly":
@@ -1249,6 +1250,14 @@ class TrainWorker(TrainingEngine):
                 meter.update(scores, labels)
 
         results = meter.compute()
+        if task == "detect":
+            operating_point = meter.operating_point()
+            for row, counts in zip(results["per_class"], operating_point.pop("per_class")):
+                row.update(counts)
+            results.update(operating_point)
+            results["detection_evaluation"] = {"unit": "image", "split": "val", "protocol": "voc11",
+                                               "confidence": operating_point["detection_confidence"],
+                                               "iou": operating_point["detection_iou"]}
 
         # 로그 출력
         self.signals.log_message.emit("  ─── 종합 평가 결과 ───")

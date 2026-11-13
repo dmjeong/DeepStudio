@@ -263,6 +263,12 @@ def _train_upstream_project(context, project, device):
                                        input_size=cfg.input_size, project_dir=project.project_dir)
     run_dir = Path(project.project_dir) / "runs" / run_id
     history = []
+    if project.task == "detect":
+        from core.metrics import DETECTION_CONFIDENCE, DETECTION_MATCH_IOU
+        detection_evaluation = {"unit": "patch" if cfg.patch_training else "image", "split": "val",
+                                "protocol": "coco", "confidence": DETECTION_CONFIDENCE, "iou": DETECTION_MATCH_IOU}
+    else:
+        detection_evaluation = None
 
     def progress(event):
         if event.get("event") == "training_started":
@@ -296,14 +302,22 @@ def _train_upstream_project(context, project, device):
         if event.get("learning_rate") is not None:
             context.emit("lr_updated", [int(event["epoch"]), float(event["learning_rate"])])
         if event.get("is_best"):
+            display = ({**metrics, "detection_evaluation": detection_evaluation,
+                        "detection_per_class": event.get("detection_per_class", [])}
+                       if detection_evaluation else metrics)
             context.emit("best_epoch_updated", [int(event.get("best_epoch") or event["epoch"]),
-                                                 float(event["train_loss"]), float(event["val_loss"]), metrics])
+                                                 float(event["train_loss"]), float(event["val_loss"]), display])
         context.emit("progress_updated", [int(event["epoch"]), int(event["total_epochs"])])
         context.emit("log_message", [f"Epoch {event['epoch']}/{event['total_epochs']} | train={event['train_loss']:.5f} | val={event['val_loss']:.5f} | {event['metric_name']}={event['metric']:.5f} | {event['epoch_time_sec']:.1f}s"])
 
     spec = get_upstream_spec(model_id)
     mode = str(cfg.training_mode)
     source = project.model.pretrained_weights or None
+    if detection_evaluation:
+        context.emit("log_message", [
+            "객체 탐지 검증: " + ("패치 단위" if cfg.patch_training else "이미지 단위")
+            + " · Best는 mAP@0.50–0.95 · Precision/Recall은 점수 0.25 및 IoU 0.50"
+        ])
     context.emit("log_message", [f"기본 native 모델 학습: {spec.family}/{spec.size}"])
     from center_crop import configured_center_crop
     result = train_upstream_model(
@@ -316,13 +330,32 @@ def _train_upstream_project(context, project, device):
         augmentation={key: getattr(cfg.augmentation, key) for key in ("horizontal_flip", "rotation", "color_jitter")},
         patch_training=cfg.patch_training, patch_scale=cfg.patch_scale, patches_per_image=cfg.patches_per_image,
         small_object_coverage=getattr(cfg, "small_object_coverage", False))
-    checkpoint = result.get("best_checkpoint") or result.get("last_checkpoint")
+    checkpoint = result.get("best_checkpoint")
+    if not checkpoint and spec.task != "detect":
+        checkpoint = result.get("last_checkpoint")
     if not checkpoint or not Path(checkpoint).is_file():
-        raise RuntimeError("upstream 학습이 best.pt 또는 last.pt를 만들지 않았습니다")
+        raise RuntimeError("학습 결과에 Best 에폭의 체크포인트가 없습니다.")
     metric_name = (history[-1].get("metric_name", "metric") if history else "metric")
-    best_metric = float(result.get("best_metric") if result.get("best_metric") is not None
-                        else (history[-1]["metric"] if history else 0.0))
-    best_epoch = int(result.get("best_epoch") or (history[-1]["epoch"] if history else 0))
+    best_epoch = int(result.get("best_epoch") or 0)
+    selected = next((event for event in history if int(event["epoch"]) == best_epoch), None)
+    best_metric = result.get("best_metric")
+    if best_metric is None:
+        best_metric = result.get("best_mAP50_95")
+    if selected is not None:
+        metric_name = selected["metric_name"]
+        best_metric = selected["metric"]
+    if best_epoch < 1 or best_metric is None:
+        raise RuntimeError("저장된 Best 에폭과 평가 점수를 확인할 수 없습니다.")
+    best_metric = float(best_metric)
+    best_eval = {}
+    if detection_evaluation:
+        metric_name = "mAP_50_95"
+        saved = result.get("best_validation") or {}
+        if saved.get("epoch") != best_epoch:
+            saved = {}
+        best_eval = {**saved.get("metrics", {}), **(selected or {}).get("metrics", {}),
+                     "mAP_50_95": best_metric, "task": "detect", "detection_evaluation": detection_evaluation,
+                     "per_class": (selected or {}).get("detection_per_class", saved.get("per_class", []))}
     metrics_history = {"train_loss": [float(item["train_loss"]) for item in history],
                        "epoch": [int(item["epoch"]) for item in history],
                        "val_loss": [float(item["val_loss"]) for item in history],
@@ -337,6 +370,7 @@ def _train_upstream_project(context, project, device):
         checkpoint, run_dir, metrics_history, epoch=best_epoch, metric=metric_name, value=best_metric,
         direction=direction, engine="upstream", task=project.task,
         policy="upstream_native_is_best", formula=metric_name,
+        evaluation_metrics=best_eval,
         hyperparameters=training_hyperparameters(
             project, engine="upstream",
             effective={"device": str(device), "model_id": model_id,
@@ -354,11 +388,13 @@ def _train_upstream_project(context, project, device):
                        finished_at=datetime.now().isoformat(), status="completed",
                        epochs_done=len(history), best_metric=best_metric, best_epoch=best_epoch,
                        best_metric_name=metric_name, checkpoint_path=named_checkpoint,
-                       metrics_history=metrics_history,
+                       metrics_history=metrics_history, eval_results=best_eval,
                        config_snapshot={"engine": "upstream", "model_id": model_id,
                                         "upstream_family": spec.family, "upstream_size": spec.size,
                                         "upstream_result": result, "best_selection": selection})
     project.runs.append(record)
+    if best_eval:
+        context.emit("eval_finished", [best_eval])
     context.emit("training_finished", [best_metric, best_epoch, named_checkpoint])
     return record
 

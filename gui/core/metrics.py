@@ -35,6 +35,9 @@ Deep Vision Studio — 성능 평가 지표 엔진
 import numpy as np
 from typing import Dict, List, Tuple
 
+DETECTION_CONFIDENCE = 0.25
+DETECTION_MATCH_IOU = 0.5
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  Classification 평가 지표
@@ -314,12 +317,12 @@ class DetectionMetrics:
 
         for p in preds:
             self.all_preds.append((
-                p["class_id"], p["confidence"],
+                int(p["class_id"]), p["confidence"],
                 *p["bbox"], image_id
             ))
         for g in gts:
             self.all_gts.append((
-                g["class_id"], *g["bbox"], image_id
+                int(g["class_id"]), *g["bbox"], image_id
             ))
 
     def _compute_iou(self, box1, box2) -> float:
@@ -426,6 +429,48 @@ class DetectionMetrics:
         self._tp_counts[(class_id, iou_threshold)] = int(sum(tp_list))
         return ap, precisions, recalls
 
+    def operating_point(self, confidence=DETECTION_CONFIDENCE, iou_threshold=DETECTION_MATCH_IOU):
+        """Micro precision/recall from unique same-class matches at a fixed score."""
+        if not 0 <= confidence <= 1 or not 0 < iou_threshold <= 1:
+            raise ValueError("탐지 평가 점수 또는 IoU 범위 오류")
+        by_image_class = {}
+        for cls, *box, image_id in self.all_gts:
+            by_image_class.setdefault((image_id, cls), []).append(box)
+        support = np.bincount([row[0] for row in self.all_gts], minlength=self.num_classes)
+        true_positives = np.zeros(self.num_classes, dtype=np.int64)
+        false_positives = np.zeros_like(true_positives)
+        predictions = sorted((row for row in self.all_preds if row[1] >= confidence),
+                             key=lambda row: row[1], reverse=True)
+        for cls, _, *box, image_id in predictions:
+            remaining = by_image_class.get((image_id, cls), [])
+            overlaps = [self._compute_iou(box, truth) for truth in remaining]
+            if overlaps:
+                index = int(np.argmax(overlaps))
+                if overlaps[index] >= iou_threshold:
+                    true_positives[cls] += 1
+                    remaining.pop(index)
+                    continue
+            false_positives[cls] += 1
+
+        def counts(tp, fp, total):
+            tp, fp, total = int(tp), int(fp), int(total)
+            return {"tp": tp, "fp": fp, "fn": total - tp, "support": total,
+                    "precision": tp / max(tp + fp, 1) if total or fp else None,
+                    "recall": tp / total if total else None}
+
+        aggregate = counts(true_positives.sum(), false_positives.sum(), support.sum())
+        return {
+            "precision": aggregate["precision"], "recall": aggregate["recall"],
+            "detection_tp": aggregate["tp"], "detection_fp": aggregate["fp"],
+            "detection_fn": aggregate["fn"], "detection_support": aggregate["support"],
+            "detection_confidence": confidence, "detection_iou": iou_threshold,
+            "per_class": [
+                {"class_id": c, "name": self.class_names[c] if c < len(self.class_names) else f"Class {c}",
+                 **counts(true_positives[c], false_positives[c], support[c])}
+                for c in range(self.num_classes)
+            ],
+        }
+
     def compute(self) -> Dict:
         """
         전체 Detection 메트릭 계산
@@ -446,15 +491,15 @@ class DetectionMetrics:
         present = {int(gt[0]) for gt in self.all_gts}
 
         for c in range(self.num_classes):
-            ap_50, precs, recs = self._compute_class_ap(c, iou_threshold=0.5)
+            ap_50, _, _ = self._compute_class_ap(c, iou_threshold=0.5)
             aps_50.append(ap_50)
 
             # mAP@0.5:0.95 (COCO: 10개 IoU 임계값 평균)
             aps_multi = []
-            for iou_thr in np.arange(0.5, 1.0, 0.05):
+            for iou_thr in np.linspace(0.5, 0.95, 10)[1:]:
                 ap_at_thr, _, _ = self._compute_class_ap(c, iou_threshold=iou_thr)
                 aps_multi.append(ap_at_thr)
-            ap_50_95 = float(np.mean(aps_multi)) if aps_multi else 0.0
+            ap_50_95 = float(np.mean([ap_50, *aps_multi]))
             aps_50_95.append(ap_50_95)
 
             per_class.append({
@@ -467,13 +512,8 @@ class DetectionMetrics:
         mAP_50_95 = float(np.mean([aps_50_95[c] for c in present])) if present else 0.0
 
         # 전체 Precision/Recall @IoU=0.5 (모든 예측 합산)
-        total_tp = 0
+        total_tp = sum(self._tp_counts[(c, 0.5)] for c in range(self.num_classes))
         total_gt = len(self.all_gts)
-        # 간단히 mAP 계산 시 부산물로 추정
-        for c in range(self.num_classes):
-            _, precs, recs = self._compute_class_ap(c, 0.5)
-            if precs and recs:
-                total_tp += self._tp_counts[(c, 0.5)]
 
         total_preds = len(self.all_preds)
         precision = total_tp / max(total_preds, 1)
@@ -482,7 +522,7 @@ class DetectionMetrics:
         return {
             "mAP_50": mAP_50,
             "mAP_50_95": mAP_50_95,
-            "ap_interpolation": "voc_11_point",
+            "ap_interpolation": "voc_11_point" if self.ap_method == "voc11" else "interp_101_point",
             "evaluable": bool(present),
             "precision": float(precision),
             "recall": float(recall),

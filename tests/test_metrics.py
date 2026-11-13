@@ -59,6 +59,19 @@ class AnomalyMetricTests(unittest.TestCase):
 
 
 class OtherMetricTests(unittest.TestCase):
+    def test_detection_operating_point_ignores_low_score_and_counts_duplicate_and_empty_class(self):
+        meter = metrics.DetectionMetrics(2, ["crack", "empty"])
+        target = {"class_id": 0.0, "bbox": [.1, .1, .11, .12]}
+        meter.update([{**target, "confidence": .9}, {**target, "confidence": .8},
+                      {**target, "confidence": .7, "class_id": 1}], [target])
+        meter.update([{**target, "confidence": .1}], [target])
+        self.assertGreater(meter.compute()["mAP_50"], .8)
+        result = meter.operating_point()
+        self.assertEqual((result["detection_tp"], result["detection_fp"], result["detection_fn"]), (1, 2, 1))
+        self.assertEqual((result["precision"], result["recall"]), (1/3, .5))
+        self.assertIsNone(result["per_class"][1]["recall"])
+        self.assertEqual(result["per_class"][1]["fp"], 1)
+
     def test_tiny_identical_boxes_keep_scale_invariant_iou(self):
         for method in ("voc11", "interp101"):
             with self.subTest(method=method):

@@ -568,6 +568,10 @@ class ProjectManager:
         # 채널 필드가 없던 구형 프로젝트의 과거 기본값을 보존한다.
         train_raw.setdefault("in_channels", 3)
         train_cfg = TrainingConfig(**train_raw, augmentation=aug_cfg)
+        if (raw.get("task") == "detect" and train_cfg.training_mode.startswith("upstream_")
+                and train_cfg.selection_metric in {"mAP_50", "val_loss"}):
+            # Older apps offered these options even though the detector selected mAP50–95.
+            train_cfg.selection_metric = "engine_default"
 
         # runs 복원
         runs = [RunRecord(**r) for r in raw.get("runs", [])]

@@ -176,6 +176,54 @@ def test_finished_models_replace_precision_recall_in_both_views(page):
         assert page.metric_cards["Best Recall"].text() == summary["Recall"]
 
 
+def test_reopening_legacy_detection_run_displays_correct_best_epoch_and_patch_scope(page):
+    project = copy.deepcopy(page.project)
+    project.task = "detect"
+    project.model.model_id = "re_detr_v4_small"
+    project.training.training_mode = "upstream_scratch"
+    project.runs = [RunRecord(run_id="detect", status="completed", best_epoch=1,
+        best_metric_name="metrics/mAP50-95", best_metric=.2,
+        config_snapshot={"engine": "upstream", "model_id": "re_detr_v4_small",
+                         "training": {"patch_training": True},
+                         "best_selection": {"epoch": 1, "metrics": {"metrics_mAP50-95": .2}}},
+        metrics_history={"epoch": [1, 2], "metrics/mAP50-95": [.5, .2], "metrics/mAP50": [.7, .3],
+                         "metrics/precision": [.5, .2], "metrics/recall": [.9, .4]})]
+    page.set_project(project)
+    assert page.metric_cards["Best mAP@0.50–0.95"].text() == "0.5000"
+    assert page.metric_cards["Best Precision"].text() == page.metric_cards["Best Recall"].text() == "N/A"
+    assert page.metric_cards["Best AR@100"].text() == "0.9000"
+    assert "패치별" in page.eval_widget.evaluation_scope.text()
+    assert "re_detr_v4_small" in page.run_identity_label.text()
+    assert "0.5000" in page.best_selection_label.text()
+    assert "metrics/precision" not in page.metric_chart.metrics_history
+    run = project.runs[0]
+    run.metrics_history["metrics/mAP50-95"][0] = None
+    run.config_snapshot["upstream_result"] = {"best_epoch": 1, "best_mAP50_95": .55}
+    page.set_project(project)
+    assert page.metric_cards["Best mAP@0.50–0.95"].text() == "0.5500"
+
+
+def test_live_detection_best_shows_fixed_threshold_and_class_counts(page):
+    project = copy.deepcopy(page.project)
+    project.task = "detect"
+    project.model.model_id = "re_detr_v4_small"
+    project.training.training_mode = "upstream_scratch"
+    page.set_project(project)
+    page._on_best_epoch_updated(4, .4, .3, {
+        "mAP_50": .8, "mAP_50_95": .5, "precision": .7, "recall": .8, "detection_tp": 7,
+        "detection_evaluation": {"unit": "image", "protocol": "coco", "confidence": .25, "iou": .5},
+        "detection_per_class": [{"name": "scratch", "precision": .7, "recall": .8, "tp": 7, "fp": 3, "fn": 2, "support": 9}],
+    })
+    assert page.metric_cards["Best 정탐 박스 (TP)"].text() == "7"
+    assert "confidence ≥ 0.25" in page.eval_widget.evaluation_scope.text()
+    table = page.eval_widget.detail_table
+    assert table.rowCount() == 1 and table.item(0, 0).text() == "scratch"
+    assert table.item(0, 3).text() == "7"
+    page._on_epoch_finished(4, .4, .3, {"mAP_50": .8, "detection_tp": 7})
+    assert page.metric_chart.metrics_history["mAP_50"] == [.8]
+    assert "detection_tp" not in page.metric_chart.metrics_history
+
+
 def test_live_best_event_updates_summary_and_replaces_previous_model_metrics(page):
     page._on_best_epoch_updated(2, .4, .3, {"accuracy": .8, "recall_macro": .7})
     old_card = page.metric_cards["Best Accuracy"].parentWidget()

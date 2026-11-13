@@ -11,7 +11,8 @@ from PySide6.QtGui import QFont, QColor
 from core.project import ProjectData
 from core.metrics import TASK_METRIC_NAMES
 from core.training_progress import record_epoch
-from core.best_metrics import scalar_metrics, metric_label
+from core.best_metrics import (detection_evaluation_text, display_metrics, metric_label,
+                               saved_detection_evaluation, selection_value_for_display)
 # 마우스 휠로 하이퍼파라미터가 실수로 바뀌는 것을 막는 위젯
 
 
@@ -28,6 +29,10 @@ def _metric_info_for(project=None, results=None):
     results = results or {}
     task = project.task if project else results.get("task", "classify")
     info = copy.deepcopy(TASK_METRIC_NAMES.get(task, {}))
+    if task == "detect":
+        info["labels"] = {key: metric_label(key, task) for key in (*info["display"], "AR100")}
+        if project and str(project.training.training_mode).startswith("upstream_"):
+            info["primary"] = "mAP_50_95"
     if task == "anomaly" and project and project.training.anomaly_method == "reconstruction":
         info["primary"] = "recon_loss"
         info.setdefault("labels", {})["recon_loss"] = "Reconstruction Loss"
@@ -41,7 +46,8 @@ def _metric_info_for(project=None, results=None):
         engine = "dinomaly" if project.model.model_id == "dinomaly_vits14" else training_engine_name(project.training.training_mode)
         policy = selection_policy(project.training, engine, task)
         info["primary"] = policy.metric
-        info.setdefault("labels", {})[policy.metric] = LABELS[policy.metric]
+        info.setdefault("labels", {})[policy.metric] = (metric_label(policy.metric, task)
+                                                        if task == "detect" else LABELS[policy.metric])
         if policy.metric not in info.setdefault("display", []):
             info["display"].append(policy.metric)
     return info
@@ -205,8 +211,9 @@ class MetricChart(_BaseChart):
         observed = {}
         for key, value in metrics.items():
             # 차트에 표시할 메트릭만 추적 (loss, confusion_matrix 등 제외)
-            if key in ("val_loss", "recon_loss", "confusion_matrix", "per_class", "roc_curve",
-                       "epoch_time_sec", "elapsed_time_sec") or not _finite_metric(value):
+            if (key in ("train_loss", "val_loss", "recon_loss", "confusion_matrix", "per_class", "roc_curve",
+                        "epoch_time_sec", "elapsed_time_sec") or key.startswith("detection_")
+                    or not _finite_metric(value)):
                 continue
             observed[key] = value
         record_epoch(self.epochs, self.metrics_history, epoch, observed)
@@ -420,6 +427,10 @@ class EvalResultsWidget(QWidget):
         self.summary_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.summary_table.setAlternatingRowColors(True)
         layout.addWidget(self.summary_table)
+        self.evaluation_scope = QLabel()
+        self.evaluation_scope.setWordWrap(True)
+        self.evaluation_scope.hide()
+        layout.addWidget(self.evaluation_scope)
 
         # ── 클래스별 상세 ──
         detail_label = QLabel("클래스별 상세")
@@ -457,7 +468,10 @@ class EvalResultsWidget(QWidget):
         task = results.get("task", "classify")
 
         # ── 요약 테이블 ──
-        values = scalar_metrics(results if metrics is None else metrics)
+        values = display_metrics(results if metrics is None else metrics, task)
+        self.evaluation_scope.setVisible(task == "detect")
+        if task == "detect":
+            self.evaluation_scope.setText(detection_evaluation_text(results.get("detection_evaluation") or {}))
         display_keys = list(values)
 
         self.summary_table.setRowCount(len(display_keys))
@@ -471,7 +485,8 @@ class EvalResultsWidget(QWidget):
             name_item.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
             self.summary_table.setItem(row, 0, name_item)
 
-            val_item = QTableWidgetItem(_format_metric(value))
+            count = task == "detect" and key.startswith("detection_")
+            val_item = QTableWidgetItem(str(int(value)) if count and value is not None else _format_metric(value))
             val_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             # A high accuracy and a high loss have opposite meanings; use neutral values.
             val_item.setFont(QFont("Consolas", 12, QFont.Weight.Bold))
@@ -503,14 +518,21 @@ class EvalResultsWidget(QWidget):
                     self.detail_table.setItem(row, 2, QTableWidgetItem(_format_metric(pc.get("dice"))))
 
             elif task in ("detect", "obb") or (task == "segment" and "mask_mAP_50" in results):
-                headers = ["Class", "AP@0.5", "AP@.5:.95"]
-                self.detail_table.setColumnCount(3)
+                columns = [("ap_50", "AP@0.50"), ("ap_50_95", "AP@0.50–0.95")]
+                if task == "detect":
+                    columns.extend((("precision", "Precision"), ("recall", "Recall"),
+                                    ("tp", "TP"), ("fp", "FP"), ("fn", "FN"), ("support", "정답 박스")))
+                    columns = [(key, label) for key, label in columns if any(key in pc for pc in per_class)]
+                headers = ["Class", *(label for _, label in columns)]
+                self.detail_table.setColumnCount(len(headers))
                 self.detail_table.setHorizontalHeaderLabels(headers)
                 self.detail_table.setRowCount(len(per_class))
                 for row, pc in enumerate(per_class):
                     self.detail_table.setItem(row, 0, QTableWidgetItem(pc["name"]))
-                    self.detail_table.setItem(row, 1, QTableWidgetItem(_format_metric(pc.get("ap_50"))))
-                    self.detail_table.setItem(row, 2, QTableWidgetItem(_format_metric(pc.get("ap_50_95"))))
+                    for column, (key, _) in enumerate(columns, start=1):
+                        value = pc.get(key)
+                        display = str(value) if key in {"tp", "fp", "fn", "support"} and value is not None else _format_metric(value)
+                        self.detail_table.setItem(row, column, QTableWidgetItem(display))
 
             # 상세 테이블 열 너비 자동 조정
             self.detail_table.horizontalHeader().setSectionResizeMode(
@@ -527,6 +549,7 @@ class EvalResultsWidget(QWidget):
         self.detail_table.setRowCount(0)
         self.summary_table.hide()
         self.detail_table.hide()
+        self.evaluation_scope.hide()
         self.placeholder.show()
 
 
@@ -615,9 +638,9 @@ class ModelCompareWidget(QWidget):
             self.compare_table.setItem(row, 1, QTableWidgetItem(status_text))
 
             # 주요 메트릭
-            metric_val = run.best_metric
+            metric_val = selection_value_for_display(run, project.task)
             metric_text = "N/A" if run.best_metric_name == "unavailable" else _format_metric(metric_val)
-            metric_item = QTableWidgetItem(f"{run.best_metric_name}: {metric_text}")
+            metric_item = QTableWidgetItem(f"{metric_label(run.best_metric_name, project.task)}: {metric_text}")
             metric_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             metric_item.setFont(QFont("Consolas", 11, QFont.Weight.Bold))
             self.compare_table.setItem(row, 2, metric_item)
@@ -638,12 +661,18 @@ class ModelCompareWidget(QWidget):
 
             # 변화 (이전 run 대비)
             previous = sorted_runs[row + 1] if row + 1 < len(sorted_runs) else None
+            previous_val = selection_value_for_display(previous, project.task) if previous else None
             comparable = (previous is not None and previous.best_metric_name == run.best_metric_name
                           and run.best_metric_name != "unavailable"
                           and previous.status == run.status == "completed"
-                          and _finite_metric(metric_val) and _finite_metric(previous.best_metric))
+                          and _finite_metric(metric_val) and _finite_metric(previous_val))
+            if comparable and project.task == "detect":
+                evaluation = saved_detection_evaluation(run)
+                previous_evaluation = saved_detection_evaluation(previous)
+                comparable = all(evaluation.get(key) and evaluation.get(key) == previous_evaluation.get(key)
+                                 for key in ("unit", "protocol"))
             if comparable:
-                delta = metric_val - previous.best_metric
+                delta = metric_val - previous_val
                 improvement = -delta if run.best_metric_name in ("recon_loss", "val_loss") else delta
                 if improvement > 0.001:
                     change_text = f"개선 {delta:+.4f}"

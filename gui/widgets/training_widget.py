@@ -11,6 +11,8 @@ from PySide6.QtCore import QSignalBlocker
 from PySide6.QtGui import QTextCursor
 
 from core.project import ProjectData, ProjectManager
+from core.best_metrics import (best_epoch_metrics, display_metrics, metric_label, saved_detection_evaluation,
+                               selection_value_for_display)
 from core.qt_training import TrainWorker, PatchCoreWorker
 from core.training_modes import (training_engine_name, training_capabilities, MODE_LABELS,
                                  BUILTIN_ADAPTER_IDS, BUILTIN_SCRATCH_ONLY_IDS, UPSTREAM_ADAPTER_IDS,
@@ -857,6 +859,12 @@ class TrainingWidget(TrainingForm, QWidget):
         self._progress_total_epochs = 0
         self.progress_bar.setRange(0, 100)
         self.run_identity_label.setText("선택된 학습 결과 없음")
+        if project.task == "detect":
+            latest = next((run for run in reversed(project.runs) if run.status == "completed" and run.best_epoch > 0),
+                          None)
+            if latest:
+                self.run_identity_label.setText(run_description(latest))
+                self._display_finished_run(project, latest)
 
     def collect_config(self):
         """저장과 클래스 변경에서 호출하는 공개 설정 동기화 진입점."""
@@ -1380,7 +1388,9 @@ class TrainingWidget(TrainingForm, QWidget):
         self.loss_chart.update_chart(epoch, train_loss, val_loss)
 
         # Metric 차트
-        self.metric_chart.update_metrics(epoch, metrics)
+        project = self._run_snapshot or self.project
+        self.metric_chart.update_metrics(epoch, display_metrics(metrics, project.task) if project and
+                                         project.task == "detect" else metrics)
         show_timing = getattr(self, "_show_epoch_timing", None)
         if callable(show_timing):
             show_timing(metrics)
@@ -1396,16 +1406,18 @@ class TrainingWidget(TrainingForm, QWidget):
                     label.setText(format_hms(value))
 
     def _render_best_metrics(self, epoch, values, project=None):
-        from core.best_metrics import scalar_metrics
         project = project or self._run_snapshot or self.project
-        values = scalar_metrics(values)
+        task = project.task if project else "classify"
+        values = display_metrics(values, task)
         timing = {key: self.metric_cards[key].text() for key in ("최근 에폭 시간", "누적 시간")
                   if key in self.metric_cards}
-        self._rebuild_metric_cards(project.task if project else "classify", project=project, metrics=values)
+        self._rebuild_metric_cards(task, project=project, metrics=values)
         self._best_display_metrics, self._best_display_epoch = values, epoch
         self.metric_cards["Best Epoch"].setText(str(epoch) if epoch else "N/A")
         for key, name in self._metric_card_keys.items():
-            self.metric_cards[name].setText(_format_metric(values[key]))
+            value = values[key]
+            count = task == "detect" and key.startswith("detection_")
+            self.metric_cards[name].setText(str(int(value)) if count and value is not None else _format_metric(value))
         for key, value in timing.items():
             self.metric_cards[key].setText(value)
         if hasattr(self, "best_selection_label"):
@@ -1416,8 +1428,13 @@ class TrainingWidget(TrainingForm, QWidget):
         values = {**(metrics or {}), "train_loss": train_loss, "val_loss": val_loss}
         self._render_best_metrics(epoch, values)
         project = self._run_snapshot or self.project
-        self.eval_widget.update_results({"task": project.task if project else "classify"},
-                                        metrics=self._best_display_metrics)
+        results = {"task": project.task if project else "classify"}
+        if project and project.task == "detect":
+            details = values.get("detection_evaluation") or {}
+            if not details and str(project.training.training_mode).startswith("upstream_"):
+                details = {"unit": "patch" if project.training.patch_training else "image", "protocol": "coco"}
+            results.update(detection_evaluation=details, per_class=values.get("detection_per_class") or [])
+        self.eval_widget.update_results(results, metrics=self._best_display_metrics)
 
     def _on_batch_finished(self, epoch, batch_idx, total_batches, loss):
         """배치 완료"""
@@ -1460,8 +1477,8 @@ class TrainingWidget(TrainingForm, QWidget):
                 self.cm_chart.update_matrix(cm, class_names)
 
         # 평가 결과 테이블
-        from core.best_metrics import scalar_metrics
-        values = {**scalar_metrics(eval_results), **getattr(self, "_best_display_metrics", {})}
+        values = {**display_metrics(eval_results, eval_results.get("task")),
+                  **getattr(self, "_best_display_metrics", {})}
         epoch = getattr(self, "_best_display_epoch", None)
         if epoch is not None:
             self._render_best_metrics(epoch, values)
@@ -1573,7 +1590,9 @@ class TrainingWidget(TrainingForm, QWidget):
             QMessageBox.warning(self, "결과 표시 오류", f"학습 기록은 저장되었습니다.\n{display_error}")
         elif status == "completed" and result:
             best_metric, best_epoch, ckpt_path = result
-            metric_name = new_runs[-1].best_metric_name if new_runs else "metric"
+            metric_name = metric_label(new_runs[-1].best_metric_name, snapshot.task) if new_runs else "metric"
+            if new_runs:
+                best_metric = selection_value_for_display(new_runs[-1], snapshot.task)
             metric_text = "평가 불가" if metric_name == "unavailable" else _format_metric(best_metric)
             self.progress_bar.setValue(100)
             epoch_text = str(best_epoch) if best_epoch > 0 else "N/A"
@@ -1600,13 +1619,12 @@ class TrainingWidget(TrainingForm, QWidget):
         self.loss_chart.clear()
         self.metric_chart.clear()
         self.lr_chart.clear()
-        from core.best_metrics import scalar_metrics
         for index, epoch in enumerate(epochs):
             values = {key: sequence[index] if index < len(sequence) else None
                       for key, sequence in history.items() if key != "epoch"}
             redraw = index == len(epochs) - 1
             self.loss_chart.update_chart(epoch, values.get("train_loss"), values.get("val_loss"), redraw=redraw)
-            self.metric_chart.update_metrics(epoch, {key: value for key, value in scalar_metrics(values).items()
+            self.metric_chart.update_metrics(epoch, {key: value for key, value in display_metrics(values, snapshot.task).items()
                                                    if key not in {"train_loss", "val_loss"}}, redraw=redraw)
             if index < len(run.lr_history):
                 self.lr_chart.update_lr(epoch, run.lr_history[index], redraw=index == min(len(epochs), len(run.lr_history)) - 1)
@@ -1617,16 +1635,19 @@ class TrainingWidget(TrainingForm, QWidget):
                 for key, values in history.items()
                 if key in {"epoch_time_sec", "elapsed_time_sec"}
             })
-        from core.best_metrics import best_epoch_metrics
-        values = best_epoch_metrics(run)
+        values = best_epoch_metrics(run, snapshot.task)
         self._render_best_metrics(run.best_epoch, values, project=snapshot)
+        label = metric_label(run.best_metric_name, snapshot.task)
+        selected = selection_value_for_display(run, snapshot.task)
         self.best_selection_label.setText(
-            f"Best epoch {run.best_epoch} | 저장 기준: {run.best_metric_name} = {_format_metric(run.best_metric)}")
+            f"Best epoch {run.best_epoch} | 저장 기준: {label} = {_format_metric(selected)}")
         self.cm_chart.clear()
         self.eval_widget.clear()
         # Built-in, upstream and SAM2 runs need not have a separate full evaluation.
         # Their saved best-epoch history is still a complete display source.
         results = {"task": snapshot.task, **run.eval_results}
+        if snapshot.task == "detect":
+            results["detection_evaluation"] = saved_detection_evaluation(run)
         self.eval_widget.update_results(results, metrics=values)
         if "confusion_matrix" in results:
             names = snapshot.data.class_names if snapshot.task == "classify" else ["Normal", "Anomaly"]

@@ -4,7 +4,8 @@ import type { TrainingConfig, ModelConfig, AugmentationConfig } from "../project
 import { api, number, terminal, type Config, type Project } from "../api";
 import { Check, Empty, Field, JobMonitor, LossChart, Panel, PathField, Stat, useJob } from "../components";
 import type { PageProps } from "../page-context";
-import { CURRENT_RUN, initialRunIndex, runModel, trainingView } from "../training-view";
+import { CURRENT_RUN, detectionEvaluationText, initialRunIndex, runModel, trainingMetricLabel,
+  trainingSelectionValue, trainingView } from "../training-view";
 import { builtinAdapters, modelModes } from "../model-options";
 
 type CatalogModel = { model_id: string; family: string; variant: string; input_size: number[]; input_channels: number[] };
@@ -43,6 +44,9 @@ export function Training({
   const modes = modelModes(project.task, modelId, modelName);
   const builtin = builtinAdapters.has(modelId);
   const sam2 = project.task === "segment" && modelId.startsWith("sam2_hiera_");
+  const upstreamDetection = project.task === "detect" && cfg.training_mode.startsWith("upstream_");
+  const selectionMetric = upstreamDetection && !["engine_default", "mAP_50_95"].includes(cfg.selection_metric)
+    ? "engine_default" : cfg.selection_metric;
   const unsupported = project.task !== "anomaly" && !modes.some(([value]) => value === cfg.training_mode);
   const efficientnet = project.task === "classify" && cfg.training_mode.startsWith("efficientnet");
   const resume = cfg.training_mode === "efficientnet_resume";
@@ -76,9 +80,9 @@ export function Training({
     };
   }, [project.task, unsupported, efficientnet, cfg.training_mode, cfg.anomaly_method, modelId]);
   const save = async () => {
-    const training = { ...cfg,
+    const training = { ...cfg, selection_metric: selectionMetric,
       small_object_coverage: Boolean(cfg.small_object_coverage && cfg.patch_training && cfg.patches_per_image
-        && project.task === "detect" && cfg.training_mode.startsWith("upstream_")),
+        && upstreamDetection),
       detection_foreground_supervision: Boolean(cfg.detection_foreground_supervision
         && project.task === "detect" && cfg.training_mode === "custom" && !modelId) };
     await api("/project", "PUT", { training, model });
@@ -104,8 +108,11 @@ export function Training({
       />
     </Field>
   );
-  const { runIndex: selectedIndex, selectedRun, train, val, best, epochNumbers, bestMetrics, missingResult } =
-    trainingView(project.runs, runIndex, hasLiveJob, events, job);
+  const { runIndex: selectedIndex, selectedRun, train, val, best, epochNumbers, bestMetrics, missingResult,
+    detectionEvaluation, detectionClasses } = trainingView(project.runs, runIndex, hasLiveJob, events, job, project.task);
+  const metricLabel = (key: string) => trainingMetricLabel(key, project.task);
+  const metricNumber = (key: string, value: number | null) =>
+    project.task === "detect" && key.startsWith("detection_") && value !== null ? String(value) : number(value);
   return (
     <>
       <div className="training-layout">
@@ -287,7 +294,7 @@ export function Training({
                   {numeric("학습률", "learning_rate", 0.0000001, 1, 0.0001)}
                   <Field label="Best 선정 지표">
                     <select
-                      value={cfg.selection_metric}
+                      value={selectionMetric}
                       onChange={(e) => set("selection_metric", e.target.value)}
                     >
                       {options.metrics.map((v: Config) => (
@@ -519,7 +526,7 @@ export function Training({
             <div className="stats">
               <Stat label="Best epoch" value={best || "—"} />
               {Object.entries(bestMetrics).map(([key, value]) =>
-                <Stat key={key} label={`Best ${key}`} value={number(value)} />)}
+                <Stat key={key} label={`Best ${metricLabel(key)}`} value={metricNumber(key, value)} />)}
             </div>
             <LossChart
               train={train}
@@ -529,16 +536,18 @@ export function Training({
             />
             {selectedRun && (
               <p className="muted">
-                선정 지표: {selectedRun.best_metric_name} ={" "}
-                {number(selectedRun.best_metric)}
+                선정 지표: {metricLabel(selectedRun.best_metric_name)} ={" "}
+                {number(trainingSelectionValue(selectedRun, project.task))}
               </p>
             )}
             <h3>종합 평가 지표 — Best epoch {best || "—"}</h3>
+            {project.task === "detect" && !!best && <p className="muted">{detectionEvaluationText(detectionEvaluation)}</p>}
             {Object.keys(bestMetrics).length ? <table aria-label="Best epoch 종합 평가 지표">
               <thead><tr><th>저장 지표</th><th>값</th></tr></thead>
               <tbody>{Object.entries(bestMetrics).map(([key, value]) =>
-                <tr key={key}><td>{key}</td><td>{number(value)}</td></tr>)}</tbody>
+                <tr key={key}><td>{metricLabel(key)}</td><td>{metricNumber(key, value)}</td></tr>)}</tbody>
             </table> : <p className="muted">저장된 Best 지표가 없습니다.</p>}
+            {project.task === "detect" && !!detectionClasses?.length && <DetectionClassTable rows={detectionClasses} />}
           </Panel>
           <LayerDebug snapshot={selectedIndex === CURRENT_RUN
             ? [...events].reverse().find(e => e.event === "layer_debug")?.args[0] ?? selectedRun?.config_snapshot.layer_debug?.latest
@@ -573,8 +582,8 @@ export function Training({
                   </td>
                   <td>{r.status}</td>
                   <td>{r.best_epoch || "—"}</td>
-                  <td>{r.best_metric_name}</td>
-                  <td>{number(r.best_metric)}</td>
+                  <td>{metricLabel(r.best_metric_name)}</td>
+                  <td>{number(trainingSelectionValue(r, project.task))}</td>
                   <td>
                     {r.checkpoint_path && (
                       <a
@@ -603,6 +612,21 @@ export function Training({
       </Panel>
     </>
   );
+}
+
+function DetectionClassTable({ rows }: { rows: Config[] }) {
+  const columns = [
+    ["ap_50", "AP@0.50"], ["ap_50_95", "AP@0.50–0.95"], ["precision", "Precision"], ["recall", "Recall"],
+    ["tp", "TP"], ["fp", "FP"], ["fn", "FN"], ["support", "정답 박스"],
+  ].filter(([key]) => rows.some(row => key in row));
+  return <div className="table-scroll">
+    <table aria-label="클래스별 검증 지표">
+      <thead><tr><th>클래스</th>{columns.map(([key, label]) => <th key={key}>{label}</th>)}</tr></thead>
+      <tbody>{rows.map((row, i) => <tr key={row.class_id ?? i}><td>{row.name}</td>
+        {columns.map(([key]) => <td key={key}>{row[key] == null ? "—" :
+          ["tp", "fp", "fn", "support"].includes(key) ? String(row[key]) : number(row[key])}</td>)}</tr>)}</tbody>
+    </table>
+  </div>;
 }
 
 function LayerDebug({ snapshot }: { snapshot?: Config }) {

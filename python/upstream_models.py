@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import random
 import shutil
@@ -166,9 +167,11 @@ def write_detection_dataset_yaml(root: str | Path, class_names: list[str], outpu
     val = dataset_root / "images" / "val"
     if not train.is_dir():
         raise ValueError(f"검출 학습 이미지 폴더가 없습니다: {train}")
+    if not val.is_dir():
+        raise ValueError(f"검출 검증 이미지 폴더가 없습니다: {val}")
     descriptor = {
         "path": str(dataset_root), "train": "images/train",
-        "val": "images/val" if val.is_dir() else "images/train",
+        "val": "images/val",
         "nc": len(class_names), "names": list(class_names),
     }
     target = Path(output_path)
@@ -273,10 +276,43 @@ def prepare_classification_dataset(
         }
 
 
+_DETECTION_METRIC_NAMES = {
+    "mAP_50": ("mAP_50", "metrics/mAP50", "metrics/mAP50(B)"),
+    "mAP_50_95": ("mAP_50_95", "metrics/mAP50-95", "metrics/mAP50-95(B)"),
+    "AR100": ("AR100", "metrics/AR100", "metrics/ar_100"),
+}
+_DETECTION_POINT_METRICS = (
+    "precision", "recall", "detection_tp", "detection_fp", "detection_fn",
+    "detection_support", "detection_confidence", "detection_iou",
+)
+
+
+def detection_validation_metrics(raw_metrics):
+    """Map pinned LibreYOLO metrics without its deprecated P/R aliases."""
+    metrics = {}
+    for name, keys in _DETECTION_METRIC_NAMES.items():
+        value = next((raw_metrics[key] for key in keys if key in raw_metrics), None)
+        if value is not None and math.isfinite(value) and 0 <= value <= 1:
+            metrics[name] = float(value)
+    for name in _DETECTION_POINT_METRICS:
+        value = raw_metrics.get(name)
+        if value is not None and math.isfinite(value):
+            metrics[name] = value
+    return metrics
+
+
 class _ProgressCallback:
     def __init__(self, emit: Callable[[dict], None]):
         self.emit = emit
         self.elapsed_seconds = 0.0
+        self.detection_validation = None
+
+    def on_detection_validation(self, result):
+        self.detection_validation = result
+
+    def on_missing_detection_best(self):
+        self.emit({"event": "preprocessing_configured", "message":
+                   "이전 Best 체크포인트를 찾지 못했습니다. 재개 후 검증 결과에서 Best를 다시 고릅니다."})
 
     def on_train_start(self, event) -> None:
         self.emit({"event": "training_started", "epoch": int(event.start_epoch),
@@ -300,6 +336,16 @@ class _ProgressCallback:
             raise RuntimeError("upstream validator가 val_loss를 보고하지 않았습니다")
         if metric is None:
             raise RuntimeError("upstream validator가 선택 검증 지표를 보고하지 않았습니다")
+        is_detect = getattr(event, "task", None) == "detect"
+        details = {}
+        if is_detect:
+            metric_name = next((name for name, aliases in _DETECTION_METRIC_NAMES.items()
+                                if metric_name in aliases), metric_name)
+            metrics = detection_validation_metrics(metrics)
+            metrics[metric_name] = float(metric)
+            validation = self.detection_validation
+            if validation and validation["epoch"] == event.epoch:
+                details["detection_per_class"] = validation["per_class"]
         epoch_seconds = float(event.epoch_seconds)
         self.elapsed_seconds += epoch_seconds
         metrics["epoch_time_sec"] = epoch_seconds
@@ -314,7 +360,8 @@ class _ProgressCallback:
                    "learning_rate": min((float(value) for value in event.lr.values()), default=0.0),
                    "is_best": bool(event.is_best),
                    "best_metric": float(event.best_metric) if event.best_metric is not None else None,
-                   "best_epoch": int(event.best_epoch) if event.best_epoch is not None else None})
+                   "best_epoch": int(event.best_epoch) if event.best_epoch is not None else None,
+                   **details})
 
     def on_train_exception(self, event) -> None:
         self.emit({"event": "training_exception", "message": str(event.exception_message)})
@@ -356,19 +403,26 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
            ("원본 한 장 단위 분류" if spec.task == "classify" else "검증 mAP는 패치 단위")
            if patches else "전체 입력 영역 사용")})
     if spec.task == "detect":
+        from libreyolo.data.utils import IMG_FORMATS
         from native_detection_training import train_detector
+        from spatial_data import validate_spatial_dataset
+        validation = validate_spatial_dataset(data_root, "detect", len(class_names), extensions=IMG_FORMATS)["val"]
         with tempfile.TemporaryDirectory(prefix="studio-detect-", dir=output.parent) as temp:
             if patches:
                 from detection_patch_dataset import prepare_detection_patches
                 data_root = prepare_detection_patches(data_root, Path(temp) / "patches", patches,
                     num_classes=len(class_names), patches_per_image=patches_per_image, seed=seed,
                     small_object_coverage=small_object_coverage)
+                validation = validate_spatial_dataset(data_root, "detect", len(class_names))["val"]
                 if small_object_coverage:
                     coverage = json.loads((data_root / "patches.json").read_text(encoding="utf-8"))["small_object_coverage"]
                     emit({"event": "preprocessing_configured", "policy": "small_object_patch_coverage_v1",
                           "message": "완전히 포함된 작은 객체 (패치 수가 제한된 학습 이미지) "
                                      f"{coverage['randomly_covered']} → {coverage['selected_covered']} / {coverage['small_targets']}",
                           **coverage})
+            unit = "패치" if patches else "이미지"
+            emit({"event": "preprocessing_configured", "message":
+                  f"탐지 검증 {validation['images']}개 {unit} · 정답 박스 {validation['objects']}개"})
             source = str(write_detection_dataset_yaml(data_root, class_names, output / "dataset.yaml"))
             model = build_upstream_model(model_id, num_classes=len(class_names), device=device,
                                          weights=weights, pretrained=pretrained)
