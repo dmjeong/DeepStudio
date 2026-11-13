@@ -91,3 +91,19 @@ def test_detection_int8_compares_real_decisions_and_preserves_output_on_failure(
         quantize_segment(config, images, log=logs.append)
     assert output.read_bytes() == config_before
     assert output.with_suffix(".onnx").read_bytes() == onnx_before
+
+    from precision_benchmark import benchmark_precisions, parse_thread_counts
+
+    source_before = source.read_bytes()
+    counts = parse_thread_counts("1, 2, 1")
+    rows = benchmark_precisions(config, images, thread_counts=counts, calibration_dir=images,
+                                image_count=2, repeats=1, warmup=1, log=logs.append)
+    assert [(row["precision"], row["threads"]) for row in rows] == [
+        (precision, threads) for precision in ("FP32", "FP16", "INT8") for threads in (1, 2)
+    ]
+    assert all(row["status"] == "완료" and row["samples"] == 2 for row in rows)
+    assert all(row["p95_ms"] >= row["p50_ms"] >= row["model_p50_ms"] > 0 for row in rows)
+    assert all("판정 변경 0장" in row["comparison"] for row in rows[2:])
+    assert all("INT8 배포 검증 미통과" in row["detail"] for row in rows[-2:])
+    assert source.read_bytes() == source_before
+    assert output.read_bytes() == config_before

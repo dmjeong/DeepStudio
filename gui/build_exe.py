@@ -251,6 +251,7 @@ def build():
         "--hidden-import", "numpy",
         "--hidden-import", "onnx",
         "--hidden-import", "onnxruntime",
+        "--hidden-import", "onnxruntime.transformers.float16",
         "--hidden-import", "model_crypto",
         "--hidden-import", "dinov2_segmentation",
         "--hidden-import", "dinov2",

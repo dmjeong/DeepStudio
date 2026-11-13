@@ -20,6 +20,7 @@ def quantize_dense(
     reduce_range=False,
     output_json=None,
     log=print,
+    benchmark_only=False,
 ):
     import onnx
     import onnxruntime as ort
@@ -142,7 +143,13 @@ def quantize_dense(
         )
         if detect:
             report = compare_detection_sessions(config, fp, quant, paths)
-            validate_detection_quantization(report, log)
+            try:
+                validate_detection_quantization(report, log)
+            except ValueError as error:
+                if not benchmark_only:
+                    raise
+                report["deployment_check_error"] = str(error)
+                log(f"INT8 배포 검증 실패 · 임시 비교만 계속: {error}")
         else:
             report = compare_sessions(config, fp, quant, paths)
         result = copy.deepcopy(config)
@@ -168,7 +175,7 @@ def quantize_dense(
         # Verification applies to executable shape/finite outputs. Accuracy is
         # reported separately, never inherited as FP32 numerical equivalence.
         result["export"]["fp32_verification"] = result.get("verification")
-        result["verification"] = "int8_compared"
+        result["verification"] = "benchmark_only" if benchmark_only else "int8_compared"
         result["export"]["verification_policy"] = ("int8_detection_calibration_decisions_v1" if detect
                                                    else "int8_finite_and_calibration_comparison_v1")
         staged_json = Path(directory) / output.name

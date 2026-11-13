@@ -97,6 +97,60 @@ def test_export_worker_passes_explicit_validation_options(monkeypatch):
     assert captured["allow_precision_fallback"] is False
 
 
+def test_precision_comparison_uses_shared_worker_and_displays_thread_results(tmp_path, monkeypatch):
+    import sys
+    import time
+    from types import SimpleNamespace
+    from widgets.precision_benchmark_dialog import PrecisionBenchmarkDialog
+
+    captured = {}
+
+    def benchmark(**kwargs):
+        captured.update(kwargs)
+        kwargs["log"]("비교 실행")
+        return [
+            {"precision": "FP32", "threads": 0, "p50_ms": 10, "p95_ms": 12, "model_p50_ms": 8,
+             "comparison": "기준", "status": "완료"},
+            {"precision": "INT8", "threads": 0, "p50_ms": 6, "p95_ms": 7, "model_p50_ms": 5,
+             "comparison": "판정 100%", "status": "완료"},
+        ]
+
+    monkeypatch.setitem(sys.modules, "precision_benchmark", SimpleNamespace(
+        parse_thread_counts=lambda raw: tuple(int(value) for value in raw.split(",")),
+        benchmark_precisions=benchmark,
+    ))
+    config = tmp_path / "fp32.json"
+    config.write_text("{}", encoding="utf-8")
+    app = QApplication.instance() or QApplication([])
+    dialog = PrecisionBenchmarkDialog(fp32_path=str(config), image_dir=str(tmp_path), calibration_dir=str(tmp_path))
+    try:
+        dialog.run_fp16.setChecked(False)
+        dialog.fp16.setText("ignored-fp16.json")
+        dialog.threads.setText("0, 8")
+        dialog.start_button.click()
+        assert dialog.isRunning()
+        deadline = time.monotonic() + 5
+        while dialog.isRunning() and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(.01)
+        assert not dialog.isRunning()
+        assert captured["thread_counts"] == (0, 8) and captured["calibration_dir"] == str(tmp_path)
+        assert captured["fp16_path"] is None and not captured["run_fp16"]
+        assert captured["run_int8"] and dialog.table.rowCount() == 2
+        assert dialog.table.item(0, 1).text() == dialog.table.item(1, 1).text() == "자동"
+        assert dialog.table.item(1, 3).text() == "7.00"
+        assert dialog.table.item(1, 5).text() == "판정 100%"
+        assert "비교 실행" in dialog.log.toPlainText()
+    finally:
+        if dialog.worker is not None:
+            dialog.worker.requestInterruption()
+            dialog.worker.wait()
+            app.processEvents()
+        dialog.close()
+        dialog.deleteLater()
+        app.processEvents()
+
+
 def test_encryption_extension_and_key_do_not_leak_across_projects(tmp_path):
     app = QApplication.instance() or QApplication([])
     widget = ExportWidget()

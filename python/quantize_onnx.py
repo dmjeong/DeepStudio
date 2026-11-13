@@ -189,7 +189,7 @@ def _set_hw(model, height, width):
 #  ① + ② 보정 · 양자화
 # ─────────────────────────────────────────────────────────────
 def quantize_segment(config_path, calibration_dir, *, count=16, reduce_range=False,
-                     tile=768, output_json=None, log=print):
+                     tile=768, output_json=None, log=print, benchmark_only=False):
     """FP32 분할 모델 → INT8(QDQ) 모델 + JSON. 만든 JSON 경로를 돌려준다.
 
         전체 입력(예: 1504×3520)으로 보정하면 층마다 중간값을 모두 잡아 15GB 넘게 든다
@@ -210,7 +210,7 @@ def quantize_segment(config_path, calibration_dir, *, count=16, reduce_range=Fal
     if not (config.get("preprocessing") or {}).get("whole_image"):
         from quantize_dense import quantize_dense
         return quantize_dense(config_path, calibration_dir, count=count, reduce_range=reduce_range,
-                              output_json=output_json, log=log)
+                              output_json=output_json, log=log, benchmark_only=benchmark_only)
     _whole(config)
     height, width = int(config["input_height"]), int(config["input_width"])
     tile = min(int(tile), height, width) // 32 * 32       # 백본 보폭 32의 배수
@@ -306,7 +306,7 @@ def quantize_segment(config_path, calibration_dir, *, count=16, reduce_range=Fal
         result["export"]["precision"] = "int8"
         result["export"]["fp32_verification"] = result.get("verification")
         result["export"]["verification_policy"] = "int8_finite_and_calibration_comparison_v1"
-        result["verification"] = "int8_compared"
+        result["verification"] = "benchmark_only" if benchmark_only else "int8_compared"
         staged_json.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         comparison = compare(config_path, staged_json, calibration_dir, count=count, threads=2, log=log)
         comparison["scope"] = "calibration inputs; not independent accuracy evaluation"

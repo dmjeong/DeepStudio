@@ -11,7 +11,9 @@ Deep Vision Studio — 모델 내보내기 페이지
 └─────────────────────────────────────────────────────────────┘
 """
 
+import json
 import os
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
@@ -79,6 +81,7 @@ class ExportWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.project = None
+        self._benchmark_reference = ""
         self._init_ui()
 
     def _init_ui(self):
@@ -258,6 +261,10 @@ class ExportWidget(QWidget):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
+        self.benchmark_btn = QPushButton("정밀도·CPU 스레드 비교…")
+        self.benchmark_btn.clicked.connect(self._open_precision_benchmark)
+        btn_row.addWidget(self.benchmark_btn)
+
         self.export_btn = QPushButton("ONNX Export")
         self.export_btn.setProperty("cssClass", "primary")
         self.export_btn.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
@@ -289,6 +296,7 @@ class ExportWidget(QWidget):
         if self.project is not project:
             self.encrypt_check.setChecked(False)
             self.key_edit.clear()
+            self._benchmark_reference = ""
         self.project = project
         self.export_precision.setCurrentIndex(0)
         self.calibration_edit.setText(project.data.train_dir or "")
@@ -336,6 +344,41 @@ class ExportWidget(QWidget):
         self.output_edit.setText(
             os.path.join(export_dir, f"model_{project.task}" + (".dvsenc" if self.encrypt_check.isChecked() else ".onnx"))
         )
+
+    def _open_precision_benchmark(self):
+        from widgets.precision_benchmark_dialog import PrecisionBenchmarkDialog
+        from core.class_management import IMAGE_EXTENSIONS
+
+        data = self.project.data if self.project else None
+        image_dirs = [directory for directory in (
+            getattr(data, "test_dir", ""), getattr(data, "val_dir", ""), getattr(data, "train_dir", ""),
+        ) if directory and os.path.isdir(directory)]
+        image_dir = next((directory for directory in image_dirs if any(
+            file.is_file() and file.suffix.lower() in IMAGE_EXTENSIONS
+            for file in Path(directory).rglob("*")
+        )), image_dirs[0] if image_dirs else "")
+        fp32_path = self._benchmark_reference if os.path.isfile(self._benchmark_reference) else ""
+        output = self.output_edit.text().strip()
+        if not fp32_path and output and Path(output).suffix.lower() == ".onnx":
+            config = Path(output).with_suffix(".json")
+            if config.is_file():
+                try:
+                    manifest = json.loads(config.read_text(encoding="utf-8"))
+                    precision = manifest.get("export", {}).get("precision", "float32")
+                    if manifest.get("model_path") and precision == "float32":
+                        fp32_path = str(config)
+                except (OSError, ValueError, AttributeError, TypeError):
+                    pass  # The chooser remains available for exported manifests in other locations.
+        self._benchmark_dialog = PrecisionBenchmarkDialog(
+            self, fp32_path=fp32_path,
+            image_dir=image_dir, calibration_dir=self.calibration_edit.text().strip(),
+            browse_dir=str(Path(output).parent) if output else "",
+        )
+        try:
+            self._benchmark_dialog.exec()
+        finally:
+            self._benchmark_dialog.deleteLater()
+            self._benchmark_dialog = None
 
     def _refresh_deploy_preview(self):
         path = self.ckpt_edit.text().strip()
@@ -496,6 +539,7 @@ class ExportWidget(QWidget):
             return
         self.log_text.clear()
         self.export_btn.setEnabled(False)
+        self.benchmark_btn.setEnabled(False)
         self.progress_bar.show()
         self.worker = ExportWorker(
             checkpoint_path=ckpt_path, output_path=output_path,
@@ -557,6 +601,7 @@ class ExportWidget(QWidget):
     def _worker_finished(self):
         self.worker = None
         self.export_btn.setEnabled(True)
+        self.benchmark_btn.setEnabled(True)
         self.progress_bar.hide()
 
     def _on_log(self, message):
@@ -566,6 +611,12 @@ class ExportWidget(QWidget):
         self.log_text.setTextCursor(cursor)
 
     def _on_finished(self, result):
+        config_path = result.get("config_path")
+        if config_path and not result.get("encrypted") and Path(config_path).suffix.lower() == ".json":
+            if result.get("precision", "float32") == "float32":
+                self._benchmark_reference = str(config_path)
+            elif self._benchmark_reference == str(config_path):
+                self._benchmark_reference = ""
         status = ("INT8 실행·보정 영상 비교 완료" if result.get("precision") == "int8" else
                   "검증 통과" if result["verification"] == "passed" else "검증 건너뜀")
         if result.get("merged"):
