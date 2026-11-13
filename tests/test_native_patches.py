@@ -111,6 +111,32 @@ def test_detection_patch_boxes_and_source_splits(tmp_path):
     assert [r["class_id"] for r in detection_nms(rows)] == [0, 1]
 
 
+def test_small_object_coverage_preserves_full_box_and_validation(tmp_path):
+    source = make_detection_data(tmp_path / "source", (232, 64))
+    target = source / "labels/train/0.txt"
+    target.write_text(f"0 {64/232:.12g} {20/64:.12g} {4/232:.12g} {6/64:.12g}\n", encoding="utf-8")
+    contract = patch_contract("detect", 64)
+    options = dict(num_classes=2, patches_per_image=2, seed=2)
+    baseline = prepare_detection_patches(source, tmp_path / "baseline", contract, **options)
+    covered = prepare_detection_patches(source, tmp_path / "covered", contract,
+                                       small_object_coverage=True, **options)
+    info = json.loads((covered / "patches.json").read_text(encoding="utf-8"))
+    assert info["small_object_coverage"] == {
+        "small_targets": 1, "randomly_covered": 0, "selected_covered": 1,
+    }
+    assert info["counts"] == json.loads((baseline / "patches.json").read_text(encoding="utf-8"))["counts"]
+    from spatial_data import read_spatial_labels
+    from hashlib import sha256
+    prefix = sha256(b"train/0.png").hexdigest()[:20]
+    positives = [row for path in (covered / "labels/train").glob(f"{prefix}_*.txt")
+                 for row in read_spatial_labels(path, "detect", 2)]
+    np.testing.assert_allclose(positives, [[0, 16/64, 20/64, 4/64, 6/64]])
+    for folder in ("images/val", "labels/val"):
+        assert {p.name: p.read_bytes() for p in (covered / folder).iterdir()} == {
+            p.name: p.read_bytes() for p in (baseline / folder).iterdir()
+        }
+
+
 @pytest.mark.parametrize("model_id", ["libreyolo_detect_9t", "re_detr_v4_small", "libreyolo_detect_dfine_nano"])
 def test_real_detector_training_settings_and_export(tmp_path, model_id):
     pytest.importorskip("libreyolo")
@@ -123,17 +149,30 @@ def test_real_detector_training_settings_and_export(tmp_path, model_id):
     )
     source = make_detection_data(tmp_path / "data")
     contract = patch_contract("detect", 640, batch=2)
-    prepared = prepare_detection_patches(source, tmp_path / "patches", contract, num_classes=2)
+    prepared = prepare_detection_patches(source, tmp_path / "patches", contract, num_classes=2,
+                                         patches_per_image=1, small_object_coverage=True)
     data = write_detection_dataset_yaml(prepared, ["crack", "FM"], tmp_path / "data.json")
     model = build_upstream_model(model_id, num_classes=2, device="cpu")
     from native_detection import DetectorValidationTransform
     assert isinstance(model._get_val_preprocessor(), DetectorValidationTransform)
     result = train_detector(model, data=str(data), augmentation=ZERO, patches=contract,
+        small_object_coverage=True, train_patch_limit=1,
         epochs=1, batch=2, imgsz=640, workers=0, device="cpu", project=str(tmp_path), name="train",
         exist_ok=True, amp=False, val_loss=True, eval_interval=1, seed=1, cuda_graph=False)
     saved = torch.load(result["best_checkpoint"], map_location="cpu", weights_only=False)
     assert saved["studio_augmentation"] == ZERO and saved["studio_patches"] == contract
+    assert result["small_object_coverage"] and saved["studio_small_object_coverage"]
+    assert saved["studio_train_patch_limit"] == 1
+    if model_id == "libreyolo_detect_9t":
+        resume = build_upstream_model(model_id, num_classes=2, device="cpu",
+                                     weights=result["last_checkpoint"])
+        with pytest.raises(ValueError, match="재개 모델의 작은 객체 우선 설정"):
+            train_detector(resume, data=str(data), augmentation=ZERO, patches=contract,
+                small_object_coverage=True, train_patch_limit=2, resume=True,
+                epochs=2, batch=2, imgsz=640, workers=0, device="cpu",
+                project=str(tmp_path), name="resume", exist_ok=True, amp=False)
     loaded = load_upstream_checkpoint(result["best_checkpoint"], device="cpu")
+    assert all(not module.training for module in loaded.model.modules())
     from native_patch_inference import predict_patches
     prediction = predict_patches(loaded, Image.open(source / "images/val/0.png"), contract)
     assert prediction.studio_tiles == 1

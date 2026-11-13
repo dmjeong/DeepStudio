@@ -3,7 +3,7 @@
 import copy
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QGraphicsItemGroup, QMenu
 from widgets.detection_canvas import DetectionCanvas
@@ -25,6 +25,7 @@ class SegmentationCanvas(DetectionCanvas):
         super().__init__(pixmap, parent)
         self.mode = "polygon"
         self.class_id, self.brush_size = 1, 20
+        self.stroke_width = self.brush_size
         self.stroke_erase = False
         self.points, self.stroke, self.preview_shape = [], [], None
         self.document = None
@@ -162,6 +163,16 @@ class SegmentationCanvas(DetectionCanvas):
     def set_opacity(self, value):
         self.overlay.setOpacity(value / 100)
 
+    def set_brush_size(self, value):
+        self.brush_size = value
+        self.viewport().update()
+
+    def viewportEvent(self, event):
+        if event.type() == QEvent.Type.Leave:
+            self.hover = None
+            self.viewport().update()
+        return super().viewportEvent(event)
+
     def toggle_overlay(self):
         self.overlay_visible = not self.overlay_visible
         self.overlay.setVisible(self.overlay_visible)
@@ -291,7 +302,7 @@ class SegmentationCanvas(DetectionCanvas):
             "kind": "stroke",
             "class_id": 0 if self.stroke_erase else self.class_id,
             "points": list(points),
-            "width": self.brush_size,
+            "width": self.stroke_width,
         }
         if self.brush_tip == "square":
             shape["tip"] = "square"
@@ -396,6 +407,7 @@ class SegmentationCanvas(DetectionCanvas):
         self.stroke = self._normalized(point)
         self._stroke_dirty = None
         self.stroke_erase = erase
+        self.stroke_width = self.brush_size
         self._preview_segment()
         self.pending_changed.emit(True)
 
@@ -849,23 +861,22 @@ class SegmentationCanvas(DetectionCanvas):
             painter.drawPolygon(self._polygon(self.preview_shape["points"]))
         if self.gesture == "marquee" and self.preview:
             painter.drawRect(self.preview)
-        if self.mode in {"brush", "erase"} and self.hover is not None:
+        if self.mode in {"brush", "erase"} and self.hover is not None and self.gesture != "pan":
             # The overlay contains the actual changed pixels. Only the cursor
             # outline is painted here; an erase gesture never draws white paint.
             painter.setPen(pen)
+            width = self.stroke_width if self.gesture == "stroke" else self.brush_size
             if self.brush_tip == "square":
                 painter.drawRect(
                     QRectF(
-                        self.hover.x() - self.brush_size / 2,
-                        self.hover.y() - self.brush_size / 2,
-                        self.brush_size,
-                        self.brush_size,
+                        self.hover.x() - width / 2,
+                        self.hover.y() - width / 2,
+                        width,
+                        width,
                     )
                 )
             else:
-                painter.drawEllipse(
-                    self.hover, self.brush_size / 2, self.brush_size / 2
-                )
+                painter.drawEllipse(self.hover, width / 2, width / 2)
         pen = QPen(QColor("#d4c66b"), 1, Qt.PenStyle.DashLine)
         pen.setCosmetic(True)
         painter.setPen(pen)

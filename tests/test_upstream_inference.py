@@ -60,6 +60,7 @@ def test_upstream_pt_checkpoint_uses_public_libreyolo_factory(tmp_path, monkeypa
 
     class _NativeModel:
         FAMILY = "yolo9"
+        model = torch.nn.BatchNorm2d(3)
 
     def factory(path, *, device):
         calls.append((path, device))
@@ -68,6 +69,7 @@ def test_upstream_pt_checkpoint_uses_public_libreyolo_factory(tmp_path, monkeypa
     monkeypatch.setitem(sys.modules, "libreyolo", SimpleNamespace(LibreYOLO=factory))
     engine = load_inference_engine(checkpoint_path, device="cpu", gradcam=False)
     assert engine._upstream_model.FAMILY == "yolo9"
+    assert not engine._upstream_model.model.training
     assert engine._upstream_task == "detect"
     assert engine.class_names == ["OK", "NG"]
     assert engine._input_size == (640, 640)

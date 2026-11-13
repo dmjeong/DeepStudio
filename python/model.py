@@ -43,7 +43,7 @@ CustomCSP 모델 정의
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Tuple, Optional
+from typing import List
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -431,6 +431,7 @@ class DetectionHead(nn.Module):
         self.cls_pred = nn.Conv2d(fpn_channels, num_classes, 1)
         self.bbox_pred = nn.Conv2d(fpn_channels, 4, 1)
         self.obj_pred = nn.Conv2d(fpn_channels, 1, 1)
+        self.foreground_aux = None
 
     def forward(self, features: List[torch.Tensor]) -> torch.Tensor:
         """
@@ -659,6 +660,21 @@ class CustomCSP(nn.Module):
             elif isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.zeros_(m.bias)
+
+    def enable_detection_foreground_supervision(self) -> None:
+        """Attach a training-only classifier to the stride-4 detection features."""
+        if self.task != "detect":
+            raise ValueError("전경 보조 학습은 객체 탐지에서만 지원합니다.")
+        if self.head.foreground_aux is None:
+            first_projection = self.backbone.stage1[0].conv
+            self.head.foreground_aux = nn.Conv2d(first_projection.out_channels, 1, 1).to(
+                device=first_projection.weight.device, dtype=first_projection.weight.dtype)
+
+    def forward_with_detection_foreground(self, x: torch.Tensor):
+        if self.task != "detect" or self.head.foreground_aux is None:
+            raise ValueError("전경 보조 헤드를 먼저 활성화하세요.")
+        features = self.backbone(x)
+        return self.head(features), self.head.foreground_aux(features[0])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

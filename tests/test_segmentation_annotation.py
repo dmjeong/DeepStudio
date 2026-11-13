@@ -109,6 +109,37 @@ def test_brush_shortcuts_adjust_size_and_shift_temporarily_erases(editor):
     assert dialog.document.render()[200, 230] == 0
 
 
+def test_brush_slider_and_exact_size_control_keep_stroke_width_in_image_pixels(editor):
+    app, dialog, _ = editor
+    dialog.mode_buttons["brush"].click()
+    assert dialog.brush_slider.isVisible() and dialog.brush_size.isVisible()
+    dialog.brush_slider.setValue(48)
+    assert dialog.brush_size.value() == dialog.view.brush_size == 48
+
+    # Resizing during a gesture affects the next stroke only, so the rendered
+    # preview and the mask recorded on release use the same width.
+    view = dialog.view
+    center = view.mapFromScene(QPointF(250, 200))
+    QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton, pos=center)
+    QTest.keyClick(view, Qt.Key.Key_BracketRight)
+    assert dialog.brush_size.value() == dialog.brush_slider.value() == 50
+    QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=center)
+    app.processEvents()
+    assert dialog.document.shapes[-1]["width"] == 48
+    assert dialog.document.render()[200, 268] == 1
+
+    dialog.mode_buttons["erase"].click()
+    dialog.brush_size.setValue(9)
+    assert dialog.brush_slider.value() == 9
+    dialog._zoom(1)
+    app.processEvents()
+    click(dialog, 250, 200)
+    assert dialog.document.shapes[-1]["operation"] == "erase"
+    assert dialog.document.shapes[-1]["width"] == 9
+    mask = dialog.document.render()
+    assert mask[200, 250] == 0 and mask[200, 268] == 1
+
+
 def test_incomplete_polygon_is_drafted_and_failed_explicit_save_stays_open(editor):
     app, dialog, saved = editor
     click(dialog, 200, 100)

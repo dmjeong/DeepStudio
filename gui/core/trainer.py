@@ -167,6 +167,9 @@ class TrainWorker(TrainingEngine):
         #   사전학습이 적용된 줄 알았다.)
         weights_path = (model_cfg.pretrained_weights or "").strip()
         pretrained_loaded = self._initialize_model(model, weights_path, task)
+        if task == "detect" and getattr(cfg, "detection_foreground_supervision", False):
+            model.enable_detection_foreground_supervision()
+            self.signals.log_message.emit("  전경 보조 학습: P2 특징에 물체/배경 손실 적용")
         if getattr(self, "debug_observer", None) is not None:
             self.debug_observer(model)
 
@@ -330,9 +333,15 @@ class TrainWorker(TrainingEngine):
             else:
                 patience_counter += 1
             checkpoint = self._checkpoint_metadata()
+            model_state = model.state_dict()
+            if task == "detect" and model.head.foreground_aux is not None:
+                # Save the deployable detector schema. Custom CSP supports transfer
+                # learning from this checkpoint; it has no optimizer-resume mode.
+                model_state = {name: value for name, value in model_state.items()
+                               if not name.startswith("head.foreground_aux.")}
             checkpoint.update({
                 "epoch": epoch,
-                "model_state_dict": self._cpu_state(model.state_dict()),
+                "model_state_dict": self._cpu_state(model_state),
                 "optimizer_state_dict": self._cpu_state(optimizer.state_dict()),
                 "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
                 "scaler_state_dict": scaler.state_dict() if scaler else None,
@@ -341,6 +350,8 @@ class TrainWorker(TrainingEngine):
             })
             if self.project.task == "segment":
                 checkpoint["unlabeled_policy"] = "background"
+            if task == "detect":
+                checkpoint["detection_foreground_supervision"] = getattr(cfg, "detection_foreground_supervision", False)
             if getattr(self, "_class_weight_details", None) is not None:
                 checkpoint["class_weight_details"] = self._class_weight_details
             record_epoch_time(self._training_clock, metrics_history,
@@ -401,6 +412,8 @@ class TrainWorker(TrainingEngine):
             ckpt = torch.load(
                 ckpt_path, map_location="cpu", weights_only=False
             )
+            if task == "detect":
+                model.head.foreground_aux = None
             model.load_state_dict(ckpt["model_state_dict"])
             model.to(device)
             self.signals.log_message.emit(
@@ -963,6 +976,9 @@ class TrainWorker(TrainingEngine):
         └──────────────────────────────────────────────┘
         """
         model.train()
+        foreground_weight = (.25 * (total_epochs - epoch + 1) / total_epochs
+                             if self.project.task == "detect" and
+                             getattr(self.project.training, "detection_foreground_supervision", False) else 0.0)
         if self.project.model.freeze_backbone:
             model.backbone.eval()
         total_loss = 0.0
@@ -1004,14 +1020,7 @@ class TrainWorker(TrainingEngine):
             # AMP 활성화 시 autocast + GradScaler 사용
             if use_amp and scaler is not None:
                 with torch.amp.autocast("cuda"):
-                    outputs = model(images)
-                    if self.project.task == "anomaly":
-                        # 재구성 타겟 = 원본 [0,1] 이미지 (targets)
-                        loss = self._criterion_loss(criterion, outputs, targets)
-                    elif criterion is not None:
-                        loss = self._criterion_loss(criterion, outputs, targets)
-                    else:
-                        loss = self._compute_detection_loss(outputs, targets)
+                    loss = self._training_batch_loss(model, images, targets, criterion, foreground_weight)
 
                 # Scaled 역전파
                 scaler.scale(loss).backward()
@@ -1021,13 +1030,7 @@ class TrainWorker(TrainingEngine):
                 scaler.update()
             else:
                 # 기본 FP32 학습 (CPU 또는 AMP 미지원 GPU)
-                outputs = model(images)
-                if self.project.task == "anomaly":
-                    loss = self._criterion_loss(criterion, outputs, targets)
-                elif criterion is not None:
-                    loss = self._criterion_loss(criterion, outputs, targets)
-                else:
-                    loss = self._compute_detection_loss(outputs, targets)
+                loss = self._training_batch_loss(model, images, targets, criterion, foreground_weight)
 
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
@@ -1049,6 +1052,17 @@ class TrainWorker(TrainingEngine):
             torch.cuda.empty_cache()
 
         return total_loss / max(processed_batches, 1)
+
+    def _training_batch_loss(self, model, images, targets, criterion, foreground_weight):
+        if foreground_weight:
+            from detection import foreground_supervision_loss
+            outputs, foreground = model.forward_with_detection_foreground(images)
+            return (self._compute_detection_loss(outputs, targets)
+                    + foreground_weight * foreground_supervision_loss(foreground, targets))
+        outputs = model(images)
+        if criterion is not None or self.project.task == "anomaly":
+            return self._criterion_loss(criterion, outputs, targets)
+        return self._compute_detection_loss(outputs, targets)
 
     # ── 검증 (에폭 단위 — 간략 메트릭) ────────────────
     @torch.no_grad()

@@ -230,6 +230,7 @@ def build():
         "--hidden-import", "train_dinomaly",
         "--hidden-import", "dense_deployment",
         "--hidden-import", "quantize_dense",
+        "--hidden-import", "detection_quantization",
         "--hidden-import", "segmentation_distillation",
         "--hidden-import", "core.dinomaly_trainer",
         "--collect-submodules", "scipy.optimize",

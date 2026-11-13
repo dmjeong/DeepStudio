@@ -1,4 +1,4 @@
-"""Static QDQ INT8 for fixed-size segmentation and Dinomaly graphs."""
+"""Static QDQ INT8 for detection, fixed-size segmentation and Dinomaly."""
 
 import copy
 import json
@@ -9,6 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from dense_deployment import PreparedWindows, predict_dense, region_pixels
+from detection_quantization import DetectionInputs, compare_detection_sessions, validate_detection_quantization
 
 
 def quantize_dense(
@@ -32,10 +33,13 @@ def quantize_dense(
 
     config_path = Path(config_path)
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    if config["task"] not in {"segment", "anomaly"} or (
+    detect = config["task"] == "detect"
+    if config["task"] not in {"detect", "segment", "anomaly"} or (
         config["task"] == "anomaly" and config["backend"] != "dinomaly"
     ):
-        raise ValueError("고정 입력 INT8은 분할·Dinomaly 모델을 지원합니다")
+        raise ValueError("고정 입력 INT8은 객체 탐지·분할·Dinomaly 모델을 지원합니다")
+    if detect and not config.get("cpp_supported"):
+        raise ValueError("C++ 배포 계약이 있는 탐지 모델만 INT8을 지원합니다")
     if config.get("encryption"):
         raise ValueError("INT8 보정을 먼저 하고 암호화하세요")
     source = config_path.parent / config["model_path"]
@@ -65,17 +69,19 @@ def quantize_dense(
     if input_name != config["input_name"]:
         raise ValueError("ONNX/JSON 입력 이름 불일치")
 
+    def prepare(path):
+        if detect:
+            return DetectionInputs(config, path)
+        image = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        return PreparedWindows(config, region_pixels(config, image))
+
     class Reader(CalibrationDataReader):
         def __init__(self):
             self.items = []
             for path in paths:
-                image = cv2.imdecode(
-                    np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED
-                )
-                pixels = region_pixels(config, image)
                 self.items.extend(
                     (path, index)
-                    for index in range(len(PreparedWindows(config, pixels)))
+                    for index in range(len(prepare(path)))
                 )
             self.start, self.end = 0, len(self.items)
             self.cached_path, self.cached_pixels = None, None
@@ -97,17 +103,9 @@ def quantize_dense(
             path, index = self.items[self.cursor]
             self.cursor += 1
             if path != self.cached_path:
-                self.cached_pixels = PreparedWindows(
-                    config,
-                    region_pixels(
-                        config,
-                        cv2.imdecode(
-                            np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED
-                        ),
-                    ),
-                )
+                self.cached_pixels = prepare(path)
                 self.cached_path = path
-            tensor = self.cached_pixels[index][2]
+            tensor = self.cached_pixels[index][1 if detect else 2]
             return {input_name: tensor}
 
     reader = Reader()
@@ -125,11 +123,13 @@ def quantize_dense(
             weight_type=QuantType.QInt8,
             per_channel=True,
             reduce_range=reduce_range,
-            op_types_to_quantize=["Conv", "MatMul", "Gemm"],
+            op_types_to_quantize=["Conv"] if detect else ["Conv", "MatMul", "Gemm"],
             extra_options={"CalibStridedMinMax": 1},
         )
         quantized = onnx.load(str(staged))
         onnx.checker.check_model(quantized)
+        if detect and [v.name for v in quantized.graph.output] != config["output_names"]:
+            raise ValueError("탐지 INT8 ONNX/JSON 출력 이름 또는 순서 불일치")
         if not any(n.op_type == "QuantizeLinear" for n in quantized.graph.node):
             raise ValueError("INT8로 변환된 연산이 없습니다")
         settings = ort.SessionOptions()
@@ -140,7 +140,11 @@ def quantize_dense(
         quant = ort.InferenceSession(
             str(staged), settings, providers=["CPUExecutionProvider"]
         )
-        report = compare_sessions(config, fp, quant, paths)
+        if detect:
+            report = compare_detection_sessions(config, fp, quant, paths)
+            validate_detection_quantization(report, log)
+        else:
+            report = compare_sessions(config, fp, quant, paths)
         result = copy.deepcopy(config)
         result["model_path"] = staged.name
         result.setdefault("export", {}).update(
@@ -159,25 +163,27 @@ def quantize_dense(
                 "comparison": report,
             },
         )
+        if detect:
+            result["export"]["quantization"]["operators"] = ["Conv"]
         # Verification applies to executable shape/finite outputs. Accuracy is
         # reported separately, never inherited as FP32 numerical equivalence.
         result["export"]["fp32_verification"] = result.get("verification")
         result["verification"] = "int8_compared"
-        result["export"]["verification_policy"] = (
-            "int8_finite_and_calibration_comparison_v1"
-        )
+        result["export"]["verification_policy"] = ("int8_detection_calibration_decisions_v1" if detect
+                                                   else "int8_finite_and_calibration_comparison_v1")
         staged_json = Path(directory) / output.name
         staged_json.write_text(
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        staged_report = Path(directory) / output.with_suffix(".report.json").name
+        staged_report.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         os.replace(staged, output.with_suffix(".onnx"))
         os.replace(staged_json, output)
-    output.with_suffix(".report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    log(
-        f"INT8 완료: {output.name} · 실제 보정 타일 {len(reader)}개 · 출력 차이: {report}"
-    )
+        os.replace(staged_report, output.with_suffix(".report.json"))
+    message = f"INT8 완료: {output.name} · 실제 보정 타일 {len(reader)}개"
+    log(message if detect else f"{message} · 출력 차이: {report}")
     return output
 
 

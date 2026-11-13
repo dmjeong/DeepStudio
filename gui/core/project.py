@@ -161,6 +161,8 @@ class TrainingConfig:
     patches_per_image: int = 0
     # 패치 학습 배율: 1.0 = 원본 해상도. 0.5면 이미지를 절반으로 줄인 뒤 자른다 (추론 계산량 1/4).
     patch_scale: float = 1.0
+    small_object_coverage: bool = False
+    detection_foreground_supervision: bool = False
     # 원본 판정 영역 전체를 축소·분할 없이 분할 모델에 입력.
     original_size_training: bool = False
     device: str = "auto"  # auto, cpu, cuda, cuda:0, cuda:1

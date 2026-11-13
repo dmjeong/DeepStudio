@@ -76,7 +76,13 @@ export function Training({
     };
   }, [project.task, unsupported, efficientnet, cfg.training_mode, cfg.anomaly_method, modelId]);
   const save = async () => {
-    await api("/project", "PUT", { training: cfg, model });
+    const training = { ...cfg,
+      small_object_coverage: Boolean(cfg.small_object_coverage && cfg.patch_training && cfg.patches_per_image
+        && project.task === "detect" && cfg.training_mode.startsWith("upstream_")),
+      detection_foreground_supervision: Boolean(cfg.detection_foreground_supervision
+        && project.task === "detect" && cfg.training_mode === "custom" && !modelId) };
+    await api("/project", "PUT", { training, model });
+    setCfg(training);
     setDirty(false);
     await refresh();
   };
@@ -384,17 +390,30 @@ export function Training({
                 </div>
                 {options.capabilities.patch_training && <div className="form-grid">
                   <label><input type="checkbox" checked={cfg.patch_training ?? false}
+                    disabled={project.task === "detect" && options.capabilities.resume}
                     onChange={e => set("patch_training", e.target.checked)} />패치 학습</label>
                   {cfg.patch_training && <>
-                    <Field label="패치 배율"><select value={cfg.patch_scale ?? 1} onChange={e => set("patch_scale", Number(e.target.value))}>
+                    <Field label="패치 배율"><select value={cfg.patch_scale ?? 1}
+                      disabled={project.task === "detect" && options.capabilities.resume}
+                      onChange={e => set("patch_scale", Number(e.target.value))}>
                       {[1, .75, .5, .35, .25].map(v => <option key={v} value={v}>{v}</option>)}
                     </select></Field>
                     {project.task !== "classify" && <Field label="이미지당 학습 패치 (0=전체)"><input type="number" min="0" max="256"
+                      disabled={project.task === "detect" && options.capabilities.resume}
                       value={cfg.patches_per_image ?? 0} onChange={e => set("patches_per_image", Number(e.target.value))} /></Field>}
+                    {options.capabilities.small_object_coverage && <label>
+                      <input type="checkbox" checked={Boolean(cfg.patches_per_image && cfg.small_object_coverage)}
+                        disabled={!cfg.patches_per_image || options.capabilities.resume}
+                        onChange={e => set("small_object_coverage", e.target.checked)} />작은 물체가 포함된 패치 우선 선택
+                    </label>}
                     <p className="muted">{project.task === "classify" ? "모든 패치를 합쳐 원본 한 장의 클래스를 학습합니다. 배치는 패치 묶음 크기입니다."
                       : project.task === "detect" ? "박스를 함께 자르고 추론 시 원본 좌표로 합칩니다. 검증 mAP는 패치 단위입니다." : "패치 크기는 입력 크기입니다."}</p>
                   </>}
                 </div>}
+                {options.capabilities.detection_foreground_supervision && <label>
+                  <input type="checkbox" checked={cfg.detection_foreground_supervision ?? false}
+                    onChange={e => set("detection_foreground_supervision", e.target.checked)} />전경 보조 학습 (실험)
+                </label>}
                 <div className="form-grid">
                   {[
                     ["수평 반전 확률", "horizontal_flip", 1],

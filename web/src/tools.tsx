@@ -19,6 +19,10 @@ export function Export({ state, run, act, busy }: PageProps) {
   const [keyNotice, setKeyNotice] = useState("");
   const [opset, setOpset] = useState(17);
   const [dynamic, setDynamic] = useState(false);
+  const detection = state.project?.task === "detect";
+  const [precision, setPrecision] = useState("float32");
+  const [calibrationDir, setCalibrationDir] = useState("");
+  const int8 = detection && precision === "int8";
   const efficientnet = state.project?.task === "classify" && String(state.project.model.model_id || "").startsWith("efficientnet_");
   const [datasetValidation, setDatasetValidation] = useState(efficientnet);
   const [validationDir, setValidationDir] = useState("");
@@ -27,6 +31,8 @@ export function Export({ state, run, act, busy }: PageProps) {
     setDatasetValidation(efficientnet);
     setValidationDir("");
     setPrecisionFallback(false);
+    setPrecision("float32");
+    setCalibrationDir("");
     setKeyNotice("");
     setWeights(state.project?.runs.at(-1)?.checkpoint_path || "");
   }, [state.project?.filepath, efficientnet]);
@@ -74,6 +80,14 @@ export function Export({ state, run, act, busy }: PageProps) {
             </> : <Check label="고정밀 호환 재시도 허용 (추론이 느려질 수 있음)"
               value={precisionFallback} onChange={setPrecisionFallback} />}
           </>}
+          {detection && <>
+            <Field label="정밀도"><select value={precision} onChange={e => setPrecision(e.target.value)}>
+              <option value="float32">FP32</option>
+              <option value="int8">INT8 QDQ</option>
+            </select></Field>
+            {int8 && <PathField label="INT8 보정용 정상·불량 이미지 폴더" directory
+              value={calibrationDir} onChange={setCalibrationDir} home={state.home} />}
+          </>}
           <div className="toolbar">
             <Field label="ONNX opset">
               <select
@@ -88,7 +102,7 @@ export function Export({ state, run, act, busy }: PageProps) {
             <Check label="동적 배치" value={dynamic} onChange={setDynamic} />
             <button
               className="primary push"
-              disabled={!weights || !output || (encrypted && !keyPath)}
+              disabled={!weights || !output || (encrypted && !keyPath) || (int8 && !calibrationDir)}
               onClick={() =>
                 act(async () =>
                   setId(
@@ -102,6 +116,8 @@ export function Export({ state, run, act, busy }: PageProps) {
                         dataset_validation: efficientnet && datasetValidation,
                         validation_dir: validationDir,
                         allow_precision_fallback: efficientnet && !datasetValidation && precisionFallback,
+                        precision: int8 ? "int8" : "float32",
+                        calibration_dir: int8 ? calibrationDir : "",
                       })
                     ).id,
                   ),

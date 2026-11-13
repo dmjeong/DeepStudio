@@ -104,6 +104,8 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
     return {
         "engine": engine,
         "patch_training": engine == "dinomaly" or (task == "segment" and engine != "sam2") or (engine == "upstream" and task in {"classify", "detect"}),
+        "small_object_coverage": task == "detect" and engine == "upstream",
+        "detection_foreground_supervision": task == "detect" and engine == "custom" and not model_id,
         "original_size_training": task == "segment" and (
             (engine == "custom" and not model_id) or
             (engine in {"custom", "builtin"} and model_id in ORIGINAL_SIZE_SEGMENT_IDS)
@@ -208,6 +210,15 @@ def validate_training_options(project, *, require_runnable=True):
             patch_contract(project.task, get_upstream_spec(model_id).input_size, cfg.patch_scale, cfg.batch_size)
     if type(getattr(cfg, "patches_per_image", 0)) is not int or not 0 <= cfg.patches_per_image <= 256:
         raise ValueError("이미지당 학습 패치는 0~256 정수 필요")
+    coverage = getattr(cfg, "small_object_coverage", False)
+    foreground = getattr(cfg, "detection_foreground_supervision", False)
+    if type(coverage) is not bool or type(foreground) is not bool:
+        raise ValueError("객체 탐지 학습 옵션은 boolean 필요")
+    if coverage and (not capabilities.get("small_object_coverage", False) or
+                     not getattr(cfg, "patch_training", False) or not cfg.patches_per_image):
+        raise ValueError("작은 물체가 포함된 패치 우선 선택은 지원되는 탐지 모델의 패치 개수를 지정해야 사용할 수 있습니다.")
+    if foreground and not capabilities.get("detection_foreground_supervision", False):
+        raise ValueError("전경 보조 학습은 Custom CSP 객체 탐지에서 지원합니다.")
     if type(cfg.efficientnet_no_decay) is not bool:
         raise ValueError("EfficientNet weight decay 제외 옵션은 boolean 필요")
     if capabilities["engine"] == "efficientnet" and cfg.efficientnet_model not in capabilities["models"]:

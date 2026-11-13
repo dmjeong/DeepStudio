@@ -89,6 +89,10 @@ def load_upstream_checkpoint(path: str | Path, *, device: str):
     else:
         from native_detection import configure_detector
         configure_detector(model)
+        # The factory can return an inner module still in training mode.
+        # Detection inference must use the saved BatchNorm statistics and
+        # the evaluation branch of the decoder before the first frame.
+        model.model.eval()
     import torch
     from native_patches import validate_patches
     saved = torch.load(path, map_location="cpu", weights_only=False)
@@ -322,6 +326,7 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
                          resume: bool, use_amp: bool, patience: int,
                          val_split: float = 0.2, seed: int = 0, center_crop=None,
                          augmentation=None, patch_training=False, patch_scale=1., patches_per_image=0,
+                         small_object_coverage=False,
                          emit: Callable[[dict], None]) -> dict:
     """Run an upstream native trainer and return its documented result map."""
     spec = get_upstream_spec(model_id)
@@ -333,6 +338,10 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
     from studio_augmentation import augmentation_contract
     augmentation = augmentation_contract(augmentation)
     patches = patch_contract(spec.task, spec.input_size, patch_scale, batch_size) if patch_training else None
+    if type(small_object_coverage) is not bool or (
+        small_object_coverage and (spec.task != "detect" or not patches or not patches_per_image)
+    ):
+        raise ValueError("작은 객체 우선에는 탐지 패치 학습과 이미지당 패치 수 1 이상이 필요합니다")
     if center_crop is not None:
         from crop_dataset import prepare_crop_dataset
         data_root = prepare_crop_dataset(data_root, output.parent / "generated", spec.task,
@@ -352,12 +361,21 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
             if patches:
                 from detection_patch_dataset import prepare_detection_patches
                 data_root = prepare_detection_patches(data_root, Path(temp) / "patches", patches,
-                    num_classes=len(class_names), patches_per_image=patches_per_image, seed=seed)
+                    num_classes=len(class_names), patches_per_image=patches_per_image, seed=seed,
+                    small_object_coverage=small_object_coverage)
+                if small_object_coverage:
+                    coverage = json.loads((data_root / "patches.json").read_text(encoding="utf-8"))["small_object_coverage"]
+                    emit({"event": "preprocessing_configured", "policy": "small_object_patch_coverage_v1",
+                          "message": "완전히 포함된 작은 객체 (패치 수가 제한된 학습 이미지) "
+                                     f"{coverage['randomly_covered']} → {coverage['selected_covered']} / {coverage['small_targets']}",
+                          **coverage})
             source = str(write_detection_dataset_yaml(data_root, class_names, output / "dataset.yaml"))
             model = build_upstream_model(model_id, num_classes=len(class_names), device=device,
                                          weights=weights, pretrained=pretrained)
             return train_detector(model, data=source, resume=resume, center_crop=center_crop,
-                                  augmentation=augmentation, patches=patches, **common)
+                                  augmentation=augmentation, patches=patches,
+                                  small_object_coverage=small_object_coverage, train_patch_limit=patches_per_image,
+                                  **common)
     with prepare_classification_dataset(
         data_root, class_names, output.parent, val_split=val_split, seed=seed,
     ) as (prepared_root, summary):

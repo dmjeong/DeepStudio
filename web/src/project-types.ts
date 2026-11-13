@@ -53,6 +53,8 @@ export interface TrainingConfig {
   patch_training: boolean;
   patch_scale: number;
   patches_per_image: number;
+  small_object_coverage?: boolean;
+  detection_foreground_supervision?: boolean;
   augmentation: AugmentationConfig;
   anomaly_method: string;
   patchcore_sampling_ratio: number;

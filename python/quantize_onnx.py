@@ -338,6 +338,9 @@ def compare(fp32_json, int8_json, image_dir, *, count=None, threads=0, log=print
     """클래스 맵 일치율과 결함 클래스별 IoU(FP32를 기준으로). 리포트 dict를 돌려준다."""
     config, fp32 = _session(fp32_json, threads)
     _, int8 = _session(int8_json, threads)
+    if config["task"] == "detect":
+        from detection_quantization import compare_detection_sessions
+        return compare_detection_sessions(config, fp32, int8, list_images(image_dir, count))
     if not config.get("preprocessing", {}).get("whole_image"):
         from quantize_dense import compare_sessions
         return compare_sessions(config, fp32, int8, list_images(image_dir, count))

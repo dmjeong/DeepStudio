@@ -411,6 +411,14 @@ class TrainingForm:
         self.original_size_check.toggled.connect(self._on_patchcore_settings_changed)
         self.patch_check = QCheckBox("패치 학습")
         self.patch_check.toggled.connect(self._on_patchcore_settings_changed)
+        self.small_object_coverage_check = QCheckBox("작은 물체가 포함된 패치 우선 선택")
+        self.small_object_coverage_check.setToolTip(
+            "지정한 학습 패치 수 안에서 작은 정답 박스가 잘리지 않고 들어간 패치를 우선합니다."
+        )
+        self.detection_foreground_check = QCheckBox("전경 보조 학습 (실험)")
+        self.detection_foreground_check.setToolTip(
+            "학습 중 고해상도 특징에서 물체와 배경을 구분하는 보조 손실을 사용합니다."
+        )
 
         self.input_size_spin = NoWheelSpinBox()
         self.input_size_spin.setRange(32, 1024)
@@ -449,6 +457,10 @@ class TrainingForm:
         image_layout.addRow("입력 크기 (px)", self.input_size_spin)
         image_layout.addRow(self.patch_scale_label, self.patch_scale_combo)
         image_layout.addRow(self.patch_count_label, self.patch_count_spin)
+        image_layout.addRow(self.small_object_coverage_check)
+        image_layout.addRow(self.detection_foreground_check)
+        image_layout.setRowVisible(self.small_object_coverage_check, False)
+        image_layout.setRowVisible(self.detection_foreground_check, False)
         image_layout.addRow(self.patch_info)
         image_layout.addRow(self.pc_crop_check)
         image_layout.addRow("크롭 가로 (px)", self.pc_crop_width_spin)

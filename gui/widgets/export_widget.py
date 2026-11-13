@@ -191,7 +191,7 @@ class ExportWidget(QWidget):
 
         self.export_precision = QComboBox()
         self.export_precision.addItem("FP32 (원본 정밀도)", "float32")
-        self.export_precision.addItem("INT8 QDQ (분할·Dinomaly, 보정 필요)", "int8")
+        self.export_precision.addItem("INT8 QDQ (객체 탐지·분할·Dinomaly)", "int8")
         opt_layout.addRow("정밀도:", self.export_precision)
         self.calibration_edit = QLineEdit()
         self.calibration_edit.setPlaceholderText("INT8 보정용 학습 이미지 폴더 (정상·불량 혼합)")
@@ -584,6 +584,9 @@ class ExportWidget(QWidget):
                 f"크기: {result['file_size_mb']:.1f} MB")
         if result.get("precision") == "int8":
             text += "\nINT8은 FP32와 수치·정확도가 달라질 수 있습니다. 보정 영상 비교 결과는 로그와 JSON에 저장했습니다. 별도 시험 영상으로 확인하세요."
+            report = result.get("quantization_comparison", {})
+            if result.get("task") == "detect" and report.get("fp32_positive_images") == 0:
+                text += "\n보정 영상에서 FP32 검출이 없어 불량 검출 일치는 확인되지 않았습니다."
         if result.get("backend") == "sam2" and not result.get("encrypted"):
             text += "\nSAM2는 encoder ONNX, decoder ONNX, sam2.json 세 파일을 함께 배포합니다."
         if result.get("encrypted"):

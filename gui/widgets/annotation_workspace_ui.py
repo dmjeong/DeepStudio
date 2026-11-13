@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSlider,
-    QSpinBox,
     QSplitter,
     QTableWidget,
     QTabWidget,
@@ -29,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from widgets.annotation_io import ThumbnailLoader
-from widgets.common import NoWheelComboBox
+from widgets.common import NoWheelComboBox, NoWheelSpinBox
 
 
 class AnnotationWorkspaceUI:
@@ -102,10 +101,11 @@ class AnnotationWorkspaceUI:
         self.apply_class_button = QPushButton("선택에 적용")
         self.apply_class_button.clicked.connect(self._apply_class)
         properties.addWidget(self.apply_class_button, 0, 2)
-        self.brush_size = QSpinBox()
+        self.brush_size = NoWheelSpinBox(self)
         self.brush_size.setRange(1, 1024)
         self.brush_size.setValue(20)
         self.brush_size.setSuffix(" px")
+        self.brush_size.setVisible(self.task == "segment")
         self.erase_scope = NoWheelComboBox()
         self.erase_scope.addItem("선택 영역 / 활성 클래스", "selection")
         self.erase_scope.addItem("활성 클래스", "class")
@@ -123,7 +123,7 @@ class AnnotationWorkspaceUI:
         self.opacity.setValue(45)
         self.opacity.setMaximumWidth(110)
         for column, widget in enumerate(
-            (self.brush_size, self.erase_scope, self.background_only, self.opacity)
+            (self.erase_scope, self.background_only, self.opacity)
         ):
             widget.setVisible(self.task == "segment")
             properties.addWidget(widget, 1, column)
@@ -176,6 +176,20 @@ class AnnotationWorkspaceUI:
             button.clicked.connect(lambda checked=False, m=mode: self._set_mode(m))
             self.mode_buttons[mode] = button
             tools.addWidget(button)
+            if self.task == "segment" and mode == "erase":
+                label = QLabel("브러시 크기")
+                label.setBuddy(self.brush_size)
+                tools.addWidget(label)
+                tools.addWidget(self.brush_size)
+                self.brush_size.setToolTip("원본 이미지 기준 지름 · [ / ] 단축키")
+                self.brush_slider = QSlider(Qt.Orientation.Horizontal)
+                self.brush_slider.setAccessibleName("브러시 크기 (px)")
+                self.brush_slider.setToolTip(self.brush_size.toolTip())
+                self.brush_slider.setRange(self.brush_size.minimum(), self.brush_size.maximum())
+                self.brush_slider.setValue(self.brush_size.value())
+                self.brush_slider.valueChanged.connect(self.brush_size.setValue)
+                self.brush_size.valueChanged.connect(self.brush_slider.setValue)
+                tools.addWidget(self.brush_slider)
         self.finish_button = QPushButton("다각형 완료 ↵")
         self.finish_button.clicked.connect(self._finish_polygon)
         self.finish_button.setVisible(self.task == "segment")
@@ -214,9 +228,7 @@ class AnnotationWorkspaceUI:
             self.view.shapes_edited.connect(self._edit_many)
             self.view.pending_changed.connect(self._pending)
             self.view.prompt_requested.connect(self._ai_prompt)
-            self.brush_size.valueChanged.connect(
-                lambda v: setattr(self.view, "brush_size", v)
-            )
+            self.brush_size.valueChanged.connect(self.view.set_brush_size)
             self.opacity.valueChanged.connect(self.view.set_opacity)
             self.erase_scope.currentIndexChanged.connect(
                 lambda _: setattr(

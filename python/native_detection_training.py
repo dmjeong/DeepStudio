@@ -35,10 +35,13 @@ class DetectionTransform:
 
 
 class StudioDetectionMixin:
-    def __init__(self, *args, studio_augmentation=None, studio_patches=None, studio_center_crop=None, **kwargs):
+    def __init__(self, *args, studio_augmentation=None, studio_patches=None, studio_center_crop=None,
+                 studio_small_object_coverage=False, studio_train_patch_limit=0, **kwargs):
         self.studio_augmentation = augmentation_contract(studio_augmentation)
         self.studio_patches = studio_patches
         self.studio_center_crop = studio_center_crop
+        self.studio_small_object_coverage = studio_small_object_coverage
+        self.studio_train_patch_limit = studio_train_patch_limit
         # Only user-visible augmentations run; no hidden mosaic, IoU crop or scale jitter.
         kwargs.update(mosaic_prob=0., mixup_prob=0., hsv_prob=0., degrees=0., translate=0.,
                       flip_prob=0., no_aug_epochs=0)
@@ -51,8 +54,12 @@ class StudioDetectionMixin:
         return DetectionTransform(self.get_model_family(), self.config.imgsz, self.studio_augmentation), DEIMPassThroughDataset
 
     def _checkpoint_extra_metadata(self):
-        return {**super()._checkpoint_extra_metadata(), "studio_augmentation": self.studio_augmentation,
-                "studio_patches": self.studio_patches, "center_crop": self.studio_center_crop}
+        metadata = {**super()._checkpoint_extra_metadata(), "studio_augmentation": self.studio_augmentation,
+                    "studio_patches": self.studio_patches, "center_crop": self.studio_center_crop}
+        if self.studio_small_object_coverage:
+            metadata["studio_small_object_coverage"] = True
+            metadata["studio_train_patch_limit"] = self.studio_train_patch_limit
+        return metadata
 
 
 class StudioYOLO9Trainer(StudioDetectionMixin, YOLO9Trainer):
@@ -67,10 +74,15 @@ class StudioDFINETrainer(StudioDetectionMixin, DFINETrainer):
     pass
 
 
-def train_detector(wrapper, *, augmentation=None, patches=None, center_crop=None, resume=False, **settings):
+def train_detector(wrapper, *, augmentation=None, patches=None, center_crop=None, resume=False,
+                   small_object_coverage=False, train_patch_limit=0, **settings):
     from pathlib import Path
 
     from libreyolo.data import load_data_config
+    if type(small_object_coverage) is not bool or (
+        small_object_coverage and (not patches or type(train_patch_limit) is not int or not 1 <= train_patch_limit <= 256)
+    ):
+        raise ValueError("작은 객체 우선에는 탐지 패치 학습과 이미지당 패치 수 1~256이 필요합니다")
     if wrapper.FAMILY in {"dfine", "rtdetrv4"}:
         try:
             from pycocotools.coco import COCO  # noqa: F401
@@ -84,18 +96,23 @@ def train_detector(wrapper, *, augmentation=None, patches=None, center_crop=None
     trainer_type = {"yolo9": StudioYOLO9Trainer, "rtdetrv4": StudioRTDETRTrainer, "dfine": StudioDFINETrainer}[wrapper.FAMILY]
     trainer = trainer_type(model=wrapper.model, wrapper_model=wrapper, size=wrapper.size,
         num_classes=wrapper.nb_classes, studio_augmentation=augmentation, studio_patches=patches,
-        studio_center_crop=center_crop, resume=resume, **settings)
+        studio_center_crop=center_crop, studio_small_object_coverage=small_object_coverage,
+        studio_train_patch_limit=train_patch_limit, resume=resume, **settings)
     if resume:
         import torch
         saved = torch.load(wrapper.model_path, map_location="cpu", weights_only=False)
         if (saved.get("studio_patches") != patches or saved.get("center_crop") != center_crop or
                 saved.get("studio_augmentation") != trainer.studio_augmentation):
             raise ValueError("재개 모델의 패치/증강/입력 영역이 다릅니다. 설정을 맞추거나 추가 학습을 선택하세요.")
+        if (saved.get("studio_small_object_coverage", False) != small_object_coverage or
+                (small_object_coverage and saved.get("studio_train_patch_limit") != train_patch_limit)):
+            raise ValueError("재개 모델의 작은 객체 우선 설정이 다릅니다. 설정을 맞추거나 추가 학습을 선택하세요.")
         trainer.setup()
         trainer.resume(str(wrapper.model_path))
     result = trainer.train()
     result["applied_augmentation"] = trainer.studio_augmentation
     result["patches"] = patches
+    result["small_object_coverage"] = small_object_coverage
     best = result.get("best_checkpoint")
     if best and Path(best).is_file():
         wrapper._load_weights(str(best))

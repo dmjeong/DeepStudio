@@ -169,6 +169,8 @@ class TrainingWidget(TrainingForm, QWidget):
             for spec in registry.list(project.task, surface="desktop"):
                 self.model_id_combo.addItem(
                     spec.display_name, spec.model_id)
+            if project.task == "detect":
+                self.model_id_combo.addItem("Custom CSP", "")
             if model_id and self.model_id_combo.findData(model_id) < 0:
                 self.model_id_combo.addItem(f"저장된 모델 팩 · {model_id}", model_id)
             index = self.model_id_combo.findData(model_id)
@@ -584,6 +586,12 @@ class TrainingWidget(TrainingForm, QWidget):
                                         else "한 epoch에 이미지마다 자르는 패치 수. 0=자동(최대 64).")
         self.patch_count_spin.setEnabled(patch and not resume and not (native and task == "classify"))
         self.patch_scale_combo.setEnabled(patch and not resume)
+        coverage_available = patch and capabilities.get("small_object_coverage", False)
+        self.image_layout.setRowVisible(self.small_object_coverage_check, coverage_available)
+        has_patch_limit = self.patch_count_spin.value() > 0
+        self.small_object_coverage_check.setEnabled(coverage_available and has_patch_limit and not resume)
+        self.image_layout.setRowVisible(self.detection_foreground_check,
+                                        capabilities.get("detection_foreground_supervision", False))
 
         self.pc_crop_check.setEnabled(not resume)
         cropped = self.pc_crop_check.isChecked()
@@ -739,6 +747,8 @@ class TrainingWidget(TrainingForm, QWidget):
             self.original_size_check.blockSignals(False)
             self.patch_check.blockSignals(False)
         self.patch_count_spin.setValue(int(getattr(cfg, "patches_per_image", 0)))
+        self.small_object_coverage_check.setChecked(getattr(cfg, "small_object_coverage", False))
+        self.detection_foreground_check.setChecked(getattr(cfg, "detection_foreground_supervision", False))
         scale_index = self.patch_scale_combo.findData(float(getattr(cfg, "patch_scale", 1.0)))
         if scale_index < 0:  # 목록에 없는 값(직접 편집한 프로젝트)도 그대로 보여 준다
             self.patch_scale_combo.addItem(f"{float(cfg.patch_scale):.0%}", float(cfg.patch_scale))
@@ -952,6 +962,11 @@ class TrainingWidget(TrainingForm, QWidget):
                               and self.patch_check.isChecked() and not cfg.original_size_training)
         cfg.patches_per_image = 0 if native and self.project.task == "classify" else self.patch_count_spin.value()
         cfg.patch_scale = float(self.patch_scale_combo.currentData() or 1.0)
+        cfg.small_object_coverage = bool(capabilities.get("small_object_coverage", False)
+                                         and cfg.patch_training and cfg.patches_per_image
+                                         and self.small_object_coverage_check.isChecked())
+        cfg.detection_foreground_supervision = bool(capabilities.get("detection_foreground_supervision", False)
+                                                    and self.detection_foreground_check.isChecked())
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
         cfg.augmentation.rotation = self.rotation_spin.value()
         cfg.augmentation.color_jitter = self.color_jitter_spin.value()
