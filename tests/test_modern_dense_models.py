@@ -831,3 +831,34 @@ def test_eomt_query_targets_keep_original_coordinates_when_padded(shape):
     cropped_gradient = torch.autograd.grad(cropped_loss, masks, retain_graph=True)[0]
     padded_gradient = torch.autograd.grad(padded_loss, masks)[0]
     torch.testing.assert_close(cropped_gradient, padded_gradient, rtol=0, atol=1e-6)
+
+
+def test_eomt_query_loss_keeps_dense_reductions_finite_under_fp16_autocast():
+    from eomt import query_loss
+
+    # Match an almost full 448×448 background mask. Its dot product with a
+    # positive query is larger than the largest finite FP16 number.
+    masks = torch.tensor([1., -1.]).reshape(1, 2, 1, 1).expand(-1, -1, 4, 4).clone()
+    classes = torch.tensor([[[2., -1., 0.], [-1., 2., 0.]]])
+    target = torch.zeros(1, 448, 448, dtype=torch.long)
+    target[:, 32:48, 32:48] = 1
+    target[:, :2] = 255
+    masks.requires_grad_()
+    classes.requires_grad_()
+    reference = query_loss(masks, classes, target)
+    reference_gradients = torch.autograd.grad(reference, (masks, classes))
+    half_inputs = tuple(t.detach().half().requires_grad_() for t in (masks, classes))
+    probe = torch.ones(1, 1)
+    try:
+        with torch.autocast("cpu", dtype=torch.float16):
+            active = (probe @ probe).dtype == torch.float16
+    except (RuntimeError, TypeError):
+        active = False
+    if not active:
+        pytest.skip("PyTorch CPU FP16 autocast is unavailable")
+    with torch.autocast("cpu", dtype=torch.float16):
+        actual = query_loss(*half_inputs, target)
+    actual_gradients = torch.autograd.grad(actual, half_inputs)
+    torch.testing.assert_close(actual, reference, atol=1e-6, rtol=0)
+    for gradient, expected in zip(actual_gradients, reference_gradients):
+        torch.testing.assert_close(gradient.float(), expected, atol=1e-4, rtol=1e-3)

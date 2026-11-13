@@ -9,6 +9,7 @@ definition during export.
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -61,15 +62,26 @@ class _BatchProgress:
             self.last = now
 
 
+def _optimizer_step(optimizer, loss, scaler):
+    if scaler is None:
+        loss.backward()
+        optimizer.step()
+    else:
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
+
 def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None,
-                          should_stop=None, progress=None):
+                          should_stop=None, progress=None, scaler=None):
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
     correct = 0
     samples = 0
     confusion = None
-    non_blocking = torch.device(device).type == "cuda"
+    device_type = torch.device(device).type
+    non_blocking = device_type == "cuda"
     context = torch.enable_grad() if training else torch.inference_mode()
     with context:
         for index, (images, labels) in enumerate(loader):
@@ -77,12 +89,13 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
                 raise _Stopped()
             images = images.to(device, non_blocking=non_blocking)
             labels = labels.to(device, non_blocking=non_blocking)
-            logits = model(images)
-            loss = criterion(logits, labels)
             if training:
                 optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                optimizer.step()
+            with (torch.autocast(device_type, dtype=torch.float16) if scaler is not None else nullcontext()):
+                logits = model(images)
+                loss = criterion(logits, labels)
+            if training:
+                _optimizer_step(optimizer, loss, scaler)
             total_loss += float(loss.detach()) * labels.shape[0]
             correct += int(logits.argmax(dim=1).eq(labels).sum())
             if metrics_out is not None:
@@ -113,7 +126,8 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
 
 
 def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None,
-                        pixel_counts_out=None, class_report_out=None, should_stop=None, progress=None, distiller=None):
+                        pixel_counts_out=None, class_report_out=None, should_stop=None, progress=None,
+                        distiller=None, scaler=None):
     training = optimizer is not None
     model.train(training)
     if training:
@@ -128,7 +142,8 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
     intersection = None
     union = None
     gt_area = None
-    non_blocking = torch.device(device).type == "cuda"
+    device_type = torch.device(device).type
+    non_blocking = device_type == "cuda"
     context = torch.enable_grad() if training else torch.inference_mode()
     with context:
         for index, (images, masks) in enumerate(loader):
@@ -136,26 +151,27 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
                 raise _Stopped()
             images = images.to(device, non_blocking=non_blocking)
             masks = masks.to(device, dtype=torch.long, non_blocking=non_blocking)
-            if training and hasattr(model, "compute_training_loss"):
-                logits, loss = model.compute_training_loss(images, masks, criterion)
-            elif training and hasattr(model, "forward_train"):
-                logits, auxiliary, boundary = model.forward_train(images)
-                loss = criterion(logits, masks)
-                config = model.training_loss_config
-                for aux_logits in auxiliary:
-                    loss = loss + config["auxiliary_segmentation_weight"] * criterion(aux_logits, masks)
-                if boundary is not None:
-                    from segmentation_models import boundary_loss
-                    loss = loss + config["boundary_weight"] * boundary_loss(boundary, masks)
-            else:
-                logits = model(images)
-                loss = criterion(logits, masks)
-            if training and distiller is not None:
-                loss = distiller(images, logits, masks, loss)
             if training:
                 optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                optimizer.step()
+            with (torch.autocast(device_type, dtype=torch.float16) if scaler is not None else nullcontext()):
+                if training and hasattr(model, "compute_training_loss"):
+                    logits, loss = model.compute_training_loss(images, masks, criterion)
+                elif training and hasattr(model, "forward_train"):
+                    logits, auxiliary, boundary = model.forward_train(images)
+                    loss = criterion(logits, masks)
+                    config = model.training_loss_config
+                    for aux_logits in auxiliary:
+                        loss = loss + config["auxiliary_segmentation_weight"] * criterion(aux_logits, masks)
+                    if boundary is not None:
+                        from segmentation_models import boundary_loss
+                        loss = loss + config["boundary_weight"] * boundary_loss(boundary, masks)
+                else:
+                    logits = model(images)
+                    loss = criterion(logits, masks)
+                if training and distiller is not None:
+                    loss = distiller(images, logits, masks, loss)
+            if training:
+                _optimizer_step(optimizer, loss, scaler)
             total_loss += float(loss.detach()) * images.shape[0]
             samples += images.shape[0]
             predicted = logits.argmax(dim=1)
@@ -218,7 +234,8 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
                             training_config: dict | None = None,
                             metrics_history: list[dict] | None = None,
                             tiling: dict | None = None, center_crop: dict | None = None,
-                            original_size_region: tuple[int, int] | None = None) -> None:
+                            original_size_region: tuple[int, int] | None = None,
+                            scaler=None) -> None:
     model.eval()
     state = make_builtin_checkpoint(model_id, model, num_classes=num_classes,
                                     input_size=input_size, in_channels=in_channels,
@@ -237,6 +254,8 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
         state["optimizer_state_dict"] = optimizer.state_dict()
     if scheduler is not None:
         state["scheduler_state_dict"] = scheduler.state_dict()
+    if scaler is not None:
+        state["scaler_state_dict"] = scaler.state_dict()
     state["training_config"] = dict(training_config or {})
     state["metrics_history"] = list(metrics_history or [])
     output = Path(path)
@@ -290,7 +309,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   class_report: bool = False, should_stop=lambda: False,
                   center_crop: dict | None = None, teacher_checkpoint=None,
                   distillation_alpha=.3, distillation_temperature=2.,
-                  original_size_training: bool = False) -> Path:
+                  original_size_training: bool = False, use_amp: bool = False) -> Path:
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
     if gui_path not in sys.path:
@@ -344,9 +363,22 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         from dataset import common_image_size
         region = common_image_size(Path(data_root) / "images" / "train")  # C++ 고정 입력 내보내기의 판정 영역
     tiling = tiling_contract(input_size[0] if patch_training else 0, patch_scale if patch_training else 1.0, region)
-    if device.startswith("cuda") and not torch.cuda.is_available():
-        raise ValueError("CUDA device requested but CUDA is unavailable")
     target = torch.device(device)
+    if target.type == "cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA device requested but CUDA is unavailable")
+    # Match the desktop training device policy. Older PyTorch 2.x releases
+    # expose the scaler through torch.cuda.amp rather than torch.amp.
+    amp_enabled = bool(use_amp and target.type == "cuda"
+                       and torch.cuda.get_device_capability(target)[0] >= 7)
+    scaler = None
+    if amp_enabled:
+        grad_scaler = getattr(torch.amp, "GradScaler", None)
+        scaler = grad_scaler("cuda") if grad_scaler else torch.cuda.amp.GradScaler()
+        log("학습 정밀도: AMP (FP16 혼합 정밀도) · 검증 FP32")
+    elif use_amp:
+        log(f"학습 정밀도: FP32 ({target}에서는 CUDA AMP 미적용)")
+    else:
+        log("학습 정밀도: FP32")
     if num_workers is None:
         cores = os.cpu_count() or 1
         num_workers = max(2, min(cores // 2, 8)) if target.type == "cuda" else 0
@@ -508,6 +540,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         "label_smoothing": label_smoothing, "freeze_backbone": freeze_backbone,
         "backbone_lr_mult": backbone_lr_mult, "val_split": val_split,
         "num_workers": num_workers,
+        "use_amp": amp_enabled,
         "pretrained": pretrained, "weight_provenance": model.weight_provenance,
         "selection_metric": policy.metric, "selection_direction": policy.direction,
         "augmentation": {"horizontal_flip": horizontal_flip, "rotation": rotation,
@@ -555,6 +588,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         if scheduler is not None and checkpoint.get("scheduler_state_dict"):
             scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        if scaler is not None and checkpoint.get("scaler_state_dict"):
+            scaler.load_state_dict(checkpoint["scaler_state_dict"])
         start_epoch = int(checkpoint.get("epoch", -1)) + 1
         history = list(checkpoint.get("metrics_history") or [])
         from checkpoint import previous_best_path
@@ -580,6 +615,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if resume_best_checkpoint is not None:
         torch.save(resume_best_checkpoint, destination / "best.pt")
     completed_epochs = start_epoch
+    training_precision = {"scaler": scaler} if scaler is not None else {}
     epochs_without_improvement = max(0, start_epoch - best_epoch) if best_epoch else 0
     collapsed_epochs, collapse_warned = {}, False  # 결함 예측 0인 epoch (데스크톱 class_report)
     for epoch in range(start_epoch, epochs):
@@ -596,7 +632,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         try:
             if spec.task == "classify":
                 train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target,
-                                                                 **watch("학습", train_loader))
+                                                                 **training_precision, **watch("학습", train_loader))
                 val_loss, val_metric = _classification_epoch(model, val_loader, criterion, None, target,
                                                              validation_metrics, **watch("검증", val_loader))
             else:
@@ -604,7 +640,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                 train_loss, train_metric = _segmentation_epoch(model, train_loader, criterion, optimizer, target,
                                                                pixel_counts_out=seen_pixels,
                                                                **({"distiller": distiller} if distiller is not None else {}),
-                                                               **watch("학습", train_loader))
+                                                               **training_precision, **watch("학습", train_loader))
                 if epoch == start_epoch and class_weights == "none":
                     _log_rare_class_hint(seen_pixels, class_names, log)
                 report = {} if class_report else None
@@ -651,7 +687,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                 epoch=epoch, optimizer=optimizer, scheduler=scheduler,
                                 metric=selected_value, training_config=training_config,
                                 metrics_history=history, tiling=tiling, center_crop=center_crop,
-                                original_size_region=original_size_region)
+                                original_size_region=original_size_region, scaler=scaler)
         improved = selected_value < best_metric if policy.direction == "min" else selected_value > best_metric
         if improved:
             best_metric = selected_value
@@ -663,7 +699,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                     epoch=epoch, optimizer=optimizer, scheduler=scheduler,
                                     metric=selected_value, training_config=training_config,
                                     metrics_history=history, tiling=tiling, center_crop=center_crop,
-                                    original_size_region=original_size_region)
+                                    original_size_region=original_size_region, scaler=scaler)
             log({"event": "best_epoch_updated", "epoch": completed_epochs,
                  "train_loss": train_loss, "val_loss": val_loss, "metrics": validation_metrics})
         else:
@@ -701,6 +737,7 @@ def main() -> None:
     parser.add_argument("--learning_rate", type=float, default=1e-3)
     parser.add_argument("--output_dir", default="runs/builtin")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--amp", action="store_true", help="Enable FP16 mixed precision on supported CUDA GPUs")
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--resume")
     parser.add_argument("--pretrained", action="store_true", help="Load the selected model's packaged pretrained backbone")
@@ -715,7 +752,7 @@ def main() -> None:
                   input_size=args.input_size or None, in_channels=args.in_channels,
                   epochs=args.epochs, batch_size=args.batch_size,
                   learning_rate=args.learning_rate, output_dir=args.output_dir,
-                  device=args.device, num_workers=args.num_workers,
+                  device=args.device, num_workers=args.num_workers, use_amp=args.amp,
                   resume=args.resume, pretrained=args.pretrained,
                   initial_weights=args.initial_weights, selection_metric=args.selection_metric,
                   segmentation_loss=args.segmentation_loss, class_weights=args.class_weights)

@@ -114,9 +114,13 @@ class EoMTSegmenter(nn.Module):
 
     def semantic(self, prediction, image):
         masks, classes = prediction
-        scores = torch.einsum(
-            "bqc,bqhw->bchw", classes.softmax(-1)[..., :-1], masks.sigmoid()
-        )
+        # Preserve small probabilities until the logarithm, including under AMP.
+        with torch.autocast(device_type=masks.device.type, enabled=False):
+            scores = torch.einsum(
+                "bqc,bqhw->bchw",
+                classes.float().softmax(-1)[..., :-1],
+                masks.float().sigmoid(),
+            )
         scores = F.interpolate(
             scores,
             size=tuple(((s + 13) // 14) * 14 for s in image.shape[-2:]),
@@ -144,6 +148,7 @@ def query_loss(pred_masks, pred_classes, target):
     """One target mask per semantic class, background included, ignore pixels excluded."""
     from scipy.optimize import linear_sum_assignment
 
+    pred_masks, pred_classes = pred_masks.float(), pred_classes.float()
     total = pred_masks.sum() * 0
     for batch in range(target.shape[0]):
         valid = target[batch] != 255
@@ -162,13 +167,15 @@ def query_loss(pred_masks, pred_classes, target):
             align_corners=False,
         )[0, :, : target.shape[-2], : target.shape[-1]][:, valid]
         truth = (target[batch][None] == labels[:, None, None])[:, valid].float()
-        probabilities = masks.sigmoid()
-        dice_cost = 1 - (2 * probabilities @ truth.T + 1) / (
-            probabilities.sum(1, keepdim=True) + truth.sum(1)[None] + 1
-        )
-        bce_cost = (
-            F.softplus(masks).mean(1, keepdim=True) - masks @ truth.T / truth.shape[1]
-        )
+        # The dot products sum across all valid pixels and can exceed FP16's range.
+        with torch.autocast(device_type=masks.device.type, enabled=False):
+            probabilities = masks.sigmoid()
+            dice_cost = 1 - (2 * probabilities @ truth.T + 1) / (
+                probabilities.sum(1, keepdim=True) + truth.sum(1)[None] + 1
+            )
+            bce_cost = (
+                F.softplus(masks).mean(1, keepdim=True) - masks @ truth.T / truth.shape[1]
+            )
         cost = (
             5 * (dice_cost + bce_cost) - 2 * pred_classes[batch].softmax(-1)[:, labels]
         )

@@ -55,6 +55,9 @@ class SegmentationDistiller:
         if teacher.shape != logits.shape:
             raise ValueError("교사와 학생의 분할 출력 크기가 다릅니다")
         t = self.temperature
+        # Divide and reduce in FP32, even when the model forwards use AMP.
+        logits = logits.float()
+        teacher = teacher.float()
         kl = F.kl_div(
             F.log_softmax(logits / t, dim=1),
             F.softmax(teacher / t, dim=1),

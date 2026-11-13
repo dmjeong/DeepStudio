@@ -161,6 +161,7 @@ def _train_builtin_project(context, project, device, *, class_report=False):
                          backbone_lr_mult=project.model.backbone_lr_mult,
                          output_dir=run_dir,
                          device=str(device),
+                         use_amp=cfg.use_amp,
                          resume=resume, initial_weights=initial_weights,
                          pretrained=cfg.training_mode == "builtin_finetune",
                          selection_metric=cfg.selection_metric,
@@ -192,6 +193,7 @@ def _train_builtin_project(context, project, device, *, class_report=False):
     training_state_path = run_dir / "training.json"
     training_state = (json.loads(training_state_path.read_text(encoding="utf-8"))
                       if training_state_path.is_file() else {})
+    applied_training = training_state.get("training_config", {})
     metric = float(checkpoint.get("metric") or 0.0)
     best_epoch = int(training_state.get("best_epoch") or (int(checkpoint.get("epoch", 0)) + 1))
     completed_epochs = int(training_state.get("completed_epochs") or best_epoch)
@@ -229,9 +231,10 @@ def _train_builtin_project(context, project, device, *, class_report=False):
         hyperparameters=training_hyperparameters(
             project, engine="builtin",
             effective={"device": str(device), "model_id": model_id,
+                       "use_amp": applied_training.get("use_amp", False),
                        "input_size": training_state.get("input_size", cfg.input_size),
                        "center_crop": list(crop) if crop else None},
-            applied=training_state.get("training_config", {}),
+            applied=applied_training,
         ))
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status=(
@@ -240,7 +243,7 @@ def _train_builtin_project(context, project, device, *, class_report=False):
                        best_metric_name=metric_name, checkpoint_path=named_checkpoint,
                        metrics_history=metrics_history, lr_history=lr_history,
                        config_snapshot={"engine": "builtin", "model_id": model_id,
-                                        "training": training_state.get("training_config", {}),
+                                        "training": applied_training,
                                         "center_crop": crop, "best_selection": selection})
     project.runs.append(record)
     context.emit("training_finished", [metric, best_epoch, named_checkpoint])
