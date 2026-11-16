@@ -13,6 +13,7 @@ release-specific SBOM.
 | PyTorch / torchvision | Python training and built-in model adapters | BSD-style license; https://github.com/pytorch/pytorch/blob/main/LICENSE |
 | OpenCV | image conversion and C++ preprocessing | Apache-2.0; https://github.com/opencv/opencv/blob/4.x/LICENSE |
 | ONNX Runtime | Python and C++ CPU inference | MIT; https://github.com/microsoft/onnxruntime/blob/main/LICENSE |
+| OpenVINO 2026.4.0 | Desktop ONNX CPU benchmark and optional C++ classification runtime | Apache-2.0; https://github.com/openvinotoolkit/openvino/blob/2026.4.0/LICENSE. The frozen app carries the wheel's license and its oneDNN, oneTBB and runtime notices in `openvino-2026.4.0.dist-info/licenses`. |
 | nlohmann/json | C++ manifest parsing | MIT; https://github.com/nlohmann/json/blob/develop/LICENSE.MIT |
 | WiX Toolset | Windows MSI/Burn build tool | MIT; https://github.com/wixtoolset/wix/blob/main/LICENSE |
 | LibreYOLO 1.5.0 | 기본 LibreMobileNetV4 / LibreYOLO9 / Re-DETR v4 native runtime | MIT for the library; https://github.com/LibreYOLO/libreyolo/blob/release/LICENSE and the bundled third-party list at https://github.com/LibreYOLO/libreyolo/blob/release/NOTICE |

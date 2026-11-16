@@ -1,3 +1,9 @@
+# 20.12 — ONNX Runtime·OpenVINO CPU 비교 (+0.1)
+
+- 데스크톱에서 같은 ONNX와 이미지로 두 CPU 실행기의 전체·모델 p50/p95와 판정 차이를 비교합니다.
+- EfficientNet은 보정 이미지로 비교용 정적 INT8 그래프를 임시 생성할 수 있습니다.
+- [20.12 비교 방법](docs/RELEASE_20.12.md).
+
 # 20.02 — 객체 탐지 학습 지표 수정 (+0.01)
 
 - 학습 화면에 mAP와 고정 점수·IoU에서의 Precision·Recall을 따로 표시합니다.

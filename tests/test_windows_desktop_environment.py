@@ -9,6 +9,7 @@ def test_frozen_app_cannot_borrow_python_qt_or_native_sdk_paths():
               "QML2_IMPORT_PATH": r"C:\Qt", "DEEP_STUDIO_PROJECT": r"C:\repo",
               "VIRTUAL_ENV": r"C:\venv", "CUDA_PATH_V13_0": r"C:\CUDA",
               "VISION_NATIVE_RUNTIME_DIR": r"C:\native-sdk", "ONNXRUNTIME_ROOT": r"C:\onnx-sdk",
+              "OPENVINO_LIB_PATHS": r"C:\openvino\bin",
               "SystemRoot": r"C:\Windows", "TEMP": r"C:\Temp", "USERPROFILE": r"C:\Users\test"}
     result = clean(source)
     assert result == {"SystemRoot": r"C:\Windows", "TEMP": r"C:\Temp", "USERPROFILE": r"C:\Users\test",

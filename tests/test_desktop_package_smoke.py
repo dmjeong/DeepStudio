@@ -25,6 +25,7 @@ def test_desktop_smoke_ui_contract_on_source_cpu(tmp_path, monkeypatch):
         assert result["project_class_generation_saved"]
         assert result["defect_review_saved"]
         assert result["persistent_results"]
+        assert result["openvino_cpu_version"]
         assert result["inference_status"] != "error"
         assert Path(report.with_suffix(".png")).is_file()
     finally:

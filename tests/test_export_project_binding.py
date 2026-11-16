@@ -109,10 +109,14 @@ def test_precision_comparison_uses_shared_worker_and_displays_thread_results(tmp
         captured.update(kwargs)
         kwargs["log"]("비교 실행")
         return [
-            {"precision": "FP32", "threads": 0, "p50_ms": 10, "p95_ms": 12, "model_p50_ms": 8,
+            {"backend": "onnxruntime", "precision": "FP32", "threads": 0,
+             "p50_ms": 10, "p95_ms": 12, "model_p50_ms": 8, "model_p95_ms": 9,
              "comparison": "기준", "status": "완료"},
-            {"precision": "INT8", "threads": 0, "p50_ms": 6, "p95_ms": 7, "model_p50_ms": 5,
+            {"backend": "openvino", "precision": "FP32", "threads": 0,
+             "p50_ms": 6, "p95_ms": 7, "model_p50_ms": 5, "model_p95_ms": 6,
              "comparison": "판정 100%", "status": "완료"},
+            {"backend": "openvino", "precision": "INT8", "threads": None,
+             "status": "준비 실패", "detail": "지원하지 않는 그래프"},
         ]
 
     monkeypatch.setitem(sys.modules, "precision_benchmark", SimpleNamespace(
@@ -135,11 +139,17 @@ def test_precision_comparison_uses_shared_worker_and_displays_thread_results(tmp
             time.sleep(.01)
         assert not dialog.isRunning()
         assert captured["thread_counts"] == (0, 8) and captured["calibration_dir"] == str(tmp_path)
+        assert captured["backends"] == ("onnxruntime", "openvino")
         assert captured["fp16_path"] is None and not captured["run_fp16"]
-        assert captured["run_int8"] and dialog.table.rowCount() == 2
-        assert dialog.table.item(0, 1).text() == dialog.table.item(1, 1).text() == "자동"
-        assert dialog.table.item(1, 3).text() == "7.00"
-        assert dialog.table.item(1, 5).text() == "판정 100%"
+        assert captured["run_int8"] and dialog.table.rowCount() == 3
+        assert dialog.table.item(0, 0).text() == "ONNX Runtime"
+        assert dialog.table.item(1, 0).text() == "OpenVINO"
+        assert dialog.table.item(0, 2).text() == dialog.table.item(1, 2).text() == "자동"
+        assert dialog.table.item(1, 4).text() == "7.00"
+        assert dialog.table.item(1, 6).text() == "6.00"
+        assert dialog.table.item(1, 7).text() == "판정 100%"
+        assert dialog.table.item(2, 8).toolTip() == "지원하지 않는 그래프"
+        assert "실패 1개" in dialog.status.text()
         assert "비교 실행" in dialog.log.toPlainText()
     finally:
         if dialog.worker is not None:

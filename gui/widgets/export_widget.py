@@ -261,7 +261,8 @@ class ExportWidget(QWidget):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
-        self.benchmark_btn = QPushButton("정밀도·CPU 스레드 비교…")
+        self.benchmark_btn = QPushButton("CPU 실행기·정밀도 비교…")
+        self.benchmark_btn.setToolTip("ONNX Runtime과 OpenVINO의 정밀도와 CPU 스레드 수를 비교합니다.")
         self.benchmark_btn.clicked.connect(self._open_precision_benchmark)
         btn_row.addWidget(self.benchmark_btn)
 

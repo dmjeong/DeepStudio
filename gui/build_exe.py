@@ -79,6 +79,8 @@ REQUIRED_RUNTIME_MODULES = {
     "SAM2": "sam2",
     "Hugging Face Hub": "huggingface_hub",
 }
+if sys.platform == "win32":
+    REQUIRED_RUNTIME_MODULES["OpenVINO"] = "openvino"
 
 
 def _native_runtime_arguments() -> list[str]:
@@ -317,11 +319,16 @@ def build():
         "--exclude-module", "IPython",
         "--exclude-module", "jupyter",
         "--exclude-module", "notebook",
+        # OpenVINO's converter has a built-in stub when telemetry is absent.
+        "--exclude-module", "openvino_telemetry",
 
         # 엔트리포인트
         os.path.join(GUI_DIR, "main.py"),
     ]
-    cmd[cmd.index(os.path.join(GUI_DIR, "main.py")):cmd.index(os.path.join(GUI_DIR, "main.py"))] = _native_runtime_arguments()
+    # The Windows installer carries OpenVINO's wheel. On macOS/Linux run the
+    # source app for OpenVINO benchmarks instead of freezing its native plugins.
+    openvino_argument = "--hidden-import" if sys.platform == "win32" else "--exclude-module"
+    cmd[-1:-1] = [openvino_argument, "openvino", *_native_runtime_arguments()]
 
     print("\n 빌드 명령어:")
     print(f"  {' '.join(cmd[:6])} ...")

@@ -10,7 +10,7 @@ import tempfile
 def clean_app_environment(source):
     """Allow Windows system DLLs, never a build-time Python/native SDK PATH."""
     excluded = {"PATH", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "DVS_BUILTIN_ASSETS_DIR"}
-    prefixes = ("PYTHON", "DEEP_STUDIO_", "DEEPVISION_", "DVS_", "VISION_", "ONNXRUNTIME_", "NATIVE_",
+    prefixes = ("PYTHON", "DEEP_STUDIO_", "DEEPVISION_", "DVS_", "VISION_", "ONNXRUNTIME_", "OPENVINO_", "NATIVE_",
                 "QT_", "QML", "CUDA_PATH", "CUDNN", "CONDA_")
     environment = {k: v for k, v in source.items()
                    if k.upper() not in excluded and not k.upper().startswith(prefixes)}

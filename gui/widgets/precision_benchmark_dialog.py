@@ -4,10 +4,13 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QDialog, QFileDialog, QFormLayout, QGroupBox,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QProgressBar,
     QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
+
+
+_BACKEND_NAMES = {"onnxruntime": "ONNX Runtime", "openvino": "OpenVINO"}
 
 
 class PrecisionBenchmarkWorker(QThread):
@@ -37,23 +40,29 @@ class PrecisionBenchmarkDialog(QDialog):
     def __init__(self, parent=None, *, fp32_path="", fp16_path="", int8_path="",
                  image_dir="", calibration_dir="", browse_dir=""):
         super().__init__(parent)
-        self.setWindowTitle("ONNX 정밀도·CPU 스레드 비교")
-        self.resize(960, 700)
+        self.setWindowTitle("ONNX CPU 실행기·정밀도 비교")
+        self.resize(1080, 720)
         self.worker = None
         self._cancel_requested = False
         self.browse_dir = browse_dir
         layout = QVBoxLayout(self)
         explanation = QLabel(
-            "같은 이미지로 CPU에서 FP32·FP16·INT8을 비교합니다. "
-            "FP16 JSON을 비우면 비교용 모델을 만듭니다. 탐지·분할·Dinomaly는 "
-            "보정 이미지로 INT8 모델도 만들 수 있습니다. 기존 모델은 평문 ONNX와 배포 JSON을 사용하세요."
+            "같은 ONNX와 이미지로 ONNX Runtime과 OpenVINO의 CPU 추론을 비교합니다. "
+            "FP16 JSON을 비우면 비교용 모델을 만듭니다. EfficientNet·탐지·분할·Dinomaly는 "
+            "보정 이미지로 비교용 INT8 모델을 만들 수 있습니다."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
 
         self.settings = QGroupBox("모델과 이미지")
         form = QFormLayout(self.settings)
-        self.fp32, _ = self._path_row(form, "FP32 배포 JSON", fp32_path, "기준 모델의 ONNX 설정 (.json)")
+        self.backend = QComboBox()
+        self.backend.setAccessibleName("CPU 실행기")
+        self.backend.addItem("ONNX Runtime + OpenVINO", ("onnxruntime", "openvino"))
+        for engine, name in _BACKEND_NAMES.items():
+            self.backend.addItem(name, (engine,))
+        form.addRow("CPU 실행기", self.backend)
+        self.fp32, _ = self._path_row(form, "FP32 배포 JSON", fp32_path, "평문 ONNX의 배포 설정 (.json)")
         choices = QHBoxLayout()
         self.run_fp16 = QCheckBox("FP16")
         self.run_int8 = QCheckBox("INT8")
@@ -64,7 +73,7 @@ class PrecisionBenchmarkDialog(QDialog):
         form.addRow("비교 정밀도 (FP32 포함)", choices)
         self.fp16, fp16_row = self._path_row(form, "FP16 배포 JSON", fp16_path, "비워 두면 FP32 모델에서 생성")
         self.int8, int8_row = self._path_row(form, "INT8 배포 JSON", int8_path, "비워 두면 보정 이미지로 생성")
-        self.images, _ = self._path_row(form, "시험 이미지 폴더", image_dir, "세 모델에 공통으로 사용할 이미지", folder=True)
+        self.images, _ = self._path_row(form, "시험 이미지 폴더", image_dir, "모든 비교에 공통으로 사용할 이미지", folder=True)
         self.calibration, calibration_row = self._path_row(
             form, "INT8 보정 이미지 폴더", calibration_dir, "기존 INT8 배포 JSON을 선택하면 생략 가능", folder=True,
         )
@@ -72,7 +81,7 @@ class PrecisionBenchmarkDialog(QDialog):
         self.run_int8.toggled.connect(int8_row.setEnabled)
         self.run_int8.toggled.connect(calibration_row.setEnabled)
         self.threads = QLineEdit("1, 2, 4, 8")
-        self.threads.setToolTip("쉼표로 구분한 ONNX Runtime CPU 스레드 수. 0은 자동입니다.")
+        self.threads.setToolTip("쉼표로 구분한 각 실행기의 CPU 스레드 수. 0은 자동입니다.")
         form.addRow("CPU 스레드 수 (0=자동)", self.threads)
         counts = QHBoxLayout()
         self.image_count = self._count(counts, "이미지 수", 1, 100, 5)
@@ -84,17 +93,17 @@ class PrecisionBenchmarkDialog(QDialog):
 
         scope = QLabel(
             "전체 시간은 이미지 읽기, 전처리, 추론, 후처리를 포함합니다. "
-            "p50은 중앙값이고 p95는 95%의 측정이 이 값 이하였다는 뜻입니다. "
-            "출력은 같은 스레드 수의 FP32와 비교하며 정답률은 계산하지 않습니다. "
+            "p50은 중앙값이고 p95는 전체 측정의 95%가 이 안에 끝난 시간입니다. "
+            "출력은 같은 스레드 수의 FP32(두 실행기를 고르면 ONNX Runtime)를 기준으로 비교합니다. "
             "FP16은 CPU에서 FP32 변환이 들어가거나 지원되지 않을 수 있습니다."
         )
         scope.setWordWrap(True)
         layout.addWidget(scope)
 
-        self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(
-            ["정밀도", "CPU 스레드", "전체 p50 (ms)", "전체 p95 (ms)", "모델 p50 (ms)", "FP32 대비", "상태"]
-        )
+        headers = ["CPU 실행기", "정밀도", "CPU 스레드", "전체 p50 (ms)", "전체 p95 (ms)",
+                   "모델 p50 (ms)", "모델 p95 (ms)", "기준 FP32 대비", "상태"]
+        self.table = QTableWidget(0, len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
         self.table.verticalHeader().hide()
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -190,6 +199,7 @@ class PrecisionBenchmarkDialog(QDialog):
             return
         options = {
             "fp32_path": fp32_path, "image_dir": image_dir, "thread_counts": thread_counts,
+            "backends": tuple(self.backend.currentData()),
             "fp16_path": fp16_path or None, "int8_path": int8_path or None,
             "calibration_dir": calibration_dir or None,
             "run_fp16": self.run_fp16.isChecked(), "run_int8": self.run_int8.isChecked(),
@@ -221,9 +231,11 @@ class PrecisionBenchmarkDialog(QDialog):
         for index, row in enumerate(rows):
             threads = row["threads"]
             thread_label = "—" if threads is None else str(threads or "자동")
+            engine = row.get("backend", "onnxruntime")
+            engine_label = _BACKEND_NAMES.get(engine, engine)
             values = (
-                row["precision"], thread_label,
-                *(self._format_ms(row.get(key)) for key in ("p50_ms", "p95_ms", "model_p50_ms")),
+                engine_label, row["precision"], thread_label,
+                *(self._format_ms(row.get(key)) for key in ("p50_ms", "p95_ms", "model_p50_ms", "model_p95_ms")),
                 str(row.get("comparison") or "—"), row["status"],
             )
             for column, value in enumerate(values):
@@ -232,8 +244,15 @@ class PrecisionBenchmarkDialog(QDialog):
                     cell.setToolTip(row["detail"])
                 self.table.setItem(index, column, cell)
             if row.get("detail"):
-                self.log.appendPlainText(f"{row['precision']} · {values[1]}: {row['detail']}")
-        self.status.setText("측정 완료")
+                label = f"{engine_label} · {row['precision']}"
+                if threads is not None:
+                    label += f" · 스레드 {thread_label}"
+                self.log.appendPlainText(f"{label} · {row['detail']}")
+        completed = sum(row["status"] == "완료" for row in rows)
+        if completed == len(rows):
+            self.status.setText("측정 완료")
+        else:
+            self.status.setText(f"성공 {completed}개 · 실패 {len(rows) - completed}개. 자세한 내용은 로그를 확인하세요.")
 
     def _cancel(self):
         if self.worker is not None and self.worker.isRunning():

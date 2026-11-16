@@ -1,8 +1,36 @@
 """배포 EXE 내부에서 GUI, 모델 로드, 독립 추론과 영구 결과 복원을 검증."""
 from pathlib import Path
 import os
+import sys
 import tempfile
 import time
+
+
+def _check_openvino_cpu(path):
+    """Exercise the frozen OpenVINO Python bindings, ONNX frontend and CPU plugin."""
+    from importlib.util import find_spec
+
+    if getattr(sys, "frozen", False) and find_spec("openvino_telemetry") is not None:
+        raise RuntimeError("설치본에 OpenVINO 텔레메트리 모듈이 포함되었습니다.")
+    import numpy as np
+    import openvino as ov
+    from onnx import TensorProto, helper, save_model
+
+    graph = helper.make_graph(
+        [helper.make_node("Add", ["pixels", "offset"], ["prediction"])], "openvino_smoke",
+        [helper.make_tensor_value_info("pixels", TensorProto.FLOAT, [1, 1, 2, 2])],
+        [helper.make_tensor_value_info("prediction", TensorProto.FLOAT, [1, 1, 2, 2])],
+        [helper.make_tensor("offset", TensorProto.FLOAT, [], [2.0])],
+    )
+    save_model(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), path)
+    core = ov.Core()
+    model = core.read_model(str(path))
+    compiled = core.compile_model(model, "CPU", {"PERFORMANCE_HINT": "LATENCY", "NUM_STREAMS": 1,
+                                                  "INFERENCE_NUM_THREADS": 1, "INFERENCE_PRECISION_HINT": "f32"})
+    request = compiled.create_infer_request()
+    request.infer({"pixels": np.ones((1, 1, 2, 2), np.float32)})
+    np.testing.assert_array_equal(request.get_output_tensor(0).data, np.full((1, 1, 2, 2), 3, np.float32))
+    return ov.get_version()
 
 
 def run(output, *, require_cuda_runtime=True):
@@ -66,6 +94,11 @@ def run(output, *, require_cuda_runtime=True):
         app.processEvents()
     with tempfile.TemporaryDirectory(prefix="studio-smoke-") as folder:
         root = Path(folder)
+        frozen = bool(getattr(sys, "frozen", False))
+        openvino_version = None
+        if sys.platform == "win32" or not frozen:
+            openvino_version = _check_openvino_cpu(root / "openvino.onnx")
+            stage("openvino_cpu_ready")
         project = ProjectManager.create_new("검증 프로젝트", "classify", str(root / "project"), ["OK", "NG"])
         ProjectManager.save(project)
         window.set_project(project)
@@ -145,8 +178,9 @@ def run(output, *, require_cuda_runtime=True):
         wait(lambda: getattr(window.dataset_page, "_scan_worker", None) is not None)
         screenshot = Path(output).with_suffix(".png")
         window.grab().save(str(screenshot))
-        write_json(output, {"version": APP_VERSION, "frozen": bool(getattr(__import__('sys'), 'frozen', False)),
+        write_json(output, {"version": APP_VERSION, "frozen": frozen,
             "cuda_runtime": torch.version.cuda, "cuda_available": torch.cuda.is_available(),
+            "openvino_cpu_version": openvino_version,
             "gui_ticks": len(ticks) - before, "inference_status": result.status,
             "gradcam_status": result.gradcam_status, "persistent_results": True, "defect_review_saved": True,
             "runtime_modules": list(runtime_modules), "project_class_generation_saved": True})
