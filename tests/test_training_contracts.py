@@ -352,6 +352,8 @@ class TrainingOrchestration(unittest.TestCase):
         class Model:
             def __init__(self, **kwargs):
                 constructed_counts.append(kwargs["num_classes"])
+                if kwargs["task"] == "detect":
+                    self.head = SimpleNamespace(foreground_aux=None)
 
             def to(self, device):
                 return self

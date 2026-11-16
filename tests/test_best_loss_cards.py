@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "gui"))
 sys.path.insert(0, str(ROOT / "python"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from core.best_metrics import display_metrics, metric_label
 from core.metrics import TASK_METRIC_NAMES
 
 
@@ -47,7 +48,8 @@ class BestLossCardContracts(unittest.TestCase):
     def setUp(self):
         namespace = source_objects("gui/widgets/training_results.py",
             {"_finite_metric", "_format_metric", "_metric_info_for"},
-            {"math": math, "Real": Real, "copy": copy, "TASK_METRIC_NAMES": TASK_METRIC_NAMES})
+            {"math": math, "Real": Real, "copy": copy, "TASK_METRIC_NAMES": TASK_METRIC_NAMES,
+             "display_metrics": display_metrics})
         self.on_epoch = source_method("gui/widgets/training_widget.py", "TrainingWidget",
                                       "_on_epoch_finished", namespace)
         self.on_best = source_method("gui/widgets/training_widget.py", "TrainingWidget",
@@ -60,7 +62,6 @@ class BestLossCardContracts(unittest.TestCase):
         self.ui._render_best_metrics = lambda *args: render(self.ui, *args)
         self.ui.eval_widget = Mock()
         def rebuild(task, project=None, metrics=None):
-            from core.best_metrics import metric_label
             self.ui._metric_card_keys = {key: (metric_label(key, task) if key in {"train_loss", "val_loss"}
                 else f"Best {metric_label(key, task)}") for key in metrics}
             self.ui.metric_cards = {name: Card() for name in ["Best Epoch", *self.ui._metric_card_keys.values()]}
