@@ -18,11 +18,11 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QFileDialog, QMessageBox, QGroupBox,
-    QFormLayout, QSpinBox, QComboBox,
-    QCheckBox, QTextEdit, QProgressBar,
+    QFormLayout,
+    QCheckBox, QTextEdit, QProgressBar, QScrollArea, QFrame,
 )
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QFont, QTextCursor
+from PySide6.QtGui import QFont
 
 
 # 프로젝트 모듈 경로 추가 (PyInstaller EXE 호환)
@@ -31,6 +31,7 @@ ensure_python_path()
 
 from export_onnx import deployment_preview, export_checkpoint
 from core.project import ProjectData
+from widgets.common import NoWheelComboBox, NoWheelSpinBox
 
 
 class ExportWorker(QThread):
@@ -80,9 +81,25 @@ class ExportWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("export_page")
         self.project = None
         self._benchmark_reference = ""
         self._init_ui()
+
+    @staticmethod
+    def _scrollable_form(title):
+        group = QGroupBox(title)
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setAccessibleName(title)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        form = QFormLayout(content)
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+        return group, form
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -102,8 +119,7 @@ class ExportWidget(QWidget):
         layout.addWidget(subtitle)
 
         # ── 입력 설정 ──
-        input_group = QGroupBox("입력 설정")
-        input_layout = QFormLayout(input_group)
+        input_group, input_layout = self._scrollable_form("입력 설정")
 
         # 체크포인트 경로
         ckpt_row = QHBoxLayout()
@@ -129,7 +145,7 @@ class ExportWidget(QWidget):
         self.region_row = QWidget()
         region_layout = QHBoxLayout(self.region_row)
         region_layout.setContentsMargins(0, 0, 0, 0)
-        self.region_w, self.region_h = QSpinBox(), QSpinBox()
+        self.region_w, self.region_h = NoWheelSpinBox(), NoWheelSpinBox()
         for spin, name in ((self.region_w, "가로"), (self.region_h, "세로")):
             spin.setRange(0, 65536)
             spin.setSpecialValueText("입력 필요")  # 0 = 아직 정하지 않음 (예전 체크포인트)
@@ -176,13 +192,12 @@ class ExportWidget(QWidget):
         self._preview_timer.setInterval(400)
         self._preview_timer.timeout.connect(self._refresh_deploy_preview)
 
-        layout.addWidget(input_group)
+        layout.addWidget(input_group, 2)
 
         # ── ONNX 옵션 ──
-        opt_group = QGroupBox("ONNX 옵션")
-        opt_layout = QFormLayout(opt_group)
+        opt_group, opt_layout = self._scrollable_form("ONNX 옵션")
 
-        self.opset_spin = QSpinBox()
+        self.opset_spin = NoWheelSpinBox()
         self.opset_spin.setRange(11, 20)
         self.opset_spin.setValue(17)
         self.opset_spin.setFixedWidth(120)
@@ -192,7 +207,7 @@ class ExportWidget(QWidget):
         opset_row.addStretch(1)
         opt_layout.addRow("Opset 버전:", opset_row)
 
-        self.export_precision = QComboBox()
+        self.export_precision = NoWheelComboBox()
         self.export_precision.addItem("FP32 (원본 정밀도)", "float32")
         self.export_precision.addItem("INT8 QDQ (객체 탐지·분할·Dinomaly)", "int8")
         opt_layout.addRow("정밀도:", self.export_precision)
@@ -255,7 +270,7 @@ class ExportWidget(QWidget):
         key_hint.setWordWrap(True)
         opt_layout.addRow("", key_hint)
 
-        layout.addWidget(opt_group)
+        layout.addWidget(opt_group, 4)
 
         # ── 내보내기 버튼 ──
         btn_row = QHBoxLayout()
@@ -284,13 +299,13 @@ class ExportWidget(QWidget):
         # ── 로그 ──
         log_group = QGroupBox("변환 로그")
         log_layout = QVBoxLayout(log_group)
+        log_layout.setContentsMargins(0, 0, 0, 0)
         self.log_text = QTextEdit()
+        self.log_text.setAccessibleName("변환 로그")
         self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(250)
+        self.log_text.setMinimumHeight(56)
         log_layout.addWidget(self.log_text)
-        layout.addWidget(log_group)
-
-        layout.addStretch()
+        layout.addWidget(log_group, 2)
 
     def set_project(self, project: ProjectData):
         """프로젝트 설정"""
@@ -606,10 +621,11 @@ class ExportWidget(QWidget):
         self.progress_bar.hide()
 
     def _on_log(self, message):
+        scroll = self.log_text.verticalScrollBar()
+        position = scroll.value()
+        at_end = position == scroll.maximum()
         self.log_text.append(message)
-        cursor = self.log_text.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        self.log_text.setTextCursor(cursor)
+        scroll.setValue(scroll.maximum() if at_end else position)
 
     def _on_finished(self, result):
         config_path = result.get("config_path")
@@ -627,7 +643,7 @@ class ExportWidget(QWidget):
                     "설비는 지금처럼 Segment를 한 번 부르면 됩니다. 마스크의 클래스 번호는 위 순서입니다.")
             if result.get("rules"):
                 text += "\n두 모델의 판정 기준이 함께 담겼습니다 (C++ SDK가 기준 미달 덩어리를 지움)."
-            self.log_text.append(text)
+            self._on_log(text)
             QMessageBox.information(self, "완료", text)
             return
         text = (f"ONNX 내보내기 완료 ({status})\n\n"
@@ -670,9 +686,9 @@ class ExportWidget(QWidget):
                 text += (f"\n결정론적 합성 입력 {validation['probe_count']}개: top-1·확률·판정 마진 검증 통과 (FP32)"
                          f"\n현재 PC 모델 추론 중앙값: {measured['model_median_ms']:.2f} ms"
                          "\n실제 이미지 검증 자료가 없어 합성 입력 범위만 인증했습니다.")
-        self.log_text.append(text)
+        self._on_log(text)
         QMessageBox.information(self, "완료", text)
 
     def _on_error(self, error_msg):
-        self.log_text.append(f"\n오류: {error_msg}")
+        self._on_log(f"\n오류: {error_msg}")
         QMessageBox.critical(self, "오류", f"내보내기 실패:\n{error_msg}")
