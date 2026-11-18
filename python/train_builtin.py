@@ -25,6 +25,14 @@ from builtin_models import (CLASS_HEAD_PREFIX, HEAD_PREFIXES, build_builtin_mode
 from dataset import create_classification_loaders, create_segmentation_loaders
 
 
+def _default_num_workers(device_type: str, original_size: bool) -> int:
+    # Windows workers collate each prefetched batch in a committed file mapping.
+    # Train and validation retain separate pools between epochs.
+    if device_type != "cuda" or (original_size and sys.platform == "win32"):
+        return 0
+    return max(2, min((os.cpu_count() or 1) // 2, 8))
+
+
 def _legacy_class_names(count: int) -> list[str]:
     """Placeholder names written by segmentation training before class names were passed."""
     return [str(index) for index in range(count)]
@@ -380,8 +388,9 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     else:
         log("학습 정밀도: FP32")
     if num_workers is None:
-        cores = os.cpu_count() or 1
-        num_workers = max(2, min(cores // 2, 8)) if target.type == "cuda" else 0
+        num_workers = _default_num_workers(target.type, original_size_training)
+        if sys.platform == "win32" and original_size_training and target.type == "cuda":
+            log("Windows 원본 크기 학습: 큰 배치를 공유 메모리에 미리 쌓지 않도록 현재 프로세스에서 로딩합니다.")
     if num_workers < 0:
         raise ValueError("num_workers must be zero or greater")
     pin_memory = target.type == "cuda"

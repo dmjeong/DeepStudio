@@ -121,3 +121,17 @@ def test_resume_requires_the_same_original_region_even_with_same_padding(tmp_pat
     with pytest.raises(ValueError, match="판정 영역을 유지"):
         train_builtin("unet_lite", root, output_dir=tmp_path / "second",
                       resume=tmp_path / "first" / "last.pt", **kwargs)
+
+
+@pytest.mark.parametrize(("platform", "device", "original", "workers"), [
+    ("win32", "cuda", True, 0),
+    ("win32", "cuda", False, 8),
+    ("linux", "cuda", True, 8),
+    ("win32", "cpu", True, 0),
+])
+def test_original_size_auto_loader_workers(monkeypatch, platform, device, original, workers):
+    import train_builtin
+    from types import SimpleNamespace
+    monkeypatch.setattr(train_builtin, "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(train_builtin.os, "cpu_count", lambda: 16)
+    assert train_builtin._default_num_workers(device, original) == workers
