@@ -1,0 +1,44 @@
+학습 장치 검사: 요청=cuda:0, 실제=cuda:0
+실행 장치: NVIDIA RTX 4000 Ada Generation | PyTorch 2.14.0+cu132 | CUDA 13.2
+GPU 합성곱과 역전파 검사 통과
+기본 모델 학습: unet_resnet18
+학습 정밀도: AMP (FP16 혼합 정밀도) · 검증 FP32
+  학습 장치: cuda:0 (NVIDIA RTX 4000 Ada Generation)
+data loader: workers=8, pin_memory=True, persistent_workers=True, prefetch_factor=2
+원본 크기 학습: 2048×2048 px → 모델 입력 2048×2048 px (가장자리 채움)
+마스크 없는 이미지(train 2장)는 자동 배경(ID 0)으로 학습·검증에 포함합니다. 결함이 있는 이미지는 결함 영역을 표시해 주세요.
+가중치 로드 완료: unet_resnet18 / {'source': 'imagenet', 'backbone': 'resnet18', 'weights': 'ResNet18_Weights.IMAGENET1K_V1', 'url': 'https://download.pytorch.org/models/resnet18-f37072fd.pth'}
+segmentation class weights (sqrt): background=0.794, Broken=7.055, Flip=5.593, Wall Broken=16.068
+  에폭 1 학습: 첫 배치 완료 64.34초 (cuda:0)
+  에폭 1 학습 3/9 · 배치당 33.00초 · 남은 시간 약 3분
+  에폭 1 학습 6/9 · 배치당 24.06초 · 남은 시간 약 1분
+  에폭 1 검증: 첫 배치 완료 20.42초 (cuda:0)
+epoch 1/80: train_loss=2.206014 val_loss=2.218818 metric=0.228152
+  결함 클래스 IoU (배경 제외): Broken 0.014 · Flip 0.862 · Wall Broken 0.001 | 평균 0.292
+  Epoch 1 시간 | 소요 00:03:21 | 누적 00:03:21
+
+Caught RuntimeError in DataLoader worker process 0.
+Original Traceback (most recent call last):
+  File "C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\torch\utils\data\_utils\worker.py", line 375, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+  File "C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\torch\utils\data\_utils\fetch.py", line 57, in fetch
+    return self.collate_fn(data)
+           ~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\torch\utils\data\_utils\collate.py", line 401, in default_collate
+    return collate(batch, collate_fn_map=default_collate_fn_map)
+  File "C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\torch\utils\data\_utils\collate.py", line 215, in collate
+    collate(samples, collate_fn_map=collate_fn_map)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\torch\utils\data\_utils\collate.py", line 155, in collate
+    return collate_fn_map[elem_type](batch, collate_fn_map=collate_fn_map)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\torch\utils\data\_utils\collate.py", line 273, in collate_tensor_fn
+    storage = elem._typed_storage()._new_shared(numel, device=elem.device)
+  File "C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\torch\storage.py", line 1220, in _new_shared
+    untyped_storage = torch.UntypedStorage._new_shared(
+        size * self._element_size(), device=device
+    )
+  File "C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\torch\storage.py", line 421, in _new_shared
+    return cls._new_using_filename_cpu(size)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+RuntimeError: Couldn't open shared file mapping: <torch_19428_321913631_5>, error code: <1455>
