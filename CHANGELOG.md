@@ -1,3 +1,7 @@
+# 21.23 — 세그멘테이션 교사 학습 (+1.0)
+
+- 데스크톱에서 Mask2Former Swin-Small, SegFormer B2, DINOv2-Base를 교사로 학습하고 다른 분할 모델에 증류할 수 있습니다. 두 클래스 교사는 다중 클래스 학생의 해당 결함만 지도합니다. [사용 방법](docs/SEGMENTATION_TEACHERS.md)
+
 # 20.23 — Windows 원본 크기 분할 학습 중단 수정 (+0.01)
 
 - 기본 분할 모델의 원본 크기 학습에서 자동 로딩 워커가 Windows 공유 메모리를 소진하는 경로를 제거했습니다. [수정 및 재개 방법](docs/RELEASE_20.23.md).

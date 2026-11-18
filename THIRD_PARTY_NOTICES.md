@@ -78,3 +78,16 @@ Cell-DINO models. Include `licenses/DINOv2-APACHE-2.0.txt` with redistributed bu
 `example/cpp/nlohmann/json.hpp`: nlohmann/json v3.12.0, unmodified single header.
 Copyright (c) 2013-2025 Niels Lohmann. MIT license included at
 `example/cpp/nlohmann/LICENSE.MIT`. Source: https://github.com/nlohmann/json/tree/v3.12.0
+
+## Segmentation teacher training
+
+The Mask2Former and SegFormer adapters use Hugging Face Transformers 4.57.6
+(Apache-2.0). The default Mask2Former encoder uses Microsoft's Swin-Small
+ImageNet-1K checkpoint, revision `1e8f54cc3d19ded9cda11db863080c79b1096289`.
+The publisher's model card declares Apache-2.0. The segmentation decoder
+is initialized for the project's classes. The SegFormer adapter starts with
+random parameters or weights supplied by the user. Redistribution includes
+no NVIDIA SegFormer or ADE20K Mask2Former weights.
+
+- [Transformers license](https://github.com/huggingface/transformers/blob/v4.57.6/LICENSE)
+- [Microsoft Swin-Small model card](https://huggingface.co/microsoft/swin-small-patch4-window7-224/tree/1e8f54cc3d19ded9cda11db863080c79b1096289)

@@ -14,6 +14,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from segmentation_models import MODEL_IDS as SEGMENT_CANDIDATES
+from transformer_segmenters import MODEL_IDS as TRANSFORMER_SEGMENT_IDS, TASK_HEADS
 from modern_segmentation import MODEL_IDS as MODERN_SEGMENT_IDS
 
 
@@ -48,6 +49,8 @@ for _model_id in SEGMENT_CANDIDATES:
     BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (640, 640), (1, 3))
 for _model_id in MODERN_SEGMENT_IDS:
     BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (448, 448), (1, 3))
+for _model_id in TRANSFORMER_SEGMENT_IDS:
+    BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (512, 512), (1, 3))
 SCRATCH_ONLY_MODELS = frozenset({"unet_lite"})
 
 # 새로 학습하는 머리 부분(나머지는 사전학습 백본: 백본 학습률 배수·동결 대상)과,
@@ -84,6 +87,12 @@ HEAD_PREFIXES.update({mid: ("projections.", "middle.", "expand.", "fusion.", "he
 HEAD_PREFIXES["eomt_dinov2_small"] = ("q.", "class_head.", "mask_head.", "upscale.", "detail.")
 CLASS_HEAD_PREFIX.update({mid: ("fusion.head.", "head.head.", "aux.") for mid in MODERN_SEGMENT_IDS})
 CLASS_HEAD_PREFIX["eomt_dinov2_small"] = ("q.", "class_head.", "detail.2.")
+
+HEAD_PREFIXES["segformer_b2"] = ("net.decode_head.",)
+HEAD_PREFIXES["mask2former_swin_small"] = ("net.model.pixel_level_module.decoder.",
+                                           "net.model.transformer_module.", "net.class_predictor.")
+for _model_id in TRANSFORMER_SEGMENT_IDS:
+    CLASS_HEAD_PREFIX[_model_id] = tuple("net." + name for name in TASK_HEADS[_model_id])
 
 # Pin a concrete revision rather than torchvision's mutable DEFAULT alias.
 IMAGENET_WEIGHTS = {
@@ -143,6 +152,10 @@ _GRADCAM_TARGET_LAYERS.update(bisenetv2="net.bga", stdc1="ffm")
 
 
 _GRADCAM_TARGET_LAYERS.update({mid: "backbone" for mid in MODERN_SEGMENT_IDS})
+
+
+_GRADCAM_TARGET_LAYERS.update(segformer_b2="net.decode_head.linear_fuse",
+                              mask2former_swin_small="net.model.pixel_level_module.decoder.mask_projection")
 
 
 def get_builtin_spec(model_id: str) -> BuiltinModelSpec:
@@ -514,6 +527,21 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
         from dinov2_segmentation import DinoV2Segmentation
         model = DinoV2Segmentation(int(num_classes), in_channels,
                                   pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id in TRANSFORMER_SEGMENT_IDS:
+        from transformer_segmenters import TransformerSegmenter, load_local_tensors
+        model = TransformerSegmenter(model_id, int(num_classes), in_channels)
+        if pretrained:
+            if model_id != "mask2former_swin_small" or backbone_weights is not None:
+                raise ValueError("해당 사전학습 옵션을 사용할 수 없습니다. 로컬 가중치 또는 처음부터 학습을 선택하세요.")
+            from builtin_assets import builtin_asset_path
+            backbone_weights = builtin_asset_path("swin_small_imagenet")
+        if backbone_weights is not None:
+            model.initialize_from_weights(load_local_tensors(backbone_weights), backbone_weights)
+            if pretrained:
+                from builtin_assets import PINNED_SHA256, SOURCE_URLS
+                model.weight_provenance.update(source="microsoft_swin_imagenet",
+                                               url=SOURCE_URLS["swin_small_imagenet"],
+                                               sha256=PINNED_SHA256[Path(backbone_weights).name])
     elif model_id in MODERN_SEGMENT_IDS:
         from modern_segmentation import build_modern_segmenter
         model = build_modern_segmenter(model_id, int(num_classes), in_channels, pretrained=pretrained, weights_path=backbone_weights)

@@ -28,6 +28,9 @@ def require_model_runtime(model_id):
     modules = ["timm.layers", "timm.models.efficientvit_mit"] if model_id in TIMM_MODELS else []
     if model_id == "eomt_dinov2_small":
         modules.append("scipy.optimize")
+    if model_id in {"mask2former_swin_small", "segformer_b2"}:
+        family = "mask2former" if model_id == "mask2former_swin_small" else "segformer"
+        modules.append(f"transformers.models.{family}.modeling_{family}")
     for module in modules:
         try:
             importlib.import_module(module)

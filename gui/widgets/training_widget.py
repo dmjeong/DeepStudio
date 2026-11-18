@@ -15,7 +15,7 @@ from core.best_metrics import (best_epoch_metrics, display_metrics, metric_label
                                selection_value_for_display)
 from core.qt_training import TrainWorker, PatchCoreWorker
 from core.training_modes import (training_engine_name, training_capabilities, MODE_LABELS,
-                                 BUILTIN_ADAPTER_IDS, BUILTIN_SCRATCH_ONLY_IDS, UPSTREAM_ADAPTER_IDS,
+                                 BUILTIN_ADAPTER_IDS, BUILTIN_SCRATCH_ONLY_IDS, LOCAL_TRANSFORMER_TEACHERS, UPSTREAM_ADAPTER_IDS,
                                  SAM2_ADAPTER_IDS)
 from core.training_progress import remaining_seconds, run_description
 from core.training_time import format_hms
@@ -113,6 +113,14 @@ class TrainingWidget(TrainingForm, QWidget):
                        ("builtin_transfer", "로컬 Dinomaly / DINOv2 가중치로 시작"),
                        ("builtin_resume", "중단한 Dinomaly 학습 재개")]
             self.mode_desc.setText("정상 이미지만 에폭 학습. 인코더는 고정하고 재구성기를 학습합니다.")
+        elif model_id in LOCAL_TRANSFORMER_TEACHERS:
+            choices = [("builtin_scratch", f"{name} 처음부터 학습"),
+                       ("builtin_transfer", f"{name} 로컬 가중치로 추가 학습"),
+                       ("builtin_resume", f"{name} 중단한 학습 재개")]
+            if model_id == "mask2former_swin_small":
+                choices.insert(0, ("builtin_finetune", f"{name} Swin-Small ImageNet 백본으로 시작"))
+            self.mode_desc.setText("프로젝트 마스크로 교사를 학습합니다. 사용 권한이 있는 같은 구조의 "
+                                   "Hugging Face 가중치 또는 DeepStudio 체크포인트로 시작할 수 있습니다.")
         elif model_id in BUILTIN_SCRATCH_ONLY_IDS:
             # 사전학습 가중치가 없는 모델: 고를 수 없는 '사전학습으로 시작'은 보여 주지 않는다
             choices = [("builtin_scratch", f"{name} 처음부터 학습"),
@@ -521,6 +529,7 @@ class TrainingWidget(TrainingForm, QWidget):
         # SAM2는 자체 prompt 손실을 쓰므로 분할 손실·가중치 선택이 적용되지 않는다.
         sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
         self.segmentation_loss_combo.setEnabled(not resume and not sam2)
+        self.teacher_training_button.setVisible(self.project is not None and self.project.task == "segment")
         self.distillation_group.setVisible(self.project is not None and self.project.task == "segment"
                                           and self.model_id_combo.currentData() in BUILTIN_ADAPTER_IDS)
         self.finetune_freeze_check.setEnabled(not is_dinomaly)
@@ -667,6 +676,15 @@ class TrainingWidget(TrainingForm, QWidget):
                                   engine, self.project.task)
         self.selection_info.setText(policy.describe() + "\nBest 저장과 조기 종료에 동일하게 적용")
 
+    def _select_teacher_for_training(self, model_id):
+        index = self.model_id_combo.findData(model_id)
+        if index < 0:
+            return
+        self.model_id_combo.setCurrentIndex(index)
+        self.teacher_edit.clear()
+        self.mode_combo.setCurrentIndex(0)
+        self._sync_config()
+
     def _browse_teacher(self):
         path, _ = QFileDialog.getOpenFileName(self, "분할 교사 모델", "", "PyTorch (*.pt *.pth)")
         if path:
@@ -681,10 +699,11 @@ class TrainingWidget(TrainingForm, QWidget):
 
     def _browse_resume_weights(self):
         """이어학습용 이전 체크포인트 선택"""
-        filepath, _ = QFileDialog.getOpenFileName(
-            self, "이전 학습 모델 선택", "",
-            "PyTorch 체크포인트 (*.pt *.pth *.tar)"
-        )
+        local_teacher = (self.model_id_combo.currentData() in LOCAL_TRANSFORMER_TEACHERS
+                         and self.mode_combo.currentData() == "builtin_transfer")
+        formats = ("모델 가중치 (*.pt *.pth *.bin *.safetensors)" if local_teacher
+                   else "PyTorch 체크포인트 (*.pt *.pth *.tar)")
+        filepath, _ = QFileDialog.getOpenFileName(self, "이전 학습 모델 선택", "", formats)
         if filepath:
             self.resume_edit.setText(filepath)
 

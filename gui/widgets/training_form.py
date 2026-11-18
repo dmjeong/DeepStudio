@@ -1,6 +1,7 @@
 """학습 기본/고급 설정과 모니터 레이아웃 구성."""
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QSizePolicy, QPushButton, QLabel, QLineEdit, QFrame, QScrollArea, QGroupBox, QFormLayout, QCheckBox, QSplitter, QProgressBar, QTextEdit, QTabWidget, QTableWidget, QAbstractItemView
+from PySide6.QtWidgets import QMenu
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
@@ -62,6 +63,17 @@ class TrainingForm:
             pass
         self.model_id_combo.currentIndexChanged.connect(self._on_model_id_changed)
         model_layout.addWidget(self.model_id_combo)
+        self.teacher_training_button = QPushButton("교사 학습 모델 선택")
+        menu = QMenu(self.teacher_training_button)
+        for model_id in ("mask2former_swin_small", "segformer_b2", "dinov2_vitb14_seg"):
+            index = self.model_id_combo.findData(model_id)
+            if index >= 0:
+                action = menu.addAction(self.model_id_combo.itemText(index))
+                action.setData(model_id)
+        menu.triggered.connect(lambda action: self._select_teacher_for_training(action.data()))
+        self.teacher_training_button.setMenu(menu)
+        self.teacher_training_button.hide()
+        model_layout.addWidget(self.teacher_training_button)
         pack_actions = QHBoxLayout()
         self.model_pack_train_button = QPushButton("팩 학습")
         self.model_pack_infer_button = QPushButton("팩 추론")
@@ -375,7 +387,7 @@ class TrainingForm:
         self.distillation_group = QGroupBox("분할 교사 증류 (선택)")
         kd_layout = QFormLayout(self.distillation_group)
         self.teacher_edit = QLineEdit()
-        self.teacher_edit.setPlaceholderText("비우면 사용 안 함 · 같은 클래스 순서의 교사 .pt")
+        self.teacher_edit.setPlaceholderText("학생 학습 시 교사의 best.pt 선택")
         kd_row = QHBoxLayout()
         kd_row.addWidget(self.teacher_edit)
         kd_browse = QPushButton("찾아보기")
@@ -391,7 +403,7 @@ class TrainingForm:
         self.kd_temperature.setValue(2)
         kd_layout.addRow("증류 손실 비중",self.kd_alpha)
         kd_layout.addRow("온도",self.kd_temperature)
-        kd_note = QLabel("교사와 학생은 같은 증강 패치를 봅니다. 교사는 학습 중에만 필요하며 추론 모델에는 포함되지 않습니다.")
+        kd_note = QLabel("① 위 모델 목록에서 Mask2Former, SegFormer 또는 DINOv2 ViT-B/14를 고르고 이 칸을 비운 뒤 학습하세요.\n② 학생 모델을 고르고 위 칸에 교사의 best.pt를 넣어 다시 학습하세요. 같은 클래스 순서 또는 한 결함만 학습한 교사를 지원합니다.")
         kd_note.setWordWrap(True)
         kd_layout.addRow(kd_note)
         hp_layout.addRow(self.distillation_group)

@@ -144,7 +144,7 @@ class EoMTSegmenter(nn.Module):
         return logits, loss
 
 
-def query_loss(pred_masks, pred_classes, target):
+def query_loss(pred_masks, pred_classes, target, *, pad_stride=14, max_points=None):
     """One target mask per semantic class, background included, ignore pixels excluded."""
     from scipy.optimize import linear_sum_assignment
 
@@ -155,18 +155,26 @@ def query_loss(pred_masks, pred_classes, target):
         if not valid.any():
             continue
         labels = torch.unique(target[batch][valid])
-        # The encoder pads right/bottom to a 14-pixel patch boundary. Decode
-        # in that same coordinate system, then crop, just as semantic() does.
-        # Resizing directly to (e.g.) 640 shrinks the 644-pixel field and
-        # misaligns narrow target masks during query matching/training.
-        padded_size = tuple(((s + 13) // 14) * 14 for s in target.shape[-2:])
-        masks = F.interpolate(
-            pred_masks[batch : batch + 1],
-            size=padded_size,
-            mode="bilinear",
-            align_corners=False,
-        )[0, :, : target.shape[-2], : target.shape[-1]][:, valid]
-        truth = (target[batch][None] == labels[:, None, None])[:, valid].float()
+        padded_size = tuple(((s + pad_stride - 1) // pad_stride) * pad_stride for s in target.shape[-2:])
+        if max_points is None:
+            masks = F.interpolate(pred_masks[batch:batch + 1], size=padded_size,
+                                  mode="bilinear", align_corners=False)[0]
+            masks = masks[:, :valid.shape[0], :valid.shape[1]][:, valid]
+            truth = (target[batch][valid] == labels[:, None]).float()
+        else:
+            # Sample mask logits at valid pixel centres without expanding Q masks
+            # to the full resolution. Include a point from every observed class.
+            points = valid.nonzero()
+            if len(points) > max_points:
+                seeds = torch.stack([(target[batch] == label).nonzero()[0] for label in labels])
+                selection = torch.randperm(len(points), device=points.device)[:max_points - len(labels)]
+                points = torch.cat([seeds, points[selection]])
+            y, x = points.unbind(1)
+            grid = torch.stack(((x + .5) * (2 / padded_size[1]) - 1,
+                                (y + .5) * (2 / padded_size[0]) - 1), dim=-1)
+            masks = F.grid_sample(pred_masks[batch:batch + 1], grid[None, :, None],
+                                  padding_mode="border", align_corners=False)[0, :, :, 0]
+            truth = (target[batch, y, x] == labels[:, None]).float()
         # The dot products sum across all valid pixels and can exceed FP16's range.
         with torch.autocast(device_type=masks.device.type, enabled=False):
             probabilities = masks.sigmoid()

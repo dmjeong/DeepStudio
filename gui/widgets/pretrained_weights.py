@@ -24,6 +24,7 @@ from builtin_assets import (  # noqa: E402
 
 # 가중치 → 그 가중치로 시작하는 모델 (사용자가 '무엇을 받아야 하는지' 고를 수 있게)
 USED_BY = {
+    "swin_small_imagenet": "Mask2Former Swin-Small 분할 교사",
     "efficientnet_b0": "EfficientNet-B0 분류",
     "efficientnet_b1": "EfficientNet-B1 분류",
     "resnet18": "ResNet18 분류 · UNet ResNet18 분할",

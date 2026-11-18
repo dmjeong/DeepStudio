@@ -31,6 +31,7 @@ def check_runtime():
         "import sys, torch, torchvision, timm, scipy.optimize; "
         "from timm.layers import DropPath, LayerNorm2d; "
         "from timm.models.efficientvit_mit import MBConv; "
+        "from transformers import Mask2FormerForUniversalSegmentation, SegformerForSemanticSegmentation; "
         "print('Python:', sys.executable); "
         "print('torch:', torch.__version__, 'CUDA:', torch.version.cuda); "
         "print('torchvision:', torchvision.__version__, 'timm:', timm.__version__); "

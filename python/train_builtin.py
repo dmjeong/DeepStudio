@@ -435,17 +435,26 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         if len(class_names) != num_classes or any(not name for name in class_names):
             raise ValueError("class_names must name every segmentation class")
     initial_checkpoint = None
+    transformer_state = None
     backbone_weights = None
     if initial_weights is not None:
-        payload = torch.load(initial_weights, map_location="cpu", weights_only=True)
+        from transformer_segmenters import MODEL_IDS as transformer_ids, load_local_tensors
+        payload = load_local_tensors(initial_weights) if model_id in transformer_ids else torch.load(
+            initial_weights, map_location="cpu", weights_only=True)
         if isinstance(payload, dict) and "model_state_dict" in payload:
             if payload.get("model_id") != model_id:
                 raise ValueError("initial checkpoint model_id does not match the requested adapter")
             initial_checkpoint = payload
+        elif model_id in transformer_ids:
+            transformer_state = payload
         else:
             backbone_weights = initial_weights
+        del payload
     model = build_builtin_model(model_id, num_classes, in_channels,
                                 pretrained=pretrained, backbone_weights=backbone_weights)
+    if transformer_state is not None:
+        model.initialize_from_weights(transformer_state, initial_weights)
+        del transformer_state
     if initial_checkpoint is not None:
         # Class order matters even when the number of classes is unchanged.
         source = dict(initial_checkpoint["model_state_dict"])

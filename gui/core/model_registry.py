@@ -223,6 +223,13 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
     ])
     # DINOv2: 데스크톱 앱에만 보인다(surfaces). 웹 화면의 모델 목록은 바꾸지 않는다.
     desktop = {"surfaces": ["desktop"]}
+    for model_id, family, variant in (("mask2former_swin_small", "Mask2Former", "Swin-Small"),
+                                       ("segformer_b2", "SegFormer", "MiT-B2")):
+        specs.append(ModelSpec(
+            model_id, family, variant, "segment", ("windows_native", "onnx"), common,
+            (512, 512), (1, 3), "trained_verified", metadata=desktop,
+            pretrained_asset="Microsoft Swin-Small ImageNet-1K" if model_id == "mask2former_swin_small" else "",
+            notes="픽셀 분할 및 교사 학습. 로컬 가중치로 추가 학습 또는 처음부터 학습."))
     for variant, label in (("vits14", "ViT-S/14"), ("vitb14", "ViT-B/14")):
         asset = f"facebookresearch/dinov2 dinov2_{variant}_pretrain (LVD-142M)"
         specs.append(ModelSpec(

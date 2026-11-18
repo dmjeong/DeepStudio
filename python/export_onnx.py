@@ -264,7 +264,11 @@ def deployment_preview(checkpoint_path):
     tiling = checkpoint.get("tiling") or preprocessing.get("tiling") or {}
     model_id = checkpoint.get("model_id") or (checkpoint.get("model_config") or {}).get("model_id") or ""
     task = checkpoint.get("task")
-    preview = {"task": task, "patch": bool(tiling) and task == "segment", "vit": str(model_id).startswith("dinov2_") or model_id in {"efficientvit_b0_seg", "efficientvit_b1_seg", "sctnet_s", "eomt_dinov2_small"},
+    has_global_attention = str(model_id).startswith("dinov2_") or model_id in {
+        "mask2former_swin_small", "segformer_b2", "efficientvit_b0_seg", "efficientvit_b1_seg",
+        "sctnet_s", "eomt_dinov2_small",
+    }
+    preview = {"task": task, "patch": bool(tiling) and task == "segment", "vit": has_global_attention,
                "region": tiling.get("region"), "scale": float(tiling.get("scale", 1.0)), "rules": None}
     if task == "segment":
         try:

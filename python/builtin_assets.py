@@ -25,6 +25,7 @@ import sys
 
 
 ASSET_FILES = {
+    "swin_small_imagenet": "swin/swin_small_patch4_window7_224.pth",
     "efficientvit_b0": "timm/efficientvit_b0.pth",
     "efficientvit_b1": "timm/efficientvit_b1.pth",
     "sctnet_s_backbone": "sctnet/SCT-S_Pretrain.pth",
@@ -57,6 +58,7 @@ ASSET_FILES = {
 }
 
 SEGMENTATION_ASSET_IDS = (
+    "swin_small_imagenet",
     "efficientvit_b0", "efficientvit_b1", "sctnet_s_backbone",
     "bisenetv2_backbone", "stdc1_backbone",
     "shufflenet_v2_x1_0", "mobilenetv4_small_encoder", "efficientnet_b1_encoder",
@@ -67,6 +69,7 @@ SEGMENTATION_ASSET_IDS = (
 
 # 수동 다운로드 주소 (build.bat의 prepare_builtin_assets.py가 받는 것과 같은 공식 파일)
 SOURCE_URLS = {
+    "swin_small_imagenet": "https://huggingface.co/microsoft/swin-small-patch4-window7-224/resolve/1e8f54cc3d19ded9cda11db863080c79b1096289/pytorch_model.bin",
     "efficientvit_b0": "https://huggingface.co/timm/efficientvit_b0.r224_in1k/resolve/4844777adc2285905eeb022672ba81620b52bd0c/pytorch_model.bin",
     "efficientvit_b1": "https://huggingface.co/timm/efficientvit_b1.r224_in1k/resolve/cebc58510738e196c3cce3c3077dc8737973b7ba/pytorch_model.bin",
     "sctnet_s_backbone": "https://drive.usercontent.google.com/download?id=1rCHGRBCUOOq8frQvMELzfvA-gk-wbedE&export=download&confirm=t",
@@ -117,6 +120,7 @@ SOURCE_MIRRORS = {
 # 공식 파일 이름에 해시가 없는 가중치의 전체 SHA-256 (공식 주소에서 받은 파일, 2026-10 확인).
 # manifest가 없어도(직접 받은 파일) 이 값과 같아야 쓴다.
 PINNED_SHA256 = {
+    "swin_small_patch4_window7_224.pth": "c17c4edf3230695f4de854105601b1adb96e737d77a9a8b718010c8a103fc7e5",
     "efficientvit_b0.pth": "92b1a783baee19335e0dbe5af941ad91bfce392b5e55f2dbbae1e4dbea0b6b4e",
     "efficientvit_b1.pth": "fcd84d10cb51762639cba7e5e3d936fb391777b654ab6e61701f14219d3d4a0f",
     "SCT-S_Pretrain.pth": "6711235bef62dedb3b76853bc278878027b66ca35b9f8afb9419708ced36b65a",
@@ -372,6 +376,7 @@ def import_asset(model_id: str, source: str | Path) -> Path:
 
 # 기본 모델 → 설치본 사전학습 백본 가중치 (모델 생성기와 같은 대응)
 BUILTIN_BACKBONE_ASSETS = {
+    "mask2former_swin_small": "swin_small_imagenet",
     "efficientvit_b0_seg": "efficientvit_b0",
     "efficientvit_b1_seg": "efficientvit_b1",
     "sctnet_s": "sctnet_s_backbone",

@@ -17,13 +17,19 @@ class SegmentationDistiller:
 
         payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
         spec = resolve_checkpoint_spec(payload)
+        payload.pop("optimizer_state_dict", None)
+        teacher_names = spec["class_names"]
+        self.focus_class = None
+        if (len(teacher_names) == 2 and len(class_names) > 2
+                and teacher_names[0] == class_names[0] and teacher_names[1] in class_names[1:]):
+            self.focus_class = class_names.index(teacher_names[1])
         if (
             spec["task"] != "segment"
-            or spec["class_names"] != list(class_names)
+            or (teacher_names != list(class_names) and self.focus_class is None)
             or spec["in_channels"] != channels
         ):
             raise ValueError(
-                "교사와 학생의 태스크·클래스 순서·입력 채널이 같아야 합니다"
+                "교사와 학생은 같은 분할 태스크·입력 채널이어야 합니다. 클래스 순서를 맞추거나 배경과 학생 결함 하나로 학습한 교사를 선택하세요."
             )
         mean, std = (
             ([0.449], [0.226])
@@ -49,20 +55,33 @@ class SegmentationDistiller:
             "loss": "pixel_kl_ignore255",
         }
 
+        if self.focus_class is not None:
+            self.config["focus_class"] = teacher_names[1]
+            self.config["loss"] = "binary_pixel_kl_ignore255"
+
     def __call__(self, images, logits, masks, supervised_loss):
         with torch.no_grad():
             teacher = self.teacher(images)
+        logits = logits.float()
+        teacher = teacher.float()
+        valid = masks != 255
+        if self.focus_class is not None:
+            idx = self.focus_class
+            other = torch.cat((logits[:, :idx], logits[:, idx + 1:]), dim=1)
+            logits = torch.stack((other.logsumexp(dim=1), logits[:, idx]), dim=1)
+            # A specialist never supervises a different labelled defect. Human
+            # masks win where the specialist contradicts the annotation.
+            valid = ((masks == 0) | (masks == idx)) & (teacher.argmax(1) == (masks == idx).long())
         if teacher.shape != logits.shape:
             raise ValueError("교사와 학생의 분할 출력 크기가 다릅니다")
         t = self.temperature
         # Divide and reduce in FP32, even when the model forwards use AMP.
-        logits = logits.float()
-        teacher = teacher.float()
         kl = F.kl_div(
             F.log_softmax(logits / t, dim=1),
             F.softmax(teacher / t, dim=1),
             reduction="none",
         ).sum(1)
-        valid = masks != 255
-        kd = kl[valid].mean() * t * t if valid.any() else logits.sum() * 0
+        if not valid.any():
+            return supervised_loss
+        kd = kl[valid].mean() * t * t
         return (1 - self.alpha) * supervised_loss + self.alpha * kd

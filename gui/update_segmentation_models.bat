@@ -5,7 +5,7 @@ echo Updating segmentation model support...
 REM Keep the installed CUDA/CPU torch and torchvision packages unchanged.
 python repair_model_runtime.py
 if errorlevel 1 goto :failed
-python ..\python\prepare_builtin_assets.py --only mobilenetv4_small_encoder,efficientnet_b1_encoder,shufflenet_v2_x1_0,bisenetv2_backbone,stdc1_backbone,efficientvit_b0,efficientvit_b1,sctnet_s_backbone,dinov2_vits14 --strict
+python ..\python\prepare_builtin_assets.py --only mobilenetv4_small_encoder,efficientnet_b1_encoder,shufflenet_v2_x1_0,bisenetv2_backbone,stdc1_backbone,efficientvit_b0,efficientvit_b1,sctnet_s_backbone,dinov2_vits14,dinov2_vitb14,swin_small_imagenet --strict
 if errorlevel 1 goto :failed
 echo Ready. Restart the Python app and select a model in Training.
 if not defined DVS_WEIGHTS_NONINTERACTIVE pause

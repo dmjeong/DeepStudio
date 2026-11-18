@@ -37,7 +37,9 @@ MODE_HELP = {
     "custom": "자체 CSP 구조. 초기 가중치가 없으면 무작위 초기화합니다.",
 }
 
-BUILTIN_ADAPTER_IDS = frozenset({
+LOCAL_TRANSFORMER_TEACHERS = frozenset({"mask2former_swin_small", "segformer_b2"})
+
+BUILTIN_ADAPTER_IDS = LOCAL_TRANSFORMER_TEACHERS | frozenset({
     "resnet18", "resnet50", "convnext_v1_tiny", "dinomaly_vits14",
     "deeplabv3plus_resnet34", "unet_resnet18", "dinov2_vits14",
     "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg",
@@ -88,7 +90,7 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
         raise ValueError("Dinomaly는 이상 탐지의 사전학습·로컬 가중치·재개 모드를 사용하세요")
     if engine == "builtin" and model_id not in BUILTIN_ADAPTER_IDS:
         raise ValueError("선택한 모델은 기본 모델의 사전학습 모드를 지원하지 않습니다.")
-    if mode == "builtin_finetune" and model_id in BUILTIN_SCRATCH_ONLY_IDS:
+    if mode == "builtin_finetune" and model_id in (BUILTIN_SCRATCH_ONLY_IDS | {"segformer_b2"}):
         raise ValueError("선택 모델은 기본 사전학습 파일이 없습니다. 처음부터 학습하거나 이전 학습 결과를 선택하세요.")
     if engine == "upstream" and model_id not in UPSTREAM_ADAPTER_IDS:
         raise ValueError("선택한 모델은 upstream native 학습 모드를 지원하지 않습니다.")
