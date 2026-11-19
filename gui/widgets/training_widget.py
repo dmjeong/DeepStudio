@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QWidget, QFileDialog, QMessageBox
 from PySide6.QtCore import QSignalBlocker
 from PySide6.QtGui import QTextCursor
 
-from core.project import ProjectData, ProjectManager
+from core.project import ProjectData, ProjectManager, TrainingConfig
 from core.best_metrics import (best_epoch_metrics, display_metrics, metric_label, saved_detection_evaluation,
                                selection_value_for_display)
 from core.qt_training import TrainWorker, PatchCoreWorker
@@ -257,6 +257,15 @@ class TrainingWidget(TrainingForm, QWidget):
                 self.resume_edit.clear()
                 self.weights_edit.clear()
         self._displayed_model_id = model_id
+        mask2former = model_id == "mask2former_swin_small"
+        if not mask2former and self.patience_spin.value() == 0:
+            # Switching models must not turn "off" into a one-epoch patience.
+            self.patience_spin.setValue(self.project.training.early_stop_patience or TrainingConfig.early_stop_patience)
+        self.patience_spin.setMinimum(0 if mask2former else 1)
+        self.patience_spin.setSpecialValueText("0 (사용 안 함)" if mask2former else "")
+        self.patience_spin.setToolTip(
+            "Mask2Former는 초기에 검증 손실이 줄어도 mIoU가 한동안 같을 수 있습니다. "
+            "0이면 조기 종료 없이 설정한 에폭까지 학습합니다." if mask2former else "")
         if self.project.task == "anomaly":
             method = "dinomaly" if model_id == "dinomaly_vits14" else "patchcore"
             self.anomaly_method_combo.blockSignals(True)

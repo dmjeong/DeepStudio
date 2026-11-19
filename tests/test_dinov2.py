@@ -205,6 +205,41 @@ def test_desktop_segmentation_log_reports_defect_iou_and_all_background(tmp_path
                        for line in logs) is report
 
 
+def test_collapse_log_counts_augmented_training_and_validation_predictions_separately(tmp_path, monkeypatch):
+    import train_builtin as trainer
+
+    class FixedPrediction(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.head = torch.nn.Conv2d(1, 2, 1)
+            self.weight_provenance = {"source": "test"}
+
+        def forward(self, x):
+            scores = self.head(x) * 0
+            bias = scores.new_tensor([0., 1.] if self.training else [1., 0.])
+            return scores + bias.view(1, 2, 1, 1)
+
+    monkeypatch.setattr(trainer, "build_builtin_model", lambda *args, **kwargs: FixedPrediction())
+    for split in ("train", "val"):
+        for subset in ("images", "masks"):
+            (tmp_path / "data" / subset / split).mkdir(parents=True)
+        image = np.zeros((32, 32), np.uint8)
+        mask = image.copy()
+        mask[0] = 255
+        mask[3:5, 4:8] = 1
+        Image.fromarray(image).save(tmp_path / "data/images" / split / "part.png")
+        Image.fromarray(mask).save(tmp_path / "data/masks" / split / "part.png")
+
+    logs = []
+    trainer.train_builtin("unet_resnet18", tmp_path / "data", num_classes=2, input_size=32, in_channels=1,
+                          epochs=5, batch_size=1, output_dir=tmp_path / "run", num_workers=0,
+                          rotation=0, horizontal_flip=0, color_jitter=0, class_names=["bg", "crack"],
+                          class_report=True, log=logs.append)
+    counts = [m for m in logs if isinstance(m, str) and "결함 픽셀 (정답→예측)" in m]
+    assert [int(m.split()[1]) for m in counts] == [1, 3, 5]
+    assert all("학습 배치(증강 설정 반영) crack 8→992 | 검증 crack 8→0" in m for m in counts)
+
+
 def test_only_the_desktop_training_request_asks_for_the_class_report():
     import inspect
     from webapp import worker

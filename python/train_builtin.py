@@ -298,6 +298,17 @@ def _pixel_count_line(split, counts, names):
     return f"  {split} 입력 마스크 정답 픽셀 (255 제외) | " + " · ".join(parts)
 
 
+def _foreground_prediction_line(epoch, training, validation, names):
+    def counts(report):
+        return " · ".join(
+            f"{names[i]} {int(report['truth'][i]):,}→{int(report['predicted'][i]):,}"
+            for i in range(1, len(names))
+        )
+
+    return (f"  에폭 {epoch} 결함 픽셀 (정답→예측) | 학습 배치(증강 설정 반영) {counts(training)}"
+            f" | 검증 {counts(validation)}")
+
+
 def _collapse_help(class_weights):
     message = ("⚠ 검증 정답에 결함이 있지만 모델이 모든 픽셀을 배경으로 판정했습니다. "
                "학습·검증 입력 마스크의 결함 픽셀 수와 크롭·축소 후 결함 모양을 확인하세요. ")
@@ -648,9 +659,15 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if resume_best_checkpoint is not None:
         torch.save(resume_best_checkpoint, destination / "best.pt")
     completed_epochs = start_epoch
+    if model_id == "mask2former_swin_small" and class_report:
+        mode = "체크포인트 재개" if resume is not None else "새 학습"
+        patience = f"{early_stop_patience}에폭" if early_stop_patience else "끔"
+        log(f"Mask2Former {mode} | 에폭당 학습 {len(train_loader)}배치 · 시작 에폭 {start_epoch + 1} · "
+            f"실제 시작 헤드 학습률 {optimizer.param_groups[0]['lr']:.5g} · 조기 종료 {patience} ({policy.metric})")
     training_precision = {"scaler": scaler} if scaler is not None else {}
     epochs_without_improvement = max(0, start_epoch - best_epoch) if best_epoch else 0
-    collapsed_epochs, collapse_warned = {}, False  # 결함 예측 0인 epoch (데스크톱 class_report)
+    collapse_details, reported_epochs = {}, set()
+    collapse_warned = False
     for epoch in range(start_epoch, epochs):
         if should_stop():
             break
@@ -670,8 +687,10 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                                              validation_metrics, **watch("검증", val_loader))
             else:
                 seen_pixels = []
+                train_report = {} if class_report else None
                 train_loss, train_metric = _segmentation_epoch(model, train_loader, criterion, optimizer, target,
                                                                pixel_counts_out=seen_pixels,
+                                                               **({"class_report_out": train_report} if class_report else {}),
                                                                **({"distiller": distiller} if distiller is not None else {}),
                                                                **training_precision, **watch("학습", train_loader))
                 if epoch == start_epoch and class_weights == "none":
@@ -694,11 +713,15 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             line, collapsed = _class_report(report, class_names or [])
             if line:
                 log(line)
-            collapsed_epochs[epoch + 1] = collapsed
+            if collapsed:
+                collapse_details[epoch + 1] = _foreground_prediction_line(epoch + 1, train_report, report, class_names)
             warn_now = collapsed and epoch + 1 >= 3 and not collapse_warned
             if epoch == start_epoch or warn_now:
                 log(_pixel_count_line("학습", seen_pixels, class_names))
                 log(_pixel_count_line("검증", report["truth"], class_names))
+                if collapsed:
+                    log(collapse_details[epoch + 1])
+                    reported_epochs.add(epoch + 1)
             if warn_now:
                 log(_collapse_help(class_weights))
                 collapse_warned = True
@@ -743,11 +766,19 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             epochs_without_improvement += 1
         if early_stop_patience and epochs_without_improvement >= early_stop_patience:
             log(f"early stopping at epoch {completed_epochs}")
+            if (model_id == "mask2former_swin_small" and completed_epochs in collapse_details
+                    and policy.metric in {"mIoU", "dice_score"}):
+                log(f"검증 결함 예측이 0픽셀인 상태에서 {policy.metric}이 {early_stop_patience}에폭 동안 "
+                    "개선되지 않아 멈췄습니다. val_loss가 내려가는 중이라면 학습 화면의 "
+                    "Early Stop을 끄고 같은 설정에서 더 학습해 비교할 수 있습니다.")
             break
     if completed_epochs == start_epoch and start_epoch >= epochs:
         raise ValueError("resume checkpoint already reached the requested epochs")
-    if collapsed_epochs.get(best_epoch):
+    if best_epoch in collapse_details:
         log(f"⚠ 저장된 best 모델({best_epoch} 에폭)이 검증 결함을 하나도 예측하지 않았습니다.")
+    for epoch_number in dict.fromkeys((best_epoch, completed_epochs)):
+        if epoch_number in collapse_details and epoch_number not in reported_epochs:
+            log(collapse_details[epoch_number])
     log_total_time(log, training_clock.elapsed())
     (destination / "training.json").write_text(json.dumps({"model_id": model_id,
         "task": spec.task, "epochs": epochs, "input_size": list(input_size),

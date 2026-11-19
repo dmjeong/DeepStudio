@@ -112,6 +112,17 @@ def test_desktop_teacher_initialization_modes(tmp_path):
             widget.teacher_edit.setText("previous-teacher.pt")
             action.trigger()
             assert widget.model_id_combo.currentData() == teacher and not widget.teacher_edit.text()
+            if teacher == "mask2former_swin_small":
+                assert widget.patience_spin.minimum() == 0
+                assert widget.patience_spin.value() == 15
+                widget.patience_spin.setValue(0)
+                widget._sync_config()
+                assert project.training.early_stop_patience == 0
+                widget.set_project(ProjectManager.load(ProjectManager.save(project)))
+                assert widget.patience_spin.value() == 0 and "사용 안 함" in widget.patience_spin.text()
+            else:
+                assert widget.patience_spin.minimum() == 1
+                assert widget.patience_spin.value() == 15
             assert not widget.teacher_training_button.isHidden()
             available = {widget.mode_combo.itemData(i) for i in range(widget.mode_combo.count())}
             assert {"builtin_scratch", "builtin_transfer", "builtin_resume"} <= available
