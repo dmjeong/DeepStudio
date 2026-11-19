@@ -124,6 +124,15 @@ def test_onnx_export_matches_pytorch(tmp_path):
         expected = model(torch.from_numpy(x)).numpy()
     assert np.abs(session.run(None, {session.get_inputs()[0].name: x})[0] - expected).max() < 1e-4
 
+    from precision_benchmark import benchmark_precisions
+    del model, session
+    Image.fromarray(np.arange(112 * 112, dtype=np.uint8).reshape(112, 112)).save(tmp_path / "chip.png")
+    rows = benchmark_precisions(tmp_path / "c.json", tmp_path, thread_counts=(1,), calibration_dir=tmp_path,
+                                image_count=1, repeats=1, warmup=0, log=lambda _: None)
+    assert [(row["precision"], row["status"]) for row in rows] == [
+        ("FP32", "완료"), ("FP16", "완료"), ("INT8", "완료")], rows
+    assert "Top-1" in rows[-1]["comparison"]
+
 
 def test_training_uses_a_smaller_backbone_learning_rate(tmp_path):
     """ViT 백본 lr = 학습률 × 백본 배수 × 0.1 (기본 1e-3 × 0.1 × 0.1 = 1e-5). 로그에 남긴다."""

@@ -1,8 +1,11 @@
 """Compare deployment ONNX models on the desktop CPU."""
 
+from multiprocessing import get_context
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from time import monotonic
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QProgressBar,
@@ -15,7 +18,8 @@ _BACKEND_NAMES = {"onnxruntime": "ONNX Runtime", "openvino": "OpenVINO"}
 
 class PrecisionBenchmarkWorker(QThread):
     progress = Signal(str)
-    completed = Signal(list)
+    row_ready = Signal(dict)
+    completed = Signal(int)
     failed = Signal(str)
 
     def __init__(self, options, parent):
@@ -24,13 +28,44 @@ class PrecisionBenchmarkWorker(QThread):
 
     def run(self):
         try:
-            from precision_benchmark import benchmark_precisions
+            from precision_benchmark import run_benchmark_process
 
-            rows = benchmark_precisions(
-                **self.options, log=self.progress.emit, cancelled=self.isInterruptionRequested,
-            )
-            if not self.isInterruptionRequested():
-                self.completed.emit(rows)
+            ctx = get_context("spawn")
+            with TemporaryDirectory(prefix="dvs-cpu-compare-") as workspace:
+                receiver, sender = ctx.Pipe(duplex=False)
+                with receiver, sender:
+                    child = ctx.Process(target=run_benchmark_process, args=(self.options, workspace, sender))
+                    child.start()
+                    sender.close()
+                    try:
+                        while not self.isInterruptionRequested():
+                            if receiver.poll(0.1):
+                                try:
+                                    event, value = receiver.recv()
+                                except EOFError:
+                                    break
+                                if event == "row":
+                                    self.row_ready.emit(value)
+                                elif event == "progress":
+                                    self.progress.emit(value)
+                                elif event == "failed":
+                                    self.failed.emit(value)
+                                    child.join(timeout=1)
+                                    return
+                                elif event == "completed":
+                                    self.completed.emit(value)
+                                    child.join(timeout=1)
+                                    return
+                            elif not child.is_alive():
+                                break
+                        if not self.isInterruptionRequested():
+                            child.join(timeout=1)
+                            self.failed.emit(f"비교 프로세스가 결과 없이 종료되었습니다 (종료 코드 {child.exitcode}).")
+                    finally:
+                        if child.is_alive():
+                            child.kill()
+                        child.join()
+                        child.close()
         except Exception as exc:
             if not self.isInterruptionRequested():
                 self.failed.emit(str(exc))
@@ -44,11 +79,14 @@ class PrecisionBenchmarkDialog(QDialog):
         self.resize(1080, 720)
         self.worker = None
         self._cancel_requested = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._update_elapsed)
         self.browse_dir = browse_dir
         layout = QVBoxLayout(self)
         explanation = QLabel(
             "같은 ONNX와 이미지로 ONNX Runtime과 OpenVINO의 CPU 추론을 비교합니다. "
-            "FP16 JSON을 비우면 비교용 모델을 만듭니다. EfficientNet·탐지·분할·Dinomaly는 "
+            "FP16 JSON을 비우면 비교용 모델을 만듭니다. EfficientNet·DINOv2 분류, 탐지·분할·Dinomaly는 "
             "보정 이미지로 비교용 INT8 모델을 만들 수 있습니다."
         )
         explanation.setWordWrap(True)
@@ -80,8 +118,8 @@ class PrecisionBenchmarkDialog(QDialog):
         self.run_fp16.toggled.connect(fp16_row.setEnabled)
         self.run_int8.toggled.connect(int8_row.setEnabled)
         self.run_int8.toggled.connect(calibration_row.setEnabled)
-        self.threads = QLineEdit("1, 2, 4, 8")
-        self.threads.setToolTip("쉼표로 구분한 각 실행기의 CPU 스레드 수. 0은 자동입니다.")
+        self.threads = QLineEdit("4")
+        self.threads.setToolTip("여러 스레드 수를 비교하려면 1, 2, 4, 8처럼 입력하세요. 0은 자동입니다.")
         form.addRow("CPU 스레드 수 (0=자동)", self.threads)
         counts = QHBoxLayout()
         self.image_count = self._count(counts, "이미지 수", 1, 100, 5)
@@ -118,6 +156,7 @@ class PrecisionBenchmarkDialog(QDialog):
         layout.addWidget(self.progress)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(500)
         self.log.setMaximumHeight(104)
         self.log.setAccessibleName("비교 진행 로그")
         layout.addWidget(self.log)
@@ -207,12 +246,15 @@ class PrecisionBenchmarkDialog(QDialog):
         }
         self.table.setRowCount(0)
         self.log.clear()
-        self.status.setText("측정 중…")
+        self._success_count = 0
         self._cancel_requested = False
+        self._show_progress("비교 프로세스 시작 중")
+        self._timer.start()
         self.worker = PrecisionBenchmarkWorker(options, self)
-        self.worker.progress.connect(self.log.appendPlainText)
+        self.worker.progress.connect(self._show_progress)
+        self.worker.row_ready.connect(self._append_result)
         self.worker.completed.connect(self._show_results)
-        self.worker.failed.connect(self.status.setText)
+        self.worker.failed.connect(self._show_failure)
         self.worker.finished.connect(self._finished)
         self.settings.setEnabled(False)
         self.start_button.setEnabled(False)
@@ -224,45 +266,62 @@ class PrecisionBenchmarkDialog(QDialog):
     def _format_ms(value):
         return f"{value:.2f}" if isinstance(value, (int, float)) else "—"
 
-    def _show_results(self, rows):
+    def _show_progress(self, message):
         if self._cancel_requested:
             return
-        self.table.setRowCount(len(rows))
-        for index, row in enumerate(rows):
-            threads = row["threads"]
-            thread_label = "—" if threads is None else str(threads or "자동")
-            engine = row.get("backend", "onnxruntime")
-            engine_label = _BACKEND_NAMES.get(engine, engine)
-            values = (
-                engine_label, row["precision"], thread_label,
-                *(self._format_ms(row.get(key)) for key in ("p50_ms", "p95_ms", "model_p50_ms", "model_p95_ms")),
-                str(row.get("comparison") or "—"), row["status"],
-            )
-            for column, value in enumerate(values):
-                cell = QTableWidgetItem(value)
-                if row.get("detail"):
-                    cell.setToolTip(row["detail"])
-                self.table.setItem(index, column, cell)
+        self._stage = message if len(message) <= 180 else message[:177] + "…"
+        self._stage_start = monotonic()
+        self.log.appendPlainText(message)
+        self._update_elapsed()
+
+    def _update_elapsed(self):
+        elapsed = int(monotonic() - self._stage_start)
+        self.status.setText(f"{self._stage} · 경과 {elapsed}초")
+
+    def _append_result(self, row):
+        index = self.table.rowCount()
+        self.table.insertRow(index)
+        threads = row["threads"]
+        thread_label = "—" if threads is None else str(threads or "자동")
+        engine = row.get("backend", "onnxruntime")
+        engine_label = _BACKEND_NAMES.get(engine, engine)
+        values = (
+            engine_label, row["precision"], thread_label,
+            *(self._format_ms(row.get(key)) for key in ("p50_ms", "p95_ms", "model_p50_ms", "model_p95_ms")),
+            str(row.get("comparison") or "—"), row["status"],
+        )
+        for column, value in enumerate(values):
+            cell = QTableWidgetItem(value)
             if row.get("detail"):
-                label = f"{engine_label} · {row['precision']}"
-                if threads is not None:
-                    label += f" · 스레드 {thread_label}"
-                self.log.appendPlainText(f"{label} · {row['detail']}")
-        completed = sum(row["status"] == "완료" for row in rows)
-        if completed == len(rows):
+                cell.setToolTip(row["detail"])
+            self.table.setItem(index, column, cell)
+        self._success_count += int(row["status"] == "완료")
+        self.log.appendPlainText(f"{engine_label} · {row['precision']} · 스레드 {thread_label} · "
+                                 f"{row['status']} · {row.get('detail', '')}")
+
+    def _show_failure(self, message):
+        self._timer.stop()
+        self.status.setText(f"{self._stage} · {message}")
+        self.log.appendPlainText(self.status.text())
+
+    def _show_results(self, count):
+        self._timer.stop()
+        if self._success_count == count:
             self.status.setText("측정 완료")
         else:
-            self.status.setText(f"성공 {completed}개 · 실패 {len(rows) - completed}개. 자세한 내용은 로그를 확인하세요.")
+            self.status.setText(f"성공 {self._success_count}개 · 실패 {count - self._success_count}개. 자세한 내용은 로그를 확인하세요.")
 
     def _cancel(self):
         if self.worker is not None and self.worker.isRunning():
             self._cancel_requested = True
+            self._timer.stop()
             self.worker.requestInterruption()
             self.cancel_button.setEnabled(False)
-            self.status.setText("현재 작업이 끝나면 중단합니다…")
+            self.status.setText("비교를 중단하는 중…")
 
     def _finished(self):
         worker, self.worker = self.worker, None
+        self._timer.stop()
         if self._cancel_requested:
             self.status.setText("측정을 중단했습니다.")
         worker.deleteLater()

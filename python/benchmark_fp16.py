@@ -3,6 +3,7 @@
 from graphlib import TopologicalSorter
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 def _sort_graph_nodes(graph):
@@ -51,6 +52,19 @@ def convert_benchmark_fp16(fp32_path, output_dir) -> Path:
                 or any(node.op_type in {"QuantizeLinear", "DequantizeLinear"} for node in model.graph.node)):
             raise ValueError("원본 그래프에 이미 FP16 또는 양자화 연산이 있습니다.")
 
+        if str(config.get("architecture", "")).startswith("dinov2_"):
+            # CPU ORT can fold the positional Resize and attention scale in FP32.
+            # After conversion those same constants may need unavailable FP16 kernels.
+            import onnxruntime as ort
+            from onnx_session import cpu_session_options
+
+            del inputs, outputs, model
+            with TemporaryDirectory(dir=output_dir) as temp:
+                folded = Path(temp) / "folded.onnx"
+                options = cpu_session_options(graph_optimization_level="basic", num_threads=1)
+                options.optimized_model_filepath = str(folded)
+                ort.InferenceSession(str(source), options, providers=["CPUExecutionProvider"])
+                model = onnx.load(folded)
         model = convert_float_to_float16(model, keep_io_types=True)
         # The converter appends the I/O and blocked-operator Cast nodes.
         _sort_graph_nodes(model.graph)

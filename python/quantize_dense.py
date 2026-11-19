@@ -67,6 +67,7 @@ def quantize_dense(
     output.parent.mkdir(parents=True, exist_ok=True)
     graph = onnx.load(str(source))
     input_name = graph.graph.input[0].name
+    del graph
     if input_name != config["input_name"]:
         raise ValueError("ONNX/JSON 입력 이름 불일치")
 
@@ -104,12 +105,14 @@ def quantize_dense(
             path, index = self.items[self.cursor]
             self.cursor += 1
             if path != self.cached_path:
+                log(f"INT8 보정 · 타일 {self.cursor}/{len(self.items)} · {path.name}")
                 self.cached_pixels = prepare(path)
                 self.cached_path = path
             tensor = self.cached_pixels[index][1 if detect else 2]
             return {input_name: tensor}
 
     reader = Reader()
+    log(f"INT8 보정 준비 · 이미지 {len(paths)}장 · 타일 {len(reader)}개")
     with tempfile.TemporaryDirectory(
         prefix=".dense-int8-", dir=output.parent
     ) as directory:
@@ -133,6 +136,8 @@ def quantize_dense(
             raise ValueError("탐지 INT8 ONNX/JSON 출력 이름 또는 순서 불일치")
         if not any(n.op_type == "QuantizeLinear" for n in quantized.graph.node):
             raise ValueError("INT8로 변환된 연산이 없습니다")
+        del quantized
+        log("보정 완료 · FP32와 INT8 출력 비교 중")
         settings = ort.SessionOptions()
         settings.intra_op_num_threads = 2
         fp = ort.InferenceSession(

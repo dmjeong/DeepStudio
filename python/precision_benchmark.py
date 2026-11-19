@@ -16,6 +16,24 @@ from opencv_preprocess import convert_channels, resize
 _BACKENDS = {"onnxruntime": "ONNX Runtime", "openvino": "OpenVINO"}
 
 
+def run_benchmark_process(options, workspace, sender):
+    """Child entry point. The desktop owns the scratch directory even on forced stop."""
+    import os
+    import tempfile
+
+    tempfile.tempdir = workspace
+    for name in ("TEMP", "TMP", "TMPDIR"):
+        os.environ[name] = workspace
+    with sender:
+        try:
+            rows = benchmark_precisions(**options, log=lambda message: sender.send(("progress", message)),
+                                        on_row=lambda row: sender.send(("row", row)))
+        except Exception as exc:
+            sender.send(("failed", str(exc)))
+        else:
+            sender.send(("completed", len(rows)))
+
+
 def parse_thread_counts(text):
     fields = [part.strip() for part in text.split(",")]
     if not all(re.fullmatch(r"[0-9]{1,3}", part) for part in fields):
@@ -82,7 +100,7 @@ def _classification_tensors(cfg, image):
         yield _tensor(cfg, pixels)
 
 
-def _efficientnet_int8(fp32_path, cfg, calibration_dir, workspace, cancelled):
+def _classification_int8(fp32_path, cfg, calibration_dir, workspace, cancelled, log):
     """Build one temporary QDQ graph used unchanged by both CPU runtimes."""
     import onnx
     from onnxruntime.quantization import CalibrationDataReader, QuantFormat, QuantType, quantize_static
@@ -90,25 +108,26 @@ def _efficientnet_int8(fp32_path, cfg, calibration_dir, workspace, cancelled):
 
     paths = [path for path in list_images(calibration_dir, 16) if path.is_file()]
     if not paths:
-        raise ValueError("EfficientNet INT8 보정 이미지가 없습니다.")
+        raise ValueError("분류 INT8 보정 이미지가 없습니다.")
     source = Path(fp32_path).parent / cfg["model_path"]
-    target = workspace / "benchmark-efficientnet-int8.onnx"
+    target = workspace / "benchmark-classification-int8.onnx"
     model = onnx.load(source)
     if (any(node.op_type in {"QuantizeLinear", "DequantizeLinear"} for node in model.graph.node)
             or any(initializer.data_type in {onnx.TensorProto.FLOAT16, onnx.TensorProto.DOUBLE}
                    for initializer in model.graph.initializer)):
-        raise ValueError("EfficientNet INT8 변환에는 FP32 원본 그래프가 필요합니다.")
+        raise ValueError("분류 INT8 변환에는 FP32 원본 그래프가 필요합니다.")
     if len(model.graph.input) != 1 or model.graph.input[0].name != cfg["input_name"]:
-        raise ValueError("EfficientNet ONNX와 JSON의 입력 이름이 다릅니다.")
+        raise ValueError("분류 ONNX와 JSON의 입력 이름이 다릅니다.")
 
     class Reader(CalibrationDataReader):
         def __init__(self):
             self.rewind()
 
         def _inputs(self):
-            for path in paths:
+            for index, path in enumerate(paths, 1):
                 if cancelled():
                     raise InterruptedError("INT8 보정을 취소했습니다.")
+                log(f"분류 INT8 보정 · 이미지 {index}/{len(paths)}")
                 for tensor in _classification_tensors(cfg, _read_image(path)):
                     yield {cfg["input_name"]: tensor}
 
@@ -125,7 +144,7 @@ def _efficientnet_int8(fp32_path, cfg, calibration_dir, workspace, cancelled):
     quantized = onnx.load(target)
     onnx.checker.check_model(quantized)
     if not any(node.op_type == "QuantizeLinear" for node in quantized.graph.node):
-        raise ValueError("EfficientNet에서 INT8로 변환된 연산이 없습니다.")
+        raise ValueError("분류 모델에서 INT8로 변환된 연산이 없습니다.")
     result = {**cfg, "model_path": target.name, "verification": "benchmark_only",
               "export": {**cfg.get("export", {}), "precision": "int8"}}
     manifest = target.with_suffix(".json")
@@ -329,18 +348,20 @@ def _summarize(cfg, comparisons):
     return f"판정 변경 {changed}장 · 점수차 최대 {error:.5g}"
 
 
-def _measure(path, cfg, threads, backend, paths, warmup, repeats, *, reference, baseline, cancelled, cache):
+def _measure(path, cfg, threads, backend, paths, warmup, repeats, *, reference, baseline, cancelled, cache, progress):
     runner = _Runner(path, cfg, threads, backend)
     total_ms, model_ms, comparisons = [], [], []
     for index in range(warmup):
         if cancelled():
             return None
+        progress(f"워밍업 {index + 1}/{warmup}")
         runner.predict(paths[index % len(paths)])
     outputs = [] if reference else None
     for repeat in range(repeats):
         for index, source in enumerate(paths):
             if cancelled():
                 return None
+            progress(f"시험 이미지 {index + 1}/{len(paths)} · 반복 {repeat + 1}/{repeats}")
             runner.model_seconds = 0.0
             started = perf_counter()
             prediction = runner.predict(source)
@@ -375,7 +396,7 @@ def _measure(path, cfg, threads, backend, paths, warmup, repeats, *, reference, 
 
 def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp16_path=None, int8_path=None,
                          calibration_dir=None, run_fp16=True, run_int8=True, image_count=5, repeats=2, warmup=2,
-                         backends=("onnxruntime",), log=print, cancelled=lambda: False):
+                         backends=("onnxruntime",), log=print, cancelled=lambda: False, on_row=None):
     """Benchmark one image at a time with a separate CPU session per row."""
     from quantize_onnx import list_images, quantize_segment
 
@@ -393,12 +414,22 @@ def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp
         raise ValueError("선택한 폴더에 비교할 영상이 없습니다.")
     reference = _manifest(fp32_path, "float32")
     rows, baselines = [], {}
+
+    def record(row):
+        rows.append(row)
+        if on_row is not None:
+            on_row(row)
+
     variants = [("FP32", "float32", fp32_path)]
     if run_fp16:
         variants.append(("FP16", "float16", fp16_path))
     if run_int8:
         variants.append(("INT8", "int8", int8_path))
 
+    log(f"{reference.get('architecture') or reference['backend']} · 입력 "
+        f"{reference['input_width']}×{reference['input_height']} · "
+        f"{len(variants) * len(backends) * len(counts)}개 조합 · "
+        f"조합마다 워밍업 {warmup}회, 시험 {len(paths)}장 × {repeats}회")
     with TemporaryDirectory(prefix="dvs-precision-benchmark-") as temporary:
         for label, precision, path in variants:
             if cancelled():
@@ -412,29 +443,32 @@ def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp
                     if not calibration_dir:
                         raise ValueError("INT8 JSON 또는 양자화 보정 영상 폴더를 선택하세요.")
                     log("INT8 비교용 그래프 보정 및 검증 중")
-                    if reference["task"] == "classify" and reference["backend"] == "efficientnet":
-                        path = _efficientnet_int8(fp32_path, reference, calibration_dir, Path(temporary), cancelled)
+                    if reference["task"] == "classify" and (reference["backend"] == "efficientnet"
+                            or str(reference.get("architecture", "")).startswith("dinov2_")):
+                        path = _classification_int8(fp32_path, reference, calibration_dir, Path(temporary), cancelled, log)
                     else:
                         path = quantize_segment(fp32_path, calibration_dir, output_json=Path(temporary) / "int8.json",
                                                 log=log, benchmark_only=True)
                 cfg = reference if precision == "float32" else _manifest(path, precision, reference)
             except Exception as error:
                 log(f"{label} 준비 실패: {error}")
-                rows.extend({"backend": backend, "precision": label, "threads": None,
-                             "status": "준비 실패", "detail": str(error)} for backend in backends)
+                for backend in backends:
+                    record({"backend": backend, "precision": label, "threads": None,
+                            "status": "준비 실패", "detail": str(error)})
                 continue
             for backend in backends:
                 for threads in counts:
                     if cancelled():
                         return rows
                     title = f"{_BACKENDS[backend]} · {label} · CPU 스레드 {threads or '자동'}"
-                    log(f"{title} 측정 중")
+                    log(f"{title} · 모델 로딩 중")
                     row = {"backend": backend, "precision": label, "threads": threads}
                     try:
                         is_reference = precision == "float32" and backend == reference_backend
                         measured = _measure(path, cfg, threads, backend, paths, warmup, repeats,
                                             reference=is_reference, baseline=baselines.get(threads),
-                                            cancelled=cancelled, cache=Path(temporary))
+                                            cancelled=cancelled, cache=Path(temporary),
+                                            progress=lambda step: log(f"{title} · {step}"))
                         if measured is None:
                             return rows
                         result, outputs = measured
@@ -446,5 +480,5 @@ def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp
                     except Exception as error:
                         log(f"{title} 측정 실패: {error}")
                         row.update(status="실행 실패", detail=str(error))
-                    rows.append(row)
+                    record(row)
     return rows

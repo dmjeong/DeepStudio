@@ -97,47 +97,59 @@ def test_export_worker_passes_explicit_validation_options(monkeypatch):
     assert captured["allow_precision_fallback"] is False
 
 
-def test_precision_comparison_uses_shared_worker_and_displays_thread_results(tmp_path, monkeypatch):
-    import sys
+def _benchmark_events(options, workspace, sender):
     import time
-    from types import SimpleNamespace
+
+    sender.send(("progress", "비교 실행"))
+    for row in [
+        {"backend": "onnxruntime", "precision": "FP32", "threads": 0,
+         "p50_ms": 10, "p95_ms": 12, "model_p50_ms": 8, "model_p95_ms": 9,
+         "comparison": "기준", "status": "완료"},
+        {"backend": "openvino", "precision": "FP32", "threads": 0,
+         "p50_ms": 6, "p95_ms": 7, "model_p50_ms": 5, "model_p95_ms": 6,
+         "comparison": "판정 100%", "status": "완료"},
+        {"backend": "openvino", "precision": "INT8", "threads": None,
+         "status": "준비 실패", "detail": "지원하지 않는 그래프"},
+    ]:
+        sender.send(("row", row))
+        if options["run_fp16"]:
+            # Simulate a native runtime which never returns to Python.
+            Path(options["image_dir"], "workspace").write_text(workspace, encoding="utf-8")
+            time.sleep(60)
+    sender.send(("completed", 3))
+
+
+@pytest.mark.parametrize("stop_early", [False, True])
+def test_precision_comparison_uses_shared_worker_and_displays_thread_results(tmp_path, monkeypatch, stop_early):
+    import time
+    import precision_benchmark
     from widgets.precision_benchmark_dialog import PrecisionBenchmarkDialog
 
-    captured = {}
-
-    def benchmark(**kwargs):
-        captured.update(kwargs)
-        kwargs["log"]("비교 실행")
-        return [
-            {"backend": "onnxruntime", "precision": "FP32", "threads": 0,
-             "p50_ms": 10, "p95_ms": 12, "model_p50_ms": 8, "model_p95_ms": 9,
-             "comparison": "기준", "status": "완료"},
-            {"backend": "openvino", "precision": "FP32", "threads": 0,
-             "p50_ms": 6, "p95_ms": 7, "model_p50_ms": 5, "model_p95_ms": 6,
-             "comparison": "판정 100%", "status": "완료"},
-            {"backend": "openvino", "precision": "INT8", "threads": None,
-             "status": "준비 실패", "detail": "지원하지 않는 그래프"},
-        ]
-
-    monkeypatch.setitem(sys.modules, "precision_benchmark", SimpleNamespace(
-        parse_thread_counts=lambda raw: tuple(int(value) for value in raw.split(",")),
-        benchmark_precisions=benchmark,
-    ))
+    monkeypatch.setattr(precision_benchmark, "run_benchmark_process", _benchmark_events)
     config = tmp_path / "fp32.json"
     config.write_text("{}", encoding="utf-8")
     app = QApplication.instance() or QApplication([])
     dialog = PrecisionBenchmarkDialog(fp32_path=str(config), image_dir=str(tmp_path), calibration_dir=str(tmp_path))
     try:
-        dialog.run_fp16.setChecked(False)
-        dialog.fp16.setText("ignored-fp16.json")
+        dialog.run_fp16.setChecked(stop_early)
+        if not stop_early:
+            dialog.fp16.setText("ignored-fp16.json")
         dialog.threads.setText("0, 8")
         dialog.start_button.click()
         assert dialog.isRunning()
-        deadline = time.monotonic() + 5
+        captured = dialog.worker.options
+        deadline = time.monotonic() + 20
         while dialog.isRunning() and time.monotonic() < deadline:
             app.processEvents()
+            if stop_early and dialog.table.rowCount() and (tmp_path / "workspace").exists():
+                dialog.cancel_button.click()
             time.sleep(.01)
         assert not dialog.isRunning()
+        if stop_early:
+            assert dialog.table.rowCount() == 1
+            assert "중단" in dialog.status.text()
+            assert not Path((tmp_path / "workspace").read_text(encoding="utf-8")).exists()
+            return
         assert captured["thread_counts"] == (0, 8) and captured["calibration_dir"] == str(tmp_path)
         assert captured["backends"] == ("onnxruntime", "openvino")
         assert captured["fp16_path"] is None and not captured["run_fp16"]

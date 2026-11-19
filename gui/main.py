@@ -104,12 +104,6 @@ if __name__ == "__main__" and len(sys.argv) > 2 and sys.argv[1] == "--smoke-test
         sys.exit(1)
     sys.exit(0)
 
-from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QFont
-
-from app.main_window import MainWindow
-
-
 def load_stylesheet() -> str:
     """
     다크 테마 QSS 로드
@@ -132,6 +126,11 @@ def load_stylesheet() -> str:
 
 def main():
     """애플리케이션 메인"""
+    # A spawned benchmark or data loader also imports the entry module.
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QFont
+    from app.main_window import MainWindow
+
     # High DPI 지원 (Windows 11)
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 
