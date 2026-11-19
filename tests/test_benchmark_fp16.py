@@ -75,3 +75,44 @@ def test_dinov2_fp16_folds_position_resize_and_attention_scale_before_conversion
     inputs = np.ones((2, 1, 4, 4), dtype=np.float32)
     actual, = session.run(["logits"], {"image": inputs})
     np.testing.assert_array_equal(actual, inputs * 8 + grid.repeat(2, axis=2).repeat(2, axis=3))
+
+
+@pytest.mark.parametrize("dynamic_grid", [False, True])
+def test_mask2former_shared_position_grid_converts_to_runnable_fp16(tmp_path, dynamic_grid):
+    onnx = pytest.importorskip("onnx")
+    ort = pytest.importorskip("onnxruntime")
+    from onnx import TensorProto, helper, numpy_helper
+    from onnx_session import cpu_session_options
+
+    # The row and column CumSum nodes in a position embedding share one Cast.
+    ids = np.arange(4, dtype=np.int32).reshape(2, 2)
+    shape = ["batch", 1, 2, 2]
+    initializers = [numpy_helper.from_array(np.array(-2, np.int64), "axis0"),
+                    numpy_helper.from_array(np.array(-1, np.int64), "axis1")]
+    nodes = []
+    if dynamic_grid:
+        initializers.append(numpy_helper.from_array(np.array(.25, np.float32), "threshold"))
+        nodes.append(helper.make_node("Greater", ["image", "threshold"], ["ids"]))
+    else:
+        initializers.append(numpy_helper.from_array(ids, "ids"))
+    graph = helper.make_graph(nodes + [
+        helper.make_node("Cast", ["ids"], ["grid"], to=TensorProto.FLOAT),
+        helper.make_node("CumSum", ["grid", "axis0"], ["y"]),
+        helper.make_node("CumSum", ["grid", "axis1"], ["x"]),
+        helper.make_node("Add", ["x", "y"], ["position"]),
+        helper.make_node("Add", ["image", "position"], ["logits"]),
+    ], "shared_grid", [helper.make_tensor_value_info("image", TensorProto.FLOAT, shape)],
+       [helper.make_tensor_value_info("logits", TensorProto.FLOAT, shape)],
+       initializers)
+    onnx.save(helper.make_model(graph, ir_version=9, opset_imports=[helper.make_opsetid("", 17)]),
+              tmp_path / "source.onnx")
+    manifest = tmp_path / "source.json"
+    manifest.write_text(json.dumps({"model_path": "source.onnx", "architecture": "mask2former_swin_small",
+                                    "input_name": "image", "output_name": "logits"}))
+    config = convert_benchmark_fp16(manifest, tmp_path / "benchmark")
+    model = config.parent / json.loads(config.read_text())["model_path"]
+    session = ort.InferenceSession(str(model), cpu_session_options(num_threads=1), providers=["CPUExecutionProvider"])
+    images = np.arange(-4, 4, dtype=np.float32).reshape(2, 1, 2, 2)
+    actual, = session.run(None, {"image": images})
+    grid = images > .25 if dynamic_grid else ids
+    np.testing.assert_array_equal(actual, images + grid.cumsum(-2) + grid.cumsum(-1))

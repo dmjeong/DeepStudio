@@ -7,7 +7,18 @@ from tempfile import TemporaryDirectory
 
 
 def _sort_graph_nodes(graph):
-    nodes = list(graph.node)
+    nodes = []
+    casts = {}
+    for node in graph.node:
+        # ORT's FP16 converter can append the very same Cast once for each
+        # blocked consumer (e.g. horizontal and vertical CumSum). Keep one
+        # producer, leaving any conflicting definitions for the checker.
+        if node.op_type == "Cast" and not node.domain and len(node.output) == 1:
+            output = node.output[0]
+            if output in casts and node == casts[output]:
+                continue
+            casts[output] = node
+        nodes.append(node)
     producers = {name: i for i, node in enumerate(nodes) for name in node.output if name}
     order = TopologicalSorter({
         i: [producers[name] for name in node.input if name in producers]
@@ -52,9 +63,10 @@ def convert_benchmark_fp16(fp32_path, output_dir) -> Path:
                 or any(node.op_type in {"QuantizeLinear", "DequantizeLinear"} for node in model.graph.node)):
             raise ValueError("원본 그래프에 이미 FP16 또는 양자화 연산이 있습니다.")
 
-        if str(config.get("architecture", "")).startswith("dinov2_"):
-            # CPU ORT can fold the positional Resize and attention scale in FP32.
-            # After conversion those same constants may need unavailable FP16 kernels.
+        architecture = str(config.get("architecture", ""))
+        if architecture.startswith("dinov2_") or architecture == "mask2former_swin_small":
+            # Fold DINOv2 position/attention constants and Mask2Former position
+            # grids before the FP16 converter inserts casts for their consumers.
             import onnxruntime as ort
             from onnx_session import cpu_session_options
 
