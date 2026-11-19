@@ -1,8 +1,14 @@
 export const builtinAdapters = new Set([
-  "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18",
+  "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18", "mask2former_swin_small",
 ]);
 
 export function modelModes(task: string, modelId: string, name: string): [string, string][] {
+  if (modelId === "mask2former_swin_small") return [
+    ["builtin_finetune", `${name} ImageNet 백본으로 시작`],
+    ["builtin_transfer", `${name} 로컬 가중치로 시작`],
+    ["builtin_resume", `${name} 중단 재개`],
+    ["builtin_scratch", `${name} 처음부터 학습`],
+  ];
   if ((modelId.startsWith("libreyolo_") || modelId.startsWith("re_detr_v4_")) && ["classify", "detect"].includes(task)) return [
     ["upstream_finetune", `${name} 사전학습 가중치로 시작`],
     ["upstream_transfer", `${name} 로컬 가중치로 추가 학습`],

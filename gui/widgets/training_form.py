@@ -322,6 +322,19 @@ class TrainingForm:
         self.batch_spin.setValue(8)
         hp_layout.addRow("배치 크기:", self.batch_spin)
 
+        self.mask2former_queries_spin = NoWheelSpinBox()
+        self.mask2former_queries_spin.setRange(1, 100)
+        self.mask2former_queries_spin.setValue(100)
+        self.mask2former_queries_spin.setToolTip(
+            "이미지 한 장에서 동시에 학습할 마스크 후보 개수입니다. "
+            "각 학습 이미지나 패치에 함께 등장하는 클래스 수(배경 포함) 이상으로 설정하세요."
+        )
+        self.mask2former_resume_queries = QLabel("체크포인트에 저장된 값 사용")
+        hp_layout.addRow("마스크 후보 수", self.mask2former_queries_spin)
+        hp_layout.addRow("마스크 후보 수", self.mask2former_resume_queries)
+        hp_layout.setRowVisible(self.mask2former_queries_spin, False)
+        hp_layout.setRowVisible(self.mask2former_resume_queries, False)
+
         self.lr_spin = NoWheelDoubleSpinBox()
         self.lr_spin.setRange(1e-6, 1.0)
         self.lr_spin.setDecimals(6)

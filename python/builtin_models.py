@@ -14,7 +14,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from segmentation_models import MODEL_IDS as SEGMENT_CANDIDATES
-from transformer_segmenters import MODEL_IDS as TRANSFORMER_SEGMENT_IDS, TASK_HEADS
+from transformer_segmenters import (MASK2FORMER_DEFAULT_QUERIES, MODEL_IDS as TRANSFORMER_SEGMENT_IDS,
+                                   TASK_HEADS, checkpoint_query_count)
 from modern_segmentation import MODEL_IDS as MODERN_SEGMENT_IDS
 
 
@@ -505,7 +506,8 @@ class UNetLite(nn.Module):
 
 
 def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *,
-                        pretrained: bool = False, backbone_weights=None) -> nn.Module:
+                        pretrained: bool = False, backbone_weights=None,
+                        mask2former_num_queries: int = MASK2FORMER_DEFAULT_QUERIES) -> nn.Module:
     """Construct the adapter; pretrained/local loading must be requested explicitly."""
     spec = get_builtin_spec(model_id)
     if isinstance(num_classes, bool) or int(num_classes) != num_classes or num_classes < 1:
@@ -529,7 +531,8 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
                                   pretrained=pretrained, weights_path=backbone_weights)
     elif model_id in TRANSFORMER_SEGMENT_IDS:
         from transformer_segmenters import TransformerSegmenter, load_local_tensors
-        model = TransformerSegmenter(model_id, int(num_classes), in_channels)
+        model = TransformerSegmenter(model_id, int(num_classes), in_channels,
+                                     mask2former_num_queries=mask2former_num_queries)
         if pretrained:
             if model_id != "mask2former_swin_small" or backbone_weights is not None:
                 raise ValueError("해당 사전학습 옵션을 사용할 수 없습니다. 로컬 가중치 또는 처음부터 학습을 선택하세요.")
@@ -610,6 +613,8 @@ def make_builtin_checkpoint(model_id: str, model: nn.Module, *, num_classes: int
                            "layout": "NCHW", "value_scale": 255.0,
                            "color_order": "GRAY" if in_channels == 1 else "RGB"},
     }
+    if model_id == "mask2former_swin_small":
+        payload["model_config"]["num_queries"] = checkpoint_query_count(payload)
     if tiling:
         if spec.task != "segment":
             raise ValueError("타일 추론은 분할 모델만 지원합니다")
@@ -622,7 +627,9 @@ def load_builtin_checkpoint(checkpoint: dict) -> nn.Module:
     model_id = checkpoint.get("model_id") or (checkpoint.get("model_config") or {}).get("model_id")
     if not isinstance(model_id, str):
         raise ValueError("builtin checkpoint model_id is required")
-    model = build_builtin_model(model_id, int(checkpoint["num_classes"]), int(checkpoint["in_channels"]))
+    options = ({"mask2former_num_queries": checkpoint_query_count(checkpoint)}
+               if model_id == "mask2former_swin_small" else {})
+    model = build_builtin_model(model_id, int(checkpoint["num_classes"]), int(checkpoint["in_channels"]), **options)
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     model.weight_provenance = dict(checkpoint.get("weight_provenance", {}))
     return model.cpu().eval()

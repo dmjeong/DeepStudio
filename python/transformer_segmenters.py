@@ -1,5 +1,6 @@
 """Offline semantic training adapters for the Apache-2.0 Transformers implementations."""
 
+from numbers import Integral
 from pathlib import Path
 
 import torch
@@ -8,11 +9,55 @@ from torch.nn import functional as F
 
 
 MODEL_IDS = ("mask2former_swin_small", "segformer_b2")
+MASK2FORMER_DEFAULT_QUERIES = 100
+_QUERY_EMBEDDINGS = ("queries_features", "queries_embedder")
 # Keys in the original Hugging Face state dict, before our "net." prefix.
 TASK_HEADS = {
     "mask2former_swin_small": ("class_predictor.", "criterion.empty_weight"),
     "segformer_b2": ("decode_head.classifier.",),
 }
+
+
+def _positive_query_count(value):
+    if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
+        raise ValueError("Mask2Former 후보 수는 1 이상의 정수여야 합니다.")
+    return int(value)
+
+
+def _query_tensor_keys(prefix):
+    return [f"{prefix}model.transformer_module.{name}.weight" for name in _QUERY_EMBEDDINGS]
+
+
+def _query_count_from_state(state, prefix):
+    features, positions = (state.get(key) for key in _query_tensor_keys(prefix))
+    if (not torch.is_tensor(features) or not torch.is_tensor(positions)
+            or features.ndim != 2 or features.shape != positions.shape):
+        raise ValueError("Mask2Former 후보 가중치가 누락되었거나 두 후보 텐서의 크기가 다릅니다.")
+    return _positive_query_count(features.shape[0])
+
+
+def checkpoint_query_count(checkpoint):
+    """Use the actual embedding shapes for legacy checkpoints without query metadata."""
+    count = _query_count_from_state(checkpoint["model_state_dict"], "net.")
+    config = checkpoint.get("model_config") or {}
+    if "num_queries" in config and _positive_query_count(config["num_queries"]) != count:
+        raise ValueError(f"Mask2Former 체크포인트의 후보 수 설정과 가중치({count}개)가 다릅니다.")
+    return count
+
+
+def transfer_query_weights(state, count, *, prefix):
+    """For a new transfer run, keep the same learned content and position slots."""
+    count = _positive_query_count(count)
+    original = _query_count_from_state(state, prefix)
+    if count > original:
+        raise ValueError(f"가중치에 저장된 Mask2Former 후보는 {original}개입니다. "
+                         f"전이학습 후보 수를 {original} 이하로 선택하세요 (현재 {count}개).")
+    if count == original:
+        return state
+    state = dict(state)
+    for key in _query_tensor_keys(prefix):
+        state[key] = state[key][:count]
+    return state
 
 
 def load_local_tensors(path):
@@ -66,6 +111,12 @@ def _decoder_query_loss(out, target, native):
               for aux in (out.auxiliary_logits or [])]
     stages.append((out.masks_queries_logits, out.class_queries_logits))
     points = [_mask_points(image, native.num_points) for image in target]
+    queries = out.class_queries_logits.shape[1]
+    for sample in points:
+        if sample is not None and len(sample[0]) > queries:
+            required = len(sample[0])
+            raise ValueError(f"한 학습 이미지에 배경을 포함해 클래스 {required}개가 있습니다. "
+                             f"현재 마스크 후보 수는 {queries}개입니다. {required}개 이상으로 설정하세요.")
     total = out.class_queries_logits.float().sum() * 0.
     weights = native.weight_dict
     with torch.autocast(device_type=target.device.type, enabled=False):
@@ -98,7 +149,7 @@ def _decoder_query_loss(out, target, native):
 class TransformerSegmenter(nn.Module):
     global_attention = True
 
-    def __init__(self, model_id, classes, channels):
+    def __init__(self, model_id, classes, channels, *, mask2former_num_queries=MASK2FORMER_DEFAULT_QUERIES):
         super().__init__()
         self.model_id = model_id
         if model_id == "segformer_b2":
@@ -110,7 +161,11 @@ class TransformerSegmenter(nn.Module):
             from transformers import Mask2FormerConfig, Mask2FormerForUniversalSegmentation, SwinConfig
             backbone = SwinConfig(depths=[2, 2, 18, 2], drop_path_rate=0.3,
                                   out_features=["stage1", "stage2", "stage3", "stage4"])
-            config = Mask2FormerConfig(backbone_config=backbone, num_labels=classes)
+            count = _positive_query_count(mask2former_num_queries)
+            # Draw the same baseline parameters for a given seed, irrespective of how
+            # many of its first 100 candidates a fresh small-query run will retain.
+            config = Mask2FormerConfig(backbone_config=backbone, num_labels=classes,
+                                       num_queries=max(count, MASK2FORMER_DEFAULT_QUERIES))
             self.net = Mask2FormerForUniversalSegmentation(config)
             # Encoder-only pretraining leaves the query decoder untrained. Start its
             # content and position slots at the scale used by the original decoder.
@@ -118,6 +173,11 @@ class TransformerSegmenter(nn.Module):
             decoder = self.net.model.transformer_module
             decoder.queries_features.reset_parameters()
             decoder.queries_embedder.reset_parameters()
+            if count < config.num_queries:
+                for name in _QUERY_EMBEDDINGS:
+                    weight = getattr(decoder, name).weight[:count].detach().clone()
+                    setattr(decoder, name, nn.Embedding.from_pretrained(weight, freeze=False))
+                config.num_queries = count
         else:
             raise ValueError(f"Unknown transformer segmenter: {model_id}")
         self.gray = channels == 1
@@ -160,6 +220,8 @@ class TransformerSegmenter(nn.Module):
             expected = {k for k in self.net.state_dict() if not k.startswith(heads)}
             if set(matched) != expected:
                 raise ValueError(f"{self.model_id}의 Hugging Face 분할 모델 또는 백본 가중치가 필요합니다.")
+            if self.model_id == "mask2former_swin_small":
+                matched = transfer_query_weights(matched, self.net.config.num_queries, prefix="")
             self.net.load_state_dict(matched, strict=False)  # class order in external files is unknown
             source = "local_hf_segmentation"
         self.weight_provenance.update(source=source, file=Path(path).name)

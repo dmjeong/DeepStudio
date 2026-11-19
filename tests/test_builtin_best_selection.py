@@ -7,6 +7,61 @@ import pytest
 from core.model_selection import available_metrics, selection_policy
 
 
+def test_mask2former_transfer_and_resume_preserve_learned_query_slots(tmp_path, monkeypatch):
+    import torch
+    from torch import nn
+    import train_builtin as trainer
+
+    model_id = "mask2former_swin_small"
+    def build(_model_id, classes, channels, *, mask2former_num_queries, **kwargs):
+        model = nn.Module()
+        model.weight_provenance = {}
+        model.net = nn.Module()
+        model.net.model = nn.Module()
+        decoder = model.net.model.transformer_module = nn.Module()
+        decoder.queries_features = nn.Embedding(mask2former_num_queries, 4)
+        decoder.queries_embedder = nn.Embedding(mask2former_num_queries, 4)
+        return model
+
+    starts = []
+    def epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None, **kwargs):
+        if optimizer is not None:
+            starts.append({key: value.clone() for key, value in model.state_dict().items()})
+            optimizer.zero_grad()
+            sum(param.square().mean() for param in model.parameters()).backward()
+            optimizer.step()
+        else:
+            metrics_out.update(val_loss=1., mIoU=.5)
+        return 1., .5
+
+    monkeypatch.setattr(trainer, "build_builtin_model", build)
+    monkeypatch.setattr(trainer, "create_segmentation_loaders", lambda *args, **kwargs: ([], []))
+    monkeypatch.setattr(trainer, "_segmentation_epoch", epoch)
+    def run(name, **kwargs):
+        trainer.train_builtin(model_id, tmp_path, num_classes=2, input_size=32, output_dir=tmp_path / name,
+                              scheduler_name="none", log=lambda event: None, **kwargs)
+        return tmp_path / name / "last.pt"
+
+    path = run("legacy")
+    legacy = torch.load(path, weights_only=True)
+    assert legacy["model_config"].pop("num_queries") == 100
+    legacy["training_config"].pop("mask2former_num_queries")
+    torch.save(legacy, path)
+    resumed_legacy = run("resume100", resume=path, epochs=2, mask2former_num_queries=16)
+    assert torch.load(resumed_legacy, weights_only=True)["model_config"]["num_queries"] == 100
+
+    small = run("transfer16", initial_weights=path, mask2former_num_queries=16)
+    for key, value in starts[-1].items():
+        torch.testing.assert_close(value, legacy["model_state_dict"][key][:16])
+    resumed = run("resume16", resume=small, epochs=2, mask2former_num_queries=100)
+    checkpoint = torch.load(resumed, weights_only=True)
+    assert checkpoint["training_config"]["mask2former_num_queries"] == checkpoint["model_config"]["num_queries"] == 16
+    for state in checkpoint["optimizer_state_dict"]["state"].values():
+        assert state["step"] == 2 and state["exp_avg"].shape == (16, 4)
+    with pytest.raises(ValueError, match="16 이하"):
+        run("invalid_transfer", initial_weights=small, mask2former_num_queries=100)
+
+
 @pytest.mark.parametrize("task", ["classify", "detect", "segment"])
 def test_all_supervised_tasks_offer_val_loss(task):
     assert "val_loss" in available_metrics("builtin", task)

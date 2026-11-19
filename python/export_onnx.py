@@ -323,6 +323,9 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
         if stored_task is not None and stored_task != builtin.task:
             raise ValueError("기본 모델 task와 model_id가 일치하지 않습니다.")
         model_config["model_id"] = model_id
+        if model_id == "mask2former_swin_small":
+            from transformer_segmenters import checkpoint_query_count
+            model_config["num_queries"] = checkpoint_query_count(checkpoint)
     names = checkpoint.get("class_names") or []
     if not isinstance(names, (list, tuple)) or any(not isinstance(n, str) for n in names):
         raise ValueError("class_names: 문자열 목록 필요")
@@ -971,6 +974,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             if backend == "builtin":
                 metadata["architecture"] = spec["model_config"]["model_id"]
                 metadata["model_config"] = {"model_id": spec["model_config"]["model_id"]}
+                if metadata["architecture"] == "mask2former_swin_small":
+                    metadata["model_config"]["num_queries"] = spec["model_config"]["num_queries"]
             if backend == "redetr_v4":
                 metadata["model_config"] = dict(spec["model_config"])
                 metadata["model_config"]["output_names"] = ["pred_boxes", "pred_logits"]

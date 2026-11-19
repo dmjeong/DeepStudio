@@ -152,6 +152,7 @@ class TrainingConfig:
     # 분할 손실: "ce_dice"(CE + 전경 Dice, 기본) | "ce"(픽셀 CE만, 9.23까지의 동작)
     # 배경이 대부분인 결함 마스크에서 CE만 쓰면 작은 결함을 놓치기 쉽다 (docs/RELEASE_9.33.md 실험).
     segmentation_loss: str = "ce_dice"
+    mask2former_num_queries: int = 100
     teacher_checkpoint: str = ""
     distillation_alpha: float = 0.3
     distillation_temperature: float = 2.0

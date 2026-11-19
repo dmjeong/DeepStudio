@@ -538,6 +538,9 @@ class TrainingWidget(TrainingForm, QWidget):
         # SAM2는 자체 prompt 손실을 쓰므로 분할 손실·가중치 선택이 적용되지 않는다.
         sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
         self.segmentation_loss_combo.setEnabled(not resume and not sam2)
+        mask2former = self.model_id_combo.currentData() == "mask2former_swin_small"
+        self.hp_group.layout().setRowVisible(self.mask2former_queries_spin, mask2former and not resume)
+        self.hp_group.layout().setRowVisible(self.mask2former_resume_queries, mask2former and resume)
         self.teacher_training_button.setVisible(self.project is not None and self.project.task == "segment")
         self.distillation_group.setVisible(self.project is not None and self.project.task == "segment"
                                           and self.model_id_combo.currentData() in BUILTIN_ADAPTER_IDS)
@@ -748,6 +751,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self.wd_spin.setValue(cfg.weight_decay)
         self.input_size_spin.setValue(cfg.input_size)
         self.patience_spin.setValue(cfg.early_stop_patience)
+        self.mask2former_queries_spin.setValue(cfg.mask2former_num_queries)
 
         # 옵티마이저 매핑
         opt_map = {"adamw": 0, "sgd": 1, "adam": 2}
@@ -919,6 +923,7 @@ class TrainingWidget(TrainingForm, QWidget):
         cfg.weight_decay = self.wd_spin.value()
         cfg.input_size = self.input_size_spin.value()
         cfg.early_stop_patience = self.patience_spin.value()
+        cfg.mask2former_num_queries = self.mask2former_queries_spin.value()
         cfg.selection_metric = self.selection_combo.currentData() or "engine_default"
 
         opt_map = {0: "adamw", 1: "sgd", 2: "adam"}

@@ -80,6 +80,11 @@ def training_engine_name(mode):
     return "upstream" if str(mode).startswith("upstream") else "custom"
 
 
+def validate_mask2former_num_queries(value):
+    if type(value) is not int or not 1 <= value <= 100:
+        raise ValueError("Mask2Former 마스크 후보 수는 1~100 사이의 정수여야 합니다.")
+
+
 def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""):
     if task == "obb":
         raise ValueError("회전 박스 데이터 편집은 지원하지만 OBB 학습 엔진은 제공하지 않습니다.")
@@ -139,6 +144,8 @@ def validate_training_options(project, *, require_runnable=True):
         capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method,
                                              model_id=getattr(project.model, "model_id", ""))
     model_id = getattr(project.model, "model_id", "")
+    if model_id == "mask2former_swin_small" and cfg.training_mode != "builtin_resume":
+        validate_mask2former_num_queries(cfg.mask2former_num_queries)
     if getattr(cfg, "teacher_checkpoint", "") and (project.task != "segment" or capabilities['engine'] != 'builtin'):
         raise ValueError("교사 증류는 기본 분할 모델의 학습 경로에서 지원합니다")
     if cfg.training_mode in {"builtin_transfer", "builtin_resume", "upstream_transfer", "upstream_resume", "sam2_transfer"} and require_runnable:

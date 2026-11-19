@@ -337,7 +337,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   class_report: bool = False, should_stop=lambda: False,
                   center_crop: dict | None = None, teacher_checkpoint=None,
                   distillation_alpha=.3, distillation_temperature=2.,
-                  original_size_training: bool = False, use_amp: bool = False) -> Path:
+                  original_size_training: bool = False, use_amp: bool = False,
+                  mask2former_num_queries: int | None = None) -> Path:
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
     if gui_path not in sys.path:
@@ -365,6 +366,12 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         raise ValueError("resume and initial_weights are mutually exclusive")
     if pretrained and (resume is not None or initial_weights is not None):
         raise ValueError("ImageNet, resume and initial_weights are mutually exclusive")
+    if mask2former_num_queries is not None:
+        if model_id != "mask2former_swin_small":
+            raise ValueError("마스크 후보 수는 Mask2Former 학습에서만 설정할 수 있습니다.")
+        if resume is None:
+            from core.training_modes import validate_mask2former_num_queries
+            validate_mask2former_num_queries(mask2former_num_queries)
     if type(original_size_training) is not bool:
         raise ValueError("원본 크기 학습 옵션은 boolean 필요")
     if original_size_training:
@@ -470,14 +477,34 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         else:
             backbone_weights = initial_weights
         del payload
+    resume_checkpoint = (torch.load(resume, map_location="cpu", weights_only=True)
+                         if resume is not None else None)
+    if resume_checkpoint is not None and resume_checkpoint.get("model_id") != model_id:
+        raise ValueError("resume checkpoint model_id does not match the requested adapter")
+    model_options = {}
+    if model_id == "mask2former_swin_small":
+        from transformer_segmenters import MASK2FORMER_DEFAULT_QUERIES, checkpoint_query_count, transfer_query_weights
+        if resume_checkpoint is not None:
+            mask2former_num_queries = checkpoint_query_count(resume_checkpoint)
+        elif initial_checkpoint is not None:
+            source_count = checkpoint_query_count(initial_checkpoint)
+            if mask2former_num_queries is None:
+                mask2former_num_queries = source_count
+        if mask2former_num_queries is None:
+            mask2former_num_queries = MASK2FORMER_DEFAULT_QUERIES
+        restored = " (체크포인트에서 복원)" if resume_checkpoint is not None else ""
+        log(f"Mask2Former 마스크 후보 수: {mask2former_num_queries}{restored}")
+        model_options["mask2former_num_queries"] = mask2former_num_queries
     model = build_builtin_model(model_id, num_classes, in_channels,
-                                pretrained=pretrained, backbone_weights=backbone_weights)
+                                pretrained=pretrained, backbone_weights=backbone_weights, **model_options)
     if transformer_state is not None:
         model.initialize_from_weights(transformer_state, initial_weights)
         del transformer_state
     if initial_checkpoint is not None:
         # Class order matters even when the number of classes is unchanged.
         source = dict(initial_checkpoint["model_state_dict"])
+        if model_id == "mask2former_swin_small":
+            source = transfer_query_weights(source, mask2former_num_queries, prefix="net.")
         head = CLASS_HEAD_PREFIX[model_id]
         # Older segmentation checkpoints stored placeholder names "0".."N-1". They
         # differ from real project names, so only their backbone is transferred.
@@ -492,8 +519,6 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     model = model.to(target)
     log(f"가중치 로드 완료: {model_id} / {model.weight_provenance}")
     head_prefixes = HEAD_PREFIXES[model_id]
-    resume_checkpoint = (torch.load(resume, map_location="cpu", weights_only=True)
-                         if resume is not None else None)
     if resume_checkpoint is not None and model_id in {"bisenetv2", "stdc1"} and not freeze_backbone:
         groups = resume_checkpoint.get("optimizer_state_dict", {}).get("param_groups", [])
         if len(groups) == 1 and len(groups[0]["params"]) == len(list(model.parameters())):
@@ -590,6 +615,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         "original_size_region": list(original_size_region) if original_size_region else None,
         **loss_details,
     }
+    if model_id == "mask2former_swin_small":
+        training_config["mask2former_num_queries"] = mask2former_num_queries
     if spec.task == "segment":
         training_config["unlabeled_policy"] = "background"
         training_config["automatic_background_images"] = {
@@ -609,8 +636,6 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if resume is not None:
         resume_path = Path(resume)
         checkpoint = resume_checkpoint
-        if checkpoint.get("model_id") != model_id:
-            raise ValueError("resume checkpoint model_id does not match the requested adapter")
         if checkpoint_original_size_region(checkpoint) != original_size_region or (
             original_size_region is not None and checkpoint.get("center_crop") != center_crop
         ):
@@ -644,6 +669,9 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             )
             if resume_best_checkpoint.get("model_id") != model_id:
                 raise ValueError("best checkpoint model_id does not match the resume adapter")
+            if (model_id == "mask2former_swin_small"
+                    and checkpoint_query_count(resume_best_checkpoint) != mask2former_num_queries):
+                raise ValueError("Best 체크포인트의 Mask2Former 마스크 후보 수가 재개할 모델과 다릅니다.")
             if checkpoint_original_size_region(resume_best_checkpoint) != original_size_region or (
                 original_size_region is not None and resume_best_checkpoint.get("center_crop") != center_crop
             ):
@@ -815,6 +843,8 @@ def main() -> None:
                         help="segment: CE + foreground Dice (default) or plain pixel CE")
     parser.add_argument("--class_weights", choices=("none", "balanced", "sqrt"), default="none",
                         help="segment: class weights from training pixel counts")
+    parser.add_argument("--mask2former_num_queries", type=int,
+                        help="Mask2Former mask candidates, 1–100 (new model: 100; resume uses the checkpoint)")
     args = parser.parse_args()
     train_builtin(args.model, args.data_root, num_classes=args.num_classes,
                   input_size=args.input_size or None, in_channels=args.in_channels,
@@ -823,7 +853,8 @@ def main() -> None:
                   device=args.device, num_workers=args.num_workers, use_amp=args.amp,
                   resume=args.resume, pretrained=args.pretrained,
                   initial_weights=args.initial_weights, selection_metric=args.selection_metric,
-                  segmentation_loss=args.segmentation_loss, class_weights=args.class_weights)
+                  segmentation_loss=args.segmentation_loss, class_weights=args.class_weights,
+                  mask2former_num_queries=args.mask2former_num_queries)
 
 
 if __name__ == "__main__":

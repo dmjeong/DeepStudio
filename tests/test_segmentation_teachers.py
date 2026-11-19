@@ -16,6 +16,26 @@ from segmentation_distillation import SegmentationDistiller
 TEACHERS = ("mask2former_swin_small", "segformer_b2", "dinov2_vitb14_seg")
 
 
+def test_legacy_query_shape_and_transfer_preserve_matching_slots():
+    from transformer_segmenters import checkpoint_query_count, transfer_query_weights
+
+    feature = "net.model.transformer_module.queries_features.weight"
+    position = "net.model.transformer_module.queries_embedder.weight"
+    rows = torch.arange(800).reshape(100, 8)
+    state = {feature: rows, position: -rows, "net.other": torch.tensor(42)}
+    assert checkpoint_query_count({"model_state_dict": state}) == 100
+    reduced = transfer_query_weights(state, 16, prefix="net.")
+    assert torch.equal(reduced[feature], rows[:16]) and torch.equal(reduced[position], -rows[:16])
+    assert reduced["net.other"] is state["net.other"] and state[feature].shape[0] == 100
+    assert checkpoint_query_count({"model_config": {"num_queries": 16}, "model_state_dict": reduced}) == 16
+    with pytest.raises(ValueError, match="설정과 가중치"):
+        checkpoint_query_count({"model_config": {"num_queries": 100}, "model_state_dict": reduced})
+    with pytest.raises(ValueError, match="후보 텐서"):
+        checkpoint_query_count({"model_state_dict": {feature: rows[:16], position: -rows}})
+    with pytest.raises(ValueError, match="16 이하"):
+        transfer_query_weights(reduced, 100, prefix="net.")
+
+
 def test_mask2former_matching_samples_preserve_rare_classes_and_ignore_padding():
     from transformer_segmenters import _mask_points
 
@@ -58,6 +78,8 @@ def test_mask2former_each_decoder_gets_an_independent_assignment_and_gradient():
     aux_classes = classes.detach()[:, permutation].requires_grad_()
     aux_masks = masks.detach()[:, permutation].requires_grad_()
     result = SimpleNamespace(class_queries_logits=classes, masks_queries_logits=masks, auxiliary_logits=[])
+    with pytest.raises(ValueError, match="4개 이상"):
+        _decoder_query_loss(result, torch.tensor([[[0, 1], [2, 3]]]), native)
     with torch.random.fork_rng():
         torch.manual_seed(801)
         final_alone = _decoder_query_loss(result, target, native)
@@ -113,14 +135,30 @@ def test_desktop_teacher_initialization_modes(tmp_path):
             action.trigger()
             assert widget.model_id_combo.currentData() == teacher and not widget.teacher_edit.text()
             if teacher == "mask2former_swin_small":
+                assert not widget.mask2former_queries_spin.isHidden()
+                assert widget.mask2former_queries_spin.value() == 100
+                widget.mask2former_queries_spin.setValue(16)
                 assert widget.patience_spin.minimum() == 0
                 assert widget.patience_spin.value() == 15
                 widget.patience_spin.setValue(0)
                 widget._sync_config()
                 assert project.training.early_stop_patience == 0
-                widget.set_project(ProjectManager.load(ProjectManager.save(project)))
+                path = Path(ProjectManager.save(project))
+                widget.set_project(ProjectManager.load(path))
                 assert widget.patience_spin.value() == 0 and "사용 안 함" in widget.patience_spin.text()
+                assert widget.project.training.mask2former_num_queries == widget.mask2former_queries_spin.value() == 16
+                widget.mode_combo.setCurrentIndex(widget.mode_combo.findData("builtin_resume"))
+                assert not widget.mask2former_resume_queries.isHidden() and widget.mask2former_queries_spin.isHidden()
+                widget.mode_combo.setCurrentIndex(widget.mode_combo.findData("builtin_transfer"))
+                assert widget.mask2former_resume_queries.isHidden() and not widget.mask2former_queries_spin.isHidden()
+                assert widget.mask2former_queries_spin.value() == 16
+                legacy = json.loads(path.read_text(encoding="utf-8"))
+                del legacy["training"]["mask2former_num_queries"]
+                path.write_text(json.dumps(legacy), encoding="utf-8")
+                widget.set_project(ProjectManager.load(path))
+                assert widget.mask2former_queries_spin.value() == 100
             else:
+                assert widget.mask2former_queries_spin.isHidden() and widget.mask2former_resume_queries.isHidden()
                 assert widget.patience_spin.minimum() == 1
                 assert widget.patience_spin.value() == 15
             assert not widget.teacher_training_button.isHidden()
@@ -160,15 +198,30 @@ def test_train_teacher_distill_student_and_run_onnx(model_id):
                     input_size=64, in_channels=3, epochs=1, batch_size=2, num_workers=0,
                     optimizer_name="sgd", scheduler_name="none", log=print)
         pretrained = model_id != "segformer_b2" and os.getenv("DVS_TEST_TEACHER_ASSETS") == "1"
-        teacher = train_builtin(model_id, output_dir=root / "teacher", pretrained=pretrained, **args)
+        query_options = {"mask2former_num_queries": 16} if model_id == "mask2former_swin_small" else {}
+        teacher = train_builtin(model_id, output_dir=root / "teacher", pretrained=pretrained,
+                                **query_options, **args)
         payload = torch.load(teacher, map_location="cpu", weights_only=True)
         if pretrained:
             assert payload["weight_provenance"]["source"] not in ("random", "random_init")
         model = load_builtin_checkpoint(payload)
+        if query_options:
+            assert payload["model_config"]["num_queries"] == 16
+            assert model.net.model.transformer_module.queries_features.num_embeddings == 16
         with torch.no_grad():
             out = model(torch.randn(1, 3, 65, 79))
             assert out.shape == (1, 2, 65, 79) and out.isfinite().all()
+            if query_options:
+                sample = torch.randn(1, 3, 64, 64)
+                expected_teacher = model(sample).numpy()
         del model, payload
+        if query_options:
+            teacher_onnx = root / "teacher.onnx"
+            export_checkpoint(teacher, teacher_onnx, verify=True)
+            runtime = ort.InferenceSession(str(teacher_onnx), providers=["CPUExecutionProvider"])
+            actual_teacher = runtime.run(None, {runtime.get_inputs()[0].name: sample.numpy()})[0]
+            np.testing.assert_allclose(actual_teacher, expected_teacher, rtol=.001, atol=.001)
+            del runtime
         student = train_builtin("unet_resnet18", teacher_checkpoint=teacher, output_dir=root / "student", **args)
         payload = torch.load(student, weights_only=True)
         assert payload["training_config"]["distillation"]["teacher_sha256"]

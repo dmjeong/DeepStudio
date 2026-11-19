@@ -42,6 +42,7 @@ export interface TrainingConfig {
   selection_metric: string;
   label_smoothing: number;
   class_weights: string;
+  mask2former_num_queries?: number;
   device: string;
   use_amp: boolean;
   training_mode: string;

@@ -159,6 +159,8 @@ def _train_builtin_project(context, project, device, *, class_report=False):
                          val_split=data.val_split,
                          freeze_backbone=project.model.freeze_backbone,
                          backbone_lr_mult=project.model.backbone_lr_mult,
+                         mask2former_num_queries=(cfg.mask2former_num_queries
+                                                  if model_id == "mask2former_swin_small" else None),
                          output_dir=run_dir,
                          device=str(device),
                          use_amp=cfg.use_amp,

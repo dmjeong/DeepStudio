@@ -42,6 +42,9 @@ export function Training({
   const selectedModel = catalog.find(item => item.model_id === modelId);
   const modelName = selectedModel ? `${selectedModel.family} ${selectedModel.variant}` : modelId;
   const modes = modelModes(project.task, modelId, modelName);
+  if (modelId === "mask2former_swin_small" && cfg.training_mode === "custom") {
+    modes.push(["custom", `${modelName} 기존 프로젝트 설정으로 학습`]);
+  }
   const builtin = builtinAdapters.has(modelId);
   const sam2 = project.task === "segment" && modelId.startsWith("sam2_hiera_");
   const upstreamDetection = project.task === "detect" && cfg.training_mode.startsWith("upstream_");
@@ -167,7 +170,7 @@ export function Training({
                         layer_debug_enabled: false,
                         selection_metric: "engine_default",
                       });
-                      if (["efficientnet_finetune", "builtin_finetune"].includes(e.target.value)) setModel({ ...model, pretrained_weights: "" });
+                      if (["efficientnet_finetune", "builtin_finetune", "builtin_scratch"].includes(e.target.value)) setModel({ ...model, pretrained_weights: "" });
                       setDirty(true);
                     }}
                   >
@@ -196,10 +199,10 @@ export function Training({
                 <option value="efficientnet_b1">EfficientNet B1</option>
               </select>
             </Field>}
-            {!patch && !unsupported && !["efficientnet_finetune", "builtin_finetune"].includes(cfg.training_mode) && (
+            {!patch && !unsupported && !["efficientnet_finetune", "builtin_finetune", "builtin_scratch"].includes(cfg.training_mode) && (
               <PathField
                 label={
-                  resume
+                  resume || cfg.training_mode === "builtin_resume"
                     ? "중단 시 저장된 last.pt (필수)"
                     : efficientnet || cfg.training_mode === "builtin_transfer" ? "추가 학습할 가중치 (필수)" : "초기 가중치 (선택)"
                 }
@@ -223,6 +226,15 @@ export function Training({
                 ? "내 가중치로 새 학습을 시작합니다. 클래스 구성이 달라지면 마지막 분류기를 새로 학습합니다."
                 : "ImageNet 사전학습 가중치를 검증하고 로드합니다. 내 클래스 분류기를 새로 학습하며 전체 백본도 조정할 수 있습니다."}</p>}
             <fieldset disabled={resume}>
+            {modelId === "mask2former_swin_small" && (
+              cfg.training_mode === "builtin_resume"
+                ? <p className="muted">마스크 후보 수는 이어학습할 체크포인트에서 복원합니다.</p>
+                : <Field label="마스크 후보 수" hint="기본값은 100입니다. 16개로 비교해 볼 수 있습니다. 한 입력에 함께 등장하는 클래스 수(배경 포함) 이상으로 설정하세요.">
+                    <input type="number" min="1" max="100" step="1"
+                      value={cfg.mask2former_num_queries ?? 100}
+                      onChange={e => set("mask2former_num_queries", Number(e.target.value))} />
+                  </Field>
+            )}
             {patch ? (
               <>
                 <Field label="사전학습 백본">
