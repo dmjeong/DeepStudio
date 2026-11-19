@@ -42,6 +42,23 @@ for task in ("classify", "segment"):
         builtin_config["backend"] = "builtin"
         (root / "builtin.json").write_text(json.dumps(builtin_config, ensure_ascii=False), encoding="utf-8")
 
+# Exercise the same FP32 SDK buffers with an FP16 internal convolution.
+half_nodes = [
+    helper.make_node("Cast", ["input_image"], ["pixels16"], to=TensorProto.FLOAT16),
+    helper.make_node("Conv", ["pixels16", "weights16"], ["logits16"], kernel_shape=[1, 1]),
+    helper.make_node("Cast", ["logits16"], ["seg_mask"], to=TensorProto.FLOAT),
+]
+weights16 = helper.make_tensor("weights16", TensorProto.FLOAT16, [2, 1, 1, 1], [1., -1.])
+half_output = helper.make_tensor_value_info("seg_mask", TensorProto.FLOAT, [1, 2, 2, 3])
+half_graph = helper.make_graph(half_nodes, "segment_fp16", inputs, [half_output], [weights16])
+half_model = helper.make_model(half_graph, opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
+onnx.checker.check_model(half_model)
+onnx.save(half_model, root / "segment_fp16.onnx")
+half_config = json.loads((root / "segment.json").read_text(encoding="utf-8"))
+half_config.update(model_path="segment_fp16.onnx", verification="fp16_compared",
+                   export={"precision": "float16", "io_precision": "float32"})
+(root / "segment_fp16.json").write_text(json.dumps(half_config), encoding="utf-8")
+
 # Generic detection contract: one normalized cx/xy box, objectness and two
 # class logits.  It exercises C++ sigmoid decoding and class-aware NMS without
 # downloading a model.
@@ -340,7 +357,7 @@ key = bytes(range(32))  # Public fixture key, not for production.
 encrypted_names = []
 # Other CTests deliberately leave invalid/absolute-path JSONs in this folder.
 # Re-running CTest must only encrypt the valid fixtures produced above.
-for name in ("classify", "builtin", "segment", "detect", "redetr", "redetr_softmax",
+for name in ("classify", "builtin", "segment", "segment_fp16", "detect", "redetr", "redetr_softmax",
              "sam2", "anomaly", "patchcore", "close_logits", "runtime_optimization",
              "classify_nested", "sam2_nested"):
     config_path = root / f"{name}.json"

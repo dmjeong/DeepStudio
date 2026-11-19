@@ -1,6 +1,6 @@
 # Deep Vision Studio
 
-[분할 교사 학습과 학생 ONNX 배포](docs/SEGMENTATION_TEACHERS.md) · Mask2Former Swin-Small, SegFormer B2, DINOv2-Base
+[분할 교사 학습과 교사·학생 FP16 ONNX 배포](docs/SEGMENTATION_TEACHERS.md) · Mask2Former Swin-Small, SegFormer B2, DINOv2-Base
 
 18.90: [분할 모델 원본 크기 학습](docs/RELEASE_18.90.md). 데스크톱 학습 화면에서 원본 해상도로 전체 검사 영역을 학습합니다.
 

@@ -97,6 +97,99 @@ def test_export_worker_passes_explicit_validation_options(monkeypatch):
     assert captured["allow_precision_fallback"] is False
 
 
+@pytest.mark.parametrize("with_images", [False, True])
+def test_fp16_export_button_saves_separate_deployment_and_reopens_for_comparison(tmp_path, monkeypatch, with_images):
+    import json
+    import time
+
+    import torch
+    import numpy as np
+    from PIL import Image
+    from PySide6.QtWidgets import QMessageBox
+    from builtin_models import build_builtin_model, make_builtin_checkpoint
+    from widgets import export_widget
+    from widgets.precision_benchmark_dialog import PrecisionBenchmarkDialog
+
+    ort = pytest.importorskip("onnxruntime")
+    pytest.importorskip("onnx")
+    app = QApplication.instance() or QApplication([])
+    project = ProjectManager.create_new("fp16", "segment", str(tmp_path / "project"), ["bg", "crack"])
+    project.model.model_id = "unet_lite"
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(41)
+        network = build_builtin_model("unet_lite", 2, 1).eval()
+    checkpoint = tmp_path / "best.pt"
+    torch.save(make_builtin_checkpoint("unet_lite", network, num_classes=2, input_size=32,
+                                       in_channels=1, class_names=["bg", "crack"]), checkpoint)
+    project.runs.append(RunRecord(checkpoint_path=str(checkpoint)))
+    calls, dialogs, locations = [], [], []
+    exporter = export_widget.export_checkpoint
+
+    def export(source, destination, **options):
+        calls.append((source, options))
+        return exporter(source, destination, **options)
+
+    monkeypatch.setattr(export_widget, "export_checkpoint", export)
+    for method in ("information", "warning", "critical"):
+        monkeypatch.setattr(QMessageBox, method, lambda _, title, msg: dialogs.append((title, msg)))
+    monkeypatch.setattr(PrecisionBenchmarkDialog, "exec",
+                        lambda dialog: locations.append((dialog.fp32.text(), dialog.fp16.text())))
+    widget = ExportWidget()
+    try:
+        widget.set_project(project)
+        baseline = Path(widget.output_edit.text())
+        baseline.write_bytes(b"fp32")
+        widget.verify_check.setChecked(False)
+        widget.precision_check.setChecked(True)
+        widget.calibration_edit.clear()
+        widget.export_precision.setCurrentIndex(widget.export_precision.findData("float16"))
+        destination = Path(widget.output_edit.text())
+        assert destination == baseline.with_name("model_segment_fp16.onnx")
+        assert widget.verify_check.isChecked() and not widget.verify_check.isEnabled()
+        assert not widget.calibration_edit.isEnabled()
+        assert widget.dataset_verify_check.isEnabled() and not widget.dataset_verify_check.isChecked()
+        validation = tmp_path / "images"
+        if with_images:
+            validation.mkdir()
+            for i in (0, 1):
+                Image.fromarray(np.full((32, 32), i * 170, np.uint8)).save(validation / f"{i}.png")
+            widget.dataset_verify_check.setChecked(True)
+            widget.validation_edit.setText(str(validation))
+        widget.export_btn.click()
+        deadline = time.monotonic() + 60
+        while getattr(widget, "worker", None) is not None and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(.01)
+        assert dialogs and [title for title, _ in dialogs] == ["완료"], dialogs
+        assert "FP16 실행·FP32 출력 비교 완료" in dialogs[0][1]
+        assert f"실제 이미지 {2 if with_images else 0}장" in dialogs[0][1] and "픽셀 일치율" in dialogs[0][1]
+        assert baseline.read_bytes() == b"fp32"
+        manifest = json.loads(destination.with_suffix(".json").read_text(encoding="utf-8"))
+        assert manifest["export"]["precision"] == "float16" and manifest["verification"] == "fp16_compared"
+        from onnx_session import cpu_session_options
+        session = ort.InferenceSession(str(destination.parent / manifest["model_path"]),
+                                       cpu_session_options(num_threads=1), providers=["CPUExecutionProvider"])
+        output, = session.run(None, {manifest["input_name"]: np.ones((1, 1, 32, 32), np.float32)})
+        assert output.shape == (1, 2, 32, 32) and np.isfinite(output).all()
+        source, options = calls[0]
+        assert source == str(checkpoint) and options["precision"] == "float16"
+        assert options["verify"] and not options["allow_precision_fallback"] and not options["calibration_dir"]
+        assert options["validation_dir"] == (str(validation) if with_images else None)
+        widget.benchmark_btn.click()
+        assert locations == [("", str(destination.with_suffix(".json")))]
+        widget.encrypt_check.setChecked(True)
+        assert Path(widget.output_edit.text()) == destination.with_suffix(".dvsenc")
+        widget.export_precision.setCurrentIndex(widget.export_precision.findData("float32"))
+        assert Path(widget.output_edit.text()) == baseline.with_suffix(".dvsenc")
+        assert widget.verify_check.isEnabled() and not widget.verify_check.isChecked()
+    finally:
+        if getattr(widget, "worker", None) is not None:
+            widget.worker.wait()
+            app.processEvents()
+        widget.deleteLater()
+        app.processEvents()
+
+
 def _benchmark_events(options, workspace, sender):
     import time
 

@@ -79,7 +79,7 @@ class ExportRequest(Body):
     validation_dir: str = ""
     allow_precision_fallback: bool = False
     encryption_key_path: str = ""
-    precision: Literal["float32", "int8"] = "float32"
+    precision: Literal["float32", "float16", "int8"] = "float32"
     calibration_dir: str = ""
     calibration_count: int = Field(default=16, ge=1, le=10000)
 

@@ -59,6 +59,8 @@ class ExportWorker(QThread):
     def run(self):
         try:
             if self.merge_with:
+                if self.options["precision"] != "float32":
+                    raise ValueError("두 분할 모델을 합칠 때는 FP32 정밀도를 선택하세요.")
                 from merge_segmenters import export_merged
                 region = (self.options.get("overrides") or {}).get("region_size")
                 result = export_merged(self.checkpoint_path, self.merge_with, self.output_path, region=region,
@@ -209,15 +211,16 @@ class ExportWidget(QWidget):
 
         self.export_precision = NoWheelComboBox()
         self.export_precision.addItem("FP32 (원본 정밀도)", "float32")
+        self.export_precision.addItem("FP16 (16비트 부동소수점)", "float16")
         self.export_precision.addItem("INT8 QDQ (객체 탐지·분할·Dinomaly)", "int8")
         opt_layout.addRow("정밀도:", self.export_precision)
         self.calibration_edit = QLineEdit()
         self.calibration_edit.setPlaceholderText("INT8 보정용 학습 이미지 폴더 (정상·불량 혼합)")
         calibration_row = QHBoxLayout()
         calibration_row.addWidget(self.calibration_edit)
-        calibration_browse = QPushButton("찾아보기...")
-        calibration_browse.clicked.connect(self._browse_calibration)
-        calibration_row.addWidget(calibration_browse)
+        self.calibration_browse = QPushButton("찾아보기...")
+        self.calibration_browse.clicked.connect(self._browse_calibration)
+        calibration_row.addWidget(self.calibration_browse)
         opt_layout.addRow("INT8 보정 이미지:", calibration_row)
         self.calibration_edit.setToolTip("INT8은 FP32와 값이 달라질 수 있습니다. 출력 차이 리포트를 저장하며 검증/시험 데이터의 실제 판정도 비교하세요.")
 
@@ -243,14 +246,16 @@ class ExportWidget(QWidget):
         validation_row.addWidget(validation_browse)
         opt_layout.addRow("비교 이미지:", validation_row)
         validation_hint = QLabel(
-            "정답률을 측정하는 기능이 아니라, 같은 이미지에서 PyTorch와 ONNX 출력이 "
-            "같은지 확인합니다. 이미지 0장 클래스는 자동 제외됩니다."
+            "선택한 폴더의 이미지로 변환 전후의 출력을 비교합니다. 이미지가 든 폴더 또는 클래스별 하위 폴더를 사용할 수 있습니다. "
+            "빈 클래스 폴더는 자동으로 건너뜁니다."
         )
         validation_hint.setWordWrap(True)
         validation_hint.setStyleSheet("color: #8A92A4;")
         opt_layout.addRow("", validation_hint)
         self.precision_check = QCheckBox("고정밀 호환 내보내기 허용 (느려질 수 있음, 실제 이미지 검증 모드에서는 미사용)")
         opt_layout.addRow("", self.precision_check)
+        self._previous_precision = "float32"
+        self.export_precision.currentIndexChanged.connect(self._precision_changed)
 
         self.encrypt_check = QCheckBox("모델과 설정을 암호화해서 내보내기 (.dvsenc)")
         self.encrypt_check.toggled.connect(self._encryption_changed)
@@ -375,7 +380,8 @@ class ExportWidget(QWidget):
         )), image_dirs[0] if image_dirs else "")
         fp32_path = self._benchmark_reference if os.path.isfile(self._benchmark_reference) else ""
         output = self.output_edit.text().strip()
-        if not fp32_path and output and Path(output).suffix.lower() == ".onnx":
+        fp16_path = ""
+        if output and Path(output).suffix.lower() == ".onnx":
             config = Path(output).with_suffix(".json")
             if config.is_file():
                 try:
@@ -383,10 +389,12 @@ class ExportWidget(QWidget):
                     precision = manifest.get("export", {}).get("precision", "float32")
                     if manifest.get("model_path") and precision == "float32":
                         fp32_path = str(config)
+                    elif manifest.get("model_path") and precision == "float16":
+                        fp16_path = str(config)
                 except (OSError, ValueError, AttributeError, TypeError):
                     pass  # The chooser remains available for exported manifests in other locations.
         self._benchmark_dialog = PrecisionBenchmarkDialog(
-            self, fp32_path=fp32_path,
+            self, fp32_path=fp32_path, fp16_path=fp16_path,
             image_dir=image_dir, calibration_dir=self.calibration_edit.text().strip(),
             browse_dir=str(Path(output).parent) if output else "",
         )
@@ -463,6 +471,43 @@ class ExportWidget(QWidget):
         if self.output_edit.text().strip():
             self.output_edit.setText(str(Path(self.output_edit.text()).with_suffix(".dvsenc" if checked else ".onnx")))
 
+    def _precision_changed(self):
+        precision = self.export_precision.currentData()
+        fp16 = precision == "float16"
+        if fp16:
+            self._verify_before_fp16 = self.verify_check.isChecked()
+            self.verify_check.setChecked(True)
+        elif self._previous_precision == "float16":
+            self.verify_check.setChecked(self._verify_before_fp16)
+        self.verify_check.setText("출력 검증 (PyTorch → FP32 ONNX → FP16 ONNX)" if fp16 else
+                                  "출력 검증 (PyTorch vs ONNX)")
+        self.verify_check.setEnabled(not fp16)
+        self.precision_check.setEnabled(not fp16)
+        self.calibration_edit.setEnabled(not fp16)
+        self.calibration_browse.setEnabled(not fp16)
+        if self.project is not None:
+            task = self.project.task
+            efficientnet = task == "classify" and self.project.model.model_id.startswith("efficientnet_")
+            real_images = efficientnet or (fp16 and task in {"classify", "segment"})
+            self.dataset_verify_check.setEnabled(real_images)
+            if not real_images:
+                self.dataset_verify_check.setChecked(False)
+        self.dataset_verify_check.setText(
+            "실제 이미지로 FP32·FP16 출력 추가 비교" if fp16 else
+            "실제 이미지 추가 검증 (PyTorch·ONNX 판정 일치·확률 차이 0.1%p 이하)")
+
+        # Give each precision its own file beside the current destination.
+        # A path explicitly chosen after switching is used as entered.
+        path = Path(self.output_edit.text().strip())
+        if path.suffix.lower() in (".onnx", ".dvsenc"):
+            suffixes = {"float32": "", "float16": "_fp16", "int8": "_int8"}
+            stem = path.stem.removesuffix(suffixes[self._previous_precision]) or path.stem
+            suffix = suffixes[precision]
+            if not stem.endswith(suffix):
+                stem += suffix
+            self.output_edit.setText(str(path.with_name(stem + path.suffix)))
+        self._previous_precision = precision
+
     def _browse_key(self):
         path, _ = QFileDialog.getOpenFileName(self, "암호키 선택", "", "암호키 (*.key);;모든 파일 (*)")
         if path:
@@ -485,7 +530,7 @@ class ExportWidget(QWidget):
             self.calibration_edit.setText(folder)
 
     def _browse_validation(self):
-        folder = QFileDialog.getExistingDirectory(self, "분류 비교 이미지 폴더", self.validation_edit.text())
+        folder = QFileDialog.getExistingDirectory(self, "비교 이미지 폴더", self.validation_edit.text())
         if folder:
             self.validation_edit.setText(folder)
 
@@ -493,14 +538,18 @@ class ExportWidget(QWidget):
         """내보내기 시작"""
         ckpt_path = self.ckpt_edit.text().strip()
         output_path = self.output_edit.text().strip()
+        precision = self.export_precision.currentData()
+        sam2 = (self.project is not None and self.project.task == "segment" and
+                str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_"))
+        if precision == "float16" and (sam2 or self.merge_check.isChecked()):
+            QMessageBox.warning(self, "FP16 설정", "SAM2 인코더·디코더 또는 두 분할 모델 합치기에는 FP32를 선택하세요.")
+            return
 
         # The selection can change on the Training page after this page was
         # initially bound to the project.  A blank SAM2 source resolves to the
         # bundled official checkpoint; a selected SAM2 fine-tune result stays
         # selected so its learned prompt/mask-decoder weights are exported.
-        if (self.project is not None and self.project.task == "segment" and
-                str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_") and
-                not ckpt_path):
+        if sam2 and not ckpt_path:
             from builtin_assets import builtin_asset_path
             ckpt_path = str(builtin_asset_path(self.project.model.model_id))
             self.ckpt_edit.setText(ckpt_path)
@@ -540,7 +589,7 @@ class ExportWidget(QWidget):
                 QMessageBox.warning(self, "모델 합치기", "합친 모델은 아직 암호화 내보내기를 지원하지 않습니다. 암호화를 끄세요.")
                 return
 
-        if self.export_precision.currentData() == "int8":
+        if precision == "int8":
             if merge_with or not self.verify_check.isChecked() or not os.path.isdir(self.calibration_edit.text().strip()):
                 QMessageBox.warning(self, "INT8 설정", "출력 검증과 보정 이미지 폴더가 필요합니다. 모델 합치기는 FP32로 먼저 내보내세요.")
                 return
@@ -564,16 +613,14 @@ class ExportWidget(QWidget):
             simplify=self.simplify_check.isChecked(),
             verify=self.verify_check.isChecked(), parent=self,
             validation_dir=validation_dir,
-            precision=self.export_precision.currentData(), calibration_dir=self.calibration_edit.text().strip() or None,
-            allow_precision_fallback=self.precision_check.isChecked(),
+            precision=precision, calibration_dir=(self.calibration_edit.text().strip() or None) if precision == "int8" else None,
+            allow_precision_fallback=precision != "float16" and self.precision_check.isChecked(),
             encryption_key_path=encryption_key_path,
             merge_with=merge_with,
             overrides=({"region_size": [self.region_w.value(), self.region_h.value()]}
                        if self.region_row.isVisible() or (self._deploy_preview.get("patch") and
                                                           not self._deploy_preview.get("vit")) else None),
-            sam2_model_id=(getattr(self.project.model, "model_id", "")
-                           if self.project is not None and self.project.task == "segment" and
-                           str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_") else ""),
+            sam2_model_id=self.project.model.model_id if sam2 else "",
         )
         self.worker.log.connect(self._on_log)
         self.worker.completed.connect(self._on_finished)
@@ -634,7 +681,8 @@ class ExportWidget(QWidget):
                 self._benchmark_reference = str(config_path)
             elif self._benchmark_reference == str(config_path):
                 self._benchmark_reference = ""
-        status = ("INT8 실행·보정 영상 비교 완료" if result.get("precision") == "int8" else
+        status = ("FP16 실행·FP32 출력 비교 완료" if result.get("verification") == "fp16_compared" else
+                  "INT8 실행·보정 영상 비교 완료" if result.get("precision") == "int8" else
                   "검증 통과" if result["verification"] == "passed" else "검증 건너뜀")
         if result.get("merged"):
             text = (f"두 모델 합치기 완료 ({status})\n\n모델: {result['output_path']}\n설정: {result['config_path']}\n"
@@ -650,6 +698,11 @@ class ExportWidget(QWidget):
                 f"모델: {result['output_path']}\n"
                 f"설정: {result.get('config_path') or '암호화 파일에 포함'}\n"
                 f"크기: {result['file_size_mb']:.1f} MB")
+        if result.get("fp16_comparison"):
+            report = result["fp16_comparison"]
+            text += f"\nFP32 비교 입력: 합성 {len(report['probes'])}개 · 실제 이미지 {report['validation_images']}장"
+            if "pixel_agreement" in report:
+                text += f"\n비교 입력의 분할 픽셀 일치율: {report['pixel_agreement']:.2%}"
         if result.get("precision") == "int8":
             text += "\nINT8은 FP32와 수치·정확도가 달라질 수 있습니다. 보정 영상 비교 결과는 로그와 JSON에 저장했습니다. 별도 시험 영상으로 확인하세요."
             report = result.get("quantization_comparison", {})

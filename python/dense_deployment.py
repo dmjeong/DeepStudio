@@ -162,28 +162,34 @@ def predict_dense(config, bgr, run):
     `run` consumes NCHW float32 and returns an output list. No GUI or torch
     dependency. Output is at the scaled ROI resolution before display resize.
     """
+    return predict_dense_maps(config, bgr, lambda tensor: (run(tensor),))[0]
+
+
+def predict_dense_maps(config, bgr, run_models):
+    """Blend all models on the same windows, including padded and overlapping borders."""
     pixels = region_pixels(config, bgr)
     _, h, w = pixels.shape
     tile = tile_contract(config)
     ph, pw = (max(h, tile["tile"]), max(w, tile["tile"])) if tile else (h, w)
-    sums = None
+    sums = []
     weights = np.zeros((ph, pw), np.float32)
+    segment = config["task"] == "segment"
+    channels = int(config["num_classes"]) if segment else 1
     for y, x, tensor, weight in windows(config, pixels):
-        outputs = run(tensor)
-        values = np.asarray(outputs[0] if config["task"] == "segment" else outputs[1])
-        channels = int(config["num_classes"]) if config["task"] == "segment" else 1
-        if (
-            values.shape != (1, channels, *tensor.shape[2:])
-            or not np.isfinite(values).all()
-        ):
-            raise ValueError("Invalid dense model output")
-        values = values[0]
-        if config["task"] == "segment":
-            values = np.exp(values - values.max(0, keepdims=True))
-            values /= values.sum(0, keepdims=True)
-        if sums is None:
-            sums = np.zeros((channels, ph, pw), np.float32)
+        predictions = run_models(tensor)
+        if not sums:
+            sums = [np.zeros((channels, ph, pw), np.float32) for _ in predictions]
         th, tw = weight.shape
-        sums[:, y : y + th, x : x + tw] += values * weight
+        for total, outputs in zip(sums, predictions):
+            values = np.asarray(outputs[0] if segment else outputs[1])
+            if values.shape != (1, channels, *tensor.shape[2:]) or not np.isfinite(values).all():
+                raise ValueError("Invalid dense model output")
+            values = values[0]
+            if segment:
+                values = np.exp(values - values.max(0, keepdims=True))
+                values /= values.sum(0, keepdims=True)
+            total[:, y : y + th, x : x + tw] += values * weight
         weights[y : y + th, x : x + tw] += weight
-    return (sums / weights)[:, :h, :w]
+    for total in sums:
+        total /= weights
+    return [total[:, :h, :w] for total in sums]

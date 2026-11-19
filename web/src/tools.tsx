@@ -20,10 +20,24 @@ export function Export({ state, run, act, busy }: PageProps) {
   const [opset, setOpset] = useState(17);
   const [dynamic, setDynamic] = useState(false);
   const detection = state.project?.task === "detect";
-  const [precision, setPrecision] = useState("float32");
+  const [precision, setPrecision] = useDraft(projectKey, "export-precision", "float32");
   const [calibrationDir, setCalibrationDir] = useState("");
   const int8 = detection && precision === "int8";
+  const sam2Graphs = state.project?.task === "segment" && String(state.project.model.model_id || "").startsWith("sam2_hiera_");
+  const fp16 = precision === "float16" && !sam2Graphs;
+  function changePrecision(value: string) {
+    if (state.project) {
+      const ext = encrypted ? ".dvsenc" : ".onnx";
+      const base = join(state.project.project_dir, "exports/model");
+      if (output === base + ext || output === base + "_fp16" + ext) {
+        setOutput(base + (value === "float16" ? "_fp16" : "") + ext);
+      }
+    }
+    setPrecision(value);
+  }
   const efficientnet = state.project?.task === "classify" && String(state.project.model.model_id || "").startsWith("efficientnet_");
+  const fp16ImageValidation = fp16 && !efficientnet &&
+    (state.project?.task === "classify" || state.project?.task === "segment");
   const [datasetValidation, setDatasetValidation] = useState(efficientnet);
   const [validationDir, setValidationDir] = useState("");
   const [precisionFallback, setPrecisionFallback] = useState(false);
@@ -31,7 +45,6 @@ export function Export({ state, run, act, busy }: PageProps) {
     setDatasetValidation(efficientnet);
     setValidationDir("");
     setPrecisionFallback(false);
-    setPrecision("float32");
     setCalibrationDir("");
     setKeyNotice("");
     setWeights(state.project?.runs.at(-1)?.checkpoint_path || "");
@@ -77,13 +90,20 @@ export function Export({ state, run, act, busy }: PageProps) {
               <PathField label="비교 이미지 폴더 (비우면 프로젝트 val → test → train에서 자동 선택)"
                 value={validationDir} onChange={setValidationDir} home={state.home} directory />
               <p className="muted">평면 폴더와 클래스별 하위 폴더를 모두 지원합니다. 이미지 0장 클래스는 제외하며, 정답률이 아닌 PyTorch·ONNX 출력 일치를 검사합니다.</p>
-            </> : <Check label="고정밀 호환 재시도 허용 (추론이 느려질 수 있음)"
+            </> : !fp16 && <Check label="고정밀 호환 재시도 허용 (추론이 느려질 수 있음)"
               value={precisionFallback} onChange={setPrecisionFallback} />}
           </>}
-          {detection && <>
-            <Field label="정밀도"><select value={precision} onChange={e => setPrecision(e.target.value)}>
+          {fp16ImageValidation && <>
+            <Check label="실제 이미지로 FP32·FP16 출력 추가 비교"
+              value={datasetValidation} onChange={setDatasetValidation} />
+            {datasetValidation && <PathField label="비교할 원본 이미지 폴더" directory
+              value={validationDir} onChange={setValidationDir} home={state.home} />}
+          </>}
+          {!sam2Graphs && <>
+            <Field label="정밀도"><select value={precision} onChange={e => changePrecision(e.target.value)}>
               <option value="float32">FP32</option>
-              <option value="int8">INT8 QDQ</option>
+              <option value="float16">FP16</option>
+              {detection && <option value="int8">INT8 QDQ</option>}
             </select></Field>
             {int8 && <PathField label="INT8 보정용 정상·불량 이미지 폴더" directory
               value={calibrationDir} onChange={setCalibrationDir} home={state.home} />}
@@ -102,7 +122,8 @@ export function Export({ state, run, act, busy }: PageProps) {
             <Check label="동적 배치" value={dynamic} onChange={setDynamic} />
             <button
               className="primary push"
-              disabled={!weights || !output || (encrypted && !keyPath) || (int8 && !calibrationDir)}
+              disabled={!weights || !output || (encrypted && !keyPath) || (int8 && !calibrationDir)
+                || (fp16ImageValidation && datasetValidation && !validationDir)}
               onClick={() =>
                 act(async () =>
                   setId(
@@ -113,10 +134,10 @@ export function Export({ state, run, act, busy }: PageProps) {
                         opset,
                         encryption_key_path: encrypted ? keyPath : "",
                         dynamic_batch: dynamic,
-                        dataset_validation: efficientnet && datasetValidation,
+                        dataset_validation: (efficientnet || fp16ImageValidation) && datasetValidation,
                         validation_dir: validationDir,
-                        allow_precision_fallback: efficientnet && !datasetValidation && precisionFallback,
-                        precision: int8 ? "int8" : "float32",
+                        allow_precision_fallback: efficientnet && !datasetValidation && !fp16 && precisionFallback,
+                        precision: fp16 ? "float16" : int8 ? "int8" : "float32",
                         calibration_dir: int8 ? calibrationDir : "",
                       })
                     ).id,

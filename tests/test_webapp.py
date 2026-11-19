@@ -74,11 +74,13 @@ class WebAppTests(unittest.TestCase):
         with patch.object(self.app.state.jobs, "start", return_value={"id": "export-test"}) as start:
             response = self.client.post("/api/jobs/export", json={"weights": str(weights),
                 "output": str(self.root / "model.dvsenc"), "dataset_validation": True,
+                "precision": "float16",
                 "encryption_key_path": str(self.root / "private.key")})
         self.assertEqual(response.status_code, 200, response.text)
         kind, payload = start.call_args.args
         self.assertEqual(kind, "export")
         self.assertTrue(payload["dataset_validation"])
+        self.assertEqual(payload["precision"], "float16")
         self.assertFalse(payload["allow_precision_fallback"])
         self.assertEqual(payload["encryption_key_path"], str(self.root / "private.key"))
         self.assertEqual(payload["project"]["data"], project["data"])

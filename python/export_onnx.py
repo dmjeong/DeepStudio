@@ -745,7 +745,7 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
 
 def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_batch=False,
                       simplify=False, verify=True, overrides=None, log=print, *,
-                      validation_dir=None, allow_precision_fallback=False):
+                      validation_dir=None, allow_precision_fallback=False, fp16_reference=False):
     """검증 완료 후 ONNX와 동일 이름의 .json을 대상 폴더에 배치한다."""
     import torch
     import onnx
@@ -756,6 +756,11 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
     # 사용자 선택 체크포인트를 로드한다.
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     backend = checkpoint_backend(checkpoint)
+    if fp16_reference and backend == "sam2":
+        raise ValueError("SAM2 인코더·디코더 두 그래프의 FP16 내보내기는 지원하지 않습니다.")
+    if fp16_reference and backend != "efficientnet":
+        # The final FP16 comparison consumes the corpus using its deployment preprocessing.
+        validation_dir = None
     if validation_dir and backend != "efficientnet":
         raise ValueError("실제 이미지 분류 검증은 현재 EfficientNet 내보내기에서 지원합니다")
     if backend not in {"custom", "efficientnet", "builtin", "patchcore", "dinomaly", "redetr_v4", "sam2", "libreyolo"}:
@@ -1074,6 +1079,19 @@ def _paths_alias(first, second):
         return False
 
 
+def _destination_lock(output_path):
+    """Serialize independently launched exports of the same model/config pair."""
+    import hashlib
+    from filelock import FileLock
+
+    output = Path(output_path).resolve()
+    identity = os.path.normcase(os.fspath(output))
+    digest = hashlib.sha256(os.fsencode(identity)).hexdigest()
+    lock_dir = Path(tempfile.gettempdir()) / "deep-vision-studio-export-locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    return FileLock(lock_dir / (digest + ".lock"), timeout=0)
+
+
 def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_batch=False,
                       simplify=False, verify=True, overrides=None, log=print,
                       bundle_output=None, validation_dir=None, allow_precision_fallback=False,
@@ -1096,7 +1114,7 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
     # Diagnostics must never overwrite/delete a checkpoint, key, deployment, or
     # a symlink target. Unusual filenames are valid; do not assume key suffixes.
     if diagnostic_path.is_symlink() or any(
-        _paths_alias(diagnostic_path, path) for path in [*sources, output_path]
+        _paths_alias(diagnostic_path, path) for path in [*sources, output_path, Path(output_path).with_suffix(".json")]
     ):
         diagnostic_path = None
     def report(message):
@@ -1111,14 +1129,33 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
             # Legacy Windows redirected consoles may be CP1252/CP949. Keep the
             # original Unicode in diagnostics; escape only unsupported console text.
             print(str(message).encode(encoding, errors="backslashreplace").decode(encoding))
-    report("체크포인트 및 ONNX 의존성 로드")
+    from filelock import Timeout
+    lock = _destination_lock(output_path)
     try:
+        lock.acquire()
+    except Timeout as exc:
+        # Diagnostics belong to the active export as well.
+        raise ValueError("같은 경로에 모델을 내보내는 작업이 이미 진행 중입니다.") from exc
+    try:
+        report("체크포인트 및 ONNX 의존성 로드")
         if any(_paths_alias(output_path, path) for path in sources):
             raise ValueError("출력 파일은 체크포인트 또는 암호키와 다른 경로에 저장해야 합니다.")
         if validation_dir and not verify:
             raise ValueError("실제 이미지 검증을 사용하려면 출력 검증을 켜세요")
-        if precision not in {"float32", "int8"}:
-            raise ValueError("내보내기 정밀도는 float32 또는 int8이어야 합니다")
+        if precision not in {"float32", "float16", "int8"}:
+            raise ValueError("내보내기 정밀도는 float32, float16 또는 int8이어야 합니다")
+        if precision == "float16":
+            if not verify:
+                raise ValueError("FP16 배포 내보내기에는 출력 검증이 필요합니다.")
+            if allow_precision_fallback:
+                raise ValueError("FP16 변환에는 FP32 기준 그래프가 필요합니다. FP64 호환 옵션을 해제하세요.")
+            if sam2_model_id:
+                raise ValueError("SAM2 인코더·디코더 두 그래프의 FP16 내보내기는 지원하지 않습니다.")
+            if not encryption_key_path:
+                model, config = Path(output_path), Path(output_path).with_suffix(".json")
+                if (model.is_symlink() or config.is_symlink() or _paths_alias(model, config)
+                        or any(_paths_alias(config, source) for source in sources)):
+                    raise ValueError("FP16 모델과 JSON은 원본 파일 및 링크와 다른 경로에 저장해야 합니다.")
         if precision == "int8" and (not calibration_dir or not verify):
             raise ValueError("INT8은 출력 검증과 실제 보정 이미지 폴더가 필요합니다")
         if precision == "int8" and (type(calibration_count) is not int or calibration_count < 1):
@@ -1132,10 +1169,14 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
                     Path(destination).parent, verify=verify, opset=opset_version, log=report)
             return _export_checkpoint(checkpoint_path, destination, opset_version, dynamic_batch,
                                       simplify, verify, overrides, report, validation_dir=validation_dir,
-                                      allow_precision_fallback=allow_precision_fallback)
+                                      allow_precision_fallback=allow_precision_fallback,
+                                      fp16_reference=precision == "float16")
         def run_export(destination):
             if precision == "float32":
                 return fp32_export(destination)
+            if precision == "float16":
+                from export_fp16_onnx import export_fp16
+                return export_fp16(fp32_export, destination, validation_dir=validation_dir, log=report)
             import tempfile
             from quantize_onnx import quantize_segment
             with tempfile.TemporaryDirectory(prefix=".int8-export-", dir=Path(destination).parent) as directory:
@@ -1192,11 +1233,14 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
         except OSError:
             report(json.dumps(diagnostic, ensure_ascii=False))
         raise ValueError(f"ONNX 내보내기 실패 [{diagnostic['stage']}]: {error}{report_location}") from error
-    try:
-        if diagnostic_path is not None:
-            diagnostic_path.unlink(missing_ok=True)
-    except OSError:
-        report("이전 진단 파일 삭제 실패: ONNX 내보내기는 완료되었습니다.")
+    else:
+        try:
+            if diagnostic_path is not None:
+                diagnostic_path.unlink(missing_ok=True)
+        except OSError:
+            report("이전 진단 파일 삭제 실패: ONNX 내보내기는 완료되었습니다.")
+    finally:
+        lock.release()
     return result
 
 
@@ -1212,11 +1256,11 @@ def parse_args(argv=None):
     parser.add_argument("--dynamic_batch", action="store_true")
     parser.add_argument("--simplify", action="store_true")
     parser.add_argument("--verify", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--precision", choices=("float32", "int8"), default="float32")
+    parser.add_argument("--precision", choices=("float32", "float16", "int8"), default="float32")
     parser.add_argument("--calibration-dir", help="INT8 보정용 실제 학습 영상 폴더")
     parser.add_argument("--encryption-key", help="32-byte key file; output must use .dvsenc")
     parser.add_argument("--bundle", help="optional .dvdeploy output directory for C++/C# SDK")
-    parser.add_argument("--validation-dir", help="class folders of local images for classification FP32 verification")
+    parser.add_argument("--validation-dir", help="원본 이미지만 담은 폴더 (평면·하위 폴더 가능). EfficientNet FP32 또는 분류·분할 FP16 출력 비교")
     parser.add_argument("--allow-precision-fallback", action="store_true", help="explicitly allow slow FP64 compatibility export")
     return parser.parse_args(argv)
 
