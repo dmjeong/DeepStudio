@@ -32,6 +32,23 @@ def _components(binary):
     return count, labels, stats
 
 
+def planar_argmax(values):
+    """Find the first maximum in a C×H×W logits or probability map."""
+    mask = np.zeros(values.shape[1:], dtype=np.uint8 if len(values) <= 256 else np.int32)
+    if len(values) == 1:
+        return mask
+    if len(values) == 2:
+        np.greater(values[1], values[0], out=mask)
+        return mask
+    best = values[0].copy()
+    better = np.empty(mask.shape, dtype=bool)
+    for index, plane in enumerate(values[1:], 1):
+        np.greater(plane, best, out=better)
+        np.copyto(mask, index, where=better, casting="unsafe")
+        np.maximum(best, plane, out=best)
+    return mask
+
+
 def _nearest_index(size, source):
     """PIL NEAREST 확대와 같은 대응: 출력 픽셀 i가 가져오는 입력 픽셀 번호.
 
@@ -121,7 +138,7 @@ def analyze_segmentation(mask, probabilities=None, *, size=None, labels=None, cl
         row_h, col_w = np.ones(out_h, np.int64), np.ones(out_w, np.int64)
     start_y = np.concatenate([[0], np.cumsum(row_h)[:-1]])
     start_x = np.concatenate([[0], np.cumsum(col_w)[:-1]])
-    pixel_area = (row_h[:, None] * col_w[None, :]).astype(np.float64)  # 모델 픽셀 하나가 덮는 원본 픽셀 수
+    unit_area = mask.shape == (out_h, out_w)
     histogram = None
     if truth is not None:
         truth = np.asarray(truth)
@@ -136,19 +153,29 @@ def analyze_segmentation(mask, probabilities=None, *, size=None, labels=None, cl
     for class_id in range(1, classes):
         predicted = mask == class_id
         in_truth = histogram is not None and histogram[class_id] > 0
-        if not predicted.any() and not in_truth:
+        y0, x0 = 0, 0
+        y1, x1 = predicted.shape
+        if truth is None:
+            band = _band(predicted)
+            if band is None:
+                continue
+            y0, y1, x0, x1 = band
+        elif not predicted.any() and not in_truth:
             continue
-        count, components, stats = _components(predicted)
+        count, components, stats = _components(predicted[y0:y1, x0:x1])
         if count > 1:
             flat = components.ravel()
-            areas = np.bincount(flat, weights=pixel_area.ravel(), minlength=count)
+            pixel_area = None if unit_area else (row_h[y0:y1, None] * col_w[None, x0:x1]).astype(np.float64)
+            areas = stats[:, 4] if unit_area else np.bincount(flat, weights=pixel_area.ravel(), minlength=count)
             scores = None
             if probabilities is not None and class_id < probabilities.shape[0]:
-                weighted = (probabilities[class_id] * pixel_area).ravel()
-                scores = np.bincount(flat, weights=weighted, minlength=count) / np.maximum(areas, 1)
+                confidence = probabilities[class_id, y0:y1, x0:x1]
+                weighted = confidence if unit_area else confidence * pixel_area
+                scores = np.bincount(flat, weights=weighted.ravel(), minlength=count) / np.maximum(areas, 1)
         first = len(defects)
         for index in range(1, count):
             x, y, w, h = (int(v) for v in stats[index][:4])
+            x, y = x + x0, y + y0
             left, top = int(start_x[x]), int(start_y[y])
             defects.append({"id": len(defects), "class_id": class_id, "class_name": _name(class_names, class_id),
                             "x": left + ox, "y": top + oy,

@@ -541,7 +541,6 @@ class TrainingWidget(TrainingForm, QWidget):
         mask2former = self.model_id_combo.currentData() == "mask2former_swin_small"
         self.hp_group.layout().setRowVisible(self.mask2former_queries_spin, mask2former and not resume)
         self.hp_group.layout().setRowVisible(self.mask2former_resume_queries, mask2former and resume)
-        self.teacher_training_button.setVisible(self.project is not None and self.project.task == "segment")
         self.distillation_group.setVisible(self.project is not None and self.project.task == "segment"
                                           and self.model_id_combo.currentData() in BUILTIN_ADAPTER_IDS)
         self.finetune_freeze_check.setEnabled(not is_dinomaly)
@@ -693,15 +692,6 @@ class TrainingWidget(TrainingForm, QWidget):
         policy = selection_policy(SimpleNamespace(selection_metric=self.selection_combo.currentData() or "engine_default"),
                                   engine, self.project.task)
         self.selection_info.setText(policy.describe() + "\nBest 저장과 조기 종료에 동일하게 적용")
-
-    def _select_teacher_for_training(self, model_id):
-        index = self.model_id_combo.findData(model_id)
-        if index < 0:
-            return
-        self.model_id_combo.setCurrentIndex(index)
-        self.teacher_edit.clear()
-        self.mode_combo.setCurrentIndex(0)
-        self._sync_config()
 
     def _browse_teacher(self):
         path, _ = QFileDialog.getOpenFileName(self, "분할 교사 모델", "", "PyTorch (*.pt *.pth)")

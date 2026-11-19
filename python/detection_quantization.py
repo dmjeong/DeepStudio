@@ -25,6 +25,10 @@ class DetectionInputs:
         crop = config.get("preprocessing", {}).get("center_crop")
         left, top, right, bottom = center_crop_box((image.shape[1], image.shape[0]), crop)
         region = image[top:bottom, left:right, ::-1]
+        native = config["preprocessing"].get("original_size_region")
+        if native:
+            from opencv_preprocess import require_native_region
+            require_native_region(region, native)
         self.patches = validate_patches(config.get("patches"), "detect")
         self.pixels = scaled_image(region, self.patches) if self.patches else region
         self.height, self.width = self.pixels.shape[:2]
@@ -60,7 +64,7 @@ class DetectionInputs:
                                  interpolation=cv2.INTER_LINEAR_EXACT)
             pixels = np.full((h, w, 3), 114, np.uint8)
             pixels[:resized.shape[0], :resized.shape[1]] = resized
-        else:
+        elif pixels.shape[:2] != (h, w):
             pixels = cv2.resize(pixels, (w, h), interpolation=cv2.INTER_LINEAR_EXACT)
         pixels = pixels.reshape(h, w, self.config["input_channels"]).astype(np.float32)
         tensor = ((pixels / 255 - self.mean) / self.std).transpose(2, 0, 1)[None]

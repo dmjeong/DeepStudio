@@ -301,3 +301,61 @@ def test_gui_worker_routes_encryption_and_sam2_through_common_service(monkeypatc
     worker.run()
     assert captured["encryption_key_path"] == "private.key"
     assert captured["sam2_model_id"] == sam2_model_id
+
+
+def test_cpu_comparison_builds_missing_fp32_and_measures_matching_original_images(tmp_path):
+    import time
+
+    import numpy as np
+    from PIL import Image
+    import torch
+
+    from builtin_models import build_builtin_model, make_builtin_checkpoint
+    from checkpoint import record_original_size_training
+    from widgets.precision_benchmark_dialog import PrecisionBenchmarkDialog
+
+    pytest.importorskip("onnxruntime")
+    pytest.importorskip("onnx")
+    app = QApplication.instance() or QApplication([])
+    net = build_builtin_model("unet_lite", 2, 1).eval()
+    weights = make_builtin_checkpoint(
+        "unet_lite", net, num_classes=2, input_size=(32, 64),
+        in_channels=1, class_names=["bg", "defect"],
+    )
+    record_original_size_training(weights, (63, 31))
+    checkpoint = tmp_path / "best.pt"
+    torch.save(weights, checkpoint)
+    images = tmp_path / "시험 영상"
+    images.mkdir()
+    Image.fromarray(np.zeros((24, 24), np.uint8)).save(images / "다른 해상도.png")
+    Image.fromarray(np.zeros((31, 63), np.uint8)).save(images / "원본.png")
+    dialog = PrecisionBenchmarkDialog(
+        image_dir=str(images), calibration_dir=str(images),
+        checkpoint_export={"checkpoint_path": str(checkpoint)},
+    )
+    try:
+        dialog.backend.setCurrentIndex(1)  # ONNX Runtime
+        dialog.threads.setText("1")
+        dialog.image_count.setValue(1)
+        dialog.warmup.setValue(0)
+        dialog.repeats.setValue(1)
+        dialog.start_button.click()
+        deadline = time.monotonic() + 60
+        while dialog.isRunning() and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(.01)
+        assert not dialog.isRunning()
+        log = dialog.log.toPlainText()
+        assert "비교용 FP32 ONNX 생성 중" in log
+        assert "1장 제외" in log and "63×31 px" in log
+        assert dialog.table.rowCount() == 3, log
+        assert all(dialog.table.item(i, 8).text() == "완료" for i in range(3)), log
+        assert not list(tmp_path.glob("*.onnx"))
+    finally:
+        if dialog.worker is not None:
+            dialog.worker.requestInterruption()
+            dialog.worker.wait()
+            app.processEvents()
+        dialog.close()
+        dialog.deleteLater()
+        app.processEvents()

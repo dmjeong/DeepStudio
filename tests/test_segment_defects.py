@@ -161,3 +161,11 @@ def test_large_uint8_histogram_keeps_exact_pixel_counts():
     counts = _histogram(labels)
     assert counts[0] == labels.size
     assert counts.sum() == labels.size
+
+
+def test_planar_argmax_preserves_ties_on_a_cropped_tensor():
+    from core.segment_defects import planar_argmax
+
+    rng = np.random.default_rng(9)
+    values = rng.integers(-3, 3, (5, 47, 59)).astype(np.float32)[:, 1:-1, 2:-2]
+    np.testing.assert_array_equal(planar_argmax(values), values.argmax(axis=0))

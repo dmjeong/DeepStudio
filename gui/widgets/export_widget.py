@@ -187,7 +187,7 @@ class ExportWidget(QWidget):
         self._deploy_preview = {}
         self._show_deploy_preview()
         self.ckpt_edit.editingFinished.connect(self._refresh_deploy_preview)
-        self.ckpt_edit.textChanged.connect(lambda _text: self._preview_timer.start())
+        self.ckpt_edit.textChanged.connect(self._checkpoint_changed)
         from PySide6.QtCore import QTimer
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
@@ -366,6 +366,10 @@ class ExportWidget(QWidget):
             os.path.join(export_dir, f"model_{project.task}" + (".dvsenc" if self.encrypt_check.isChecked() else ".onnx"))
         )
 
+    def _checkpoint_changed(self):
+        self._benchmark_reference = ""
+        self._preview_timer.start()
+
     def _open_precision_benchmark(self):
         from widgets.precision_benchmark_dialog import PrecisionBenchmarkDialog
         from core.class_management import IMAGE_EXTENSIONS
@@ -380,7 +384,7 @@ class ExportWidget(QWidget):
         )), image_dirs[0] if image_dirs else "")
         fp32_path = self._benchmark_reference if os.path.isfile(self._benchmark_reference) else ""
         output = self.output_edit.text().strip()
-        fp16_path = ""
+        fp16_path = int8_path = ""
         if output and Path(output).suffix.lower() == ".onnx":
             config = Path(output).with_suffix(".json")
             if config.is_file():
@@ -391,11 +395,26 @@ class ExportWidget(QWidget):
                         fp32_path = str(config)
                     elif manifest.get("model_path") and precision == "float16":
                         fp16_path = str(config)
+                    elif manifest.get("model_path") and precision == "int8":
+                        int8_path = str(config)
                 except (OSError, ValueError, AttributeError, TypeError):
                     pass  # The chooser remains available for exported manifests in other locations.
+        checkpoint = self.ckpt_edit.text().strip()
+        temporary_export = None
+        if not self.merge_check.isChecked() and not self.encrypt_check.isChecked() and os.path.isfile(checkpoint):
+            temporary_export = {"checkpoint_path": checkpoint, "opset_version": self.opset_spin.value(),
+                                "allow_precision_fallback": self.precision_check.isChecked()}
+            if self.dataset_verify_check.isChecked() and os.path.isdir(self.validation_edit.text().strip()):
+                temporary_export["validation_dir"] = self.validation_edit.text().strip()
+            if self._deploy_preview.get("patch") and not self._deploy_preview.get("vit"):
+                temporary_export["overrides"] = {"region_size": [self.region_w.value(), self.region_h.value()]}
+            model_id = getattr(getattr(self.project, "model", None), "model_id", "")
+            if model_id.startswith("sam2_hiera_"):
+                temporary_export["sam2_model_id"] = model_id
         self._benchmark_dialog = PrecisionBenchmarkDialog(
-            self, fp32_path=fp32_path, fp16_path=fp16_path,
-            image_dir=image_dir, calibration_dir=self.calibration_edit.text().strip(),
+            self, fp32_path=fp32_path, fp16_path=fp16_path, int8_path=int8_path,
+            checkpoint_export=temporary_export, image_dir=image_dir,
+            calibration_dir=self.calibration_edit.text().strip(),
             browse_dir=str(Path(output).parent) if output else "",
         )
         try:

@@ -26,8 +26,17 @@ def run_benchmark_process(options, workspace, sender):
         os.environ[name] = workspace
     with sender:
         try:
-            rows = benchmark_precisions(**options, log=lambda message: sender.send(("progress", message)),
-                                        on_row=lambda row: sender.send(("row", row)))
+            settings = dict(options)
+            checkpoint = settings.pop("checkpoint_export", None)
+            log = lambda message: sender.send(("progress", message))
+            if checkpoint and not settings["fp32_path"]:
+                from export_onnx import export_checkpoint
+                log("선택한 체크포인트에서 비교용 FP32 ONNX 생성 중")
+                export = dict(checkpoint)
+                source = export.pop("checkpoint_path")
+                result = export_checkpoint(source, Path(workspace) / "reference.onnx", **export, log=log)
+                settings["fp32_path"] = result["config_path"]
+            rows = benchmark_precisions(**settings, log=log, on_row=lambda row: sender.send(("row", row)))
         except Exception as exc:
             sender.send(("failed", str(exc)))
         else:
@@ -56,8 +65,6 @@ def _manifest(path, precision, reference=None):
     declared = export.get("precision", "float32")
     if declared != precision:
         raise ValueError(f"설정 파일의 정밀도가 {precision}과 다릅니다 ({declared}).")
-    if precision == "float32" and export.get("compute_precision", "float32") != "float32":
-        raise ValueError("FP32 기준에는 FP64 보정 없이 내보낸 모델이 필요합니다.")
     fields = ("task", "backend", "input_channels", "input_height", "input_width", "num_classes",
               "class_names", "normalize_mean", "normalize_std", "preprocessing", "postprocessing", "patches")
     if reference and any(cfg.get(key) != reference.get(key) for key in fields):
@@ -74,10 +81,11 @@ def _read_image(path):
 
 
 def _rgb_region(image, preprocessing):
-    if image.ndim == 3:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB if image.shape[2] == 3 else cv2.COLOR_BGRA2RGBA)
     x, y, right, bottom = center_crop_box((image.shape[1], image.shape[0]), preprocessing.get("center_crop"))
-    return image[y:bottom, x:right]
+    region = image[y:bottom, x:right]
+    if region.ndim == 3:
+        return cv2.cvtColor(region, cv2.COLOR_BGR2RGB if region.shape[2] == 3 else cv2.COLOR_BGRA2RGBA)
+    return region
 
 
 def _tensor(cfg, image):
@@ -112,11 +120,9 @@ def _classification_int8(fp32_path, cfg, calibration_dir, workspace, cancelled, 
     """Build one temporary QDQ graph used unchanged by both CPU runtimes."""
     import onnx
     from onnxruntime.quantization import CalibrationDataReader, QuantFormat, QuantType, quantize_static
-    from quantize_onnx import list_images
+    from quantize_onnx import deployment_images
 
-    paths = [path for path in list_images(calibration_dir, 16) if path.is_file()]
-    if not paths:
-        raise ValueError("분류 INT8 보정 이미지가 없습니다.")
+    paths = deployment_images(cfg, calibration_dir, 16, log=log)
     source = Path(fp32_path).parent / cfg["model_path"]
     target = workspace / "benchmark-classification-int8.onnx"
     model = onnx.load(source)
@@ -172,14 +178,24 @@ class _OpenVINOSession:
         if "CPU" not in core.available_devices:
             raise RuntimeError("OpenVINO CPU 실행기를 찾을 수 없습니다.")
         model = core.read_model(str(model_path))
-        if (len(model.inputs) != 1 or input_name not in model.input().get_names()
-                or len(model.outputs) != len(output_names)):
-            raise ValueError("OpenVINO 모델의 입력·출력 텐서 이름 또는 개수가 설정 JSON과 다릅니다.")
-        inp = model.input()
-        input_shape = inp.get_partial_shape()
-        if (inp.get_element_type() != ov.Type.f32 or input_shape.rank.is_dynamic
-                or input_shape.rank.get_length() != 4 or not input_shape.compatible(ov.PartialShape(shape))):
-            raise ValueError("OpenVINO 모델의 NCHW 입력 크기 또는 FP32 타입이 설정 JSON과 다릅니다.")
+        if len(model.outputs) != len(output_names):
+            raise ValueError("OpenVINO 모델의 출력 개수가 설정 JSON과 다릅니다.")
+        if shape is None:
+            self.input_names = [next((name for name in input_name if name in port.get_names()), None)
+                                for port in model.inputs]
+            if None in self.input_names or len(set(self.input_names)) != len(self.input_names):
+                raise ValueError("OpenVINO SAM2 디코더의 입력 이름이 설정 JSON과 다릅니다.")
+        else:
+            if len(model.inputs) != 1 or input_name not in model.input().get_names():
+                raise ValueError("OpenVINO 모델의 입력 이름이 설정 JSON과 다릅니다.")
+            self.input_names = [input_name]
+            inp = model.input()
+            input_shape = inp.get_partial_shape()
+            if (inp.get_element_type() != ov.Type.f32 or input_shape.rank.is_dynamic
+                    or input_shape.rank.get_length() != 4 or not input_shape.compatible(ov.PartialShape(shape))):
+                raise ValueError("OpenVINO 모델의 NCHW 입력 크기 또는 FP32 타입이 설정 JSON과 다릅니다.")
+            if input_shape.is_dynamic:
+                model.reshape({inp: shape})
         # Read the original names before compilation, then fetch by output index.
         indices = {name: [index for index, port in enumerate(model.outputs) if name in port.get_names()]
                    for name in output_names}
@@ -187,18 +203,16 @@ class _OpenVINOSession:
                 or len({candidates[0] for candidates in indices.values()}) != len(output_names)
                 or any(port.get_element_type() != ov.Type.f32 for port in model.outputs)):
             raise ValueError("OpenVINO 모델의 출력 이름 또는 FP32 타입이 설정 JSON과 다릅니다.")
-        if input_shape.is_dynamic:
-            model.reshape({inp: shape})
         self.compiled_model, settings = compile_cpu_model(core, model, threads)
         self.request = self.compiled_model.create_infer_request()
-        self.input_name = input_name
         self.indices = {name: candidates[0] for name, candidates in indices.items()}
         self.detail = (f"OpenVINO {ov.__version__.split('-')[0]} · {settings['device']} · "
                        f"실제 스레드 {settings['INFERENCE_NUM_THREADS']} · 스트림 {settings['NUM_STREAMS']} · FP32 힌트")
 
     def run(self, names, feed):
         # The inference request reuses output buffers between calls and tiles.
-        self.request.infer({0: feed[self.input_name]}, share_inputs=True, share_outputs=True)
+        self.request.infer({i: feed[name] for i, name in enumerate(self.input_names)},
+                           share_inputs=True, share_outputs=True)
         return [self.request.get_output_tensor(self.indices[name]).data.copy() for name in names]
 
 
@@ -208,21 +222,40 @@ class _Runner:
     def __init__(self, config_path, cfg, threads, backend):
         self.cfg = cfg
         self.names = cfg.get("output_names") or [cfg["output_name"]]
-        model = Path(config_path).parent / cfg["model_path"]
+        model_dir = Path(config_path).parent
+        model = model_dir / cfg["model_path"]
+        self.decoder = None
+        if cfg["backend"] == "sam2":
+            graphs = cfg["contracts"]["graphs"]
+            model = model_dir / graphs["encoder"]["file"]
+            self.names = graphs["encoder"]["outputs"]
+            self.decoder_cfg = graphs["decoder"]
         shape = [1, cfg["input_channels"], cfg["input_height"], cfg["input_width"]]
         self.model_seconds = 0.0
         if backend == "openvino":
             self.session = _OpenVINOSession(model, cfg["input_name"], self.names, shape, threads)
             self.detail = self.session.detail
+            if cfg["backend"] == "sam2":
+                decoder = self.decoder_cfg
+                self.decoder = _OpenVINOSession(model_dir / decoder["file"], tuple(decoder["inputs"].values()),
+                                                decoder["outputs"], None, threads)
+                self.decoder_input_names = self.decoder.input_names
             return
 
         import onnxruntime as ort
 
         settings = deployment_session_settings(cfg)
         settings["num_threads"] = threads
-        self.session = ort.InferenceSession(str(model), cpu_session_options(**settings),
-                                            providers=["CPUExecutionProvider"])
+        options = cpu_session_options(**settings)
+        self.session = ort.InferenceSession(str(model), options, providers=["CPUExecutionProvider"])
+        if cfg["backend"] == "sam2":
+            self.decoder = ort.InferenceSession(str(model_dir / self.decoder_cfg["file"]), options,
+                                                providers=["CPUExecutionProvider"])
+            self.decoder_input_names = [item.name for item in self.decoder.get_inputs()]
         self.detail = f"ONNX Runtime {ort.__version__} · CPUExecutionProvider · 그래프 최적화 {settings['graph_optimization_level']}"
+        compute_precision = cfg.get("export", {}).get("compute_precision", "float32")
+        if compute_precision != "float32":
+            self.detail += f" · 내부 연산 {compute_precision}"
         inputs, outputs = self.session.get_inputs(), self.session.get_outputs()
         if (len(inputs) != 1 or inputs[0].name != cfg["input_name"] or inputs[0].type != "tensor(float)"
                 or len(inputs[0].shape) != 4
@@ -230,9 +263,10 @@ class _Runner:
                 or [o.name for o in outputs] != self.names or any(o.type != "tensor(float)" for o in outputs)):
             raise ValueError("ONNX와 JSON의 텐서 이름, 입력 크기 또는 FP32 입출력 계약이 다릅니다.")
 
-    def run(self, names, feed):
+    def run(self, names, feed, *, session=None):
         start = perf_counter()
-        outputs = self.session.run(names, feed)
+        runtime = session if session is not None else self.session
+        outputs = runtime.run(names, feed)
         self.model_seconds += perf_counter() - start
         return outputs
 
@@ -251,6 +285,8 @@ class _Runner:
 
         image = _read_image(path)
         prep = cfg["preprocessing"]
+        if self.decoder is not None:
+            return self._sam2_prediction(image)
         if task == "classify":
             logits = None
             for tensor in _classification_tensors(cfg, image):
@@ -275,7 +311,7 @@ class _Runner:
             if task == "segment":
                 crop = prep.get("center_crop")
                 size = (crop["width"], crop["height"]) if crop else (image.shape[1], image.shape[0])
-                return _mask(result, cfg, size, probabilities=bool(prep.get("tiling")))
+                return _mask(result, cfg, size, probabilities=True)
             return float(result.max())
 
         image = _rgb_region(image, prep)
@@ -294,6 +330,27 @@ class _Runner:
             return float(np.abs(tensor - outputs[0]).mean())
         raise ValueError("지원하지 않는 이상 탐지 출력 형식입니다.")
 
+    def _sam2_prediction(self, image):
+        cfg = self.cfg
+        pixels = convert_channels(_rgb_region(image, cfg["preprocessing"]), 3)
+        embeddings = self._infer(_tensor(cfg, pixels))
+        height, width = pixels.shape[:2]
+        mask_h, mask_w = cfg["contracts"]["mask_size"]
+        values = {
+            **dict(zip(self.names, embeddings)),
+            "point_coords": np.array([[[cfg["input_width"] / 2, cfg["input_height"] / 2]]], dtype=np.float32),
+            "point_labels": np.ones((1, 1), dtype=np.int64),
+            "mask_input": np.zeros((1, 1, mask_h, mask_w), dtype=np.float32),
+            "has_mask_input": np.zeros((1,), dtype=np.float32),
+            "orig_im_size": np.array([height, width], dtype=np.float32),
+        }
+        names = self.decoder_cfg["inputs"]
+        feed = {names[key]: value for key, value in values.items() if names.get(key) in self.decoder_input_names}
+        logits, scores = self.run(self.decoder_cfg["outputs"], feed, session=self.decoder)
+        if not np.isfinite(logits).all() or not np.isfinite(scores).all():
+            raise ValueError("SAM2 디코더 출력에 NaN/Inf가 있습니다.")
+        return (logits[0, int(scores[0].argmax())] > 0).astype(np.uint8), None
+
     def _classification_logits(self, tensor):
         value = self._infer(tensor)[0]
         if value.shape != (1, self.cfg["num_classes"]):
@@ -302,11 +359,12 @@ class _Runner:
 
 
 def _mask(values, cfg, size, *, probabilities=False):
-    mask = values.argmax(0).astype(np.uint8 if cfg["num_classes"] <= 256 else np.int32)
+    from core.segment_defects import analyze_segmentation, judge, planar_argmax
+
+    mask = planar_argmax(values)
     rules = cfg.get("postprocessing", {}).get("defect_rules")
     if not rules:
         return mask, None
-    from core.segment_defects import analyze_segmentation, judge
 
     if not probabilities:
         values = np.exp(values - values.max(0, keepdims=True))
@@ -406,7 +464,7 @@ def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp
                          calibration_dir=None, run_fp16=True, run_int8=True, image_count=5, repeats=2, warmup=2,
                          backends=("onnxruntime",), log=print, cancelled=lambda: False, on_row=None):
     """Benchmark one image at a time with a separate CPU session per row."""
-    from quantize_onnx import list_images, quantize_segment
+    from quantize_onnx import deployment_images, quantize_segment
 
     counts = _thread_counts(thread_counts)
     if not isinstance(backends, (tuple, list)) or not backends or any(name not in _BACKENDS for name in backends):
@@ -417,10 +475,8 @@ def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp
     if (type(image_count) is not int or image_count < 1 or type(warmup) is not int or warmup < 0
             or type(repeats) is not int or repeats < 1):
         raise ValueError("비교 영상과 반복 횟수는 1 이상, 워밍업 횟수는 0 이상이어야 합니다.")
-    paths = [path for path in list_images(image_dir, image_count) if path.is_file()]
-    if not paths:
-        raise ValueError("선택한 폴더에 비교할 영상이 없습니다.")
     reference = _manifest(fp32_path, "float32")
+    paths = deployment_images(reference, image_dir, image_count, log=log)
     rows, baselines = [], {}
 
     def record(row):
@@ -429,11 +485,13 @@ def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp
             on_row(row)
 
     variants = [("FP32", "float32", fp32_path)]
-    if run_fp16:
-        variants.append(("FP16", "float16", fp16_path))
-    if run_int8:
-        variants.append(("INT8", "int8", int8_path))
-
+    if reference["backend"] == "sam2":
+        log("SAM2는 FP32에서 인코더와 이미지 중앙의 양성 점 1개에 대한 디코더를 측정합니다.")
+    else:
+        if run_fp16:
+            variants.append(("FP16", "float16", fp16_path))
+        if run_int8:
+            variants.append(("INT8", "int8", int8_path))
     log(f"{reference.get('architecture') or reference['backend']} · 입력 "
         f"{reference['input_width']}×{reference['input_height']} · "
         f"{len(variants) * len(backends) * len(counts)}개 조합 · "
@@ -443,6 +501,8 @@ def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp
             if cancelled():
                 break
             try:
+                if precision != "float32" and not path and reference.get("export", {}).get("compute_precision", "float32") != "float32":
+                    raise ValueError("FP64 보정이 포함된 기준 모델에서 자동 변환할 수 없습니다. 별도 배포 JSON을 선택하세요.")
                 if precision == "float16" and not path:
                     from benchmark_fp16 import convert_benchmark_fp16
                     log("FP16 비교용 그래프 변환 중")

@@ -131,6 +131,17 @@ class Sam2ExportTests(unittest.TestCase):
             self.assertEqual(input_shapes["point_coords"][1], "num_points")
             self.assertEqual(input_shapes["point_labels"][1], "num_points")
 
+            import importlib.util
+            from PIL import Image
+            from precision_benchmark import benchmark_precisions
+
+            Image.new("RGB", (3, 2)).save(Path(directory) / "이미지.png")
+            backends = ("onnxruntime", "openvino") if importlib.util.find_spec("openvino") else ("onnxruntime",)
+            rows = benchmark_precisions(result["config_path"], directory, thread_counts=(1,), backends=backends,
+                                        run_fp16=False, run_int8=False, repeats=1, warmup=0)
+            self.assertEqual([row["status"] for row in rows], ["완료"] * len(backends), rows)
+            self.assertTrue(all(row["model_p50_ms"] > 0 for row in rows))
+
     def test_multi_feature_encoder_exports_contract_consumed_by_cpp_runtime(self):
         checkpoint = {
             "backend": "sam2", "task": "segment", "variant": "Hiera Base+",

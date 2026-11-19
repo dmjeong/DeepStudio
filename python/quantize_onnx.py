@@ -87,17 +87,61 @@ def preprocess(config, image):
 
 
 def list_images(folder, count=None):
-    paths = sorted(p for p in Path(folder).rglob("*") if p.suffix.lower() in IMAGE_SUFFIXES)
-    if count:
+    paths = sorted(p for p in Path(folder).rglob("*") if p.suffix.lower() in IMAGE_SUFFIXES and p.is_file())
+    return _sample_images(paths, count)
+
+
+def _sample_images(paths, count):
+    if count and paths:
         # 폴더 전체에서 고르게 뽑는다 (앞쪽 한 종류만 보정되지 않게).
         step = max(1, len(paths) // count)
         paths = paths[::step][:count]
     return paths
 
 
+def deployment_images(config, folder, count=None, *, log=print):
+    """Select images in the deployment geometry without decoding full frames."""
+    prep = config.get("preprocessing") or {}
+    whole = prep.get("whole_image") or {}
+    region = prep.get("original_size_region") or (whole.get("region") if whole.get("original_size") else None)
+    crop = prep.get("center_crop")
+    paths = list_images(folder)
+    if not paths:
+        raise ValueError(f"이미지가 없습니다: {folder}")
+    if not region and not crop:
+        return _sample_images(paths, count)
+
+    from PIL import Image
+
+    width, height = (crop["width"], crop["height"]) if crop else region
+    usable, skipped = [], []
+    for path in paths:
+        try:
+            with Image.open(path) as image:
+                size = image.size
+        except (OSError, ValueError):
+            skipped.append(f"{path.name} (읽기 실패)")
+            continue
+        if size == (width, height) or (crop and size[0] >= width and size[1] >= height):
+            usable.append(path)
+        else:
+            skipped.append(f"{path.name} ({size[0]}×{size[1]} px)")
+    if skipped:
+        log(f"{len(skipped)}장 제외 · {'중앙 크롭' if crop else '원본 입력'} {width}×{height} px 필요 · "
+            + ", ".join(skipped[:3]))
+    if not usable:
+        raise ValueError(f"{width}×{height} px 판정 영역에 맞는 이미지가 없습니다: {folder}")
+    return _sample_images(usable, count)
+
+
+def _read_image(path):
+    flags = cv2.IMREAD_UNCHANGED | cv2.IMREAD_IGNORE_ORIENTATION
+    return cv2.imdecode(np.fromfile(path, dtype=np.uint8), flags)
+
+
 def _tensors(config, paths):
     for path in paths:
-        image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        image = _read_image(path)
         region = None if image is None else judgement_region(config, image)
         if region is not None:
             yield path, preprocess(config, region)
@@ -226,14 +270,14 @@ def quantize_segment(config_path, calibration_dir, *, count=16, reduce_range=Fal
            for original in (config_path,source)):
         raise ValueError("INT8 출력으로 FP32 원본을 덮어쓸 수 없습니다")
     output_json.parent.mkdir(parents=True,exist_ok=True)
-    paths = list_images(calibration_dir, count)
+    paths = deployment_images(config, calibration_dir, count, log=log)
     if not paths:
         raise ValueError(f"보정 영상이 없습니다: {calibration_dir}")
 
     # 판정 영역에 맞는 영상만 (작은 영상은 C++도 거절한다)
     usable = []
     for path in paths:
-        image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        image = _read_image(path)
         if image is not None and judgement_region(config, image) is not None:
             usable.append(path)
     if not usable:
@@ -265,7 +309,7 @@ def quantize_segment(config_path, calibration_dir, *, count=16, reduce_range=Fal
             path, index = self.items[self._cursor]
             self._cursor += 1
             if self._cached[0] != path:
-                region = judgement_region(config, cv2.imread(str(path), cv2.IMREAD_UNCHANGED))
+                region = judgement_region(config, _read_image(path))
                 self._cached = (path, list(_tiles(preprocess(config, region), tile)))
                 log(f"  보정 {usable.index(path) + 1}/{len(usable)}: {path.name} ({per_image}타일)")
             self.tiles += 1
@@ -355,7 +399,7 @@ def compare(fp32_json, int8_json, image_dir, *, count=None, threads=0, log=print
     agree = total = 0
     times = {"fp32": [], "int8": []}
     rows = []
-    for path, tensor in _tensors(config, list_images(image_dir, count)):
+    for path, tensor in _tensors(config, deployment_images(config, image_dir, count, log=log)):
         maps = {}
         for key, session in (("fp32", fp32), ("int8", int8)):
             started = time.perf_counter()

@@ -73,7 +73,7 @@ class PrecisionBenchmarkWorker(QThread):
 
 class PrecisionBenchmarkDialog(QDialog):
     def __init__(self, parent=None, *, fp32_path="", fp16_path="", int8_path="",
-                 image_dir="", calibration_dir="", browse_dir=""):
+                 image_dir="", calibration_dir="", browse_dir="", checkpoint_export=None):
         super().__init__(parent)
         self.setWindowTitle("ONNX CPU 실행기·정밀도 비교")
         self.resize(1080, 720)
@@ -83,6 +83,7 @@ class PrecisionBenchmarkDialog(QDialog):
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._update_elapsed)
         self.browse_dir = browse_dir
+        self.checkpoint_export = checkpoint_export
         layout = QVBoxLayout(self)
         explanation = QLabel(
             "같은 ONNX와 이미지로 ONNX Runtime과 OpenVINO의 CPU 추론을 비교합니다. "
@@ -100,7 +101,9 @@ class PrecisionBenchmarkDialog(QDialog):
         for engine, name in _BACKEND_NAMES.items():
             self.backend.addItem(name, (engine,))
         form.addRow("CPU 실행기", self.backend)
-        self.fp32, _ = self._path_row(form, "FP32 배포 JSON", fp32_path, "평문 ONNX의 배포 설정 (.json)")
+        fallback = ("비워 두면 선택한 체크포인트에서 임시 생성" if checkpoint_export else
+                    "평문 ONNX의 배포 설정 (.json)")
+        self.fp32, _ = self._path_row(form, "FP32 배포 JSON", fp32_path, fallback)
         choices = QHBoxLayout()
         self.run_fp16 = QCheckBox("FP16")
         self.run_int8 = QCheckBox("INT8")
@@ -226,7 +229,9 @@ class PrecisionBenchmarkDialog(QDialog):
             fp16_path = self.fp16.text().strip() if self.run_fp16.isChecked() else ""
             int8_path = self.int8.text().strip() if self.run_int8.isChecked() else ""
             for name, path in (("FP32", fp32_path), ("FP16", fp16_path), ("INT8", int8_path)):
-                if (path or name == "FP32") and (not Path(path).is_file() or Path(path).suffix.lower() != ".json"):
+                if (path or (name == "FP32" and not self.checkpoint_export)) and (
+                    not Path(path).is_file() or Path(path).suffix.lower() != ".json"
+                ):
                     raise ValueError(f"{name} ONNX 배포 JSON을 선택하세요.")
             if not image_dir or not Path(image_dir).is_dir():
                 raise ValueError("시험 이미지 폴더를 선택하세요.")
@@ -244,6 +249,8 @@ class PrecisionBenchmarkDialog(QDialog):
             "run_fp16": self.run_fp16.isChecked(), "run_int8": self.run_int8.isChecked(),
             "image_count": self.image_count.value(), "repeats": self.repeats.value(), "warmup": self.warmup.value(),
         }
+        if not fp32_path:
+            options["checkpoint_export"] = self.checkpoint_export
         self.table.setRowCount(0)
         self.log.clear()
         self._success_count = 0

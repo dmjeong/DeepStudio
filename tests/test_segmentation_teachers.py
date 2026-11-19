@@ -130,10 +130,10 @@ def test_desktop_teacher_initialization_modes(tmp_path):
         for teacher in TEACHERS:
             index = widget.model_id_combo.findData(teacher)
             assert index >= 0
-            action = next(a for a in widget.teacher_training_button.menu().actions() if a.data() == teacher)
-            widget.teacher_edit.setText("previous-teacher.pt")
-            action.trigger()
-            assert widget.model_id_combo.currentData() == teacher and not widget.teacher_edit.text()
+            widget.model_id_combo.setCurrentIndex(index)
+            widget.collect_config()
+            assert widget.project.model.model_id == teacher
+            assert not widget.project.training.teacher_checkpoint
             if teacher == "mask2former_swin_small":
                 assert not widget.mask2former_queries_spin.isHidden()
                 assert widget.mask2former_queries_spin.value() == 100
@@ -161,11 +161,16 @@ def test_desktop_teacher_initialization_modes(tmp_path):
                 assert widget.mask2former_queries_spin.isHidden() and widget.mask2former_resume_queries.isHidden()
                 assert widget.patience_spin.minimum() == 1
                 assert widget.patience_spin.value() == 15
-            assert not widget.teacher_training_button.isHidden()
             available = {widget.mode_combo.itemData(i) for i in range(widget.mode_combo.count())}
             assert {"builtin_scratch", "builtin_transfer", "builtin_resume"} <= available
             assert ("builtin_finetune" in available) == (teacher != "segformer_b2")
             assert not widget.distillation_group.isHidden()
+
+        widget.model_id_combo.setCurrentIndex(widget.model_id_combo.findData("unet_resnet18"))
+        widget.teacher_edit.setText(str(tmp_path / "teacher.pt"))
+        widget.collect_config()
+        assert widget.project.model.model_id == "unet_resnet18"
+        assert widget.project.training.teacher_checkpoint == str(tmp_path / "teacher.pt")
     finally:
         widget.close()
         widget.deleteLater()

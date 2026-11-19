@@ -163,10 +163,9 @@ class InferenceOperations:
             # Keep the actual RGB image for original/overlay comparison even
             # when the model consumes a gray tensor. Decode only once.
             original = read_image(image_path, 3)
-            model_pixels = convert_channels(original, in_channels)
             decoded = time.perf_counter()
             box = center_crop_box((original.shape[1], original.shape[0]), crop)
-            img = model_pixels[box[1]:box[3], box[0]:box[2]]
+            img = convert_channels(original[box[1]:box[3], box[0]:box[2]], in_channels)
 
             onnx = getattr(self, "_onnx_runtime", None)
             # 패치 학습 모델: 줄이지 않고 원본 해상도 타일로 나눠 추론한다 (checkpoint의 tiling 규칙).
@@ -196,7 +195,10 @@ class InferenceOperations:
                     output = (torch.from_numpy(onnx.logits(input_tensor.numpy())) if onnx is not None
                               else self.model(input_tensor))
             inferred = time.perf_counter()
-            if not torch.isfinite(output).all():
+            cpu_segment = task == "segment" and output.device.type == "cpu"
+            segment_values = output[0].detach().float().numpy() if cpu_segment else None
+            finite = np.isfinite(segment_values).all() if cpu_segment else torch.isfinite(output).all()
+            if not finite:
                 raise ValueError("모델 출력이 유한하지 않습니다")
             target_tensor = None
             detections = None
@@ -215,10 +217,14 @@ class InferenceOperations:
                     prediction.details["model_config"] = self.model.checkpoint_config()
 
             elif task == "segment":
-                from core.segment_defects import _histogram
-                pred_mask = output.detach().argmax(dim=1)[0].cpu().numpy()
-                if self.model.num_classes <= 256:
-                    pred_mask = pred_mask.astype(np.uint8)  # 원본 해상도 타일 결과도 가볍게 다룬다
+                from core.segment_defects import _histogram, planar_argmax
+                if cpu_segment:
+                    pred_mask = planar_argmax(segment_values)
+                else:
+                    indices = output.detach().argmax(dim=1)[0]
+                    if self.model.num_classes <= 256:
+                        indices = indices.to(torch.uint8)
+                    pred_mask = indices.cpu().numpy()
                 review = getattr(self, "segment_review", None)
                 # 결함 점수용 클래스 확률 (모델 해상도, 타일이면 원본 해상도). 결함 분석을 켠 경우에만 만든다.
                 # 원본 크기와 타일 추론은 이미 softmax 확률을 반환한다.

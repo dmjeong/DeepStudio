@@ -30,7 +30,7 @@ def quantize_dense(
         QuantType,
         quantize_static,
     )
-    from quantize_onnx import list_images
+    from quantize_onnx import deployment_images
 
     config_path = Path(config_path)
     config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -61,9 +61,7 @@ def quantize_dense(
         for original in (config_path, source)
     ):
         raise ValueError("INT8 출력으로 FP32 원본을 덮어쓸 수 없습니다")
-    paths = list_images(calibration_dir, count)
-    if not paths:
-        raise ValueError("보정 이미지가 없습니다")
+    paths = deployment_images(config, calibration_dir, count, log=log)
     output.parent.mkdir(parents=True, exist_ok=True)
     graph = onnx.load(str(source))
     input_name = graph.graph.input[0].name
