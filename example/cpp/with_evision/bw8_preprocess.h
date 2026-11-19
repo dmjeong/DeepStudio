@@ -63,9 +63,9 @@ inline std::vector<Axis> MakeAxis(int source, int target) {
 class Preprocessor {
 public:
     Preprocessor(int width, int height, std::vector<float> mean, std::vector<float> stddev,
-                 int crop_width = 0, int crop_height = 0)
+                 int crop_width = 0, int crop_height = 0, bool native = false)
         : width_(width), height_(height), crop_width_(crop_width), crop_height_(crop_height),
-          channel_count_(mean.size()),
+          native_(native), channel_count_(mean.size()),
           mean_(std::move(mean)), std_(std::move(stddev)) {
         if (width < 1 || height < 1 || width > 65536 || height > 65536 ||
             (mean_.size() != 1 && mean_.size() != 3) || mean_.size() != std_.size() ||
@@ -81,6 +81,8 @@ public:
     void Run(Image image, std::vector<float>& output) {
         Validate(image);
         const auto* pixels = ApplyCenterCrop(image);
+        if (native_ && (image.width != width_ || image.height != height_))
+            throw std::invalid_argument("ROI dimensions differ from native-size training");
         UpdateAxes(image.width, image.height);
 
         const size_t plane = static_cast<size_t>(width_) * height_;
@@ -214,6 +216,7 @@ private:
     }
 
     int width_, height_, crop_width_, crop_height_, source_width_ = 0, source_height_ = 0;
+    bool native_ = false;
     size_t channel_count_;
     std::vector<float> mean_, std_;
     std::array<std::vector<float>, 3> luts_;

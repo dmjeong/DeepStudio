@@ -53,6 +53,7 @@ def parse_args():
                         help="학습률")
     parser.add_argument("--input_size", type=int, default=224,
                         help="입력 이미지 크기 (정사각형)")
+    parser.add_argument("--original_size_training", action="store_true", help="이미지 원본 크기로 학습")
     parser.add_argument("--in_channels", type=int, default=3, choices=(1, 3),
                         help="입력 채널 수 (1: 그레이, 3: RGB)")
     parser.add_argument("--save_dir", type=str, default="./runs/classify",
@@ -166,7 +167,7 @@ def validate(model, loader, criterion):
 
 def save_checkpoint(model, optimizer, scheduler, epoch, best_acc,
                     class_names, save_path, is_best=False, *,
-                    input_size=(224, 224), model_config=None):
+                    input_size=(224, 224), model_config=None, original_size_region=None):
     """체크포인트 저장"""
     state = {
         "epoch": epoch,
@@ -178,7 +179,7 @@ def save_checkpoint(model, optimizer, scheduler, epoch, best_acc,
     state.update(make_checkpoint_metadata(
         task="classify", num_classes=model.num_classes,
         class_names=class_names, input_size=input_size,
-        in_channels=model.in_channels, model_config=model_config,
+        in_channels=model.in_channels, model_config=model_config, original_size_region=original_size_region,
     ))
     # 최신 체크포인트 저장
     torch.save(state, os.path.join(save_path, "last.pt"))
@@ -207,8 +208,12 @@ def main():
         data_root=args.data_root,
         input_size=input_size,
         batch_size=args.batch_size,
-        in_channels=args.in_channels,
+        in_channels=args.in_channels, original_size=args.original_size_training,
     )
+    original_size_region = None
+    if args.original_size_training:
+        input_size = train_loader.dataset.original_size
+        original_size_region = (input_size[1], input_size[0])
     if train_loader is None or len(train_loader) == 0:
         raise ValueError("학습 배치 없음: 데이터 수와 배치 크기 확인 필요")
     if val_loader is None or len(val_loader) == 0:
@@ -254,6 +259,9 @@ def main():
     best_acc = float("-inf")
     if args.resume and os.path.exists(args.resume):
         checkpoint = torch.load(args.resume, map_location="cpu")
+        from checkpoint import checkpoint_original_size_region
+        if checkpoint_original_size_region(checkpoint) != original_size_region:
+            raise ValueError("재개할 체크포인트와 원본 크기 학습 설정이 다릅니다.")
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         if checkpoint["scheduler_state_dict"]:
@@ -322,7 +330,7 @@ def main():
         # 체크포인트 저장
         save_checkpoint(
             model, optimizer, scheduler, epoch, best_acc,
-            class_names, save_path, is_best, input_size=input_size
+            class_names, save_path, is_best, input_size=input_size, original_size_region=original_size_region
         )
 
         # 조기 종료 체크

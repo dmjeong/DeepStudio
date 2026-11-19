@@ -196,6 +196,21 @@ class PatchCoreRuntimeTests(PatchCoreFixture):
         with self.assertRaisesRegex(ValueError, "불일치"):
             self.model(backbone_weights=str(bad))
 
+    def test_old_torchvision_backbone_accepts_missing_batch_counters_only(self):
+        from patchcore_weights import load_backbone_weights
+        backbone = torch.nn.Sequential(torch.nn.Conv2d(3, 4, 3), torch.nn.BatchNorm2d(4))
+        state = backbone.state_dict()
+        state.pop("1.num_batches_tracked")
+        old = self.path / "old_bn.pth"
+        torch.save(state, old)
+        backbone[1].num_batches_tracked.fill_(27)
+        load_backbone_weights(backbone, old, "resnet18")
+        self.assertEqual(backbone[1].num_batches_tracked.item(), 0)
+        for key in ("1.running_mean", "1.running_var", "1.weight", "0.weight"):
+            torch.save({k: v for k, v in state.items() if k != key}, old)
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, key):
+                load_backbone_weights(backbone, old, "resnet18")
+
     def test_missing_packaged_imagenet_weight_does_not_fall_back_to_random(self):
         from patchcore_weights import build_backbone
         with patch("builtin_assets.builtin_asset_path", side_effect=OSError("bundle unavailable")), \

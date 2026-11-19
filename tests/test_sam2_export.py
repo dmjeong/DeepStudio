@@ -100,13 +100,14 @@ class Sam2ExportTests(unittest.TestCase):
         checkpoint = {
             "type": "sam2", "backend": "sam2", "task": "segment",
             "variant": "Hiera Tiny",
-            "input_size": [2, 3], "mask_size": [2, 2],
+            "input_size": [2, 3], "original_size_region": [3, 2], "mask_size": [2, 2],
             "encoder": TinySamEncoder().eval(), "decoder": TinySamDecoder().eval(),
         }
         with tempfile.TemporaryDirectory() as directory:
             result = export_sam2_model(checkpoint, directory, verify=True, opset=17,
                                        log=lambda _: None)
             manifest = json.loads(Path(result["config_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["preprocessing"]["original_size_region"], [3, 2])
             self.assertEqual(manifest["schema_version"], 5)
             self.assertEqual(manifest["backend"], "sam2")
             self.assertEqual(manifest["variant"], "Hiera Tiny")

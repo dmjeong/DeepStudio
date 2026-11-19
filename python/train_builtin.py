@@ -375,10 +375,9 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if type(original_size_training) is not bool:
         raise ValueError("원본 크기 학습 옵션은 boolean 필요")
     if original_size_training:
-        from core.training_modes import ORIGINAL_SIZE_SEGMENT_IDS
         if patch_training:
             raise ValueError("원본 크기 학습과 패치 학습은 함께 사용할 수 없습니다.")
-        if model_id not in ORIGINAL_SIZE_SEGMENT_IDS:
+        if spec.task not in {"classify", "segment"}:
             raise ValueError("선택한 모델은 원본 크기 학습을 지원하지 않습니다.")
     if input_size is None or original_size_training:
         input_size = spec.default_size
@@ -431,7 +430,13 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             str(data_root), input_size=input_size, batch_size=batch_size,
             num_workers=num_workers, pin_memory=pin_memory,
             in_channels=in_channels, val_split=val_split,
-            flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
+            flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter,
+            original_size=original_size_training)
+        if original_size_training:
+            input_size = train_loader.dataset.original_size
+            height, width = input_size
+            original_size_region = (width, height)
+            log(f"원본 크기 분류 학습: {width}×{height} px")
         num_classes = len(class_names) if num_classes == 0 else num_classes
         if num_classes != len(class_names):
             raise ValueError("num_classes does not match classification folders")
@@ -827,6 +832,7 @@ def main() -> None:
     parser.add_argument("--data_root", required=True)
     parser.add_argument("--num_classes", type=int, default=0)
     parser.add_argument("--input_size", type=int, default=0)
+    parser.add_argument("--original_size_training", action="store_true", help="Train on the full, native-size input region")
     parser.add_argument("--in_channels", type=int, choices=(1, 3), default=3)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=4)
@@ -848,6 +854,7 @@ def main() -> None:
     args = parser.parse_args()
     train_builtin(args.model, args.data_root, num_classes=args.num_classes,
                   input_size=args.input_size or None, in_channels=args.in_channels,
+                  original_size_training=args.original_size_training,
                   epochs=args.epochs, batch_size=args.batch_size,
                   learning_rate=args.learning_rate, output_dir=args.output_dir,
                   device=args.device, num_workers=args.num_workers, use_amp=args.amp,

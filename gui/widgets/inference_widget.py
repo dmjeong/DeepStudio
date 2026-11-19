@@ -1232,6 +1232,7 @@ class InferenceWidget(QWidget, InferenceOperations):
             return False
 
     def _load_patchcore_model(self, checkpoint, ckpt_path):
+        from patchcore_data import anomaly_input_shape
         device = self._device_manager.get_device(self.infer_device_combo.currentData())
         candidate = PatchCore.load(ckpt_path, device=device)
         info = candidate.get_info()
@@ -1239,7 +1240,7 @@ class InferenceWidget(QWidget, InferenceOperations):
             raise ValueError("PatchCore 메모리 뱅크가 비어 있습니다")
         self._activate_model(
             path=ckpt_path, device=device, patchcore=candidate,
-            input_size=(candidate.input_size, candidate.input_size),
+            input_size=anomaly_input_shape(candidate.input_size),
             threshold=candidate.normalized_threshold, score_normalized=True,
             info=f"PatchCore 준비 완료 | 메모리 뱅크: {info['memory_bank_size']:,}개 패치 | "
                  f"백본: {info.get('backbone', '저장 모델')} | "

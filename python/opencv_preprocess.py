@@ -77,6 +77,19 @@ def convert_channels(image, channels):
     raise ValueError("입력 채널은 1 또는 3 필요")
 
 
+def require_native_region(image, region):
+    """Validate the cropped pixels before an original-size model's preprocessing."""
+    if region is None:
+        return
+    if (not isinstance(region, (tuple, list)) or len(region) != 2
+            or any(type(value) is not int or value <= 0 for value in region)):
+        raise ValueError("원본 판정 영역에는 양의 정수 [가로, 세로]가 필요합니다.")
+    height, width = image.shape[:2]
+    if (width, height) != tuple(region):
+        raise ValueError(f"이 모델은 {region[0]}×{region[1]} px 판정 영역이 필요합니다. "
+                         f"현재 영역: {width}×{height} px.")
+
+
 def resize(image, size):
     import cv2
     size = [size] if isinstance(size, int) else list(size)

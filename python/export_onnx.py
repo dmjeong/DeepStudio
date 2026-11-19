@@ -112,7 +112,10 @@ def _upstream_spec(checkpoint):
         class_names = [str(value) for value in names]
     else:
         raise ValueError("LibreYOLO 체크포인트의 names 메타데이터 오류")
+    from upstream_original_size import checkpoint_region
+    region = checkpoint_region(checkpoint)
     size = _positive_int(checkpoint.get("imgsz"), "imgsz")
+    height, width = region[::-1] if region else (size, size)
     if task == "classify" and family != "mobilenetv4":
         raise ValueError("기본 제공 LibreYOLO 분류 체크포인트 모델군 불일치")
     if task == "detect" and family not in {"yolo9", "rtdetrv4", "dfine"}:
@@ -120,15 +123,18 @@ def _upstream_spec(checkpoint):
     if task == "classify":
         from libreyolo_classification import preprocessing_contract
         from center_crop import checkpoint_center_crop
-        preprocessing = preprocessing_contract(size, checkpoint.get("studio_preprocessing"))
+        preprocessing = preprocessing_contract((height, width), checkpoint.get("studio_preprocessing"),
+                                               original_size_region=region)
         preprocessing["center_crop"] = checkpoint_center_crop(checkpoint)
     else:
         from native_detection import preprocessing_contract
         from center_crop import checkpoint_center_crop
-        preprocessing = preprocessing_contract(family, size)
+        preprocessing = preprocessing_contract(family, (height, width))
+        if region:
+            preprocessing["original_size_region"] = list(region)
         preprocessing["center_crop"] = checkpoint_center_crop(checkpoint)
     return {"family": family, "task": task, "num_classes": num_classes,
-            "class_names": class_names, "input_height": size, "input_width": size,
+            "class_names": class_names, "input_height": height, "input_width": width,
             "in_channels": 3,
             "preprocessing": preprocessing}
 
@@ -137,6 +143,13 @@ def _upstream_reference_outputs(model, family, dummy):
     """Return the exact tensor schema selected by LibreYOLO's ONNX exporter."""
     import torch
     network = model.model.cpu().eval()
+    region = getattr(model, "studio_original_size_region", None)
+    if region and family != "mobilenetv4":
+        from upstream_original_size import detector_size, input_hw
+        height, width = region[::-1]
+        canvas_h, canvas_w = input_hw(detector_size(family, height, width))
+        dummy = torch.nn.functional.pad(dummy, (0, canvas_w - width, 0, canvas_h - height),
+                                        value=114 / 255 if family == "yolo9" else 0.)
     head = getattr(network, "head", None)
     old_export = getattr(head, "export", None)
     if family == "yolo9" and old_export is not None:
@@ -150,10 +163,15 @@ def _upstream_reference_outputs(model, family, dummy):
     if family in {"rtdetrv4", "dfine"}:
         if not isinstance(value, dict) or not {"pred_logits", "pred_boxes"} <= set(value):
             raise ValueError("LibreYOLO Re-DETR v4 PyTorch 출력 형식 오류")
-        return [value["pred_logits"], value["pred_boxes"]]
-    if isinstance(value, (tuple, list)):
+        outputs = [value["pred_logits"], value["pred_boxes"]]
+    elif isinstance(value, (tuple, list)):
         raise ValueError("LibreYOLO ONNX 단일 출력 모델 형식 오류")
-    return [value]
+    else:
+        outputs = [value]
+    if region and family != "mobilenetv4":
+        from native_detection import source_frame_outputs
+        outputs = source_frame_outputs(family, region, outputs)
+    return outputs
 
 
 def verify_upstream_onnx(onnx_path, model, spec, dummy):
@@ -199,12 +217,13 @@ def whole_image_contract(spec, model, region=None):
     패치 학습에서 전역 문맥 모델은 타일로 배포한다. 원본 크기 학습은 저장된 판정 영역을 사용한다.
     """
     original_size_region = spec.get("original_size_region")
-    if original_size_region is not None:
+    if original_size_region is not None and spec["task"] == "segment":
         if region is not None and (not isinstance(region, (list, tuple))
                                    or tuple(region) != original_size_region):
             width, height = original_size_region
             raise ValueError(f"원본 크기 학습 모델의 판정 영역은 {width}×{height} px로 고정되어 있습니다.")
-        return {"region": list(original_size_region), "scaled": list(original_size_region),
+        return {"region": list(original_size_region), "scaled": list(original_size_region), "original_size": True,
+                **({"calibration": "full_input"} if getattr(model, "global_attention", False) else {}),
                 "interpolation": "INTER_LINEAR_EXACT", "pad": "zero_after_normalize",
                 "input": list(padded_region_size(original_size_region))}
     tiling = (spec.get("preprocessing") or {}).get("tiling")
@@ -270,11 +289,24 @@ def deployment_preview(checkpoint_path):
     }
     preview = {"task": task, "patch": bool(tiling) and task == "segment", "vit": has_global_attention,
                "region": tiling.get("region"), "scale": float(tiling.get("scale", 1.0)), "rules": None}
+    try:
+        if checkpoint.get("model_family") in UPSTREAM_FAMILIES:
+            from upstream_original_size import checkpoint_region
+            native = checkpoint_region(checkpoint)
+        elif checkpoint.get("type") == "sam2":
+            native = checkpoint.get("original_size_region")
+            if native is not None:
+                padded_region_size(native)
+        elif checkpoint.get("type") in {"dinomaly", "patchcore"}:
+            from patchcore_data import anomaly_input_shape
+            size = checkpoint.get("input_size")
+            native = anomaly_input_shape(size)[::-1] if isinstance(size, (tuple, list)) else None
+        else:
+            native = checkpoint_original_size_region(checkpoint)
+        preview["original_size_region"] = tuple(native) if native is not None else None
+    except ValueError as exc:
+        preview["region_error"] = str(exc)
     if task == "segment":
-        try:
-            preview["original_size_region"] = checkpoint_original_size_region(checkpoint)
-        except ValueError as exc:
-            preview["region_error"] = str(exc)
         try:
             preview["rules"] = deployment_defect_rules(checkpoint_path, list(checkpoint.get("class_names") or []))
         except ValueError as exc:
@@ -345,7 +377,11 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
     task = select("task", "detect" if backend == "redetr_v4" else None)
     if task not in OUTPUT_NAMES:
         raise ValueError(f"지원하지 않는 태스크: {task}")
-    num_classes = _positive_int(select("num_classes", len(names) or None), "num_classes")
+    classes = select("num_classes", len(names) or (1 if task == "anomaly" else None))
+    # Reconstruction learns one anomaly score; unlabeled projects can store zero named classes.
+    if task == "anomaly" and backend == "custom" and type(classes) is int and classes == 0 and not names:
+        classes = 1
+    num_classes = _positive_int(classes, "num_classes")
     channels = _positive_int(select("in_channels"), "in_channels")
     if channels not in (1, 3):
         raise ValueError("입력 채널은 1 또는 3만 지원합니다.")
@@ -362,8 +398,10 @@ def resolve_checkpoint_spec(checkpoint, overrides=None):
         raise ValueError("input_size: 정수 또는 [높이, 너비] 필요")
     height, width = (_positive_int(v, "input_size") for v in size)
     original_size_region = checkpoint_original_size_region(checkpoint)
-    if original_size_region is not None and backend not in {"custom", "builtin"}:
+    if original_size_region is not None and task == "segment" and backend not in {"custom", "builtin"}:
         raise ValueError("원본 크기로 학습한 분할 모델의 체크포인트가 필요합니다.")
+    if original_size_region is not None and task in {"classify", "detect", "anomaly"}:
+        preprocessing["original_size_region"] = list(original_size_region)
     mean_default = [0.449] if channels == 1 else [0.485, 0.456, 0.406]
     std_default = [0.226] if channels == 1 else [0.229, 0.224, 0.225]
     mean = preprocessing.get("normalize_mean", preprocessing.get("mean", mean_default))
@@ -409,6 +447,8 @@ def load_custom_model(checkpoint, spec=None):
             import warnings
             warnings.warn(channel_description(contract) + ": 기존 판정을 유지하는 호환 모드입니다. "
                           "새 1ch Conv 학습은 ImageNet 사전학습 모드를 선택하세요.", UserWarning, stacklevel=2)
+        if spec.get("original_size_region") is not None:
+            model.original_size_region = spec["original_size_region"]
         return model.cpu().eval()
     if backend == "builtin":
         from builtin_models import load_builtin_checkpoint
@@ -424,8 +464,6 @@ def load_custom_model(checkpoint, spec=None):
         model.load_state_dict(checkpoint["model_state_dict"])
         model.cpu().eval()
     if spec.get("original_size_region") is not None:
-        if getattr(model, "global_attention", False):
-            raise ValueError("이 모델은 원본 크기 학습을 지원하지 않습니다.")
         model.original_size_region = spec["original_size_region"]
     return model
 
@@ -683,12 +721,32 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
             if checkpoint.get("studio_preprocessing") is None:
                 log("기존 가중치를 전체 영상 전처리로 내보냅니다. 이전 중앙 자르기 추론과 판정이 달라질 수 있습니다.")
         model = load_upstream_checkpoint(checkpoint_path, device="cpu")
-        exported = Path(model.export(format="onnx", output_path=str(staged_model),
-                                     imgsz=(spec["input_height"], spec["input_width"]),
-                                     opset=opset_version, dynamic=dynamic_batch,
-                                     simplify=simplify, device="cpu"))
+        height, width = spec["input_height"], spec["input_width"]
+        region = spec["preprocessing"].get("original_size_region")
+        export_backend = "libreyolo_public_api"
+        if family == "mobilenetv4" and height != width and region:
+            # LibreYOLO 1.5's public exporter rejects rectangles for MobileNetV4.
+            # Its classifier module directly returns the logits used in native predict.
+            export_to_onnx(model.model.cpu().eval(), torch.zeros(1, 3, height, width),
+                           staged_model, opset_version, dynamic_batch, "classify")
+            if simplify:
+                simplify_onnx(staged_model)
+            exported = staged_model
+            export_backend = "studio_full_frame_classifier"
+        else:
+            from upstream_original_size import detector_size
+            canvas = detector_size(family, height, width) if region and spec["task"] == "detect" else (height, width)
+            # The DETR decoder only repeats anchors when its trace input contains
+            # multiple samples. That branch also runs correctly for a single sample.
+            trace_batch = {"batch": 2} if dynamic_batch and family in {"dfine", "rtdetrv4"} else {}
+            exported = Path(model.export(format="onnx", output_path=str(staged_model),
+                                         imgsz=canvas, opset=opset_version, dynamic=dynamic_batch,
+                                         simplify=simplify, device="cpu", **trace_batch))
         if exported.resolve() != staged_model.resolve() or not staged_model.is_file():
             raise ValueError("LibreYOLO ONNX exporter가 요청한 출력 파일을 생성하지 않았습니다")
+        if region and spec["task"] == "detect":
+            from native_detection_export import add_source_frame_interface
+            add_source_frame_interface(staged_model, family, region, spec["num_classes"], opset_version)
         onnx.checker.check_model(str(staged_model))
         input_name, output_names = _upstream_onnx_tensor_names(staged_model, family)
         if verify:
@@ -706,7 +764,7 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
             spec["class_names"], preprocessing=spec["preprocessing"], backend=backend,
             verification="passed" if verify else "skipped", config_filename=config_name,
             input_name=input_name, output_names=output_names, detection_box_encoding=detection_encoding,
-            model_config={"model_family": family, "upstream_export": "libreyolo_public_api"})
+            model_config={"model_family": family, "upstream_export": export_backend})
         manifest = json.loads(Path(staged_config).read_text(encoding="utf-8"))
         from native_patches import validate_patches
         patches = validate_patches(checkpoint.get("studio_patches"), spec["task"])

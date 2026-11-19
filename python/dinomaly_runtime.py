@@ -9,7 +9,9 @@ import torch
 
 
 def deployment_config(checkpoint, model_path="model.onnx"):
-    size = int(checkpoint["input_size"])
+    from patchcore_data import anomaly_input_shape
+    size = checkpoint["input_size"]
+    height, width = anomaly_input_shape(size)
     channels = int(checkpoint["in_channels"])
     mean, std = (
         ([0.449], [0.226])
@@ -17,7 +19,7 @@ def deployment_config(checkpoint, model_path="model.onnx"):
         else ([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     )
     prep = {
-        "input_size": [size, size],
+        "input_size": [height, width],
         "in_channels": channels,
         "resize": "bilinear",
         "resize_mode": "stretch",
@@ -29,6 +31,10 @@ def deployment_config(checkpoint, model_path="model.onnx"):
         "value_scale": 255.0,
         "center_crop": checkpoint.get("center_crop"),
     }
+    if isinstance(size, (tuple, list)):
+        if checkpoint.get("tiling"):
+            raise ValueError("원본 크기 학습 모델에 타일 설정이 함께 저장되어 있습니다.")
+        prep["original_size_region"] = [width, height]
     if checkpoint.get("tiling"):
         prep["tiling"] = copy.deepcopy(checkpoint["tiling"])
     return {
@@ -40,8 +46,8 @@ def deployment_config(checkpoint, model_path="model.onnx"):
         "output_name": "anomaly_score",
         "output_names": ["anomaly_score", "anomaly_map"],
         "input_channels": channels,
-        "input_height": size,
-        "input_width": size,
+        "input_height": height,
+        "input_width": width,
         "num_classes": 1,
         "class_names": [],
         "normalize_mean": mean,
@@ -117,11 +123,12 @@ class DinomalyRuntime:
         )
 
     @torch.inference_mode()
-    def predict_from_path(self, path, *, center_crop=None):
+    def predict_from_path(self, path, *, center_crop=...):
         from dense_deployment import predict_dense
 
         config = copy.deepcopy(self.config)
-        config["preprocessing"]["center_crop"] = center_crop
+        if center_crop is not ...:
+            config["preprocessing"]["center_crop"] = center_crop
 
         def run(tensor):
             return [

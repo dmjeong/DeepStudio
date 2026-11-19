@@ -131,6 +131,7 @@ struct InferenceConfig
     // 기준 미달 덩어리는 마스크에서 배경(0)으로 지운다 → 설비 코드는 마스크·픽셀 수를 그대로 쓰면 된다.
     struct DefectRule { int min_area = 1; float min_score = 0.0f; };
     std::vector<DefectRule> defect_rules; ///< 비어 있으면 마스크를 그대로 둔다
+    bool native_input = false;    ///< Require the post-crop image to match the model input.
 };
 
 

@@ -108,6 +108,10 @@ bool Sam2Inference::InitializeDocument(const json& document, const std::string& 
         m_input_channels = document.value("input_channels", 3);
         m_input_height = document.value("input_height", 1024);
         m_input_width = document.value("input_width", 1024);
+        const auto preprocessing = document.value("preprocessing", nlohmann::json::object());
+        m_native_size = preprocessing.contains("original_size_region");
+        if (m_native_size && preprocessing.at("original_size_region") != nlohmann::json::array({m_input_width, m_input_height}))
+            throw std::invalid_argument("SAM2 native region must match encoder input dimensions.");
         m_normalize_mean = document.value("normalize_mean", m_normalize_mean);
         m_normalize_std = document.value("normalize_std", m_normalize_std);
         if (m_input_name.empty() || m_input_channels != 3 || m_input_height <= 0 || m_input_width <= 0 ||
@@ -259,13 +263,16 @@ std::vector<float> Sam2Inference::Preprocess(const cv::Mat& image) const
 {
     if (image.empty() || image.depth() != CV_8U)
         throw std::invalid_argument("SAM2 image must be a non-empty 8-bit image.");
+    if (m_native_size && (image.cols != m_input_width || image.rows != m_input_height))
+        throw std::invalid_argument("Image dimensions do not match the native SAM2 training region.");
     cv::Mat rgb;
     if (image.channels() == 1) cv::cvtColor(image, rgb, cv::COLOR_GRAY2RGB);
     else if (image.channels() == 3) cv::cvtColor(image, rgb, cv::COLOR_BGR2RGB);
     else if (image.channels() == 4) cv::cvtColor(image, rgb, cv::COLOR_BGRA2RGB);
     else throw std::invalid_argument("SAM2 image must have 1, 3 or 4 channels.");
-    cv::Mat resized;
-    cv::resize(rgb, resized, cv::Size(m_input_width, m_input_height), 0, 0, cv::INTER_LINEAR_EXACT);
+    cv::Mat resized = rgb;
+    if (!m_native_size)
+        cv::resize(rgb, resized, cv::Size(m_input_width, m_input_height), 0, 0, cv::INTER_LINEAR_EXACT);
     std::vector<float> result(static_cast<size_t>(m_input_channels) * m_input_height * m_input_width);
     for (int y = 0; y < m_input_height; ++y) {
         const auto* row = resized.ptr<cv::Vec3b>(y);

@@ -7,7 +7,7 @@ from libreyolo.validation import ClassifyValidator, ValidationConfig
 from libreyolo_classification import FullFrameTransform, preprocessing_contract
 
 
-def _set_transform(loader, size, *, augment=False, augmentation=None, patches=None):
+def _set_transform(loader, size, *, augment=False, augmentation=None, patches=None, original_size=False):
     # ClassifyDataset wraps ImageFolder in the pinned LibreYOLO 1.5 runtime.
     dataset = loader.dataset
     if not hasattr(dataset, "_impl") or not hasattr(dataset._impl, "transform"):
@@ -16,17 +16,21 @@ def _set_transform(loader, size, *, augment=False, augmentation=None, patches=No
         from native_patches import PatchBagTransform
         dataset._impl.transform = PatchBagTransform(patches, augment=augment, augmentation=augmentation)
     else:
-        dataset._impl.transform = FullFrameTransform(size, augment=augment, augmentation=augmentation)
+        dataset._impl.transform = FullFrameTransform(size, augment=augment, augmentation=augmentation,
+                                                    original_size=original_size)
     return loader
 
 
 class FullFrameValidator(ClassifyValidator):
-    def __init__(self, *args, studio_patches=None, **kwargs):
+    def __init__(self, *args, studio_patches=None, studio_original_size_region=None, **kwargs):
+        self.studio_original_size_region = studio_original_size_region
         self.studio_patches = studio_patches
         super().__init__(*args, **kwargs)
 
     def _setup_dataloader(self):
-        return _set_transform(super()._setup_dataloader(), self.config.imgsz, patches=self.studio_patches)
+        size = self.studio_original_size_region[::-1] if self.studio_original_size_region else self.config.imgsz
+        return _set_transform(super()._setup_dataloader(), size, patches=self.studio_patches,
+                              original_size=bool(self.studio_original_size_region))
 
     def _inference(self, images):
         if self.studio_patches:
@@ -37,7 +41,9 @@ class FullFrameValidator(ClassifyValidator):
 
 
 class FullFrameTrainer(MobileNetV4Trainer):
-    def __init__(self, *args, studio_center_crop=None, studio_augmentation=None, studio_patches=None, **kwargs):
+    def __init__(self, *args, studio_center_crop=None, studio_augmentation=None, studio_patches=None,
+                 studio_original_size_region=None, **kwargs):
+        self.studio_original_size_region = studio_original_size_region
         from center_crop import validate_center_crop
         from studio_augmentation import augmentation_contract
         self.studio_center_crop = validate_center_crop(studio_center_crop)
@@ -63,8 +69,10 @@ class FullFrameTrainer(MobileNetV4Trainer):
                 pin_memory=previous.pin_memory, persistent_workers=previous.num_workers > 0)
         else:
             super()._setup_classify_data()
-        _set_transform(self.train_loader, self.config.imgsz, augment=True,
-                       augmentation=self.studio_augmentation, patches=self.studio_patches)
+        size = self.studio_original_size_region[::-1] if self.studio_original_size_region else self.config.imgsz
+        _set_transform(self.train_loader, size, augment=True,
+                       augmentation=self.studio_augmentation, patches=self.studio_patches,
+                       original_size=bool(self.studio_original_size_region))
 
     def on_forward(self, imgs, targets, polygons=None):
         if not self.studio_patches:
@@ -75,18 +83,26 @@ class FullFrameTrainer(MobileNetV4Trainer):
         return {"total_loss": loss, "loss_ce": loss.detach()}
 
     def _checkpoint_extra_metadata(self):
+        region = self.studio_original_size_region
+        size = region[::-1] if region else self.config.imgsz
         return {**super()._checkpoint_extra_metadata(),
                 "center_crop": self.studio_center_crop,
                 "studio_augmentation": self.studio_augmentation,
                 "studio_patches": self.studio_patches,
-                "studio_preprocessing": preprocessing_contract(self.config.imgsz)}
+                **({"original_size_region": list(region)} if region else {}),
+                "studio_preprocessing": preprocessing_contract(size, original_size_region=region)}
 
     def resume(self, checkpoint_path):
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         if checkpoint.get("studio_preprocessing") is None:
             raise ValueError("중앙 자르기를 사용한 구형 LibreYOLO 학습은 중단 재개할 수 없습니다. "
                              "기존 가중치로 추가 학습을 선택하세요. 추론에는 그대로 사용할 수 있습니다.")
-        preprocessing_contract(self.config.imgsz, checkpoint["studio_preprocessing"])
+        from upstream_original_size import checkpoint_region
+        region = checkpoint_region(checkpoint)
+        if region != self.studio_original_size_region:
+            raise ValueError("이어학습은 저장된 원본 크기 설정과 일치해야 합니다.")
+        preprocessing_contract(region[::-1] if region else self.config.imgsz, checkpoint["studio_preprocessing"],
+                               original_size_region=region)
         if checkpoint.get("studio_patches") != self.studio_patches:
             raise ValueError("중단 재개 모델의 패치 설정이 다릅니다. 추가 학습을 선택하세요.")
         if checkpoint.get("studio_augmentation", {"horizontal_flip": .5, "rotation": 0., "color_jitter": 0.}) != self.studio_augmentation:
@@ -111,7 +127,7 @@ class FullFrameTrainer(MobileNetV4Trainer):
         self.wrapper_model.model = network
         try:
             result = FullFrameValidator(self.wrapper_model, config,
-                                       studio_patches=self.studio_patches,
+                                       studio_patches=self.studio_patches, studio_original_size_region=self.studio_original_size_region,
                                        **self._validation_loss_kwargs(network)).run()
         finally:
             self.wrapper_model.model = original

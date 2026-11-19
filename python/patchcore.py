@@ -248,7 +248,7 @@ class PatchCore:
         device: str | torch.device = "cpu",
         sampling_ratio: float = 0.01,
         n_neighbors: int = 9,
-        input_size: int = 224,
+        input_size: int | tuple[int, int] = 224,
         pretrained: bool = True,
         backbone_weights: str = "",
         max_candidates: int = 20000,
@@ -265,10 +265,11 @@ class PatchCore:
             device: 연산 디바이스
             sampling_ratio: 코어셋 비율 (0.01 = 전체 패치의 1%)
             n_neighbors: 이미지 점수 재가중에 사용할 최근접 정상 특징 수
-            input_size: 입력 이미지 크기 (정사각형)
+            input_size: 정사각형 리사이즈 크기 또는 원본 해상도 (높이, 너비)
         """
+        from patchcore_data import anomaly_input_shape
         if (not 0 < sampling_ratio <= 1 or n_neighbors < 1
-                or int(n_neighbors) != n_neighbors or int(input_size) < 32):
+                or int(n_neighbors) != n_neighbors or min(anomaly_input_shape(input_size)) < 32):
             raise ValueError("PatchCore 설정 범위 오류")
         self.device = torch.device(device)
         self.backbone_name = backbone_name
@@ -280,7 +281,7 @@ class PatchCore:
         # 사용하고, n_neighbors는 이미지 점수 재가중에만 사용한다. 이전
         # 체크포인트는 legacy 정의를 유지하여 재학습 전 판정이 바뀌지 않는다.
         self.score_definition = score_definition
-        self.input_size = int(input_size)
+        self.input_size = tuple(input_size) if isinstance(input_size, (list, tuple)) else int(input_size)
         self.anomaly_threshold = None
         self.score_normalization = None
         self.calibration = {"evaluable": False, "reason": "임계값 미보정"}
@@ -344,6 +345,14 @@ class PatchCore:
         feat = feat.permute(0, 2, 3, 1).reshape(-1, D)
         return feat
 
+    def _validate_images(self, images):
+        if images.ndim != 4 or images.shape[1] != 3 or images.shape[0] < 1:
+            raise ValueError("PatchCore 입력은 정규화된 (B,3,H,W) 이미지여야 합니다")
+        if isinstance(self.input_size, tuple) and tuple(images.shape[-2:]) != self.input_size:
+            height, width = self.input_size
+            raise ValueError(f"원본 학습 판정 영역 {width}×{height}px가 필요합니다. "
+                             f"현재 {images.shape[-1]}×{images.shape[-2]}px")
+
     @torch.no_grad()
     def fit(self, train_loader, progress_callback=None, cancel_callback=None, *, append=False):
         """고정된 백본으로 정상 특징을 구축한다. 취소 시 기존 뱅크는 유지한다."""
@@ -364,8 +373,7 @@ class PatchCore:
         for batch_idx, batch in enumerate(train_loader):
             _check_cancel(cancel_callback)
             images = batch[0] if isinstance(batch, (list, tuple)) else batch
-            if images.ndim != 4 or images.shape[1] != 3:
-                raise ValueError("PatchCore 입력은 정규화된 (B,3,H,W) 이미지여야 합니다")
+            self._validate_images(images)
             # 고해상도에서 큰 전체 배치를 GPU로 올리지 않는다.
             micro_batch = max(1, min(images.shape[0], 1048576 // (images.shape[2] * images.shape[3])))
             for start in range(0, images.shape[0], micro_batch):
@@ -448,8 +456,7 @@ class PatchCore:
                 "fit() 또는 load()를 먼저 실행해 주세요."
             )
 
-        if images.ndim != 4 or images.shape[1] != 3 or images.shape[0] < 1:
-            raise ValueError("PatchCore 입력은 (B,3,H,W) 이미지여야 합니다")
+        self._validate_images(images)
         self.backbone.eval()
         micro_batch = max(1, 1048576 // (images.shape[2] * images.shape[3]))
         if images.shape[0] > micro_batch:

@@ -25,7 +25,8 @@ def test_foreground_loss_supervises_even_subcell_boxes():
     assert torch.count_nonzero(grad > 0) == 63
 
 
-def test_foreground_training_exports_a_regular_detector(tmp_path):
+@pytest.mark.parametrize("original_size", [False, True])
+def test_foreground_training_exports_a_regular_detector(tmp_path, original_size):
     pytest.importorskip("onnxruntime")
     project = ProjectManager.create_new("foreground", "detect", str(tmp_path), ["crack", "material"])
     project.model.model_id = ""
@@ -35,7 +36,9 @@ def test_foreground_training_exports_a_regular_detector(tmp_path):
     cfg.training_mode = "custom"
     cfg.input_size, cfg.epochs, cfg.batch_size, cfg.device = 64, 1, 2, "cpu"
     cfg.detection_foreground_supervision = True
-    image = np.full((64, 64, 3), 120, np.uint8)
+    cfg.original_size_training = original_size
+    shape = (75, 109) if original_size else (64, 64)
+    image = np.full((*shape, 3), 120, np.uint8)
     image[21:24, 18:23] = 232
     for folder in (project.data.train_dir, project.data.val_dir):
         directory = Path(folder)
@@ -55,6 +58,18 @@ def test_foreground_training_exports_a_regular_detector(tmp_path):
     output = tmp_path / "detector.onnx"
     result = export_checkpoint(saved, output, log=lambda _: None)
     assert result["verification"] == "passed"
+    if original_size:
+        from core.inference_loading import load_inference_engine
+
+        manifest = json.loads(Path(result["config_path"]).read_text())
+        assert manifest["preprocessing"]["input_size"] == list(shape)
+        assert manifest["preprocessing"]["original_size_region"] == list(shape[::-1])
+        engine = load_inference_engine(saved)
+        inferred = engine.infer(str(directory / "0.png"))
+        assert inferred.status == "ok", inferred.error
+        wrong = tmp_path / "wrong.png"
+        Image.fromarray(image[:-1]).save(wrong)
+        assert engine.infer(str(wrong)).status != "ok"
     if probe := os.environ.get("DETECT_PROBE"):
         result = subprocess.run([probe, result["config_path"], str(directory / "0.png")],
                                 capture_output=True, text=True, check=True)

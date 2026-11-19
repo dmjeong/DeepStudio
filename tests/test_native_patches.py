@@ -233,7 +233,9 @@ def test_real_detector_training_settings_and_export(tmp_path, model_id):
     prediction = predict_patches(loaded, Image.open(source / "images/val/0.png"), contract)
     assert prediction.studio_tiles == 1
     output = tmp_path / "model.onnx"
-    export_checkpoint(result["best_checkpoint"], output, verify=True, log=lambda _: None)
+    # A one-sample trace of the native DETR decoder drops batch expansion of anchors.
+    export_checkpoint(result["best_checkpoint"], output, verify=True, log=lambda _: None,
+                      dynamic_batch=model_id == "libreyolo_detect_dfine_nano")
     manifest = json.loads(output.with_suffix(".json").read_text())
     assert manifest["patches"] == contract and manifest["schema_version"] == 7
     assert manifest["normalize_mean"] == [0., 0., 0.]

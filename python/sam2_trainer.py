@@ -58,22 +58,20 @@ def _prompt_targets(masks: torch.Tensor, *, class_offset: int = 0) -> tuple[torc
 
 def _sam2_logits(model, images: torch.Tensor, point_coords: torch.Tensor, point_labels=None) -> torch.Tensor:
     """Run the official image path used by the paired ONNX exporter."""
-    features = model.forward_image(images)["backbone_fpn"]
-    image_embeddings = features[2]
-    if model.directly_add_no_mem_embed:
-        image_embeddings = image_embeddings + model.no_mem_embed.reshape(1, -1, 1, 1)
+    from sam2_native import image_embeddings
+    image_embed, first, second = image_embeddings(model, images)
     if point_labels is None:
         point_labels = torch.ones(point_coords.shape[:2], device=images.device, dtype=torch.int32)
     sparse, dense = model.sam_prompt_encoder(
         points=(point_coords, point_labels), boxes=None, masks=None)
     logits, _, _, _ = model.sam_mask_decoder(
-        image_embeddings=image_embeddings,
+        image_embeddings=image_embed,
         image_pe=model.sam_prompt_encoder.get_dense_pe(),
         sparse_prompt_embeddings=sparse,
         dense_prompt_embeddings=dense,
         multimask_output=False,
         repeat_image=False,
-        high_res_features=[features[0], features[1]],
+        high_res_features=[first, second],
     )
     return logits[:, 0]
 
@@ -174,12 +172,12 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
                epochs: int, batch_size: int, learning_rate: float, weight_decay: float,
                device: str, use_amp: bool, input_size: int = 1024,
                class_names: list[str] | None = None,
-               initial_checkpoint: str | Path | None = None,
+               initial_checkpoint: str | Path | None = None, original_size_training: bool = False,
                horizontal_flip: float = 0.5, rotation: float = 0.0,
                color_jitter: float = 0.0, emit: Callable[[dict], None] | None = None,
                should_stop: Callable[[], bool] | None = None) -> dict:
     """Fine-tune one shipped SAM2.1 Hiera variant and return run artifacts."""
-    if int(input_size) != 1024:
+    if not original_size_training and int(input_size) != 1024:
         # SAM2.1 Hiera checkpoints and the official ONNX ABI use a fixed 1024
         # image side.  Do not silently resize to a different model contract.
         raise ValueError("SAM2 학습 입력 크기는 1024여야 합니다.")
@@ -195,10 +193,12 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
     torch_device = torch.device(device)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
+    options = {"original_size": True} if original_size_training else {}
     train_loader, val_loader = create_segmentation_loaders(
         str(data_root), input_size=(1024, 1024), batch_size=batch_size, in_channels=3,
         flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter,
-        num_classes=len(class_names) if class_names else None, pin_memory=torch_device.type == "cuda")
+        num_classes=len(class_names) if class_names else None, pin_memory=torch_device.type == "cuda", **options)
+    native_region = tuple(reversed(train_loader.dataset.original_size)) if original_size_training else None
     train_data = _validate_prompt_masks(train_loader, "train", class_names)
     val_data = _validate_prompt_masks(val_loader, "val", class_names)
     from dataset import unlabeled_message
@@ -208,6 +208,13 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
     # Check the data contract before allocating/downloading SAM2 weights. This
     # makes the common missing-mask/background-only error immediate and clear.
     model = load_sam2_checkpoint(model_id, checkpoint_path=initial_checkpoint, device=str(torch_device))
+    if native_region:
+        from sam2_native import configure_native_region
+        configure_native_region(model, native_region)
+    elif getattr(model, "dvs_original_size_region", None):
+        from sam2_native import configure_native_region
+        configure_native_region(model, (1024, 1024))
+        del model.dvs_original_size_region
     # Train, validation and export must all use the trained single-mask token.
     model.dvs_multimask_output = False
     model.sam_mask_decoder.dynamic_multimask_via_stability = False
@@ -227,7 +234,7 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
     best_path, last_path = output / "best.pt", output / "last.pt"
     started = time.perf_counter()
     emit({"event": "training_started", "family": "SAM2.1", "size": model_id,
-          "epoch": 1, "total_epochs": epochs, "input_size": 1024,
+          "epoch": 1, "total_epochs": epochs, "input_size": list(reversed(native_region)) if native_region else 1024,
           "frozen_modules": ["image_encoder"]})
 
     for epoch in range(1, epochs + 1):
@@ -295,11 +302,15 @@ def train_sam2(model_id: str, data_root: str | Path, *, output_dir: str | Path,
         payload = _checkpoint_payload(model, optimizer, model_id=model_id, epoch=epoch,
                                       best_dice=best_dice, history=history,
                                       source_checkpoint=str(initial_checkpoint) if initial_checkpoint else None)
+        if original_size_training:
+            payload["original_size_region"] = list(native_region)
         _save_checkpoint(last_path, payload)
         if event["is_best"]:
             _save_checkpoint(best_path, payload)
         emit(event)
     return {
+        "input_size": list(reversed(native_region)) if native_region else 1024,
+        "original_size_region": list(native_region) if native_region else None,
         "best_checkpoint": str(best_path) if best_path.is_file() else None,
         "last_checkpoint": str(last_path) if last_path.is_file() else None,
         "best_metric": best_dice if best_dice >= 0 else None,

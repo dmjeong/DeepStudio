@@ -110,7 +110,8 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
     if not 11 <= opset <= 17:
         raise ValueError("PatchCore exporter supports ONNX opset 11..17")
     output.parent.mkdir(parents=True, exist_ok=True)
-    size = int(patchcore.input_size)
+    from patchcore_data import anomaly_input_shape
+    height, width = anomaly_input_shape(patchcore.input_size)
     threshold = patchcore.anomaly_threshold
     if threshold is None:
         raise ValueError("PatchCore ONNX 배포 전 정상·불량 보정 데이터로 임계값을 설정해야 합니다. 미보정 모델은 C++에서 자동 OK/NG 판정을 할 수 없습니다.")
@@ -122,7 +123,7 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
     from center_crop import validate_center_crop
     crop = validate_center_crop(getattr(patchcore, "center_crop", None))
     model = PatchCoreOnnxWrapper(patchcore).eval()
-    dummy = torch.randn(1, 3, size, size, generator=torch.Generator().manual_seed(42))
+    dummy = torch.randn(1, 3, height, width, generator=torch.Generator().manual_seed(42))
     with tempfile.TemporaryDirectory(prefix=".patchcore-onnx-", dir=output.parent) as directory:
         staged = Path(directory) / output.name
         log(f"PatchCore ONNX 그래프 생성: bank={patchcore.memory_bank.shape[0]}, k={model.effective_neighbors}")
@@ -149,9 +150,9 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
         "schema_version": 5, "backend": "patchcore", "task": "anomaly",
         "model_path": output.name, "input_name": input_name, "output_name": output_names[0],
         "output_names": output_names, "input_channels": 3,
-        "input_height": size, "input_width": size, "num_classes": 1,
+        "input_height": height, "input_width": width, "num_classes": 1,
         "normalize_mean": [0.485, 0.456, 0.406], "normalize_std": [0.229, 0.224, 0.225],
-        "class_names": [], "preprocessing": {"input_size": [size, size], "in_channels": 3,
+        "class_names": [], "preprocessing": {"input_size": [height, width], "in_channels": 3,
             "resize_implementation": "opencv_linear_exact_v1", "interpolation": "INTER_LINEAR_EXACT",
             "antialias": False, "layout": "NCHW", "resize": "bilinear", "value_scale": 255.,
         "value_range": "uint8_0_255_or_uint16_0_65535", "implementation": "opencv_full_range_v2", "color_order": "RGB",
@@ -165,6 +166,8 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
                             "memory_bank_size": int(patchcore.memory_bank.shape[0]),
                             "n_neighbors": int(model.effective_neighbors)},
     }
+    if isinstance(patchcore.input_size, (tuple, list)):
+        config["preprocessing"]["original_size_region"] = [width, height]
     config_path = output.with_suffix(".json")
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     result = {"output_path": str(output), "config_path": str(config_path),

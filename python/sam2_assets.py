@@ -190,6 +190,10 @@ def load_sam2_checkpoint(model_id: str, *, device: str = "cpu",
         raise ValueError("SAM2 미세조정 체크포인트의 모델 구조가 맞지 않습니다.") from exc
     if unexpected or any(name.startswith(("sam_prompt_encoder.", "sam_mask_decoder.")) for name in _missing):
         raise ValueError("SAM2 미세조정 체크포인트의 모델 구조가 선택한 Hiera 변형과 다릅니다.")
+    region = payload.get("original_size_region")
+    if region is not None:
+        from sam2_native import configure_native_region
+        configure_native_region(model, region)
     model.dvs_multimask_output = False
     if hasattr(model, 'sam_mask_decoder'):
         model.sam_mask_decoder.dynamic_multimask_via_stability = False

@@ -51,6 +51,16 @@ def region_pixels(config, bgr):
         bgr = bgr[
             (h - ch) // 2 : (h - ch) // 2 + ch, (w - cw) // 2 : (w - cw) // 2 + cw
         ]
+    region = (config.get("preprocessing") or {}).get("original_size_region")
+    if region is not None and tuple(region) != (bgr.shape[1], bgr.shape[0]):
+        raise ValueError(f"원본 학습 판정 영역 {region[0]}×{region[1]}px가 필요합니다. "
+                         f"현재 {bgr.shape[1]}×{bgr.shape[0]}px")
+    whole = (config.get("preprocessing") or {}).get("whole_image")
+    if whole:
+        from quantize_onnx import preprocess
+        if list(bgr.shape[1::-1]) != whole["region"]:
+            raise ValueError("원본 분할 판정 영역 크기와 입력이 다릅니다.")
+        return preprocess(config, bgr)[0]
     c = config["input_channels"]
     if c == 1:
         pixels = (
@@ -192,4 +202,7 @@ def predict_dense_maps(config, bgr, run_models):
         weights[y : y + th, x : x + tw] += weight
     for total in sums:
         total /= weights
+    whole = (config.get("preprocessing") or {}).get("whole_image")
+    if whole:
+        w, h = whole["scaled"]
     return [total[:, :h, :w] for total in sums]

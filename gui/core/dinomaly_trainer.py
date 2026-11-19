@@ -18,6 +18,7 @@ def train_project(context, project, device):
         model_name="dinomaly_vits14",
         input_size=cfg.input_size,
         project_dir=project.project_dir,
+        original_size=cfg.original_size_training,
     )
     run_dir = Path(project.project_dir) / "runs" / run_id
 
@@ -56,7 +57,7 @@ def train_project(context, project, device):
     started = datetime.now().isoformat()
     context.emit(
         "log_message",
-        [f"Dinomaly 정상 재구성 학습 · 장치: {device} · 입력: {cfg.input_size}"],
+        [f"Dinomaly 정상 재구성 학습 · 장치: {device} · 입력: {'원본 크기' if cfg.original_size_training else cfg.input_size}"],
     )
     best = train_dinomaly(
         project.data.root,
@@ -75,6 +76,7 @@ def train_project(context, project, device):
         pretrained=cfg.training_mode == "builtin_finetune",
         resume=resume,
         initial_weights=None if resume else weights,
+        original_size_training=cfg.original_size_training,
         patch_training=cfg.patch_training,
         patches_per_image=cfg.patches_per_image,
         patch_scale=cfg.patch_scale,

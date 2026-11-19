@@ -102,7 +102,7 @@ class PatchCoreBestEpoch(unittest.TestCase):
                               "evaluable": auroc is not None, "optimal_threshold": None}
                 def loader():
                     return SimpleNamespace(dataset=SimpleNamespace(
-                        samples=[], preprocessing="full_range_v1",
+                        samples=[], input_size=64, preprocessing="full_range_v1",
                         augmentation_info=lambda: {"additional_views": 0},
                     ))
                 worker = SimpleNamespace(

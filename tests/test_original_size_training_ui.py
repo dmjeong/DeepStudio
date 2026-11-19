@@ -58,8 +58,35 @@ def test_original_size_and_patch_modes_do_not_mix(tmp_path):
 
         widget.original_size_check.click()
         widget.model_id_combo.setCurrentIndex(widget.model_id_combo.findData("sam2_hiera_tiny"))
-        assert widget.original_size_check.isHidden() and not widget.original_size_check.isChecked()
+        assert not widget.original_size_check.isHidden()
+        if not widget.original_size_check.isChecked():
+            widget.original_size_check.click()
+        assert not widget.pc_crop_check.isEnabled() and not widget.pc_crop_check.isChecked()
         assert not widget.patch_check.isEnabled()
+    finally:
+        widget.close()
+        widget.deleteLater()
+        app.processEvents()
+
+
+def test_original_size_available_for_every_shipped_model(tmp_path):
+    from core.model_registry import builtin_model_specs
+
+    app = QApplication.instance() or QApplication([])
+    widget = TrainingWidget()
+    try:
+        for spec in builtin_model_specs():
+            project = ProjectManager.create_new("native", spec.task, str(tmp_path / spec.model_id),
+                                                ["background", "defect"])
+            project.model.model_id = spec.model_id
+            widget.set_project(project)
+            assert widget.model_id_combo.currentData() == spec.model_id
+            assert not widget.original_size_check.isHidden(), spec.model_id
+            widget.original_size_check.click()
+            widget.collect_config()
+            assert project.training.original_size_training, spec.model_id
+            assert not project.training.patch_training, spec.model_id
+            assert not widget.input_size_spin.isEnabled(), spec.model_id
     finally:
         widget.close()
         widget.deleteLater()

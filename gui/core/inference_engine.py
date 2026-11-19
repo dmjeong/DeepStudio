@@ -40,6 +40,11 @@ class InferenceOperations:
             crop = self._center_crop
             box = center_crop_box((original.shape[1], original.shape[0]), crop)
             source_image = Image.fromarray(original[box[1]:box[3], box[0]:box[2]])
+            native = getattr(model, "studio_original_size_region", None)
+            if native and tuple(source_image.size) != tuple(native):
+                raise ValueError(f"이 모델의 판정 영역은 {native[0]}×{native[1]} px여야 합니다.")
+            height, width = self._input_size
+            model_size = height if width == height else (height, width)
             patches = getattr(model, "studio_patches", None)
             if patches:
                 from native_patch_inference import predict_patches
@@ -47,7 +52,7 @@ class InferenceOperations:
                     conf=float(getattr(self, "detection_confidence", .25)),
                     iou=float(getattr(self, "detection_iou", .5)))
             else:
-                result = model.predict(source_image, imgsz=int(self._input_size[0]),
+                result = model.predict(source_image, imgsz=model_size,
                                        conf=float(getattr(self, "detection_confidence", .25)),
                                        iou=float(getattr(self, "detection_iou", .5)),
                                        device=str(self._infer_device))
@@ -118,7 +123,7 @@ class InferenceOperations:
                         valid = np.ones(activation.shape, bool)
                         preprocessing_info += " | 최대 로짓에 기여한 패치의 Grad-CAM"
                     else:
-                        activation, valid = self._gradcam.generate_image(source_image, self._input_size[0], top)
+                        activation, valid = self._gradcam.generate_image(source_image, model_size, top)
                     if crop:
                         from core.heatmap import reproject_center_crop
                         activation, valid = reproject_center_crop(activation, original.shape[:2], crop)
@@ -166,12 +171,11 @@ class InferenceOperations:
             onnx = getattr(self, "_onnx_runtime", None)
             # 패치 학습 모델: 줄이지 않고 원본 해상도 타일로 나눠 추론한다 (checkpoint의 tiling 규칙).
             tiling = getattr(self, "_tiling", None) if task == "segment" else None
-            original_size = getattr(self.model, "original_size_region", None) if task == "segment" else None
+            original_size = getattr(self.model, "original_size_region", None)
             if original_size is not None:
-                width, height = original_size
-                if img.shape[:2] != (height, width):
-                    raise ValueError(f"이 모델은 {width}×{height} px 판정 영역이 필요합니다. "
-                                     f"현재 영역: {img.shape[1]}×{img.shape[0]} px.")
+                from opencv_preprocess import require_native_region
+                require_native_region(img, original_size)
+            if task == "segment" and original_size is not None:
                 input_tensor = None
                 prepared = time.perf_counter()
                 output = self._whole_probabilities(img, mean, std, device).unsqueeze(0)
@@ -181,7 +185,7 @@ class InferenceOperations:
                 output = self._patch_probabilities(img, tiling, mean, std, device).unsqueeze(0)
             else:
                 transform = transforms.Compose([
-                    OpenCVResize(input_size),
+                    *([] if original_size is not None else [OpenCVResize(input_size)]),
                     transforms.ToTensor(),
                     transforms.Normalize(mean=mean, std=std),
                 ])
@@ -252,7 +256,7 @@ class InferenceOperations:
                 # normalized input과 비교하면 스케일이 맞지 않아
                 # 이상 맵이 왜곡됨.
                 unnorm_transform = transforms.Compose([
-                    OpenCVResize(input_size),
+                    *([] if original_size is not None else [OpenCVResize(input_size)]),
                     transforms.ToTensor(),  # [0,1] 범위, Normalize 없음
                 ])
                 target_tensor = unnorm_transform(img).unsqueeze(0).to(device)
@@ -350,6 +354,7 @@ class InferenceOperations:
         if crop:
             self._set_info((getattr(self, "info", "") or "") + f" | 판정 범위: 중앙 {crop['width']}×{crop['height']} px")
         if original_size is not None:
+            width, height = original_size
             self._set_info((getattr(self, "info", "") or "") + f" | 원본 크기 학습 모델 · {width}×{height} px")
         elif task == "segment" and tiling:
             scale = float(tiling.get("scale", 1.0))

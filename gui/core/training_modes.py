@@ -50,12 +50,6 @@ BUILTIN_ADAPTER_IDS = LOCAL_TRANSFORMER_TEACHERS | frozenset({
 # 사전학습 가중치가 없는 기본 모델 (python/builtin_models.SCRATCH_ONLY_MODELS와 같은 목록)
 BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite"})
 
-# These models use the full-resolution inference contract, including the SDK.
-ORIGINAL_SIZE_SEGMENT_IDS = frozenset({
-    "deeplabv3plus_resnet34", "unet_resnet18", "unet_lite", "unet_mobilenetv2",
-    "unet_mobilenetv4_small", "unet_shufflenetv2", "unet_efficientnet_b1", "bisenetv2", "stdc1",
-})
-
 UPSTREAM_ADAPTER_IDS = frozenset({
     "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",
     "libreyolo_classify_mobilenetv4_medium", "libreyolo_detect_dfine_nano",
@@ -113,9 +107,9 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
         "patch_training": engine == "dinomaly" or (task == "segment" and engine != "sam2") or (engine == "upstream" and task in {"classify", "detect"}),
         "small_object_coverage": task == "detect" and engine == "upstream",
         "detection_foreground_supervision": task == "detect" and engine == "custom" and not model_id,
-        "original_size_training": task == "segment" and (
-            (engine == "custom" and not model_id) or
-            (engine in {"custom", "builtin"} and model_id in ORIGINAL_SIZE_SEGMENT_IDS)
+        "original_size_training": (
+            not model_id or model_id in BUILTIN_ADAPTER_IDS | UPSTREAM_ADAPTER_IDS | SAM2_ADAPTER_IDS
+            or model_id in {"efficientnet_b0", "efficientnet_b1", "patchcore_resnet18", "patchcore_wide_resnet50_2"}
         ),
         "models": ["efficientnet_b0", "efficientnet_b1"] if engine == "efficientnet" else [],
         "resume": mode.endswith("_resume") and (task != "anomaly" or engine == "dinomaly"),
@@ -173,8 +167,10 @@ def validate_training_options(project, *, require_runnable=True):
             spec = registry.get(model_id)
         except (ImportError, KeyError, ValueError):
             spec = None
-        if spec is not None and not (project.task == "anomaly" and
-                                     cfg.anomaly_method == "patchcore"):
+        legacy_reconstruction = (project.task == "anomaly" and cfg.anomaly_method == "reconstruction"
+                                 and model_id in {"patchcore_resnet18", "patchcore_wide_resnet50_2"})
+        if spec is not None and not legacy_reconstruction and not (project.task == "anomaly" and
+                                                                   cfg.anomaly_method == "patchcore"):
             if spec.task != project.task:
                 raise ValueError(f"선택한 모델 {model_id}은 {project.task} 태스크와 맞지 않습니다.")
             if cfg.in_channels not in spec.input_channels:
@@ -206,6 +202,8 @@ def validate_training_options(project, *, require_runnable=True):
     if type(original_size) is not bool:
         raise ValueError("원본 크기 학습 옵션은 boolean 필요")
     if original_size:
+        if model_id in SAM2_ADAPTER_IDS and getattr(cfg, "patchcore_crop_enabled", False):
+            raise ValueError("SAM2 원본 크기 학습에는 중앙 크롭을 끄고 같은 크기의 이미지와 마스크를 사용하세요.")
         if getattr(cfg, "patch_training", False):
             raise ValueError("원본 크기 학습과 패치 학습은 함께 사용할 수 없습니다.")
         if not capabilities.get("original_size_training", False):

@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 from center_crop import center_crop_box
 from onnx_session import cpu_session_options, deployment_session_settings
-from opencv_preprocess import convert_channels, resize
+from opencv_preprocess import convert_channels, require_native_region, resize
 
 
 _BACKENDS = {"onnxruntime": "ONNX Runtime", "openvino": "OpenVINO"}
@@ -81,7 +81,15 @@ def _rgb_region(image, preprocessing):
 
 
 def _tensor(cfg, image):
-    pixels = resize(image, (cfg["input_height"], cfg["input_width"]))
+    size = (cfg["input_height"], cfg["input_width"])
+    native = (cfg.get("preprocessing") or {}).get("original_size_region")
+    if native is None:
+        pixels = resize(image, size)
+    else:
+        require_native_region(image, native)
+        if tuple(native) != size[::-1]:
+            raise ValueError("원본 판정 영역과 모델 입력 크기가 다릅니다.")
+        pixels = image
     scale = 65535 if pixels.dtype == np.uint16 else 255
     pixels = pixels.reshape(*pixels.shape[:2], cfg["input_channels"]).astype(np.float32) / scale
     pixels = (pixels - np.asarray(cfg["normalize_mean"], np.float32)) / np.asarray(cfg["normalize_std"], np.float32)

@@ -854,7 +854,13 @@ class TrainWorker(TrainingEngine):
                     rotation=rotation,
                     color_jitter=color_jitter,
                     val_split=data_cfg.val_split,
+                    original_size=original_size,
                 )
+                if original_size:
+                    height, width = result[0].dataset.original_size
+                    self._original_size_region = (width, height)
+                    self._padded_input_size = (height, width)
+                    self.signals.log_message.emit(f"  원본 크기 분류 학습: {width}×{height} px")
                 # (train_loader, val_loader, class_names) 반환
                 if len(result) == 3:
                     train_loader, val_loader, class_names = result
@@ -918,7 +924,7 @@ class TrainWorker(TrainingEngine):
                 self.signals.log_message.emit(
                     "  Detection 데이터 로더 (정규화 좌표 포맷)"
                 )
-                return create_detection_loaders(
+                loaders = create_detection_loaders(
                     data_root=data_root,
                     input_size=input_size,
                     batch_size=cfg.batch_size,
@@ -926,14 +932,20 @@ class TrainWorker(TrainingEngine):
                     pin_memory=pin_memory,
                     num_classes=data_cfg.num_classes,
                     in_channels=cfg.in_channels,
-                    flip_prob=flip_prob,
+                    flip_prob=flip_prob, original_size=original_size,
                 )
+                if original_size:
+                    height, width = loaders[0].dataset.original_size
+                    self._original_size_region = (width, height)
+                    self._padded_input_size = (height, width)
+                    self.signals.log_message.emit(f"  원본 크기 탐지 학습: {width}×{height} px")
+                return loaders
 
             elif task == "anomaly":
                 self.signals.log_message.emit(
                     "  Anomaly 데이터 로더 (정상 이미지 재구성)"
                 )
-                return create_anomaly_loaders(
+                loaders = create_anomaly_loaders(
                     data_root=data_root,
                     input_size=input_size,
                     batch_size=cfg.batch_size,
@@ -941,8 +953,14 @@ class TrainWorker(TrainingEngine):
                     pin_memory=pin_memory,
                     in_channels=cfg.in_channels,
                     val_split=data_cfg.val_split,
-                    flip_prob=flip_prob,
+                    flip_prob=flip_prob, original_size=original_size,
                 )
+                if original_size:
+                    height, width = loaders[0].dataset.original_size
+                    self._original_size_region = (width, height)
+                    self._padded_input_size = (height, width)
+                    self.signals.log_message.emit(f"  원본 크기 재구성 학습: {width}×{height} px")
+                return loaders
 
         except Exception as e:
             self._dataloader_error = f"{type(e).__name__}: {e}"

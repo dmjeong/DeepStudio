@@ -38,8 +38,8 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from model import CustomCSP
-from dataset import create_segmentation_loaders
-from checkpoint import make_checkpoint_metadata
+from dataset import common_image_size, create_segmentation_loaders
+from checkpoint import make_checkpoint_metadata, tiling_contract
 
 
 def parse_args():
@@ -59,6 +59,11 @@ def parse_args():
                         help="학습률")
     parser.add_argument("--input_size", type=int, default=320,
                         help="입력 이미지 크기")
+    geometry = parser.add_mutually_exclusive_group()
+    geometry.add_argument("--original_size_training", action="store_true",
+                          help="원본 해상도 유지 (오른쪽과 아래 가장자리만 채움)")
+    geometry.add_argument("--patch_training", action="store_true",
+                          help="원본 해상도에서 --input_size 크기로 패치를 잘라 학습")
     parser.add_argument("--in_channels", type=int, default=3, choices=(1, 3),
                         help="입력 채널 수")
     parser.add_argument("--save_dir", type=str, default="./runs/segment",
@@ -300,15 +305,28 @@ def main():
         batch_size=args.batch_size,
         in_channels=args.in_channels,
         num_classes=args.num_classes,
+        patch_size=args.input_size if args.patch_training else 0,
+        original_size=args.original_size_training,
     )
     if train_loader is None or len(train_loader) == 0:
         raise ValueError("학습 배치 없음: 데이터 수와 배치 크기 확인 필요")
     if val_loader is None or len(val_loader) == 0:
         raise ValueError("검증 데이터 없음: 모델 선택을 위한 검증 데이터 필요")
+    original_region = None
+    tiling = None
+    if args.original_size_training:
+        height, width = train_loader.dataset.original_size
+        original_region = (width, height)
+        input_size = train_loader.dataset.padded_size
+        print(f"원본 크기 학습: {width}×{height} px → 모델 입력 {input_size[1]}×{input_size[0]} px")
+    elif args.patch_training:
+        region = common_image_size(os.path.join(args.data_root, "images", "train"))
+        tiling = tiling_contract(args.input_size, region=region)
     checkpoint_metadata = make_checkpoint_metadata(
         task="segment", num_classes=args.num_classes,
         class_names=[str(index) for index in range(args.num_classes)],
         input_size=input_size, in_channels=args.in_channels,
+        original_size_region=original_region, tiling=tiling,
     )
 
     # ── 모델 생성 ────────────────────────────────────

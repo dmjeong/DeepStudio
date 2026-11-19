@@ -43,6 +43,7 @@ def _project(tmp_path, model_id, *, crop):
 
 @pytest.mark.parametrize("model_id,crop,expected_region,expected_input", [
     ("unet_lite", False, (117, 91), (96, 128)),
+    ("unet_lite", True, (85, 61), (64, 96)),
     ("", True, (85, 61), (64, 96)),
 ])
 def test_desktop_worker_keeps_original_region(tmp_path, model_id, crop, expected_region, expected_input):
@@ -73,6 +74,9 @@ def test_desktop_worker_keeps_original_region(tmp_path, model_id, crop, expected
     assert project.training.input_size == 32
     if crop:
         assert saved["center_crop"] == {"width": 85, "height": 61}
+        if model_id:
+            effective = record.config_snapshot["best_selection"]["hyperparameters"]["effective"]
+            assert effective["center_crop"] == saved["center_crop"]
 
     image_path = Path(project.data.root) / "images" / "val" / "0.png"
     engine = load_inference_engine(record.checkpoint_path)
@@ -89,7 +93,7 @@ def test_desktop_worker_keeps_original_region(tmp_path, model_id, crop, expected
         assert result.details["crop_box"] == [16, 15, 101, 76]
 
 
-def test_original_size_cannot_be_combined_with_patches_or_used_for_sam2(tmp_path):
+def test_original_size_excludes_patches_and_checks_sam2_crop(tmp_path):
     from core.training_modes import validate_training_options
 
     project = _project(tmp_path, "unet_lite", crop=False)
@@ -99,7 +103,9 @@ def test_original_size_cannot_be_combined_with_patches_or_used_for_sam2(tmp_path
     project.training.patch_training = False
     project.model.model_id = "sam2_hiera_tiny"
     project.training.training_mode = "sam2_finetune"
-    with pytest.raises(ValueError, match="원본 크기 학습을 지원하지"):
+    validate_training_options(project)
+    project.training.patchcore_crop_enabled = True
+    with pytest.raises(ValueError, match="중앙 크롭"):
         validate_training_options(project)
 
 
@@ -135,3 +141,69 @@ def test_original_size_auto_loader_workers(monkeypatch, platform, device, origin
     monkeypatch.setattr(train_builtin, "sys", SimpleNamespace(platform=platform))
     monkeypatch.setattr(train_builtin.os, "cpu_count", lambda: 16)
     assert train_builtin._default_num_workers(device, original) == workers
+
+
+def test_custom_reconstruction_native_train_and_onnx(tmp_path):
+    import json
+    import onnxruntime as ort
+    from core.project import ProjectManager
+    from core.trainer import TrainWorker
+    from core.inference_loading import load_inference_engine
+    from export_onnx import export_checkpoint
+
+    project = ProjectManager.create_new("native", "anomaly", str(tmp_path / "project"))
+    project.model.model_id = ""
+    project.training.anomaly_method = "reconstruction"
+    cfg = project.training
+    cfg.original_size_training, cfg.training_mode = True, "custom"
+    cfg.input_size, cfg.epochs, cfg.batch_size, cfg.in_channels, cfg.device = 32, 1, 2, 1, "cpu"
+    project.model.backbone_channels = [8, 16, 32, 64, 96]
+    project.model.csp_depth = [1] * 4
+    folder = Path(project.data.root) / "train" / "good"
+    for i in range(3):
+        pixels = np.random.default_rng(i).integers(0, 256, (65, 95), np.uint8)
+        Image.fromarray(pixels).save(folder / f"{i}.png")
+    worker = TrainWorker(project)
+    worker.debug_num_workers = 0
+    errors = []
+    worker.signals.training_error.connect(errors.append)
+    worker.run()
+    assert not errors, errors
+    checkpoint = project.runs[-1].checkpoint_path
+    engine = load_inference_engine(checkpoint, runtime="pytorch")
+    assert engine.infer(str(folder / "0.png")).status in {"ok", "uncalibrated"}
+    wrong = tmp_path / "wrong.png"
+    Image.fromarray(pixels[:, :-1]).save(wrong)
+    assert "95×65" in engine.infer(str(wrong)).error
+    output = tmp_path / "native-anomaly.onnx"
+    export_checkpoint(checkpoint, output, verify=True)
+    config = json.loads(output.with_suffix(".json").read_text())
+    assert config["preprocessing"]["original_size_region"] == [95, 65]
+    sess = ort.InferenceSession(str(output), providers=["CPUExecutionProvider"])
+    reconstructed, = sess.run(None, {sess.get_inputs()[0].name: np.zeros((1, 1, 65, 95), np.float32)})
+    assert reconstructed.shape == (1, 1, 65, 95)
+
+
+def test_custom_segmentation_cli_native_checkpoint(tmp_path, monkeypatch):
+    import train_segmentation
+    from checkpoint import checkpoint_original_size_region
+    from export_onnx import load_custom_model, resolve_checkpoint_spec
+
+    project = _project(tmp_path, "", crop=False)
+    args = ["train_segmentation.py", "--data_root", project.data.root, "--num_classes", "2",
+            "--epochs", "1", "--batch_size", "2", "--input_size", "32",
+            "--original_size_training", "--save_dir", str(tmp_path), "--exp_name", "native"]
+    monkeypatch.setattr(sys, "argv", [*args, "--patch_training"])
+    with pytest.raises(SystemExit) as conflict:
+        train_segmentation.parse_args()
+    assert conflict.value.code == 2
+    monkeypatch.setattr(sys, "argv", args)
+    train_segmentation.main()
+    for name in ("best", "last"):
+        saved = torch.load(tmp_path / "native" / (name + ".pt"), weights_only=True)
+        assert checkpoint_original_size_region(saved) == (117, 91)
+        assert saved["input_size"] == [96, 128]
+        spec = resolve_checkpoint_spec(saved)
+        with torch.inference_mode():
+            out = load_custom_model(saved, spec)(torch.zeros(1, 3, 96, 128))
+        assert out.shape == (1, 2, 96, 128)

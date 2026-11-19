@@ -28,7 +28,7 @@ class LibreYOLOGradCAM:
         from libreyolo_classification import POLICY
         if getattr(self.wrapper, "studio_input_policy", None) != POLICY:
             raise ValueError("LibreYOLO 전체 영상 전처리가 연결되지 않았습니다")
-        tensor, image, _, _ = self.wrapper._preprocess(image_path, input_size=int(input_size))
+        tensor, image, _, _ = self.wrapper._preprocess(image_path, input_size=input_size)
         activation = self.cam.generate_activation(tensor, target_class=target_class)
         # No implicit crop: all pixels in the selected ROI belong to the CAM.
         return reproject_classification_cam(

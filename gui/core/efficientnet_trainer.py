@@ -191,6 +191,9 @@ class EfficientNetTrainWorker(TrainWorker):
         if self.project.training.training_mode != "efficientnet_resume":
             return {}
         checkpoint = self._source_checkpoint
+        from checkpoint import checkpoint_original_size_region
+        if checkpoint_original_size_region(checkpoint) != getattr(self, "_original_size_region", None):
+            raise ValueError("재개할 EfficientNet의 원본 학습 영역과 현재 데이터 크기가 다릅니다.")
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         if scheduler is not None:
             if checkpoint["scheduler_state_dict"] is None:

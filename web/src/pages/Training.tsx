@@ -37,7 +37,7 @@ export function Training({
     () => initialRunIndex(project.runs.length, hasLiveJob, !!jobId),
   );
   const patch =
-    project.task === "anomaly" && cfg.anomaly_method === "patchcore";
+    project.task === "anomaly" && cfg.anomaly_method === "patchcore" && model.model_id !== "dinomaly_vits14";
   const modelId = model.model_id || "";
   const selectedModel = catalog.find(item => item.model_id === modelId);
   const modelName = selectedModel ? `${selectedModel.family} ${selectedModel.variant}` : modelId;
@@ -53,6 +53,8 @@ export function Training({
   const unsupported = project.task !== "anomaly" && !modes.some(([value]) => value === cfg.training_mode);
   const efficientnet = project.task === "classify" && cfg.training_mode.startsWith("efficientnet");
   const resume = cfg.training_mode === "efficientnet_resume";
+  const engine = modelId === "dinomaly_vits14" ? "dinomaly" : project.task === "anomaly" ? "custom" : cfg.training_mode.split("_")[0];
+  const original = Boolean(cfg.original_size_training && options.capabilities.original_size_training);
   const set = (key: keyof TrainingConfig, value: unknown) => {
     setCfg({ ...cfg, [key]: value });
     setDirty(true);
@@ -74,17 +76,20 @@ export function Training({
     setOptionError("");
     setOptions({ metrics: [], models: [], capabilities: {} });
     api(
-      `/options?task=${project.task}&engine=${efficientnet ? "efficientnet" : cfg.training_mode.startsWith("builtin") ? "builtin" : "custom"}&mode=${project.task === "anomaly" ? "custom" : cfg.training_mode}&anomaly_method=${cfg.anomaly_method}&model_id=${encodeURIComponent(modelId)}`,
+      `/options?task=${project.task}&engine=${engine}&mode=${engine === "custom" ? "custom" : cfg.training_mode}&anomaly_method=${cfg.anomaly_method}&model_id=${encodeURIComponent(modelId)}`,
     )
       .then((d) => active && setOptions(d))
       .catch((e) => active && setOptionError(e.message));
     return () => {
       active = false;
     };
-  }, [project.task, unsupported, efficientnet, cfg.training_mode, cfg.anomaly_method, modelId]);
+  }, [project.task, engine, cfg.training_mode, cfg.anomaly_method, modelId]);
   const save = async () => {
     const training = { ...cfg, selection_metric: selectionMetric,
-      small_object_coverage: Boolean(cfg.small_object_coverage && cfg.patch_training && cfg.patches_per_image
+      original_size_training: Boolean(cfg.original_size_training && options.capabilities.original_size_training !== false),
+      patch_training: original ? false : cfg.patch_training,
+      patchcore_crop_enabled: original && sam2 ? false : cfg.patchcore_crop_enabled,
+      small_object_coverage: Boolean(!original && cfg.small_object_coverage && cfg.patch_training && cfg.patches_per_image
         && upstreamDetection),
       detection_foreground_supervision: Boolean(cfg.detection_foreground_supervision
         && project.task === "detect" && cfg.training_mode === "custom" && !modelId) };
@@ -139,6 +144,7 @@ export function Training({
                   efficientnet_model: id.startsWith("efficientnet_") ? id : cfg.efficientnet_model,
                   patchcore_backbone: id.startsWith("patchcore_") ? id.slice(10) : cfg.patchcore_backbone,
                   input_size: item?.input_size[0] ?? cfg.input_size,
+                  patchcore_crop_enabled: id.startsWith("sam2_hiera_") && cfg.original_size_training ? false : cfg.patchcore_crop_enabled,
                   in_channels: item && !item.input_channels.includes(cfg.in_channels) ? item.input_channels[0] : cfg.in_channels,
                   layer_debug_enabled: false, selection_metric: "engine_default" });
                 setDirty(true);
@@ -149,7 +155,7 @@ export function Training({
               </select>
             </Field>}
             <div className="form-grid">
-              {project.task === "anomaly" ? (
+              {project.task === "anomaly" && modelId !== "dinomaly_vits14" ? (
                 <Field label="이상 탐지 모델">
                   <select
                     value={cfg.anomaly_method}
@@ -213,12 +219,7 @@ export function Training({
             )}
             {unsupported && <p className="learning-mode-help">선택 모델에 맞는 학습 모드를 다시 선택하세요.</p>}
             {sam2 && <p className="learning-mode-help">SAM2 학습은 train과 val 양쪽에 이미지와 같은 이름의 픽셀 마스크가 있어야 합니다. 전경 영역을 1번 이상 클래스 ID로 그리세요. 배경만 있거나 0번 클래스만 표시된 마스크는 학습 대상이 아닙니다.</p>}
-            {modelId.startsWith("libreyolo_") && <p className="learning-mode-help">
-              LibreYOLO 완성 .dvmodel 팩은 현재 기본 설치본과 저장소에 포함되지 않습니다. 모델 이름만으로 학습할 수 있는 상태는 아닙니다.
-              .pt의 확장자를 바꾸는 방식이 아니라 학습 코드·가중치·Docker 이미지를 묶은 팩이 필요합니다.
-              {" "}<a href="https://github.com/dmjeong/DeepStudio/blob/main/docs/LIBREYOLO_MODEL_PACKS.ko.md" target="_blank" rel="noreferrer">팩 구성·설치 방법</a>
-            </p>}
-            {builtin && <p className="learning-mode-help">{modelName}: ImageNet 가중치는 최초 1회 다운로드하며 캐시 또는 로컬 .pth로 오프라인 학습할 수 있습니다.
+            {builtin && cfg.training_mode === "builtin_finetune" && <p className="learning-mode-help">{modelName}의 기본 제공 백본 가중치로 학습합니다.
               {project.task === "segment" && " 분할 모델은 백본만 사전학습되며 분할 헤드는 새로 학습합니다."}</p>}
             {efficientnet && <p className="learning-mode-help">{resume
               ? "last.pt에서 모델과 optimizer, 스케줄러, 난수 상태, 학습 설정을 복원합니다. 데이터가 바뀌면 추가 학습을 선택하세요."
@@ -340,19 +341,30 @@ export function Training({
                 />
               </>
             )}
+            {options.capabilities.original_size_training && <label className="check">
+              <input type="checkbox" checked={original} disabled={options.capabilities.resume}
+                onChange={event => {
+                  const enabled = event.target.checked;
+                  setCfg({ ...cfg, original_size_training: enabled, patch_training: enabled ? false : cfg.patch_training,
+                    small_object_coverage: enabled ? false : cfg.small_object_coverage,
+                    patchcore_crop_enabled: enabled && sam2 ? false : cfg.patchcore_crop_enabled });
+                  setDirty(true);
+                }} />원본 크기로 학습
+            </label>}
             <div className="form-grid">
-              {cfg.training_mode.startsWith("upstream") ? <p>모델 입력 / 패치 크기: {selectedModel?.input_size[0] ?? cfg.input_size}px (고정)</p>
+              {original ? <p>{sam2 ? "SAM2는 같은 크기의 원본 이미지와 마스크를 사용합니다." : "판정 영역 전체를 원본 해상도로 사용합니다."}</p>
+                : cfg.training_mode.startsWith("upstream") ? <p>모델 입력 / 패치 크기: {selectedModel?.input_size[0] ?? cfg.input_size}px (고정)</p>
                 : numeric("입력 크기 (px)", "input_size", 32, 4096)}
               {numeric("배치 크기", "batch_size", 1, 1024)}
             </div>
-            <Check label="중앙 크롭 사용" value={Boolean(cfg.patchcore_crop_enabled)}
-              onChange={(v) => set("patchcore_crop_enabled", v)} />
-            {cfg.patchcore_crop_enabled && <>
+            {!(original && sam2) && <Check label="중앙 크롭 사용" value={Boolean(cfg.patchcore_crop_enabled)}
+              onChange={(v) => set("patchcore_crop_enabled", v)} />}
+            {cfg.patchcore_crop_enabled && !(original && sam2) && <>
               <div className="form-grid">
                 {numeric("크롭 가로 (px)", "patchcore_crop_width", 1, 65536)}
                 {numeric("크롭 세로 (px)", "patchcore_crop_height", 1, 65536)}
               </div>
-              <p className="muted">원본 중앙 {cfg.patchcore_crop_width ?? project.training.patchcore_crop_width}×{cfg.patchcore_crop_height ?? project.training.patchcore_crop_height} px → 모델 입력 {cfg.input_size}×{cfg.input_size} px.
+              <p className="muted">원본 중앙 {cfg.patchcore_crop_width ?? project.training.patchcore_crop_width}×{cfg.patchcore_crop_height ?? project.training.patchcore_crop_height} px{original ? "를 그대로 사용합니다." : ` → 모델 입력 ${cfg.input_size}×${cfg.input_size} px.`}
                 모든 태스크의 학습과 추론에 적용하며 박스와 마스크도 함께 자릅니다. 원본보다 큰 크롭은 사용할 수 없습니다. 분류와 이상 탐지는 크롭 안의 내용에 맞는 이미지 라벨이 필요합니다.</p>
             </>}
             {!patch && (
@@ -408,10 +420,10 @@ export function Training({
                   )}
                 </div>
                 {options.capabilities.patch_training && <div className="form-grid">
-                  <label><input type="checkbox" checked={cfg.patch_training ?? false}
-                    disabled={project.task === "detect" && options.capabilities.resume}
+                  <label><input type="checkbox" checked={!original && (cfg.patch_training ?? false)}
+                    disabled={original || (project.task === "detect" && options.capabilities.resume)}
                     onChange={e => set("patch_training", e.target.checked)} />패치 학습</label>
-                  {cfg.patch_training && <>
+                  {cfg.patch_training && !original && <>
                     <Field label="패치 배율"><select value={cfg.patch_scale ?? 1}
                       disabled={project.task === "detect" && options.capabilities.resume}
                       onChange={e => set("patch_scale", Number(e.target.value))}>

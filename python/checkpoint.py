@@ -24,14 +24,21 @@ def checkpoint_original_size_region(checkpoint):
     region = checkpoint.get("original_size_region")
     if enabled is False and region is None:
         return None
-    if enabled is not True or checkpoint.get("task") != "segment":
+    task = checkpoint.get("task")
+    if enabled is not True or task not in {"classify", "detect", "segment", "anomaly"}:
         raise ValueError("원본 크기 학습 체크포인트 설정이 올바르지 않습니다.")
     preprocessing = checkpoint.get("preprocessing") or {}
     if checkpoint.get("tiling") or preprocessing.get("tiling"):
         raise ValueError("원본 크기 학습 체크포인트에 타일 설정을 함께 저장할 수 없습니다.")
     size = checkpoint.get("input_size")
     size = (size, size) if type(size) is int else size
-    if not isinstance(size, (tuple, list)) or tuple(size) != padded_region_size(region):
+    expected = padded_region_size(region)
+    if task in {"classify", "detect", "anomaly"}:
+        expected = (region[1], region[0])
+        recorded = preprocessing.get("original_size_region")
+        if recorded is not None and recorded != list(region):
+            raise ValueError("전처리 원본 학습 영역과 체크포인트가 다릅니다.")
+    if not isinstance(size, (tuple, list)) or tuple(size) != expected:
         raise ValueError("원본 학습 영역과 체크포인트 입력 크기가 일치하지 않습니다.")
     crop = checkpoint.get("center_crop") or preprocessing.get("center_crop")
     if crop:
@@ -46,6 +53,8 @@ def record_original_size_training(checkpoint, region):
     if region is not None:
         checkpoint["original_size_training"] = True
         checkpoint["original_size_region"] = list(region)
+        if checkpoint.get("task") in {"classify", "detect", "anomaly"}:
+            checkpoint["preprocessing"]["original_size_region"] = list(region)
         checkpoint_original_size_region(checkpoint)
 
 

@@ -149,6 +149,7 @@ def train_dinomaly(
     pretrained=True,
     initial_weights=None,
     resume=None,
+    original_size_training=False,
     patch_training=False,
     patch_scale=1.0,
     patches_per_image=0,
@@ -164,8 +165,7 @@ def train_dinomaly(
     if (
         epochs < 1
         or batch_size < 1
-        or input_size < 32
-        or input_size > 4096
+        or (not original_size_training and not 32 <= input_size <= 4096)
         or in_channels not in (1, 3)
     ):
         raise ValueError("Dinomaly 학습 크기·배치·에폭 설정 오류")
@@ -195,6 +195,13 @@ def train_dinomaly(
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    train_paths, val_paths, val_labels = discover(data_root)
+    if original_size_training:
+        if patch_training:
+            raise ValueError("원본 크기 학습과 패치 학습은 함께 사용할 수 없습니다.")
+        from patchcore_data import native_anomaly_size
+        input_size = native_anomaly_size([*train_paths, *val_paths], center_crop)
+        log(f"원본 크기 학습: 입력 {input_size[1]}×{input_size[0]} px")
     tiling = tiling_contract(input_size, patch_scale) if patch_training else None
     if tiling:
         tiling["blend"] = "center_weighted_map"
@@ -210,7 +217,6 @@ def train_dinomaly(
         "tiling": tiling,
     }
     contract = deployment_config(meta)
-    train_paths, val_paths, val_labels = discover(data_root)
     datasets = [
         NormalDataset(
             paths,

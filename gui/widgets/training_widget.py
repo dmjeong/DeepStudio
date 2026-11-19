@@ -616,7 +616,11 @@ class TrainingWidget(TrainingForm, QWidget):
         self.image_layout.setRowVisible(self.detection_foreground_check,
                                         capabilities.get("detection_foreground_supervision", False))
 
-        self.pc_crop_check.setEnabled(not resume)
+        native_sam = original and capabilities.get("engine") == "sam2"
+        if native_sam and self.pc_crop_check.isChecked():
+            with QSignalBlocker(self.pc_crop_check):
+                self.pc_crop_check.setChecked(False)
+        self.pc_crop_check.setEnabled(not resume and not native_sam)
         cropped = self.pc_crop_check.isChecked()
         for control in (self.pc_crop_width_spin, self.pc_crop_height_spin):
             self.image_layout.setRowVisible(control, cropped)
@@ -624,7 +628,9 @@ class TrainingWidget(TrainingForm, QWidget):
         self.image_layout.setRowVisible(self.pc_crop_info, original or cropped)
         width, height = self.pc_crop_width_spin.value(), self.pc_crop_height_spin.value()
         size = self.input_size_spin.value()
-        if original:
+        if native_sam:
+            self.pc_crop_info.setText("SAM2는 같은 크기의 원본 이미지와 마스크를 사용합니다. 모델에 필요한 여백만 가장자리에 채웁니다.")
+        elif original:
             area = f"중앙 {width}×{height} px" if cropped else "이미지 전체"
             self.pc_crop_info.setText(f"{area}를 원본 해상도로 학습합니다. 메모리가 부족하면 배치 크기를 줄이세요.")
         elif cropped:

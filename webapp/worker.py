@@ -235,7 +235,7 @@ def _train_builtin_project(context, project, device, *, class_report=False):
             effective={"device": str(device), "model_id": model_id,
                        "use_amp": applied_training.get("use_amp", False),
                        "input_size": training_state.get("input_size", cfg.input_size),
-                       "center_crop": list(crop) if crop else None},
+                       "center_crop": crop},
             applied=applied_training,
         ))
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
@@ -262,7 +262,8 @@ def _train_upstream_project(context, project, device):
     from core.training_artifacts import publish_best, training_hyperparameters
     cfg, data = project.training, project.data
     run_id = ProjectManager.new_run_id(task=project.task, model_name=model_id,
-                                       input_size=cfg.input_size, project_dir=project.project_dir)
+                                       input_size=cfg.input_size, project_dir=project.project_dir,
+                                       original_size=cfg.original_size_training)
     run_dir = Path(project.project_dir) / "runs" / run_id
     history = []
     if project.task == "detect":
@@ -323,7 +324,7 @@ def _train_upstream_project(context, project, device):
     context.emit("log_message", [f"기본 native 모델 학습: {spec.family}/{spec.size}"])
     from center_crop import configured_center_crop
     result = train_upstream_model(
-        model_id, data_root=data.root, class_names=list(data.class_names), output_dir=run_dir,
+        model_id, original_size_training=cfg.original_size_training, data_root=data.root, class_names=list(data.class_names), output_dir=run_dir,
         epochs=cfg.epochs, batch_size=cfg.batch_size, learning_rate=cfg.learning_rate,
         device=str(device), weights=source, pretrained=mode == "upstream_finetune", resume=mode == "upstream_resume",
         use_amp=cfg.use_amp, patience=cfg.early_stop_patience,
@@ -376,7 +377,7 @@ def _train_upstream_project(context, project, device):
         hyperparameters=training_hyperparameters(
             project, engine="upstream",
             effective={"device": str(device), "model_id": model_id,
-                       "input_size": spec.input_size, "use_amp": cfg.use_amp},
+                       "input_size": result.get("input_size", spec.input_size), "use_amp": cfg.use_amp},
             applied={"pretrained": mode == "upstream_finetune",
                      "resume": mode == "upstream_resume", "val_split": data.val_split,
                      "seed": 0, "augmentation": result.get("applied_augmentation", {}),
@@ -414,7 +415,8 @@ def _train_sam2_project(context, project, device):
     from sam2_trainer import train_sam2
     cfg, data = project.training, project.data
     run_id = ProjectManager.new_run_id(task=project.task, model_name=model_id,
-                                       input_size=1024, project_dir=project.project_dir)
+                                       input_size=1024, project_dir=project.project_dir,
+                                       original_size=cfg.original_size_training)
     run_dir = Path(project.project_dir) / "runs" / run_id
     history = []
 
@@ -430,8 +432,10 @@ def _train_sam2_project(context, project, device):
             return
         if event.get("event") == "training_started":
             context.emit("progress_updated", [0, int(event["total_epochs"])])
+            size = event.get("input_size", 1024)
+            dimensions = f"{size[1]}×{size[0]}" if isinstance(size, (tuple, list)) else f"{size}×{size}"
             context.emit("log_message", [
-                f"SAM2.1 native worker 준비 완료: {event['size']} | 1024 입력 | "
+                f"SAM2.1 native worker 준비 완료: {event['size']} | {dimensions} 입력 | "
                 "image encoder 고정, prompt encoder·mask decoder 학습"
             ])
             return
@@ -456,7 +460,7 @@ def _train_sam2_project(context, project, device):
 
     source = project.model.pretrained_weights if cfg.training_mode == "sam2_transfer" else None
     result = train_sam2(
-        model_id, data.root, output_dir=run_dir, epochs=cfg.epochs, batch_size=cfg.batch_size,
+        model_id, data.root, original_size_training=cfg.original_size_training, output_dir=run_dir, epochs=cfg.epochs, batch_size=cfg.batch_size,
         learning_rate=cfg.learning_rate, weight_decay=cfg.weight_decay, device=str(device),
         use_amp=cfg.use_amp, input_size=1024, class_names=list(data.class_names), initial_checkpoint=source,
         horizontal_flip=cfg.augmentation.horizontal_flip, rotation=cfg.augmentation.rotation,
@@ -482,7 +486,7 @@ def _train_sam2_project(context, project, device):
         hyperparameters=training_hyperparameters(
             project, engine="sam2",
             effective={"device": str(device), "model_id": model_id,
-                       "input_size": 1024, "use_amp": cfg.use_amp},
+                       "input_size": result.get("input_size", 1024), "use_amp": cfg.use_amp},
             applied={"image_encoder_frozen": True,
                      "trained_modules": ["prompt_encoder", "mask_decoder"]},
         ))
@@ -492,7 +496,7 @@ def _train_sam2_project(context, project, device):
         best_metric=float(result.get("best_metric") or 0.0), best_epoch=int(result.get("best_epoch") or 0),
         best_metric_name=metric_name, checkpoint_path=named_checkpoint, metrics_history=metrics_history,
         config_snapshot={
-            "engine": "sam2", "model_id": model_id, "input_size": 1024,
+            "engine": "sam2", "model_id": model_id, "input_size": result.get("input_size", 1024),
             "training_contract": "semantic-mask-to-positive-point-object-mask-v1",
             "frozen_modules": ["image_encoder"], "sam2_result": result, "best_selection": selection,
         },

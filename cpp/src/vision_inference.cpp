@@ -103,6 +103,9 @@ void ValidateConfig(const InferenceConfig& config)
         config.crop_width > 65536 || config.crop_height > 65536 ||
         ((config.crop_width == 0) != (config.crop_height == 0)))
         throw std::invalid_argument("Invalid center crop dimensions.");
+    if (config.native_input && (config.patch_size || config.dense_tile ||
+            (config.crop_width && (config.crop_width != config.input_width || config.crop_height != config.input_height))))
+        throw std::invalid_argument("Native input dimensions conflict with crop or patch settings.");
     if (config.backend != "custom" && config.backend != "builtin" && config.backend != "patchcore" && config.backend != "dinomaly" &&
         config.backend != "redetr_v4" && config.backend != "libreyolo_mobilenetv4" &&
         config.backend != "libreyolo_yolo9" && config.backend != "libreyolo_rtdetrv4" && config.backend != "libreyolo_dfine" &&
@@ -573,6 +576,14 @@ bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::s
             if (!prep.contains("resize_implementation") || !prep.contains("antialias") ||
                 prep.value("interpolation", std::string()) != "INTER_LINEAR_EXACT")
                 throw std::invalid_argument("Schema 5 requires explicit resize metadata.");
+            if (prep.contains("original_size_region"))
+            {
+                const auto& size = prep.at("original_size_region");
+                if (size != nlohmann::json::array({config.input_width, config.input_height}) ||
+                    !size.at(0).is_number_integer() || !size.at(1).is_number_integer())
+                    throw std::invalid_argument("Native region must match ONNX input width and height.");
+                config.native_input = true;
+            }
             if (prep.contains("center_crop") && !prep.at("center_crop").is_null())
             {
                 const auto& crop = prep.at("center_crop");
@@ -804,6 +815,8 @@ void VisionInference::PreprocessInto(const cv::Mat& source, float* data, size_t 
     }
     if (image.empty() || (image.depth() != CV_8U && image.depth() != CV_16U))
         throw std::invalid_argument("Input must be a nonempty 8-bit or uint16 image.");
+    if (m_config.native_input && (image.cols != m_config.input_width || image.rows != m_config.input_height))
+        throw std::invalid_argument("Input region dimensions differ from native-size training.");
     if (image.depth() == CV_16U && m_config.input_value_range != "uint8_0_255_or_uint16_0_65535")
         throw std::invalid_argument("Deployment input contract accepts 8-bit images only.");
     const int source_channels = image.channels();

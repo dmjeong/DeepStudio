@@ -51,6 +51,7 @@ export interface TrainingConfig {
   layer_debug_enabled: boolean;
   layer_debug_patterns: string;
   layer_debug_batches: number;
+  original_size_training?: boolean;
   patch_training: boolean;
   patch_scale: number;
   patches_per_image: number;

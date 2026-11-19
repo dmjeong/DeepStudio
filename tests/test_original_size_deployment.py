@@ -126,3 +126,33 @@ def test_export_fixes_original_region_and_runs_fp32_and_int8(original_checkpoint
             np.testing.assert_array_equal(mask[7:52, 15:88], result_tensor[0, :, :45, :73].argmax(0))
             assert not mask[:7].any() and not mask[52:].any()
             assert not mask[:, :15].any() and not mask[:, 88:].any()
+
+
+def test_attention_model_calibrates_on_whole_original_image():
+    from types import SimpleNamespace
+    from dense_deployment import predict_dense, region_pixels
+    from export_onnx import whole_image_contract
+    from quantize_onnx import judgement_region
+
+    spec = {"task": "segment", "original_size_region": REGION}
+    whole = whole_image_contract(spec, SimpleNamespace(global_attention=True))
+    assert whole["calibration"] == "full_input"
+    config = {"task": "segment", "input_width": PADDED[1], "input_height": PADDED[0],
+              "input_channels": 1, "num_classes": 2, "normalize_mean": [0.0], "normalize_std": [1.0],
+              "preprocessing": {"whole_image": whole}}
+    image = np.zeros(REGION[::-1], np.uint8)
+    image[-1, -1] = 255
+    seen = []
+
+    def run(tensor):
+        seen.append(tensor.copy())
+        return [np.concatenate((-tensor, tensor), axis=1)]
+
+    probabilities = predict_dense(config, image, run)
+    assert probabilities.shape == (2, REGION[1], REGION[0])
+    assert len(seen) == 1 and seen[0].shape == (1, 1, *PADDED)
+    assert probabilities[1, -1, -1] > .8
+    assert seen[0][0, 0, REGION[1]-1, REGION[0]-1] == 1
+    for prepare in (region_pixels, judgement_region):
+        with pytest.raises(ValueError, match="원본"):
+            prepare(config, np.zeros((REGION[1], REGION[0] + 1), np.uint8))

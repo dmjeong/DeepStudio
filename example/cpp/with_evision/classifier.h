@@ -166,7 +166,13 @@ private:
         auto mean = doc.at("normalize_mean").get<std::vector<float>>();
         auto stddev = doc.at("normalize_std").get<std::vector<float>>();
         if (mean.size() != static_cast<size_t>(channels)) throw std::invalid_argument("Wrong normalization channels");
-        preprocess_ = std::make_unique<Preprocessor>(width_, height_, mean, stddev, crop_width, crop_height);
+        const bool native = prep.contains("original_size_region");
+        if (native && (prep.at("original_size_region") != nlohmann::json::array({width_, height_}) ||
+                       !prep.at("original_size_region").at(0).is_number_integer() ||
+                       !prep.at("original_size_region").at(1).is_number_integer() ||
+                       (crop_width && (crop_width != width_ || crop_height != height_))))
+            throw std::invalid_argument("Native region must match model width and height");
+        preprocess_ = std::make_unique<Preprocessor>(width_, height_, mean, stddev, crop_width, crop_height, native);
         names_ = doc.value("class_names", std::vector<std::string>{});
         if (!names_.empty() && names_.size() != static_cast<size_t>(classes))
             throw std::invalid_argument("Wrong class names count");

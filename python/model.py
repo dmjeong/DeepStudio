@@ -528,7 +528,7 @@ class AnomalyHead(nn.Module):
             nn.Conv2d(32, in_channels, 3, padding=1),
         )
 
-    def forward(self, features: List[torch.Tensor]) -> torch.Tensor:
+    def forward(self, features: List[torch.Tensor], output_size=None) -> torch.Tensor:
         """
         Args:
             features: [P2, P3, P4, P5] 백본 출력
@@ -558,7 +558,9 @@ class AnomalyHead(nn.Module):
         d2 = self.dec2(torch.cat([d3_up, p2], dim=1))
 
         # 최종 업샘플 (P2는 입력의 1/4) → 원본 해상도
-        d2_up = F.interpolate(d2, scale_factor=4, mode='bilinear',
+        if output_size is None:
+            output_size = (p2.shape[-2] * 4, p2.shape[-1] * 4)
+        d2_up = F.interpolate(d2, size=output_size, mode='bilinear',
                               align_corners=False)
         return self.reconstruct(d2_up)
 
@@ -687,6 +689,8 @@ class CustomCSP(nn.Module):
             segment:  (B, num_classes, H, W) 세그멘테이션 맵
         """
         features = self.backbone(x)
+        if self.task == "anomaly":
+            return self.head(features, x.shape[-2:])
         output = self.head(features)
         if self.task == "segment" and output.shape[-2:] != x.shape[-2:]:
             output = F.interpolate(output, size=x.shape[-2:], mode="bilinear", align_corners=False)

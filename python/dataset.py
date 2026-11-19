@@ -69,7 +69,7 @@ def get_normalize_params(in_channels: int = 3):
 
 
 def get_classification_transforms(
-    input_size: Tuple[int, int] = (224, 224),
+    input_size: Optional[Tuple[int, int]] = (224, 224),
     is_train: bool = True,
     in_channels: int = 3,
     flip_prob: float = 0.5,
@@ -90,9 +90,10 @@ def get_classification_transforms(
     # 채널 수에 맞는 정규화 값 선택
     mean, std = get_normalize_params(in_channels)
 
+    spatial = [] if input_size is None else [OpenCVResize(input_size)]
     if is_train:
         augmentations = [
-            OpenCVResize(input_size),
+            *spatial,
             T.ToTensor(),
             T.RandomHorizontalFlip(p=flip_prob),
             T.RandomRotation(degrees=rotation),
@@ -118,7 +119,7 @@ def get_classification_transforms(
         return T.Compose(augmentations)
     else:
         return T.Compose([
-            OpenCVResize(input_size),
+            *spatial,
             T.ToTensor(),
             T.Normalize(mean=mean, std=std),
         ])
@@ -203,6 +204,7 @@ class ClassificationDataset(Dataset):
         self.transform = transform
         self.in_channels = in_channels
         self.extensions = extensions or self.SUPPORTED_EXT
+        self.original_size = None
         # 각 DataLoader worker가 디코딩 결과를 제한된 크기로 재사용한다.
         # 원본 해상도가 큰 데이터에서도 메모리가 무한히 증가하지 않는다.
         self.cache_images = bool(cache_images)
@@ -268,6 +270,8 @@ class ClassificationDataset(Dataset):
             self._image_cache[key] = cached
             return cached
         image = read_image(key, self.in_channels)
+        if self.original_size is not None and image.shape[:2] != self.original_size:
+            raise ValueError(f"원본 크기 학습 중 이미지 해상도가 달라졌습니다: {key}")
         size = int(image.nbytes)
         if self.cache_images and self.cache_limit_bytes and size <= self.cache_limit_bytes:
             while self._image_cache and self._image_cache_bytes + size > self.cache_limit_bytes:
@@ -518,25 +522,32 @@ class SegmentationDataset(Dataset):
         return image, mask
 
 
+def native_image_size(paths, expected_size=None):
+    """Read every raw image header and return the shared (height, width)."""
+    size = expected_size
+    for path in paths:
+        with Image.open(path) as image:
+            current = (image.height, image.width)
+        if size is None:
+            size = current
+        if current != size:
+            raise ValueError(
+                f"원본 크기 학습에는 학습·검증 이미지 크기가 모두 같아야 합니다. "
+                f"기준 {size[1]}×{size[0]}, {path}: {current[1]}×{current[0]}. "
+                "크기가 다른 이미지에는 공통 중앙 크롭을 설정해 주세요."
+            )
+    if size is None:
+        raise ValueError("원본 크기를 확인할 학습 이미지가 없습니다.")
+    return size
+
+
 class OriginalSizeSegmentationDataset(SegmentationDataset):
     """판정 영역 전체를 원본 픽셀 크기로 사용하고 오른쪽·아래만 채운다."""
 
     def __init__(self, img_dir: str, mask_dir: str, *, expected_size=None, **kwargs):
         super().__init__(img_dir, mask_dir, **kwargs)
-        original_size = expected_size
-        for image_path, _ in self.pairs:
-            with Image.open(image_path) as image:
-                size = (image.height, image.width)
-            if original_size is None:
-                original_size = size
-            if size != original_size:
-                height, width = original_size
-                raise ValueError(
-                    f"원본 크기 학습에는 학습·검증 이미지 크기가 모두 같아야 합니다. "
-                    f"기준 {width}×{height}, {image_path}: {size[1]}×{size[0]}. "
-                    "크기가 다른 이미지에는 공통 중앙 크롭을 설정해 주세요."
-                )
-        self.original_size = self.input_size = original_size
+        self.original_size = self.input_size = native_image_size(
+            (image_path for image_path, _ in self.pairs), expected_size)
         height, width = self.original_size
         self.padded_size = padded_region_size((width, height))
 
@@ -794,6 +805,7 @@ class AnomalyDataset(Dataset):
         super().__init__()
         self.root = root
         self.input_size = input_size
+        self.original_size = None
         self.in_channels = in_channels
         self.is_train = is_train
         self.flip_prob = flip_prob
@@ -839,8 +851,12 @@ class AnomalyDataset(Dataset):
         label = self.labels[idx]
 
         # 이미지 로드 — 채널 수에 따라 RGB 또는 Grayscale 변환
-        image = Image.fromarray(read_image(img_path, self.in_channels))
-        image = Image.fromarray(resize(np.asarray(image), self.input_size))
+        image = read_image(img_path, self.in_channels)
+        if self.original_size is None:
+            image = resize(image, self.input_size)
+        elif image.shape[:2] != self.original_size:
+            raise ValueError(f"원본 학습 중 이미지 크기가 변경됐습니다: {img_path}")
+        image = Image.fromarray(image)
 
         # 학습 시 약간의 증강 (너무 강하면 재구성이 어려워짐)
         if self.is_train:
@@ -895,7 +911,8 @@ class DetectionDataset(Dataset):
                  num_classes: int = 20,
                  in_channels: int = 3,
                  is_train: bool = True,
-                 max_objects: int = 50, flip_prob: float = 0.5):
+                 max_objects: int = 50, flip_prob: float = 0.5,
+                 original_size: bool = False, expected_size=None):
         super().__init__()
         self.img_dir = img_dir
         self.label_dir = label_dir
@@ -920,6 +937,10 @@ class DetectionDataset(Dataset):
                 f"  레이블 형식: class_id x_center y_center width height"
             )
 
+        self.original_size = (native_image_size((path for path, _ in self.samples), expected_size)
+                              if original_size else None)
+        if self.original_size:
+            self.input_size = self.original_size
         print("Detection 데이터셋 로드")
         print(f"   이미지-레이블 쌍: {len(self.samples)}")
 
@@ -938,7 +959,11 @@ class DetectionDataset(Dataset):
 
         # 이미지 로드 & 리사이즈 — 채널 수에 따라 RGB 또는 Grayscale
         image = Image.fromarray(read_image(img_path, self.in_channels))
-        image = Image.fromarray(resize(np.asarray(image), self.input_size))
+        if self.original_size:
+            if image.size[::-1] != self.original_size:
+                raise ValueError(f"원본 학습 이미지 크기가 변경되었습니다: {img_path}")
+        else:
+            image = Image.fromarray(resize(np.asarray(image), self.input_size))
 
         # 학습 시 데이터 증강
         flip = False
@@ -1004,6 +1029,7 @@ def create_classification_loaders(
     val_split: float = 0.2,
     seed: int = 0,
     pin_memory: bool = False,
+    original_size: bool = False,
     **aug_kwargs
 ) -> Tuple[DataLoader, DataLoader, List[str]]:
     """
@@ -1026,14 +1052,13 @@ def create_classification_loaders(
         os.path.isdir(train_dir)
         and _has_classification_images(val_dir, ClassificationDataset.SUPPORTED_EXT)
     )
+    transform_size = None if original_size else input_size
+    train_transform = get_classification_transforms(
+        transform_size, is_train=True, in_channels=in_channels, **aug_kwargs)
+    val_transform = get_classification_transforms(
+        transform_size, is_train=False, in_channels=in_channels)
     if use_explicit_validation:
         # val에 이미지가 있는 경우에만 사용자가 명시적으로 분리한 세트다.
-        train_transform = get_classification_transforms(
-            input_size, is_train=True, in_channels=in_channels, **aug_kwargs
-        )
-        val_transform = get_classification_transforms(
-            input_size, is_train=False, in_channels=in_channels
-        )
         train_dataset = ClassificationDataset(
             train_dir, train_transform, in_channels=in_channels
         )
@@ -1052,12 +1077,6 @@ def create_classification_loaders(
         # │ 해결: _TransformOverrideSubset 래퍼로 val subset의        │
         # │       transform만 증강 없는 버전으로 교체한다.             │
         # └──────────────────────────────────────────────────────────┘
-        train_transform = get_classification_transforms(
-            input_size, is_train=True, in_channels=in_channels, **aug_kwargs
-        )
-        val_transform = get_classification_transforms(
-            input_size, is_train=False, in_channels=in_channels
-        )
         full_dataset = ClassificationDataset(
             train_dir if os.path.isdir(train_dir) else data_root,
             train_transform, in_channels=in_channels
@@ -1080,6 +1099,15 @@ def create_classification_loaders(
     class_names = (train_dataset.classes
                    if hasattr(train_dataset, 'classes')
                    else train_dataset.dataset.classes)
+
+    if original_size:
+        train_base = train_dataset if use_explicit_validation else full_dataset
+        native = native_image_size(path for path, _ in train_base.samples)
+        if min(native) < 32:
+            raise ValueError(f"원본 크기 분류 학습에는 가로·세로 각각 32px 이상이 필요합니다: {native[1]}×{native[0]}")
+        if use_explicit_validation:
+            native_image_size((path for path, _ in val_dataset.samples), native)
+        train_base.original_size = train_dataset.original_size = val_dataset.original_size = native
 
     loader_options = _loader_runtime_options(num_workers, pin_memory)
     train_loader = DataLoader(
@@ -1206,6 +1234,7 @@ def create_anomaly_loaders(
     flip_prob: float = 0.5,
     seed: int = 0,
     pin_memory: bool = False,
+    original_size: bool = False,
 ) -> Tuple[DataLoader, Optional[DataLoader]]:
     """
     Anomaly Detection 데이터 로더 생성
@@ -1247,6 +1276,10 @@ def create_anomaly_loaders(
                               in_channels=in_channels, is_train=True,
                               flip_prob=0.0)
     val_dataset = torch.utils.data.Subset(val_base, val_subset.indices)
+    if original_size:
+        size = native_image_size(full_dataset.samples)
+        full_dataset.original_size = val_base.original_size = size
+        train_dataset.original_size = val_dataset.original_size = size
 
     loader_options = _loader_runtime_options(num_workers, pin_memory)
     train_loader = DataLoader(
@@ -1276,6 +1309,7 @@ def create_detection_loaders(
     max_objects: int = 50,
     flip_prob: float = 0.5,
     pin_memory: bool = False,
+    original_size: bool = False,
 ) -> Tuple[DataLoader, Optional[DataLoader]]:
     """
     Detection 데이터 로더 생성 (정규화 좌표 포맷)
@@ -1301,6 +1335,7 @@ def create_detection_loaders(
         is_train=True,
         max_objects=max_objects,
         flip_prob=flip_prob,
+        original_size=original_size,
     )
 
     val_img_dir = os.path.join(data_root, "images", "val")
@@ -1317,6 +1352,7 @@ def create_detection_loaders(
                 in_channels=in_channels,
                 is_train=False,
                 max_objects=max_objects,
+                original_size=original_size, expected_size=train_dataset.original_size,
             )
             loader_options = _loader_runtime_options(num_workers, pin_memory)
             val_loader = DataLoader(

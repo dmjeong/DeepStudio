@@ -2,7 +2,7 @@
 
 [분할 교사 학습과 교사·학생 FP16 ONNX 배포](docs/SEGMENTATION_TEACHERS.md) · Mask2Former Swin-Small, SegFormer B2, DINOv2-Base
 
-18.90: [분할 모델 원본 크기 학습](docs/RELEASE_18.90.md). 데스크톱 학습 화면에서 원본 해상도로 전체 검사 영역을 학습합니다.
+21.57에서 분류·객체 탐지·분할·이상검출 모델의 **학습 → 학습 이미지 → 원본 크기로 학습**을 지원합니다. [입력 조건과 배포 방법](docs/RELEASE_21.57.md)
 
 17.90: [프로젝트 클래스 생성·Windows 배포](docs/RELEASE_17.90.md) — 등록한 클래스별 생성 기법 선택, 태스크에 맞는 이미지/정답 저장, EXE·설치 실행 검증. [패치 학습 그림·코드 설명](docs/PATCH_TRAINING_EXPLAINED.md).
 

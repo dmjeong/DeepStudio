@@ -78,6 +78,45 @@ def input_image(path, preprocessing="opencv_full_range_v2"):
         raise ValueError(f"미지원 전처리: {preprocessing}")
 
 
+def anomaly_input_shape(size):
+    """Legacy square resize uses an int; an explicit H,W pair preserves source pixels."""
+    shape = (size, size) if isinstance(size, int) else size
+    if (not isinstance(shape, (list, tuple)) or len(shape) != 2 or
+            any(type(v) is not int or v < 1 for v in shape)):
+        raise ValueError("이상 탐지 입력 크기는 양의 정수 또는 [높이, 너비]여야 합니다.")
+    return tuple(shape)
+
+
+def _image_region(path, crop, transpose_exif):
+    try:
+        with Image.open(path) as image:
+            size = image.size
+            if transpose_exif and image.getexif().get(274) in (5, 6, 7, 8):
+                size = size[::-1]
+        return center_crop_box(size, crop)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"이미지 판정 영역 확인 실패: {path}\n{exc}") from exc
+
+
+def native_anomaly_size(paths, crop=None, *, transpose_exif=False, cancel_callback=None):
+    """Read train/validation headers with the orientation used by the corresponding decoder."""
+    expected = None
+    for path in paths:
+        if cancel_callback:
+            cancel_callback()
+        x0, y0, x1, y1 = _image_region(path, crop, transpose_exif)
+        current = (y1 - y0, x1 - x0)
+        if min(current) < 32:
+            raise ValueError(f"원본 크기 이상 탐지 학습은 두 변 모두 32px 이상이어야 합니다: {path}")
+        if expected is not None and current != expected:
+            raise ValueError(f"원본 크기 학습에는 학습·검증 판정 영역 크기가 같아야 합니다. "
+                             f"기준 {expected[1]}×{expected[0]}, 현재 {current[1]}×{current[0]}: {path}")
+        expected = current
+    if expected is None:
+        raise ValueError("원본 크기를 확인할 학습 이미지가 없습니다.")
+    return expected
+
+
 def validate_crop_images(paths, crop, preprocessing="opencv_full_range_v2", cancel_callback=None):
     """Validate every ROI using image headers before feature extraction."""
     crop = validate_center_crop(crop)
@@ -86,59 +125,49 @@ def validate_crop_images(paths, crop, preprocessing="opencv_full_range_v2", canc
     for path in paths:
         if cancel_callback:
             cancel_callback()
-        try:
-            with Image.open(path) as image:
-                width, height = image.size
-                if preprocessing in ("full_range_v1", "opencv_full_range_v2") and image.getexif().get(274) in (5, 6, 7, 8):
-                    width, height = height, width
-                center_crop_box((width, height), crop)
-        except (OSError, ValueError) as exc:
-            raise ValueError(f"중앙 크롭 이미지 확인 실패: {path}\n{exc}") from exc
+        _image_region(path, crop, preprocessing in ("full_range_v1", "opencv_full_range_v2"))
+
+
+def _resize_pixels(array, output_size, preprocessing):
+    if array.shape[1::-1] == output_size:
+        return array
+    if preprocessing == "opencv_full_range_v2":
+        import cv2
+        return cv2.resize(array, output_size, interpolation=cv2.INTER_LINEAR_EXACT)
+    return np.asarray(Image.fromarray(array).resize(output_size, Image.Resampling.BILINEAR))
 
 
 def input_tensor(path, size, preprocessing="opencv_full_range_v2", center_crop=None):
     """16비트 전체 범위와 OpenCV C++ SDK 리사이즈 계약을 보존한다."""
     import torch
+    output_size = anomaly_input_shape(size)[::-1]
     try:
         with input_image(path, preprocessing) as source:
             image = source.crop(center_crop_box(source.size, center_crop)) if center_crop is not None else source
+            if isinstance(size, (list, tuple)) and image.size != output_size:
+                raise ValueError(f"원본 학습 판정 영역 {output_size[0]}×{output_size[1]}px가 필요합니다. "
+                                 f"현재 {image.width}×{image.height}px")
             if preprocessing == "legacy_pil_rgb":
-                pixels = np.asarray(image.convert("RGB").resize((size, size), Image.Resampling.BILINEAR), dtype=np.float32) / 255
+                rgb = np.asarray(image.convert("RGB"))
+                pixels = _resize_pixels(rgb, output_size, preprocessing).astype(np.float32) / 255
             elif preprocessing in ("full_range_v1", "opencv_full_range_v2"):
                 array = np.asarray(image)
                 if array.dtype.itemsize == 2 and array.dtype.kind == "u" and array.ndim in (2, 3):
-                    height = array
                     if preprocessing == "opencv_full_range_v2":
-                        import cv2
-                        height = cv2.resize(height, (size, size), interpolation=cv2.INTER_LINEAR_EXACT)
+                        height = _resize_pixels(array, output_size, preprocessing).astype(np.float32) / 65535
                     else:
-                        if height.ndim != 2:
+                        if array.ndim != 2:
                             raise ValueError("이전 PIL 전처리는 16비트 RGB 이미지를 지원하지 않습니다")
-                        height = np.asarray(Image.fromarray(height.astype(np.float32) / 65535).resize(
-                            (size, size), Image.Resampling.BILINEAR), dtype=np.float32)
-                    if height.ndim == 2:
-                        pixels = np.repeat((height.astype(np.float32) / (65535 if preprocessing == "opencv_full_range_v2" else 1))[..., None], 3, axis=2)
-                    else:
-                        pixels = height.astype(np.float32) / 65535
+                        height = _resize_pixels(array.astype(np.float32) / 65535, output_size, preprocessing)
+                    pixels = np.repeat(height[..., None], 3, axis=2) if height.ndim == 2 else height
                 elif array.ndim == 2 and image.mode == "I" and array.min() >= 0 and array.max() <= 65535:
-                    height = array.astype(np.float32) / 65535
-                    if preprocessing == "opencv_full_range_v2":
-                        import cv2
-                        height = cv2.resize(height, (size, size), interpolation=cv2.INTER_LINEAR_EXACT)
-                    else:
-                        height = np.asarray(Image.fromarray(height).resize(
-                            (size, size), Image.Resampling.BILINEAR), dtype=np.float32)
+                    height = _resize_pixels(array.astype(np.float32) / 65535, output_size, preprocessing)
                     pixels = np.repeat(height[..., None], 3, axis=2)
-                elif array.dtype.kind == "f" or array.dtype.kind == "i":
+                elif array.dtype.kind in ("f", "i"):
                     raise ValueError("실수/범위 밖 정수 높이맵은 먼저 명시적인 범위로 uint16 또는 uint8 변환 필요")
                 else:
                     rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
-                    if preprocessing == "opencv_full_range_v2":
-                        import cv2
-                        rgb = cv2.resize(rgb, (size, size), interpolation=cv2.INTER_LINEAR_EXACT)
-                    else:
-                        rgb = np.asarray(Image.fromarray(rgb).resize((size, size), Image.Resampling.BILINEAR), dtype=np.uint8)
-                    pixels = rgb.astype(np.float32) / 255
+                    pixels = _resize_pixels(rgb, output_size, preprocessing).astype(np.float32) / 255
             else:
                 raise ValueError(f"미지원 전처리: {preprocessing}")
         tensor = torch.from_numpy(np.ascontiguousarray(pixels.transpose(2, 0, 1)))
@@ -156,7 +185,8 @@ class PatchCoreDataset:
 
         self.samples = list(samples)
         self.labels = list(labels) if labels is not None else [0] * len(self.samples)
-        self.input_size, self.preprocessing = int(input_size), preprocessing
+        self.input_size = tuple(input_size) if isinstance(input_size, (tuple, list)) else int(input_size)
+        self.preprocessing = preprocessing
         self.center_crop = validate_center_crop(center_crop)
         if len(self.samples) != len(self.labels):
             raise ValueError("이미지와 평가 라벨 수 불일치")

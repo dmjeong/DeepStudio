@@ -164,7 +164,7 @@ class TrainingConfig:
     patch_scale: float = 1.0
     small_object_coverage: bool = False
     detection_foreground_supervision: bool = False
-    # 원본 판정 영역 전체를 축소·분할 없이 분할 모델에 입력.
+    # 원본 판정 영역의 픽셀 크기를 유지하고 패치로 나누지 않는다.
     original_size_training: bool = False
     device: str = "auto"  # auto, cpu, cuda, cuda:0, cuda:1
     use_amp: bool = True              # Mixed Precision (GPU 시 자동 활성화)

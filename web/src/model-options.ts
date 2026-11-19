@@ -1,8 +1,25 @@
 export const builtinAdapters = new Set([
+  "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14", "dinov2_vits14_seg", "dinov2_vitb14_seg",
+  "unet_lite", "unet_mobilenetv2", "unet_mobilenetv4_small", "unet_shufflenetv2", "unet_efficientnet_b1",
+  "bisenetv2", "stdc1", "efficientvit_b0_seg", "efficientvit_b1_seg", "sctnet_s", "eomt_dinov2_small", "segformer_b2",
   "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18", "mask2former_swin_small",
 ]);
 
 export function modelModes(task: string, modelId: string, name: string): [string, string][] {
+  if (task === "segment" && modelId.startsWith("sam2_hiera_")) return [
+    ["sam2_finetune", "SAM2 기본 제공 가중치로 미세조정"],
+    ["sam2_transfer", "SAM2 로컬 미세조정 체크포인트로 시작"],
+  ];
+  if (modelId === "dinomaly_vits14") return [
+    ["builtin_finetune", "DINOv2 백본으로 시작"],
+    ["builtin_transfer", "로컬 가중치로 시작"],
+    ["builtin_resume", "중단 재개"],
+  ];
+  if (modelId === "unet_lite" || modelId === "segformer_b2") return [
+    ["builtin_scratch", "처음부터 학습"],
+    ["builtin_transfer", "로컬 가중치로 시작"],
+    ["builtin_resume", "중단 재개"],
+  ];
   if (modelId === "mask2former_swin_small") return [
     ["builtin_finetune", `${name} ImageNet 백본으로 시작`],
     ["builtin_transfer", `${name} 로컬 가중치로 시작`],

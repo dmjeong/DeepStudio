@@ -98,6 +98,8 @@ def load_upstream_checkpoint(path: str | Path, *, device: str):
     from native_patches import validate_patches
     saved = torch.load(path, map_location="cpu", weights_only=False)
     model.studio_patches = validate_patches(saved.get("studio_patches"), saved.get("task"))
+    from upstream_original_size import checkpoint_region
+    model.studio_original_size_region = checkpoint_region(saved)
     return model
 
 
@@ -373,7 +375,7 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
                          resume: bool, use_amp: bool, patience: int,
                          val_split: float = 0.2, seed: int = 0, center_crop=None,
                          augmentation=None, patch_training=False, patch_scale=1., patches_per_image=0,
-                         small_object_coverage=False,
+                         small_object_coverage=False, original_size_training=False,
                          emit: Callable[[dict], None]) -> dict:
     """Run an upstream native trainer and return its documented result map."""
     spec = get_upstream_spec(model_id)
@@ -384,6 +386,8 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
     from native_patches import patch_contract
     from studio_augmentation import augmentation_contract
     augmentation = augmentation_contract(augmentation)
+    if type(original_size_training) is not bool or original_size_training and patch_training:
+        raise ValueError("원본 크기 학습과 패치 학습은 동시에 사용할 수 없습니다.")
     patches = patch_contract(spec.task, spec.input_size, patch_scale, batch_size) if patch_training else None
     if type(small_object_coverage) is not bool or (
         small_object_coverage and (spec.task != "detect" or not patches or not patches_per_image)
@@ -424,18 +428,44 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
             emit({"event": "preprocessing_configured", "message":
                   f"탐지 검증 {validation['images']}개 {unit} · 정답 박스 {validation['objects']}개"})
             source = str(write_detection_dataset_yaml(data_root, class_names, output / "dataset.yaml"))
+            if original_size_training:
+                from dataset import native_image_size
+                from spatial_data import image_files
+                from upstream_original_size import detector_size, input_hw
+                height, width = native_image_size(path for split in ("train", "val") for path in
+                                                  image_files(Path(data_root) / "images" / split, extensions=IMG_FORMATS))
+                common["imgsz"] = detector_size(spec.family, height, width)
+                common["studio_original_size_region"] = (width, height)
+                message = f"원본 크기 탐지 학습: {width}×{height} px"
+                canvas_h, canvas_w = input_hw(common["imgsz"])
+                if (height, width) != (canvas_h, canvas_w):
+                    message += f" · 오른쪽·아래 여백 포함 입력 {canvas_w}×{canvas_h} px"
+                emit({"event": "preprocessing_configured", "message": message})
             model = build_upstream_model(model_id, num_classes=len(class_names), device=device,
                                          weights=weights, pretrained=pretrained)
-            return train_detector(model, data=source, resume=resume, center_crop=center_crop,
+            result = train_detector(model, data=source, resume=resume, center_crop=center_crop,
                                   augmentation=augmentation, patches=patches,
                                   small_object_coverage=small_object_coverage, train_patch_limit=patches_per_image,
                                   **common)
+            if original_size_training:
+                result["input_size"] = [height, width]
+            return result
     with prepare_classification_dataset(
         data_root, class_names, output.parent, val_split=val_split, seed=seed,
     ) as (prepared_root, summary):
         emit({"event": "dataset_prepared", **summary})
+        if original_size_training:
+            from dataset import native_image_size
+            height, width = native_image_size(path for split in ("train", "val") for name in class_names
+                                              for path in _classification_images(prepared_root / split, name))
+            # Native config takes a scalar; Studio supplies the exact transform to both loaders.
+            common["studio_original_size_region"] = (width, height)
+            emit({"event": "preprocessing_configured", "message": f"원본 크기 분류 학습: {width}×{height} px"})
         model = build_upstream_model(model_id, num_classes=len(class_names), device=device,
                                      weights=weights, pretrained=pretrained)
         from libreyolo_training import train_classifier
-        return train_classifier(model, data=str(prepared_root), resume=resume,
+        result = train_classifier(model, data=str(prepared_root), resume=resume,
                                 center_crop=center_crop, augmentation=augmentation, patches=patches, **common)
+        if original_size_training:
+            result["input_size"] = [height, width]
+        return result

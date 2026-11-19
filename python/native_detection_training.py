@@ -51,7 +51,7 @@ def _resume_best_checkpoint(resume_path, saved, trainer):
                 and all(candidate.get(key) == saved.get(key) for key in (
                     "task", "model_family", "size", "nc", "names", "imgsz", "imgsz_h", "imgsz_w",
                     "best_metric_key", "studio_augmentation", "studio_patches", "center_crop",
-                    "studio_small_object_coverage", "studio_train_patch_limit",
+                    "studio_small_object_coverage", "studio_train_patch_limit", "original_size_region",
                 )))
 
     def validation(candidate):
@@ -80,14 +80,15 @@ def _resume_best_checkpoint(resume_path, saved, trainer):
 class DetectionTransform:
     wants_unresized_image = True
 
-    def __init__(self, family, size, settings):
+    def __init__(self, family, size, settings, original_region=None):
+        self.original_region = original_region
         self.settings = augmentation_contract(settings)
         self.family, self.size = family, size
 
     def __call__(self, image, targets, input_dim):
         from native_detection import detector_pixels
         rgb, labels = augment_rgb(image[:, :, ::-1], self.settings, targets)
-        pixels, (sx, sy) = detector_pixels(rgb, self.size, self.family)
+        pixels, (sx, sy) = detector_pixels(rgb, self.size, self.family, self.original_region)
         if len(labels) > 300:
             raise ValueError("한 패치의 박스가 300개를 넘습니다. 패치 크기를 조절하세요.")
         padded = np.zeros((300, 5), np.float32)
@@ -96,7 +97,8 @@ class DetectionTransform:
         if len(labels):
             boxes = labels[:, :4] * np.asarray([sx, sy, sx, sy], np.float32)
             if self.family == "yolo9":
-                boxes /= self.size
+                height, width = pixels.shape[:2]
+                boxes /= np.asarray([width, height, width, height], np.float32)
             else:
                 # Native DETR trainer expects pixel cxcywh; it normalizes in on_forward.
                 boxes = np.column_stack(((boxes[:, :2] + boxes[:, 2:]) / 2, boxes[:, 2:] - boxes[:, :2]))
@@ -107,7 +109,8 @@ class DetectionTransform:
 
 class StudioDetectionMixin:
     def __init__(self, *args, studio_augmentation=None, studio_patches=None, studio_center_crop=None,
-                 studio_small_object_coverage=False, studio_train_patch_limit=0, **kwargs):
+                 studio_small_object_coverage=False, studio_train_patch_limit=0, studio_original_size_region=None, **kwargs):
+        self.studio_original_size_region = studio_original_size_region
         self.studio_augmentation = augmentation_contract(studio_augmentation)
         self.studio_patches = studio_patches
         self.studio_center_crop = studio_center_crop
@@ -125,7 +128,8 @@ class StudioDetectionMixin:
 
     def create_transforms(self):
         from libreyolo.models.deim.transforms import DEIMPassThroughDataset
-        return DetectionTransform(self.get_model_family(), self.config.imgsz, self.studio_augmentation), DEIMPassThroughDataset
+        return DetectionTransform(self.get_model_family(), self.config.imgsz, self.studio_augmentation,
+                                  self.studio_original_size_region), DEIMPassThroughDataset
 
     def _run_validation(self, epoch, *, save_plots=None):
         from upstream_models import detection_validation_metrics
@@ -157,6 +161,8 @@ class StudioDetectionMixin:
     def _checkpoint_extra_metadata(self):
         metadata = {**super()._checkpoint_extra_metadata(), "studio_augmentation": self.studio_augmentation,
                     "studio_patches": self.studio_patches, "center_crop": self.studio_center_crop}
+        if self.studio_original_size_region:
+            metadata["original_size_region"] = list(self.studio_original_size_region)
         if self.studio_small_object_coverage:
             metadata["studio_small_object_coverage"] = True
             metadata["studio_train_patch_limit"] = self.studio_train_patch_limit
@@ -197,6 +203,7 @@ def train_detector(wrapper, *, augmentation=None, patches=None, center_crop=None
     wrapper._seed_scratch_initialization(settings.get("seed", 0))
     wrapper.names = {i: name for i, name in enumerate(data["names"])} if isinstance(data["names"], list) else data["names"]
     trainer_type = {"yolo9": StudioYOLO9Trainer, "rtdetrv4": StudioRTDETRTrainer, "dfine": StudioDFINETrainer}[wrapper.FAMILY]
+    wrapper.studio_original_size_region = settings.get("studio_original_size_region")
     trainer = trainer_type(model=wrapper.model, wrapper_model=wrapper, size=wrapper.size,
         num_classes=wrapper.nb_classes, studio_augmentation=augmentation, studio_patches=patches,
         studio_center_crop=center_crop, studio_small_object_coverage=small_object_coverage,
@@ -204,6 +211,9 @@ def train_detector(wrapper, *, augmentation=None, patches=None, center_crop=None
     if resume:
         import torch
         saved = torch.load(wrapper.model_path, map_location="cpu", weights_only=False)
+        from upstream_original_size import checkpoint_region
+        if checkpoint_region(saved) != trainer.studio_original_size_region:
+            raise ValueError("이어학습은 저장된 원본 크기 설정과 일치해야 합니다.")
         if (saved.get("studio_patches") != patches or saved.get("center_crop") != center_crop or
                 saved.get("studio_augmentation") != trainer.studio_augmentation):
             raise ValueError("재개 모델의 패치/증강/입력 영역이 다릅니다. 설정을 맞추거나 추가 학습을 선택하세요.")

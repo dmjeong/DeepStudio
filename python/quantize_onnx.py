@@ -48,9 +48,12 @@ def _whole(config):
 
 def judgement_region(config, image):
     """원본 → C++가 모델에 넣는 판정 영역 (중앙 크롭이 있으면 그 크기, 없으면 원본 = 판정 영역)."""
-    width, height = _whole(config)["region"]
+    whole = _whole(config)
+    width, height = whole["region"]
     crop = (config.get("preprocessing") or {}).get("center_crop")
     rows, cols = image.shape[:2]
+    if whole.get("original_size") and not crop and (cols, rows) != (width, height):
+        raise ValueError(f"원본 크기 모델은 {width}×{height} px 입력이 필요합니다. 현재 {cols}×{rows} px")
     if crop or (cols, rows) != (width, height):
         # 크롭 모델(또는 크기가 다른 보정 영상): 가운데에서 판정 영역 크기만큼 잘라 쓴다.
         if cols < width or rows < height:
@@ -207,7 +210,8 @@ def quantize_segment(config_path, calibration_dir, *, count=16, reduce_range=Fal
 
     config_path = Path(config_path)
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    if not (config.get("preprocessing") or {}).get("whole_image"):
+    whole = (config.get("preprocessing") or {}).get("whole_image")
+    if not whole or whole.get("calibration") == "full_input":
         from quantize_dense import quantize_dense
         return quantize_dense(config_path, calibration_dir, count=count, reduce_range=reduce_range,
                               output_json=output_json, log=log, benchmark_only=benchmark_only)
