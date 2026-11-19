@@ -292,9 +292,18 @@ def _class_report(report, class_names):
     return line, collapsed
 
 
-COLLAPSE_HELP = ("⚠ 검증에서 결함 픽셀을 하나도 예측하지 않았습니다(모두 배경). val loss가 낮아도 결함을 못 찾는 상태입니다. "
-                 "흔한 원인: ① 이미지를 입력 크기로 줄이며 가는 결함이 사라짐 → 패치 학습을 켜거나 학습 화면의 "
-                 "'데이터에 맞게 자동 설정' ② 결함 픽셀이 너무 적음 → 클래스 가중치 Sqrt ③ epoch 부족.")
+def _pixel_count_line(split, counts, names):
+    total = sum(counts)
+    parts = [f"{name} {int(count):,} ({count / total:.3%})" for name, count in zip(names, counts)]
+    return f"  {split} 입력 마스크 정답 픽셀 (255 제외) | " + " · ".join(parts)
+
+
+def _collapse_help(class_weights):
+    message = ("⚠ 검증 정답에 결함이 있지만 모델이 모든 픽셀을 배경으로 판정했습니다. "
+               "학습·검증 입력 마스크의 결함 픽셀 수와 크롭·축소 후 결함 모양을 확인하세요. ")
+    if class_weights == "none":
+        return message + "희귀 결함 픽셀이 적으면 클래스 가중치 Sqrt를 비교해 보세요."
+    return message + f"현재 클래스 가중치 {class_weights} 적용 중."
 
 
 def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
@@ -575,6 +584,12 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         training_config["automatic_background_images"] = {
             split: len(getattr(getattr(loader, "dataset", None), "unlabeled", []))
             for split, loader in (("train", train_loader), ("val", val_loader))}
+        if class_report:
+            input_mode = "패치" if tiling else "원본 크기" if original_size_training else "전체 영역 리사이즈"
+            encoder_lr = f"{learning_rate * backbone_lr_mult * backbone_scale:g}" if trainable_backbone else "동결"
+            log(f"분할 학습 설정 | {input_mode} {input_size[1]}×{input_size[0]} · 배치 {batch_size} · "
+                f"{optimizer_name} · 기준 학습률 헤드 {learning_rate:g} / 백본 {encoder_lr} · "
+                f"준비 에폭 {warmup_epochs} · 클래스 가중치 {class_weights} · Best 기준 {policy.metric}")
     start_epoch = 0
     history: list[dict] = []
     best_metric = float("inf") if policy.direction == "min" else float("-inf")
@@ -680,8 +695,12 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             if line:
                 log(line)
             collapsed_epochs[epoch + 1] = collapsed
-            if collapsed and epoch + 1 >= 3 and not collapse_warned:
-                log(COLLAPSE_HELP)
+            warn_now = collapsed and epoch + 1 >= 3 and not collapse_warned
+            if epoch == start_epoch or warn_now:
+                log(_pixel_count_line("학습", seen_pixels, class_names))
+                log(_pixel_count_line("검증", report["truth"], class_names))
+            if warn_now:
+                log(_collapse_help(class_weights))
                 collapse_warned = True
         log(f"  Epoch {epoch + 1} 시간 | 소요 {format_hms(epoch_time_sec)} | "
             f"누적 {format_hms(elapsed_time_sec)}")
@@ -728,7 +747,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if completed_epochs == start_epoch and start_epoch >= epochs:
         raise ValueError("resume checkpoint already reached the requested epochs")
     if collapsed_epochs.get(best_epoch):
-        log("⚠ 저장된 best 모델이 검증 결함을 하나도 예측하지 않습니다. " + COLLAPSE_HELP.removeprefix("⚠ "))
+        log(f"⚠ 저장된 best 모델({best_epoch} 에폭)이 검증 결함을 하나도 예측하지 않았습니다.")
     log_total_time(log, training_clock.elapsed())
     (destination / "training.json").write_text(json.dumps({"model_id": model_id,
         "task": spec.task, "epochs": epochs, "input_size": list(input_size),

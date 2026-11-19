@@ -22,6 +22,79 @@ def load_local_tensors(path):
     return torch.load(path, map_location="cpu", weights_only=True)
 
 
+def _mask_points(target, limit):
+    """Pixel centres in the stride-32 padded frame; 255 and padding never enter the loss."""
+    height, width = target.shape
+    flat = target.flatten()
+    valid = (flat != 255).nonzero().flatten()
+    labels = flat[valid].unique()
+    if not labels.numel():
+        return None
+    if limit < labels.numel():
+        raise ValueError("Mask2Former의 점 샘플 수가 이미지에 있는 클래스 수보다 작습니다.")
+    count = min(limit, valid.numel())
+    foreground = labels[labels != 0]
+    # Preserve a training signal for a one-pixel defect even on small crops where every pixel fits.
+    # The remaining three quarters keep the region's normal background and negative examples.
+    reserved = []
+    quota = max(1, count // (4 * max(1, foreground.numel())))
+    for label in foreground:
+        locations = (flat == label).nonzero().flatten()
+        indices = torch.randint(locations.numel(), (quota,), device=flat.device)
+        reserved.append(locations[indices])
+    reserved = torch.cat(reserved) if reserved else valid[:0]
+    uniform = valid[torch.randperm(valid.numel(), device=flat.device)[:count - reserved.numel()]]
+    indices = torch.cat((reserved, uniform))
+    # A mostly foreground crop can have a single background pixel. Keep its mask matchable.
+    if labels[0] == 0 and not (flat[indices] == 0).any():
+        indices[-1] = (flat == 0).nonzero()[0, 0]
+    valid = indices
+    padded_h, padded_w = ((size + 31) // 32 * 32 for size in (height, width))
+    x = (valid % width + .5) * (2. / padded_w) - 1
+    y = (valid // width + .5) * (2. / padded_h) - 1
+    grid = torch.stack((x, y), dim=-1)[None, :, None]
+    return labels, (flat[valid] == labels[:, None]).float(), grid
+
+
+def _decoder_query_loss(out, target, native):
+    from scipy.optimize import linear_sum_assignment
+    from transformers.models.mask2former.modeling_mask2former import (
+        dice_loss, pair_wise_dice_loss, pair_wise_sigmoid_cross_entropy_loss, sigmoid_cross_entropy_loss,
+    )
+
+    stages = [(aux["masks_queries_logits"], aux["class_queries_logits"])
+              for aux in (out.auxiliary_logits or [])]
+    stages.append((out.masks_queries_logits, out.class_queries_logits))
+    points = [_mask_points(image, native.num_points) for image in target]
+    total = out.class_queries_logits.float().sum() * 0.
+    weights = native.weight_dict
+    with torch.autocast(device_type=target.device.type, enabled=False):
+        for masks, classes in stages:
+            for i, sample in enumerate(points):
+                if sample is None:
+                    continue
+                labels, truth, grid = sample
+                cls = classes[i].float()
+                # Match each decoder stage separately. Retain gradient buffers only for assigned masks.
+                with torch.no_grad():
+                    sampled = F.grid_sample(masks[i:i + 1].float(), grid, padding_mode="border",
+                                            align_corners=False)[0, :, :, 0]
+                    cost = (weights["loss_mask"] * pair_wise_sigmoid_cross_entropy_loss(sampled, truth)
+                            + weights["loss_dice"] * pair_wise_dice_loss(sampled, truth)
+                            - weights["loss_cross_entropy"] * cls.softmax(-1)[:, labels])
+                    row, col = linear_sum_assignment(cost.cpu().numpy())
+                    row = torch.as_tensor(row, device=target.device)
+                    col = torch.as_tensor(col, device=target.device)
+                expected = torch.full((cls.shape[0],), cls.shape[1] - 1, device=target.device, dtype=torch.long)
+                expected[row] = labels[col]
+                matched = F.grid_sample(masks[i, row][None].float(), grid, padding_mode="border",
+                                        align_corners=False)[0, :, :, 0]
+                total = (total + weights["loss_cross_entropy"] * F.cross_entropy(cls, expected, native.empty_weight)
+                         + weights["loss_mask"] * sigmoid_cross_entropy_loss(matched, truth[col], len(row))
+                         + weights["loss_dice"] * dice_loss(matched, truth[col], len(row)))
+    return total / (len(stages) * max(1, sum(sample is not None for sample in points)))
+
+
 class TransformerSegmenter(nn.Module):
     global_attention = True
 
@@ -39,6 +112,12 @@ class TransformerSegmenter(nn.Module):
                                   out_features=["stage1", "stage2", "stage3", "stage4"])
             config = Mask2FormerConfig(backbone_config=backbone, num_labels=classes)
             self.net = Mask2FormerForUniversalSegmentation(config)
+            # Encoder-only pretraining leaves the query decoder untrained. Start its
+            # content and position slots at the scale used by the original decoder.
+            # A full segmentation checkpoint restores both tensors after construction.
+            decoder = self.net.model.transformer_module
+            decoder.queries_features.reset_parameters()
+            decoder.queries_embedder.reset_parameters()
         else:
             raise ValueError(f"Unknown transformer segmenter: {model_id}")
         self.gray = channels == 1
@@ -85,13 +164,14 @@ class TransformerSegmenter(nn.Module):
             source = "local_hf_segmentation"
         self.weight_provenance.update(source=source, file=Path(path).name)
 
-    def _outputs(self, image):
+    def _outputs(self, image, *, supervise_decoder=False):
         if self.gray:
             image = (image * .226 + .449 - self.rgb_mean) / self.rgb_std
         h, w = image.shape[-2:]
         # Align the four feature levels in the pixel decoder, including odd-sized ROIs.
         image = F.pad(image, (0, (-w) % 32, 0, (-h) % 32))
-        out = self.net(pixel_values=image, return_dict=True)
+        options = {"output_auxiliary_logits": True} if supervise_decoder else {}
+        out = self.net(pixel_values=image, return_dict=True, **options)
         if self.model_id == "segformer_b2":
             logits = out.logits
         else:
@@ -109,10 +189,9 @@ class TransformerSegmenter(nn.Module):
         return self._outputs(image)[0]
 
     def compute_training_loss(self, image, target, criterion):
-        logits, out = self._outputs(image)
+        supervise_decoder = self.model_id == "mask2former_swin_small"
+        logits, out = self._outputs(image, supervise_decoder=supervise_decoder)
         loss = criterion(logits, target)
-        if self.model_id == "mask2former_swin_small":
-            from eomt import query_loss
-            loss = loss + query_loss(out.masks_queries_logits, out.class_queries_logits,
-                                     target, pad_stride=32, max_points=12544)
+        if supervise_decoder:
+            loss = loss + _decoder_query_loss(out, target, self.net.criterion)
         return logits, loss

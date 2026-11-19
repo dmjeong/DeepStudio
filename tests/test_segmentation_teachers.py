@@ -16,6 +16,61 @@ from segmentation_distillation import SegmentationDistiller
 TEACHERS = ("mask2former_swin_small", "segformer_b2", "dinov2_vitb14_seg")
 
 
+def test_mask2former_matching_samples_preserve_rare_classes_and_ignore_padding():
+    from transformer_segmenters import _mask_points
+
+    target = torch.zeros(101, 91, dtype=torch.long)
+    target[:3] = 255
+    target[50, 20:40] = 1
+    target[-1, -1] = 2
+    with torch.random.fork_rng():
+        torch.manual_seed(42)
+        labels, truth, grid = _mask_points(target, 256)
+    assert labels.tolist() == [0, 1, 2] and truth.shape == (3, 256)
+    x = ((grid[0, :, 0, 0] + 1) * 48).floor().long()
+    y = ((grid[0, :, 0, 1] + 1) * 64).floor().long()
+    assert torch.equal(truth.bool(), target[y, x] == labels[:, None])
+    assert (truth.sum(0) == 1).all() and truth[1].sum() >= 32 and truth[2].sum() >= 32
+    small = torch.zeros(9, 17, dtype=torch.long)
+    small[-1, -1] = 1
+    small_labels, small_truth, _ = _mask_points(small, 12544)
+    assert small_labels.tolist() == [0, 1] and small_truth[1].sum() >= small.numel() // 4
+    small.zero_()
+    background, bg_truth, _ = _mask_points(small, 64)
+    assert background.tolist() == [0] and bg_truth.shape == (1, 64) and bg_truth.all()
+    with pytest.raises(ValueError, match="클래스 수"):
+        _mask_points(target, 2)
+    assert _mask_points(torch.full_like(target, 255), 256) is None
+
+
+def test_mask2former_each_decoder_gets_an_independent_assignment_and_gradient():
+    from types import SimpleNamespace
+    from transformer_segmenters import _decoder_query_loss
+
+    native = SimpleNamespace(num_points=128, empty_weight=torch.tensor([1., 1., .1]),
+                             weight_dict={"loss_cross_entropy": 2., "loss_dice": 5., "loss_mask": 5.})
+    target = torch.full((1, 32, 32), 255)
+    target[:, :2, :4] = 0
+    target[:, :2, 4:8] = 1
+    classes = torch.tensor([[[2., 0., -1.], [0., 2., -1.], [-1., -1., 2.]]], requires_grad=True)
+    masks = torch.zeros(1, 3, 32, 32, requires_grad=True)
+    permutation = [2, 0, 1]
+    aux_classes = classes.detach()[:, permutation].requires_grad_()
+    aux_masks = masks.detach()[:, permutation].requires_grad_()
+    result = SimpleNamespace(class_queries_logits=classes, masks_queries_logits=masks, auxiliary_logits=[])
+    with torch.random.fork_rng():
+        torch.manual_seed(801)
+        final_alone = _decoder_query_loss(result, target, native)
+        result.auxiliary_logits = [{"class_queries_logits": aux_classes, "masks_queries_logits": aux_masks}]
+        torch.manual_seed(801)
+        supervised = _decoder_query_loss(result, target, native)
+    torch.testing.assert_close(supervised, final_alone)
+    supervised.backward()
+    assert aux_classes.grad.abs().sum() > 0 and aux_masks.grad.abs().sum() > 0
+    assert masks.grad[:, :, 2:].count_nonzero() == aux_masks.grad[:, :, 2:].count_nonzero() == 0
+    torch.testing.assert_close(masks.grad[:, permutation], aux_masks.grad)
+
+
 def test_specialist_supervises_only_its_own_defect(tmp_path):
     teacher = build_builtin_model("unet_lite", 2).eval()
     payload = make_builtin_checkpoint("unet_lite", teacher, num_classes=2,
@@ -134,6 +189,10 @@ def test_local_hf_weights_keep_encoder_and_reset_foreign_labels(model_id):
     with TemporaryDirectory() as directory:
         source = build_builtin_model(model_id, 4)
         tensors = source.net.state_dict()
+        query_key = "model.transformer_module.queries_features.weight"
+        if model_id == "mask2former_swin_small":
+            assert .9 < float(tensors[query_key].std()) < 1.1
+            tensors[query_key][0, :3] = torch.tensor([.25, -.75, 1.5])
         key = next(k for k in tensors if k.endswith("projection.weight") or k.endswith("proj.weight"))
         sentinel = tensors[key].flatten()[0].item()
         file = Path(directory) / "model.safetensors"
@@ -142,6 +201,9 @@ def test_local_hf_weights_keep_encoder_and_reset_foreign_labels(model_id):
         target = build_builtin_model(model_id, 2, backbone_weights=file)
         assert target.weight_provenance["source"] == "local_hf_segmentation"
         assert target.net.state_dict()[key].flatten()[0].item() == sentinel
+        if model_id == "mask2former_swin_small":
+            torch.testing.assert_close(target.net.state_dict()[query_key][0, :3],
+                                       torch.tensor([.25, -.75, 1.5]))
         assert target.net.state_dict()[TASK_HEADS[model_id][0] + "weight"].shape[0] == (
             3 if model_id == "mask2former_swin_small" else 2)
         with pytest.raises(ValueError, match="가중치"):
