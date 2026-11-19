@@ -1,6 +1,5 @@
 """Compare deployment ONNX models on the desktop CPU."""
 
-from multiprocessing import get_context
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
@@ -28,44 +27,13 @@ class PrecisionBenchmarkWorker(QThread):
 
     def run(self):
         try:
-            from precision_benchmark import run_benchmark_process
+            from precision_benchmark import run_desktop_benchmark
 
-            ctx = get_context("spawn")
             with TemporaryDirectory(prefix="dvs-cpu-compare-") as workspace:
-                receiver, sender = ctx.Pipe(duplex=False)
-                with receiver, sender:
-                    child = ctx.Process(target=run_benchmark_process, args=(self.options, workspace, sender))
-                    child.start()
-                    sender.close()
-                    try:
-                        while not self.isInterruptionRequested():
-                            if receiver.poll(0.1):
-                                try:
-                                    event, value = receiver.recv()
-                                except EOFError:
-                                    break
-                                if event == "row":
-                                    self.row_ready.emit(value)
-                                elif event == "progress":
-                                    self.progress.emit(value)
-                                elif event == "failed":
-                                    self.failed.emit(value)
-                                    child.join(timeout=1)
-                                    return
-                                elif event == "completed":
-                                    self.completed.emit(value)
-                                    child.join(timeout=1)
-                                    return
-                            elif not child.is_alive():
-                                break
-                        if not self.isInterruptionRequested():
-                            child.join(timeout=1)
-                            self.failed.emit(f"비교 프로세스가 결과 없이 종료되었습니다 (종료 코드 {child.exitcode}).")
-                    finally:
-                        if child.is_alive():
-                            child.kill()
-                        child.join()
-                        child.close()
+                rows = run_desktop_benchmark(self.options, workspace, log=self.progress.emit,
+                                             on_row=self.row_ready.emit, cancelled=self.isInterruptionRequested)
+            if not self.isInterruptionRequested():
+                self.completed.emit(len(rows))
         except Exception as exc:
             if not self.isInterruptionRequested():
                 self.failed.emit(str(exc))
@@ -130,6 +98,14 @@ class PrecisionBenchmarkDialog(QDialog):
         self.warmup = self._count(counts, "워밍업", 0, 20, 2)
         counts.addStretch()
         form.addRow("측정 설정", counts)
+        from precision_benchmark import DEFAULT_STAGE_TIMEOUT
+
+        self.stage_timeout = QSpinBox()
+        self.stage_timeout.setRange(5, 600)
+        self.stage_timeout.setValue(DEFAULT_STAGE_TIMEOUT)
+        self.stage_timeout.setSuffix(" 초")
+        self.stage_timeout.setToolTip("한 단계가 이 시간 안에 끝나지 않으면 해당 조합을 중단하고 다음 조합을 측정합니다.")
+        form.addRow("단계별 제한 시간", self.stage_timeout)
         layout.addWidget(self.settings)
 
         scope = QLabel(
@@ -248,6 +224,7 @@ class PrecisionBenchmarkDialog(QDialog):
             "calibration_dir": calibration_dir or None,
             "run_fp16": self.run_fp16.isChecked(), "run_int8": self.run_int8.isChecked(),
             "image_count": self.image_count.value(), "repeats": self.repeats.value(), "warmup": self.warmup.value(),
+            "stage_timeout": self.stage_timeout.value(),
         }
         if not fp32_path:
             options["checkpoint_export"] = self.checkpoint_export
@@ -283,7 +260,7 @@ class PrecisionBenchmarkDialog(QDialog):
 
     def _update_elapsed(self):
         elapsed = int(monotonic() - self._stage_start)
-        self.status.setText(f"{self._stage} · 경과 {elapsed}초")
+        self.status.setText(f"{self._stage} · 경과 {elapsed}초 / 단계 제한 {self.stage_timeout.value()}초")
 
     def _append_result(self, row):
         index = self.table.rowCount()

@@ -2,9 +2,11 @@
 
 import json
 import re
+from functools import partial
+from multiprocessing import get_context
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from time import perf_counter
+from time import monotonic, perf_counter
 
 import cv2
 import numpy as np
@@ -14,33 +16,100 @@ from opencv_preprocess import convert_channels, require_native_region, resize
 
 
 _BACKENDS = {"onnxruntime": "ONNX Runtime", "openvino": "OpenVINO"}
+DEFAULT_STAGE_TIMEOUT = 60
 
 
-def run_benchmark_process(options, workspace, sender):
-    """Child entry point. The desktop owns the scratch directory even on forced stop."""
+class BenchmarkStepTimeout(TimeoutError):
+    """The native worker did not report its next stage before the deadline."""
+
+
+def _step_process(operation, args, kwargs, workspace, sender):
     import os
     import tempfile
 
-    tempfile.tempdir = workspace
-    for name in ("TEMP", "TMP", "TMPDIR"):
-        os.environ[name] = workspace
+    # Native libraries and any exporter children use the same disposable workspace.
+    if workspace is not None:
+        tempfile.tempdir = workspace
+        for name in ("TEMP", "TMP", "TMPDIR"):
+            os.environ[name] = workspace
     with sender:
         try:
-            settings = dict(options)
-            checkpoint = settings.pop("checkpoint_export", None)
-            log = lambda message: sender.send(("progress", message))
-            if checkpoint and not settings["fp32_path"]:
-                from export_onnx import export_checkpoint
-                log("선택한 체크포인트에서 비교용 FP32 ONNX 생성 중")
-                export = dict(checkpoint)
-                source = export.pop("checkpoint_path")
-                result = export_checkpoint(source, Path(workspace) / "reference.onnx", **export, log=log)
-                settings["fp32_path"] = result["config_path"]
-            rows = benchmark_precisions(**settings, log=log, on_row=lambda row: sender.send(("row", row)))
-        except Exception as exc:
-            sender.send(("failed", str(exc)))
+            result = operation(*args, **kwargs, progress=lambda text: sender.send(("progress", text)))
+        except Exception as error:
+            sender.send(("error", f"{type(error).__name__}: {error}"))
         else:
-            sender.send(("completed", len(rows)))
+            sender.send(("result", result))
+
+
+def _run_step(operation, *args, stage, progress, timeout, cancelled, workspace, **kwargs):
+    """Own exactly one process so cancellation or a hung runtime cannot block the next row."""
+    if cancelled():
+        raise InterruptedError("CPU 비교를 중단했습니다.")
+    progress(stage)
+    if timeout is None:
+        return operation(*args, **kwargs, progress=progress)
+
+    ctx = get_context("spawn")
+    receiver, sender = ctx.Pipe(duplex=False)
+    with receiver, sender:
+        child_workspace = str(workspace) if workspace is not None else None
+        child = ctx.Process(target=_step_process, args=(operation, args, kwargs, child_workspace, sender))
+        child.start()
+        sender.close()
+        deadline = monotonic() + timeout
+        final_message = False
+        try:
+            while not cancelled():
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise BenchmarkStepTimeout(f"{stage} · {timeout:g}초 동안 완료되지 않았습니다.")
+                if not receiver.poll(min(remaining, .05)):
+                    continue
+                try:
+                    event, value = receiver.recv()
+                except EOFError:
+                    child.join(timeout=.25)
+                    raise RuntimeError(f"{stage} · 작업 프로세스 종료 코드 {child.exitcode}") from None
+                if event == "progress":
+                    stage = value
+                    deadline = monotonic() + timeout
+                    progress(value)
+                else:
+                    final_message = True
+                    if event == "error":
+                        raise RuntimeError(f"{stage} · {value}")
+                    return value
+            raise InterruptedError("CPU 비교를 중단했습니다.")
+        finally:
+            if final_message:
+                child.join(timeout=.25)
+            if child.is_alive():
+                child.kill()
+            child.join()
+            child.close()
+
+
+def _export_reference(checkpoint, workspace, *, progress):
+    from export_onnx import export_checkpoint
+
+    export = dict(checkpoint)
+    source = export.pop("checkpoint_path")
+    result = export_checkpoint(source, Path(workspace) / "reference.onnx", **export, log=progress)
+    return result["config_path"]
+
+
+def run_desktop_benchmark(options, workspace, *, log, on_row, cancelled):
+    settings = dict(options)
+    checkpoint = settings.pop("checkpoint_export", None)
+    timeout = settings.pop("stage_timeout", DEFAULT_STAGE_TIMEOUT)
+    run_step = partial(_run_step, timeout=timeout, cancelled=cancelled, workspace=workspace)
+    if checkpoint and not settings["fp32_path"]:
+        settings["fp32_path"] = run_step(
+            _export_reference, checkpoint, workspace,
+            stage="선택한 체크포인트에서 비교용 FP32 ONNX 생성 중", progress=log,
+        )
+    return benchmark_precisions(**settings, log=log, on_row=on_row, cancelled=cancelled,
+                                stage_timeout=timeout, workspace=workspace)
 
 
 def parse_thread_counts(text):
@@ -414,20 +483,22 @@ def _summarize(cfg, comparisons):
     return f"판정 변경 {changed}장 · 점수차 최대 {error:.5g}"
 
 
-def _measure(path, cfg, threads, backend, paths, warmup, repeats, *, reference, baseline, cancelled, cache, progress):
+def _measure(path, cfg, threads, backend, paths, warmup, repeats, *, reference, baseline, cache, progress,
+             cancelled=lambda: False):
     runner = _Runner(path, cfg, threads, backend)
     total_ms, model_ms, comparisons = [], [], []
     for index in range(warmup):
         if cancelled():
             return None
-        progress(f"워밍업 {index + 1}/{warmup}")
-        runner.predict(paths[index % len(paths)])
+        source = paths[index % len(paths)]
+        progress(f"워밍업 {index + 1}/{warmup} · {source.name}")
+        runner.predict(source)
     outputs = [] if reference else None
     for repeat in range(repeats):
         for index, source in enumerate(paths):
             if cancelled():
                 return None
-            progress(f"시험 이미지 {index + 1}/{len(paths)} · 반복 {repeat + 1}/{repeats}")
+            progress(f"시험 이미지 {index + 1}/{len(paths)} · 반복 {repeat + 1}/{repeats} · {source.name}")
             runner.model_seconds = 0.0
             started = perf_counter()
             prediction = runner.predict(source)
@@ -460,11 +531,40 @@ def _measure(path, cfg, threads, backend, paths, warmup, repeats, *, reference, 
     }, outputs
 
 
+def _select_benchmark_input(fp32_path, image_dir, image_count, *, progress):
+    from quantize_onnx import deployment_images
+
+    reference = _manifest(fp32_path, "float32")
+    return reference, deployment_images(reference, image_dir, image_count, log=progress)
+
+
+def _prepare_precision(precision, fp32_path, reference, calibration_dir, output, *, progress,
+                       cancelled=lambda: False):
+    if reference.get("export", {}).get("compute_precision", "float32") != "float32":
+        raise ValueError("FP64 보정이 포함된 기준 모델에서 자동 변환할 수 없습니다. 별도 배포 JSON을 선택하세요.")
+    if precision == "float16":
+        from benchmark_fp16 import convert_benchmark_fp16
+
+        return convert_benchmark_fp16(fp32_path, output)
+    if not calibration_dir:
+        raise ValueError("INT8 JSON 또는 양자화 보정 영상 폴더를 선택하세요.")
+    if reference["task"] == "classify" and (reference["backend"] == "efficientnet"
+            or str(reference.get("architecture", "")).startswith("dinov2_")):
+        return _classification_int8(fp32_path, reference, calibration_dir, output, cancelled, progress)
+
+    from quantize_onnx import quantize_segment
+
+    return quantize_segment(fp32_path, calibration_dir, output_json=output / "int8.json",
+                            log=progress, benchmark_only=True)
+
+
 def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp16_path=None, int8_path=None,
                          calibration_dir=None, run_fp16=True, run_int8=True, image_count=5, repeats=2, warmup=2,
-                         backends=("onnxruntime",), log=print, cancelled=lambda: False, on_row=None):
-    """Benchmark one image at a time with a separate CPU session per row."""
-    from quantize_onnx import deployment_images, quantize_segment
+                         backends=("onnxruntime",), log=print, cancelled=lambda: False, on_row=None,
+                         stage_timeout=None, workspace=None):
+    """Benchmark one image at a time, optionally supervising each native operation in a worker."""
+    if stage_timeout is not None and not 0 < stage_timeout <= 600:
+        raise ValueError("CPU 비교 제한 시간은 0초 초과 600초 이하여야 합니다.")
 
     counts = _thread_counts(thread_counts)
     if not isinstance(backends, (tuple, list)) or not backends or any(name not in _BACKENDS for name in backends):
@@ -475,8 +575,10 @@ def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp
     if (type(image_count) is not int or image_count < 1 or type(warmup) is not int or warmup < 0
             or type(repeats) is not int or repeats < 1):
         raise ValueError("비교 영상과 반복 횟수는 1 이상, 워밍업 횟수는 0 이상이어야 합니다.")
-    reference = _manifest(fp32_path, "float32")
-    paths = deployment_images(reference, image_dir, image_count, log=log)
+    run_step = partial(_run_step, timeout=stage_timeout, cancelled=cancelled, workspace=workspace)
+    inline_options = {"cancelled": cancelled} if stage_timeout is None else {}
+    reference, paths = run_step(_select_benchmark_input, fp32_path, image_dir, image_count,
+                                stage="배포 설정과 시험 이미지 확인 중", progress=log)
     rows, baselines = [], {}
 
     def record(row):
@@ -496,47 +598,40 @@ def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp
         f"{reference['input_width']}×{reference['input_height']} · "
         f"{len(variants) * len(backends) * len(counts)}개 조합 · "
         f"조합마다 워밍업 {warmup}회, 시험 {len(paths)}장 × {repeats}회")
-    with TemporaryDirectory(prefix="dvs-precision-benchmark-") as temporary:
+    with TemporaryDirectory(prefix="dvs-precision-benchmark-", dir=workspace) as scratch:
+        temporary = Path(scratch)
         for label, precision, path in variants:
             if cancelled():
                 break
             try:
-                if precision != "float32" and not path and reference.get("export", {}).get("compute_precision", "float32") != "float32":
-                    raise ValueError("FP64 보정이 포함된 기준 모델에서 자동 변환할 수 없습니다. 별도 배포 JSON을 선택하세요.")
-                if precision == "float16" and not path:
-                    from benchmark_fp16 import convert_benchmark_fp16
-                    log("FP16 비교용 그래프 변환 중")
-                    path = convert_benchmark_fp16(fp32_path, temporary)
-                elif precision == "int8" and not path:
-                    if not calibration_dir:
-                        raise ValueError("INT8 JSON 또는 양자화 보정 영상 폴더를 선택하세요.")
-                    log("INT8 비교용 그래프 보정 및 검증 중")
-                    if reference["task"] == "classify" and (reference["backend"] == "efficientnet"
-                            or str(reference.get("architecture", "")).startswith("dinov2_")):
-                        path = _classification_int8(fp32_path, reference, calibration_dir, Path(temporary), cancelled, log)
-                    else:
-                        path = quantize_segment(fp32_path, calibration_dir, output_json=Path(temporary) / "int8.json",
-                                                log=log, benchmark_only=True)
+                if not path:
+                    stage = "FP16 비교용 그래프 변환 중" if precision == "float16" else "INT8 보정 및 검증 중"
+                    path = run_step(_prepare_precision, precision, fp32_path, reference, calibration_dir, temporary,
+                                    stage=stage, progress=log, **inline_options)
                 cfg = reference if precision == "float32" else _manifest(path, precision, reference)
             except Exception as error:
-                log(f"{label} 준비 실패: {error}")
+                if cancelled():
+                    return rows
+                status = "시간 초과" if isinstance(error, BenchmarkStepTimeout) else "준비 실패"
+                log(f"{label} · {status} · {error}")
                 for backend in backends:
                     record({"backend": backend, "precision": label, "threads": None,
-                            "status": "준비 실패", "detail": str(error)})
+                            "status": status, "detail": str(error)})
                 continue
             for backend in backends:
                 for threads in counts:
                     if cancelled():
                         return rows
                     title = f"{_BACKENDS[backend]} · {label} · CPU 스레드 {threads or '자동'}"
-                    log(f"{title} · 모델 로딩 중")
                     row = {"backend": backend, "precision": label, "threads": threads}
                     try:
                         is_reference = precision == "float32" and backend == reference_backend
-                        measured = _measure(path, cfg, threads, backend, paths, warmup, repeats,
-                                            reference=is_reference, baseline=baselines.get(threads),
-                                            cancelled=cancelled, cache=Path(temporary),
-                                            progress=lambda step: log(f"{title} · {step}"))
+                        measured = run_step(
+                            _measure, path, cfg, threads, backend, paths, warmup, repeats,
+                            reference=is_reference, baseline=baselines.get(threads), cache=temporary,
+                            stage=f"모델 로딩 중 · {Path(path).name}",
+                            progress=lambda step: log(f"{title} · {step}"), **inline_options,
+                        )
                         if measured is None:
                             return rows
                         result, outputs = measured
@@ -546,7 +641,10 @@ def benchmark_precisions(fp32_path, image_dir, *, thread_counts=(1, 2, 4, 8), fp
                             result["detail"] += " · INT8 배포 검증 미통과 (임시 비교)"
                         row.update(result, status="완료")
                     except Exception as error:
-                        log(f"{title} 측정 실패: {error}")
-                        row.update(status="실행 실패", detail=str(error))
+                        if cancelled():
+                            return rows
+                        status = "시간 초과" if isinstance(error, BenchmarkStepTimeout) else "실행 실패"
+                        log(f"{title} · {status} · {error}")
+                        row.update(status=status, detail=str(error))
                     record(row)
     return rows

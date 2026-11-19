@@ -190,11 +190,18 @@ def test_fp16_export_button_saves_separate_deployment_and_reopens_for_comparison
         app.processEvents()
 
 
-def _benchmark_events(options, workspace, sender):
+def _blocked_native_stage(*, progress):
     import time
 
-    sender.send(("progress", "비교 실행"))
-    for row in [
+    progress("워밍업 1/2")
+    time.sleep(60)
+
+
+def _benchmark_events(options, workspace, *, log, on_row, cancelled):
+    from precision_benchmark import _run_step
+
+    log("비교 실행")
+    rows = [
         {"backend": "onnxruntime", "precision": "FP32", "threads": 0,
          "p50_ms": 10, "p95_ms": 12, "model_p50_ms": 8, "model_p95_ms": 9,
          "comparison": "기준", "status": "완료"},
@@ -203,13 +210,19 @@ def _benchmark_events(options, workspace, sender):
          "comparison": "판정 100%", "status": "완료"},
         {"backend": "openvino", "precision": "INT8", "threads": None,
          "status": "준비 실패", "detail": "지원하지 않는 그래프"},
-    ]:
-        sender.send(("row", row))
+    ]
+    for row in rows:
+        on_row(row)
         if options["run_fp16"]:
-            # Simulate a native runtime which never returns to Python.
-            Path(options["image_dir"], "workspace").write_text(workspace, encoding="utf-8")
-            time.sleep(60)
-    sender.send(("completed", 3))
+            # Exercise cancellation while the native worker is still running.
+            def signal_stage(stage):
+                log(stage)
+                if stage.startswith("워밍업"):
+                    Path(options["image_dir"], "workspace").write_text(workspace, encoding="utf-8")
+
+            _run_step(_blocked_native_stage, stage="모델 로딩 중", progress=signal_stage,
+                      timeout=60, cancelled=cancelled, workspace=workspace)
+    return rows
 
 
 @pytest.mark.parametrize("stop_early", [False, True])
@@ -218,7 +231,7 @@ def test_precision_comparison_uses_shared_worker_and_displays_thread_results(tmp
     import precision_benchmark
     from widgets.precision_benchmark_dialog import PrecisionBenchmarkDialog
 
-    monkeypatch.setattr(precision_benchmark, "run_benchmark_process", _benchmark_events)
+    monkeypatch.setattr(precision_benchmark, "run_desktop_benchmark", _benchmark_events)
     config = tmp_path / "fp32.json"
     config.write_text("{}", encoding="utf-8")
     app = QApplication.instance() or QApplication([])
