@@ -127,12 +127,13 @@ class TrainingWidget(TrainingForm, QWidget):
                        ("builtin_transfer", f"{name} 이전 학습 결과(.pt)로 이어서")]
             self.mode_desc.setText(f"선택 모델: {name}\n기본 사전학습 파일은 제공하지 않습니다. 내 데이터로 학습하거나 이전 학습 결과를 불러옵니다.")
         elif model_id in BUILTIN_ADAPTER_IDS:
-            source = "LVD-142M" if model_id.startswith(("dinov2_", "eomt_")) else "ImageNet"  # DINOv2는 자기지도 사전학습
+            source = ("WebLI" if model_id.startswith("siglip2_") else
+                      "LVD-142M" if model_id.startswith(("dinov2_", "eomt_")) else "ImageNet")
             choices = [("builtin_finetune", f"{name} {source} 가중치로 시작"),
                        ("builtin_transfer", f"{name} 로컬 가중치로 시작"),
                        ("builtin_scratch", f"{name} 처음부터 학습"),
                        ("builtin_resume", f"{name} 중단한 학습 재개")]
-            scope = "분류 모델" if self.project.task == "classify" else "백본 (분할 헤드는 새로 학습)"
+            scope = "백본 (프로젝트 클래스용 헤드는 새로 학습)"
             self.mode_desc.setText(f"선택 모델: {name}\n사전학습 범위: {scope}")
         elif model_id.startswith("efficientnet_") or (not model_id and self.project.task == "classify"):
             choices = [(key, MODE_LABELS[key]) for key in
@@ -541,8 +542,6 @@ class TrainingWidget(TrainingForm, QWidget):
         mask2former = self.model_id_combo.currentData() == "mask2former_swin_small"
         self.hp_group.layout().setRowVisible(self.mask2former_queries_spin, mask2former and not resume)
         self.hp_group.layout().setRowVisible(self.mask2former_resume_queries, mask2former and resume)
-        self.distillation_group.setVisible(self.project is not None and self.project.task == "segment"
-                                          and self.model_id_combo.currentData() in BUILTIN_ADAPTER_IDS)
         self.finetune_freeze_check.setEnabled(not is_dinomaly)
         self.backbone_lr_spin.setEnabled(not is_dinomaly and not resume)
         self.amp_check.setEnabled(not is_dinomaly)
@@ -553,6 +552,7 @@ class TrainingWidget(TrainingForm, QWidget):
         if self.project and self.project.task == "segment" and sam2:
             self.class_weight_combo.setEnabled(False)
         capabilities = self._training_capabilities()
+        self.distillation_group.setVisible(self.project is not None and capabilities.get("distillation", False))
         self._update_image_settings(capabilities, resume, is_dinomaly)
         self.selection_combo.setEnabled(not is_pc and not resume)
         self._selection_changed()
@@ -694,7 +694,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self.selection_info.setText(policy.describe() + "\nBest 저장과 조기 종료에 동일하게 적용")
 
     def _browse_teacher(self):
-        path, _ = QFileDialog.getOpenFileName(self, "분할 교사 모델", "", "PyTorch (*.pt *.pth)")
+        path, _ = QFileDialog.getOpenFileName(self, "교사 체크포인트", "", "PyTorch (*.pt *.pth)")
         if path:
             self.teacher_edit.setText(path)
 
@@ -707,9 +707,9 @@ class TrainingWidget(TrainingForm, QWidget):
 
     def _browse_resume_weights(self):
         """이어학습용 이전 체크포인트 선택"""
-        local_teacher = (self.model_id_combo.currentData() in LOCAL_TRANSFORMER_TEACHERS
-                         and self.mode_combo.currentData() == "builtin_transfer")
-        formats = ("모델 가중치 (*.pt *.pth *.bin *.safetensors)" if local_teacher
+        supports_safe_tensors = self.model_id_combo.currentData() in (LOCAL_TRANSFORMER_TEACHERS | {"siglip2_so400m_cls"})
+        local_backbone = supports_safe_tensors and self.mode_combo.currentData() == "builtin_transfer"
+        formats = ("모델 가중치 (*.pt *.pth *.bin *.safetensors)" if local_backbone
                    else "PyTorch 체크포인트 (*.pt *.pth *.tar)")
         filepath, _ = QFileDialog.getOpenFileName(self, "이전 학습 모델 선택", "", formats)
         if filepath:
@@ -989,7 +989,7 @@ class TrainingWidget(TrainingForm, QWidget):
                              if self.project.task in ("classify", "segment") else "none")
         cfg.segmentation_loss = self.segmentation_loss_combo.currentData() or "ce_dice"
         cfg.teacher_checkpoint = (self.teacher_edit.text().strip()
-                                  if self.project.task == "segment" and mcfg.model_id in BUILTIN_ADAPTER_IDS else "")
+                                  if capabilities.get("distillation") else "")
         cfg.distillation_alpha = self.kd_alpha.value()
         cfg.distillation_temperature = self.kd_temperature.value()
         native = self.project.task in {"classify", "detect"} and capabilities.get("engine") == "upstream"

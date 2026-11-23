@@ -240,6 +240,16 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
             f"dinov2_{variant}_seg", "DINOv2", label, "segment", ("windows_native", "onnx"), common, (448, 448), (1, 3),
             "export_verified", pretrained_asset=asset, metadata=desktop,
             notes="ViT 의미 특징(1/14) + 합성곱 세부 경로(1/2·1/4) 디코더; 1~2px 결함은 U-Net 원본 해상도가 낫다"))
+    specs.extend((
+        ModelSpec("dinov2_vitl14_cls", "DINOv2", "ViT-L/14", "classify", ("windows_native", "onnx"),
+                  common, (224, 224), (1, 3), "export_verified", metadata=desktop,
+                  pretrained_asset="Meta DINOv2 ViT-L/14 LVD-142M (Apache-2.0)",
+                  notes="대형 자기지도 사전학습 ViT. 교사 학습 및 분류 증류 지원."),
+        ModelSpec("siglip2_so400m_cls", "SigLIP 2", "So400m/16 · 384", "classify", ("windows_native", "onnx"),
+                  common, (384, 384), (1, 3), "export_verified", metadata=desktop,
+                  pretrained_asset="Google SigLIP 2 vision encoder, timm WebLI (Apache-2.0)",
+                  notes="대형 이미지 인코더. 교사 학습 및 분류 증류 지원."),
+    ))
     specs.append(ModelSpec(
         "unet_lite", "U-Net", "Lite", "segment", ("windows_native", "onnx"), common, (256, 256), (1, 3),
         "export_verified", metadata=desktop,

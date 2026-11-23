@@ -212,7 +212,7 @@ class ExportWidget(QWidget):
         self.export_precision = NoWheelComboBox()
         self.export_precision.addItem("FP32 (원본 정밀도)", "float32")
         self.export_precision.addItem("FP16 (16비트 부동소수점)", "float16")
-        self.export_precision.addItem("INT8 QDQ (객체 탐지·분할·Dinomaly)", "int8")
+        self.export_precision.addItem("INT8 QDQ (분류·객체 탐지·분할·Dinomaly)", "int8")
         opt_layout.addRow("정밀도:", self.export_precision)
         self.calibration_edit = QLineEdit()
         self.calibration_edit.setPlaceholderText("INT8 보정용 학습 이미지 폴더 (정상·불량 혼합)")
@@ -725,6 +725,10 @@ class ExportWidget(QWidget):
         if result.get("precision") == "int8":
             text += "\nINT8은 FP32와 수치·정확도가 달라질 수 있습니다. 보정 영상 비교 결과는 로그와 JSON에 저장했습니다. 별도 시험 영상으로 확인하세요."
             report = result.get("quantization_comparison", {})
+            if result.get("task") == "classify" and "top1_agreement" in report:
+                text += f"\nFP32 대비 분류 판정 일치율: {report['top1_agreement']:.2%} ({report['windows']}개 입력)"
+                if report["top1_agreement"] < 1:
+                    text += "\n판정이 바뀐 보정 영상이 있습니다. JSON의 changed_images를 확인하세요."
             if result.get("task") == "detect" and report.get("fp32_positive_images") == 0:
                 text += "\n보정 영상에서 FP32 검출이 없어 불량 검출 일치는 확인되지 않았습니다."
         if result.get("backend") == "sam2" and not result.get("encrypted"):

@@ -39,6 +39,8 @@ USED_BY = {
     "bisenetv2_backbone": "BiSeNetV2 분할 (ImageNet 백본)",
     "stdc1_backbone": "STDC1 분할 (ImageNet 백본)",
     "dinov2_vits14": "DINOv2 ViT-S/14 분류·분할",
+    "dinov2_vitl14": "DINOv2 ViT-L/14 분류",
+    "siglip2_so400m_cls": "SigLIP 2 So400m/16 분류",
     "dinov2_vitb14": "DINOv2 ViT-B/14 분류·분할",
     "libreyolo_classify_mobilenetv4_small": "MobileNetV4 분류",
     "libreyolo_classify_mobilenetv4_medium": "MobileNetV4 Medium 분류",
@@ -60,7 +62,7 @@ def choose_and_import(parent, asset_id: str) -> bool:
     from pathlib import Path
     expected = Path(ASSET_FILES[asset_id]).name
     path, _ = QFileDialog.getOpenFileName(
-        parent, f"{asset_id} 가중치 파일 선택 ({expected})", "", "PyTorch 가중치 (*.pth *.pt *.tar);;모든 파일 (*)")
+        parent, f"{asset_id} 가중치 파일 선택 ({expected})", "", "모델 가중치 (*.pth *.pt *.tar *.safetensors);;모든 파일 (*)")
     if not path:
         return False
     try:

@@ -549,7 +549,7 @@ def _prepare_precision(precision, fp32_path, reference, calibration_dir, output,
     if not calibration_dir:
         raise ValueError("INT8 JSON 또는 양자화 보정 영상 폴더를 선택하세요.")
     if reference["task"] == "classify" and (reference["backend"] == "efficientnet"
-            or str(reference.get("architecture", "")).startswith("dinov2_")):
+            or str(reference.get("architecture", "")).startswith(("dinov2_", "siglip2_"))):
         return _classification_int8(fp32_path, reference, calibration_dir, output, cancelled, progress)
 
     from quantize_onnx import quantize_segment

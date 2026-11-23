@@ -1,4 +1,4 @@
-"""Static QDQ INT8 for detection, fixed-size segmentation and Dinomaly."""
+"""Static QDQ INT8 for deployment models with fixed spatial inputs."""
 
 import copy
 import json
@@ -35,14 +35,17 @@ def quantize_dense(
     config_path = Path(config_path)
     config = json.loads(config_path.read_text(encoding="utf-8"))
     detect = config["task"] == "detect"
-    if config["task"] not in {"detect", "segment", "anomaly"} or (
+    classify = config["task"] == "classify"
+    if config["task"] not in {"classify", "detect", "segment", "anomaly"} or (
         config["task"] == "anomaly" and config["backend"] != "dinomaly"
     ):
-        raise ValueError("고정 입력 INT8은 객체 탐지·분할·Dinomaly 모델을 지원합니다")
+        raise ValueError("고정 입력 INT8은 분류·객체 탐지·분할·Dinomaly 모델을 지원합니다")
     if detect and not config.get("cpp_supported"):
         raise ValueError("C++ 배포 계약이 있는 탐지 모델만 INT8을 지원합니다")
     if config.get("encryption"):
         raise ValueError("INT8 보정을 먼저 하고 암호화하세요")
+    if classify and config.get("export", {}).get("compute_precision", "float32") != "float32":
+        raise ValueError("분류 INT8은 FP32 기준 그래프가 필요합니다.")
     source = config_path.parent / config["model_path"]
     output = (
         Path(output_json)
@@ -70,6 +73,9 @@ def quantize_dense(
         raise ValueError("ONNX/JSON 입력 이름 불일치")
 
     def prepare(path):
+        if classify:
+            from precision_benchmark import _classification_tensors, _read_image
+            return list(_classification_tensors(config, _read_image(path)))
         if detect:
             return DetectionInputs(config, path)
         image = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
@@ -106,8 +112,8 @@ def quantize_dense(
                 log(f"INT8 보정 · 타일 {self.cursor}/{len(self.items)} · {path.name}")
                 self.cached_pixels = prepare(path)
                 self.cached_path = path
-            tensor = self.cached_pixels[index][1 if detect else 2]
-            return {input_name: tensor}
+            item = self.cached_pixels[index]
+            return {input_name: item if classify else item[1 if detect else 2]}
 
     reader = Reader()
     log(f"INT8 보정 준비 · 이미지 {len(paths)}장 · 타일 {len(reader)}개")
@@ -153,6 +159,8 @@ def quantize_dense(
                     raise
                 report["deployment_check_error"] = str(error)
                 log(f"INT8 배포 검증 실패 · 임시 비교만 계속: {error}")
+        elif classify:
+            report = compare_classification_sessions(config, fp, quant, paths, prepare, Path(calibration_dir))
         else:
             report = compare_sessions(config, fp, quant, paths)
         result = copy.deepcopy(config)
@@ -195,6 +203,35 @@ def quantize_dense(
     message = f"INT8 완료: {output.name} · 실제 보정 타일 {len(reader)}개"
     log(message if detect else f"{message} · 출력 차이: {report}")
     return output
+
+
+def compare_classification_sessions(config, fp32, int8, paths, prepare, root):
+    matches = count = 0
+    max_logit_error = max_probability_error = 0.0
+    changed = []
+    name = config["output_name"]
+    for path in paths:
+        label = Path(path).relative_to(root).as_posix()
+        for tensor in prepare(path):
+            feed = {config["input_name"]: tensor}
+            left, right = (session.run([name], feed)[0].astype(np.float64) for session in (fp32, int8))
+            if left.shape != (1, config["num_classes"]) or right.shape != left.shape:
+                raise ValueError("분류 INT8: FP32와 출력 형태가 다릅니다.")
+            if not np.isfinite(left).all() or not np.isfinite(right).all():
+                raise ValueError("분류 INT8: 출력에 NaN 또는 무한대가 있습니다.")
+            count += 1
+            if left.argmax() == right.argmax():
+                matches += 1
+            elif label not in changed:
+                changed.append(label)
+            max_logit_error = max(max_logit_error, float(np.abs(left - right).max()))
+            lp, rp = (np.exp(x - x.max()) for x in (left, right))
+            max_probability_error = max(max_probability_error, float(np.abs(lp / lp.sum() - rp / rp.sum()).max()))
+    if not count:
+        raise ValueError("분류 INT8: 비교할 영상이 없습니다.")
+    return {"windows": count, "top1_agreement": matches / count, "changed_images": changed,
+            "max_logit_error": max_logit_error, "max_probability_error": max_probability_error,
+            "scope": "calibration_images"}
 
 
 def compare_sessions(config, fp32, int8, paths):

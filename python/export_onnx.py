@@ -517,7 +517,10 @@ def export_to_onnx(model, dummy_input, output_path, opset_version=17,
     exporter_options = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
     if "external_data" in inspect.signature(torch.onnx.export).parameters:
         exporter_options["external_data"] = False
-    with torch.no_grad(), torch.autocast(device_type="cpu", enabled=False):
+    from contextlib import nullcontext
+    prepare = getattr(model, "prepare_onnx_export", None)
+    export_context = prepare(dummy_input.shape) if prepare is not None else nullcontext()
+    with export_context, torch.no_grad(), torch.autocast(device_type="cpu", enabled=False):
         torch.onnx.export(model, dummy_input.cpu(), str(output_path), export_params=True,
                           opset_version=opset_version, do_constant_folding=constant_folding,
                           input_names=["input_image"], output_names=names,

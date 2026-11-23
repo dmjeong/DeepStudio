@@ -241,6 +241,8 @@ def build():
         "--hidden-import", "benchmark_fp16",
         "--hidden-import", "detection_quantization",
         "--hidden-import", "segmentation_distillation",
+        "--hidden-import", "classification_distillation",
+        "--hidden-import", "siglip2_classifier",
         "--hidden-import", "transformer_segmenters",
         "--collect-submodules", "transformers.models.mask2former",
         "--collect-submodules", "transformers.models.segformer",

@@ -44,6 +44,8 @@ ASSET_FILES = {
     "stdc1_backbone": "stdc/STDCNet813M_73.91.tar",
     "dinov2_vits14": "dinov2/dinov2_vits14_pretrain.pth",
     "dinov2_vitb14": "dinov2/dinov2_vitb14_pretrain.pth",
+    "dinov2_vitl14": "dinov2/dinov2_vitl14_pretrain.pth",
+    "siglip2_so400m_cls": "siglip2/siglip2_so400m_patch16_384.safetensors",
     "libreyolo_classify_mobilenetv4_small": "libreyolo/LibreMobileNetV4s-cls.pt",
     "libreyolo_classify_mobilenetv4_medium": "libreyolo/LibreMobileNetV4m-cls.pt",
     "libreyolo_detect_dfine_nano": "libreyolo/LibreDFINEn.pt",
@@ -88,6 +90,8 @@ SOURCE_URLS = {
     "stdc1_backbone": "https://drive.usercontent.google.com/download?id=1DFoXcV42zy-apUcMh5P8WhsXMRJofgl8&export=download&confirm=t",
     "dinov2_vits14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth",
     "dinov2_vitb14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth",
+    "dinov2_vitl14": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_pretrain.pth",
+    "siglip2_so400m_cls": "https://huggingface.co/timm/vit_so400m_patch16_siglip_384.v2_webli/resolve/5269a45a3c4b03a8efae511eac9bcacdf4bf55e9/model.safetensors",
     "libreyolo_classify_mobilenetv4_small":
         "https://huggingface.co/LibreYOLO/LibreMobileNetV4s-cls/resolve/main/LibreMobileNetV4s-cls.pt",
     "libreyolo_classify_mobilenetv4_medium":
@@ -130,6 +134,8 @@ PINNED_SHA256 = {
     "efficientnet_b1_ra4.pth": "aaf5438e2525c3f5a467e1c515ee6d19041cf5bd0ab77b9467370c6c506bdaa1",
     "dinov2_vits14_pretrain.pth": "b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9",
     "dinov2_vitb14_pretrain.pth": "0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73",
+    "dinov2_vitl14_pretrain.pth": "d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428",
+    "siglip2_so400m_patch16_384.safetensors": "542bac8ad54c1effc887315d3d6448fed01a26c900064bc47f342ed5e3e5fb62",
 }
 
 
@@ -397,6 +403,7 @@ BUILTIN_BACKBONE_ASSETS = {
     # 모델 ID(…_cls 분류, …_seg 분할)는 main의 DINOv2 분할(dinov2_vits14)과 겹치지 않게, 가중치 ID는 같은 공식 파일이라 공유
     "dinov2_vits14_cls": "dinov2_vits14", "dinov2_vits14_seg": "dinov2_vits14",
     "dinov2_vitb14_cls": "dinov2_vitb14", "dinov2_vitb14_seg": "dinov2_vitb14",
+    "dinov2_vitl14_cls": "dinov2_vitl14", "siglip2_so400m_cls": "siglip2_so400m_cls",
 }
 
 

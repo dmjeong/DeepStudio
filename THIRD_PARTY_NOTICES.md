@@ -69,9 +69,27 @@ Deep Vision Studio additions. Fixed official weights:
 https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth
 (SHA256 `b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9`) and
 https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth
-(SHA256 `0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73`).
+(SHA256 `0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73`), and
+https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_pretrain.pth
+(SHA256 `d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428`).
 This applies to the basic DINOv2 models, not the separately licensed XRay-DINO or
 Cell-DINO models. Include `licenses/DINOv2-APACHE-2.0.txt` with redistributed builds.
+
+## SigLIP 2 So400m/16 image encoder
+
+Google Research's SigLIP 2 weights and Big Vision code are released under
+Apache-2.0. Deep Vision Studio uses the vision-only timm 1.0.31 architecture and
+checkpoint `timm/vit_so400m_patch16_siglip_384.v2_webli`, revision
+`5269a45a3c4b03a8efae511eac9bcacdf4bf55e9`, SHA-256
+`542bac8ad54c1effc887315d3d6448fed01a26c900064bc47f342ed5e3e5fb62`.
+The adapter adds a project-specific classification head and converts the
+application's normalized RGB or gray input to the encoder's normalization.
+The original and converted weight repositories both identify the weight license
+as Apache-2.0. Include `licenses/SigLIP2-APACHE-2.0.txt` and
+`licenses/timm-LICENSE.txt` when redistributing.
+Sources: https://github.com/google-research/big_vision,
+https://huggingface.co/google/siglip2-so400m-patch16-384,
+https://huggingface.co/timm/vit_so400m_patch16_siglip_384.v2_webli.
 
 ## C++ example bundled JSON header
 

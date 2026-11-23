@@ -81,7 +81,7 @@ def _optimizer_step(optimizer, loss, scaler):
 
 
 def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None,
-                          should_stop=None, progress=None, scaler=None):
+                          should_stop=None, progress=None, scaler=None, distiller=None):
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
@@ -102,6 +102,8 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
             with (torch.autocast(device_type, dtype=torch.float16) if scaler is not None else nullcontext()):
                 logits = model(images)
                 loss = criterion(logits, labels)
+                if training and distiller is not None:
+                    loss = distiller(images, logits, loss)
             if training:
                 _optimizer_step(optimizer, loss, scaler)
             total_loss += float(loss.detach()) * labels.shape[0]
@@ -471,8 +473,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     backbone_weights = None
     if initial_weights is not None:
         from transformer_segmenters import MODEL_IDS as transformer_ids, load_local_tensors
-        payload = load_local_tensors(initial_weights) if model_id in transformer_ids else torch.load(
-            initial_weights, map_location="cpu", weights_only=True)
+        payload = load_local_tensors(initial_weights)
         if isinstance(payload, dict) and "model_state_dict" in payload:
             if payload.get("model_id") != model_id:
                 raise ValueError("initial checkpoint model_id does not match the requested adapter")
@@ -594,11 +595,12 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         criterion = nn.CrossEntropyLoss(ignore_index=255, label_smoothing=label_smoothing)
     distiller = None
     if teacher_checkpoint:
-        if spec.task != "segment":
-            raise ValueError("픽셀 증류는 분할 태스크만 지원합니다")
-        from segmentation_distillation import SegmentationDistiller
-        distiller = SegmentationDistiller(teacher_checkpoint, class_names, in_channels, target,
-                                         alpha=distillation_alpha, temperature=distillation_temperature)
+        if spec.task == "classify":
+            from classification_distillation import ClassificationDistiller as Distiller
+        else:
+            from segmentation_distillation import SegmentationDistiller as Distiller
+        distiller = Distiller(teacher_checkpoint, class_names, in_channels, target,
+                              alpha=distillation_alpha, temperature=distillation_temperature)
         log(f"동일 증강 입력 교사 증류: {distiller.config}")
     training_config = {
         "distillation": distiller.config if distiller else None,
@@ -712,10 +714,12 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             return ({"should_stop": should_stop,
                      "progress": _BatchProgress(log, f"에폭 {epoch + 1} {label}", len(loader), target)}
                     if class_report else {})
+        distillation = {"distiller": distiller} if distiller is not None else {}
         try:
             if spec.task == "classify":
                 train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target,
-                                                                 **training_precision, **watch("학습", train_loader))
+                                                                 **distillation, **training_precision,
+                                                                 **watch("학습", train_loader))
                 val_loss, val_metric = _classification_epoch(model, val_loader, criterion, None, target,
                                                              validation_metrics, **watch("검증", val_loader))
             else:
@@ -724,7 +728,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                 train_loss, train_metric = _segmentation_epoch(model, train_loader, criterion, optimizer, target,
                                                                pixel_counts_out=seen_pixels,
                                                                **({"class_report_out": train_report} if class_report else {}),
-                                                               **({"distiller": distiller} if distiller is not None else {}),
+                                                               **distillation,
                                                                **training_precision, **watch("학습", train_loader))
                 if epoch == start_epoch and class_weights == "none":
                     _log_rare_class_hint(seen_pixels, class_names, log)

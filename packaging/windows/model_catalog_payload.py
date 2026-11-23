@@ -32,7 +32,7 @@ _PAYLOAD_KINDS = frozenset({"builtin", "pack"})
 _MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,79}$")
 REQUIRED_BUILTIN_MODEL_IDS = frozenset({
     "efficientnet_b0", "efficientnet_b1", "resnet18", "resnet50",
-    "convnext_v1_tiny", "libreyolo_classify_mobilenetv4_small",
+    "convnext_v1_tiny", "dinov2_vitl14_cls", "siglip2_so400m_cls", "libreyolo_classify_mobilenetv4_small",
     "libreyolo_classify_mobilenetv4_medium", "libreyolo_detect_dfine_nano",
     "patchcore_wide_resnet50_2", "patchcore_resnet18",
     "re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large",

@@ -26,6 +26,8 @@ def dependency_message(model_id, error):
 
 def require_model_runtime(model_id):
     modules = ["timm.layers", "timm.models.efficientvit_mit"] if model_id in TIMM_MODELS else []
+    if model_id == "siglip2_so400m_cls":
+        modules.extend(("timm.models.vision_transformer", "safetensors.torch"))
     if model_id == "eomt_dinov2_small":
         modules.append("scipy.optimize")
     if model_id in {"mask2former_swin_small", "segformer_b2"}:

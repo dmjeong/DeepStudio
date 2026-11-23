@@ -42,7 +42,8 @@ LOCAL_TRANSFORMER_TEACHERS = frozenset({"mask2former_swin_small", "segformer_b2"
 BUILTIN_ADAPTER_IDS = LOCAL_TRANSFORMER_TEACHERS | frozenset({
     "resnet18", "resnet50", "convnext_v1_tiny", "dinomaly_vits14",
     "deeplabv3plus_resnet34", "unet_resnet18", "dinov2_vits14",
-    "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg",
+    "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vitl14_cls", "siglip2_so400m_cls",
+    "dinov2_vits14_seg", "dinov2_vitb14_seg",
     "unet_lite", "unet_mobilenetv2",
     "efficientvit_b0_seg", "efficientvit_b1_seg", "sctnet_s", "eomt_dinov2_small",
     "unet_mobilenetv4_small", "unet_shufflenetv2", "unet_efficientnet_b1", "bisenetv2", "stdc1",
@@ -104,6 +105,8 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
     separate_adapter = model_id in BUILTIN_ADAPTER_IDS | UPSTREAM_ADAPTER_IDS | SAM2_ADAPTER_IDS
     return {
         "engine": engine,
+        "distillation": ((task == "classify" and engine in {"builtin", "efficientnet"})
+                         or (task == "segment" and engine == "builtin")),
         "patch_training": engine == "dinomaly" or (task == "segment" and engine != "sam2") or (engine == "upstream" and task in {"classify", "detect"}),
         "small_object_coverage": task == "detect" and engine == "upstream",
         "detection_foreground_supervision": task == "detect" and engine == "custom" and not model_id,
@@ -140,8 +143,8 @@ def validate_training_options(project, *, require_runnable=True):
     model_id = getattr(project.model, "model_id", "")
     if model_id == "mask2former_swin_small" and cfg.training_mode != "builtin_resume":
         validate_mask2former_num_queries(cfg.mask2former_num_queries)
-    if getattr(cfg, "teacher_checkpoint", "") and (project.task != "segment" or capabilities['engine'] != 'builtin'):
-        raise ValueError("교사 증류는 기본 분할 모델의 학습 경로에서 지원합니다")
+    if getattr(cfg, "teacher_checkpoint", "") and not capabilities.get("distillation"):
+        raise ValueError("교사 증류는 기본 분류·분할 모델과 EfficientNet 학습에서 지원합니다.")
     if cfg.training_mode in {"builtin_transfer", "builtin_resume", "upstream_transfer", "upstream_resume", "sam2_transfer"} and require_runnable:
         source = getattr(project.model, "pretrained_weights", "")
         if not source or not Path(source).is_file():

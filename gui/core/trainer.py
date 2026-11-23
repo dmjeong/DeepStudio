@@ -106,6 +106,7 @@ class TrainWorker(TrainingEngine):
             )
 
         finally:
+            self._distiller = None
             if getattr(self, "_layer_debug_session", None) is not None:
                 self._layer_debug_session.close()
 
@@ -154,6 +155,14 @@ class TrainWorker(TrainingEngine):
             raise ValueError(message)
         if val_loader is None or len(val_loader) == 0:
             raise ValueError("모델 선택을 위한 검증 데이터 필요")
+        self._distiller = None
+        if task == "classify" and getattr(cfg, "teacher_checkpoint", ""):
+            from classification_distillation import ClassificationDistiller
+            self._distiller = ClassificationDistiller(
+                cfg.teacher_checkpoint, data_cfg.class_names, cfg.in_channels, device,
+                alpha=cfg.distillation_alpha, temperature=cfg.distillation_temperature,
+            )
+            self.signals.log_message.emit(f"  분류 교사 증류: {self._distiller.config}")
         model = self._build_model().to(device)
 
         params = model.get_param_count()
@@ -236,6 +245,8 @@ class TrainWorker(TrainingEngine):
 
         if getattr(self, "_class_weight_details", None) is not None:
             run_record.config_snapshot["class_weight_details"] = self._class_weight_details
+        if self._distiller is not None:
+            run_record.config_snapshot["distillation"] = dict(self._distiller.config)
         if self._original_size_region is not None:
             run_record.config_snapshot["original_size_region"] = list(self._original_size_region)
         self._run_record = run_record
@@ -1079,7 +1090,9 @@ class TrainWorker(TrainingEngine):
                     + foreground_weight * foreground_supervision_loss(foreground, targets))
         outputs = model(images)
         if criterion is not None or self.project.task == "anomaly":
-            return self._criterion_loss(criterion, outputs, targets)
+            loss = self._criterion_loss(criterion, outputs, targets)
+            distiller = getattr(self, "_distiller", None)
+            return distiller(images, outputs, loss) if distiller is not None else loss
         return self._compute_detection_loss(outputs, targets)
 
     # ── 검증 (에폭 단위 — 간략 메트릭) ────────────────

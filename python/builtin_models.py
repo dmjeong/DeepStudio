@@ -37,6 +37,8 @@ BUILTIN_MODEL_SPECS = {
     # DINOv2 (자기지도 ViT, 패치 14px). 224·448은 14와 32의 공배수라 학습 화면의 입력 크기 단계(32)와 맞는다.
     "dinov2_vits14_cls": BuiltinModelSpec("dinov2_vits14_cls", "classify", (224, 224), (1, 3)),
     "dinov2_vitb14_cls": BuiltinModelSpec("dinov2_vitb14_cls", "classify", (224, 224), (1, 3)),
+    "dinov2_vitl14_cls": BuiltinModelSpec("dinov2_vitl14_cls", "classify", (224, 224), (1, 3)),
+    "siglip2_so400m_cls": BuiltinModelSpec("siglip2_so400m_cls", "classify", (384, 384), (1, 3)),
     "dinov2_vits14_seg": BuiltinModelSpec("dinov2_vits14_seg", "segment", (448, 448), (1, 3)),
     "dinov2_vitb14_seg": BuiltinModelSpec("dinov2_vitb14_seg", "segment", (448, 448), (1, 3)),
     # 초경량 U-Net: 사전학습 가중치 없이 처음부터 학습(라이선스 걱정 없음). 원본 해상도 패치 학습용.
@@ -63,6 +65,7 @@ HEAD_PREFIXES = {
     "deeplabv3plus_resnet34": ("aspp.", "low_projection.", "decoder."),
     "unet_resnet18": ("dec", "head."),
     "dinov2_vits14_cls": ("head.",), "dinov2_vitb14_cls": ("head.",),
+    "dinov2_vitl14_cls": ("head.",), "siglip2_so400m_cls": ("head.",),
     "dinov2_vits14_seg": ("neck.", "detail", "fuse", "head."),
     "dinov2_vitb14_seg": ("neck.", "detail", "fuse", "head."),
     "unet_lite": ("",),  # 사전학습 백본이 없어 전부 머리(같은 학습률)
@@ -73,6 +76,7 @@ CLASS_HEAD_PREFIX = {
     "resnet18": "fc.", "resnet50": "fc.", "convnext_v1_tiny": "classifier.2.",
     "deeplabv3plus_resnet34": "decoder.6.", "unet_resnet18": "head.",
     "dinov2_vits14_cls": "head.", "dinov2_vitb14_cls": "head.",
+    "dinov2_vitl14_cls": "head.", "siglip2_so400m_cls": "head.",
     "dinov2_vits14_seg": "head.", "dinov2_vitb14_seg": "head.",
     "unet_lite": "head.", "unet_mobilenetv2": "head.",
 }
@@ -144,6 +148,7 @@ _GRADCAM_TARGET_LAYERS = {
     "unet_resnet18": "enc4",
     "dinov2_vits14": "fusion",
     "dinov2_vits14_cls": "feature_map", "dinov2_vitb14_cls": "feature_map",  # 패치 토큰을 펼친 (B, D, h, w) 지도
+    "dinov2_vitl14_cls": "feature_map", "siglip2_so400m_cls": "feature_map",
     "dinov2_vits14_seg": "neck", "dinov2_vitb14_seg": "neck",
     "unet_lite": "e4",
     "unet_mobilenetv2": "encoder.17",
@@ -201,8 +206,11 @@ def _classification_model(model_id: str, num_classes: int, in_channels: int, **w
         model.features[0][0] = _replace_conv_in_channels(first, in_channels)
         model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
         return model
-    if model_id in ("dinov2_vits14_cls", "dinov2_vitb14_cls"):
+    if model_id.startswith("dinov2_"):
         return DinoV2Classifier(model_id.removeprefix("dinov2_").removesuffix("_cls"), num_classes, in_channels, **weights)
+    if model_id == "siglip2_so400m_cls":
+        from siglip2_classifier import SigLIP2Classifier
+        return SigLIP2Classifier(num_classes, in_channels, **weights)
     raise ValueError(f"Unsupported classification adapter: {model_id}")
 
 
