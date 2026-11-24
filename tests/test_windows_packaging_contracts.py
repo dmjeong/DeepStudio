@@ -107,6 +107,8 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
                       cpp / "include", cpp / "src", csharp):
         directory.mkdir(parents=True, exist_ok=True)
     (app / "DeepVisionStudio.exe").write_bytes(b"app")
+    (app / "_internal").mkdir()
+    (app / "_internal" / "python311.dll").write_bytes(b"runtime fixture")
     (examples / "README.md").write_text("example", encoding="utf-8")
     (examples / "assets" / "test.onnx").write_bytes(b"onnx")
     (examples / "cpp" / "CMakeLists.txt").write_text("cmake", encoding="utf-8")
@@ -156,6 +158,17 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     assert (payload / "Examples/cpp/encrypted.cpp").is_file()
     assert (payload / "Examples/csharp/encrypted/Program.cs").is_file()
     simple["validate_simple_payload"](payload)
+    runtime = payload / "app" / "_internal"
+    dll = runtime / "python311.dll"
+    assert dll.read_bytes() == b"runtime fixture"
+    dll.write_bytes(b"")
+    with pytest.raises(simple["PayloadStageError"], match="Python DLL"):
+        simple["validate_simple_payload"](payload)
+    dll.write_bytes(b"runtime fixture")
+    moved = runtime.rename(runtime.with_name("moved"))
+    with pytest.raises(simple["PayloadStageError"], match="Python DLL"):
+        simple["validate_simple_payload"](payload)
+    moved.rename(runtime)
     for required in ("Examples/cpp/build_encrypted.cmake", "Examples/cpp/with_evision/encrypted.cpp"):
         path = payload / required
         original = path.read_bytes()

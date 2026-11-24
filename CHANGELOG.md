@@ -1,3 +1,7 @@
+# 22.60 — Windows Python DLL 누락 검사 (+0.01)
+
+- Windows EXE 빌드와 간단 설치본 생성 단계에서 `_internal`의 Python 런타임 누락을 검사합니다. [실행 오류 복구 방법](docs/RELEASE_22.60.md)
+
 # 22.59 — 대형 분류 모델과 지식 증류 (+1.0)
 
 - 데스크톱 Classification에 DINOv2 ViT-L/14와 SigLIP 2 So400m/16을 추가했습니다. 두 모델의 Apache-2.0 사전학습 가중치는 SHA-256으로 확인합니다.

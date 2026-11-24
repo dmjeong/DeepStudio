@@ -1,6 +1,12 @@
 # Deep Vision Studio 설치본 사용 안내
 
-`app/DeepVisionStudio.exe`를 실행하세요. `app` 안의 DLL·`_internal` 폴더를 지우거나 EXE만 따로 옮기면 실행할 수 없습니다. Python/pip/Node/Git은 사용 PC에 따로 설치하지 않아도 됩니다. 개발 예제는 옆의 `Examples/cpp`, `Examples/csharp`에 있습니다.
+설치한 폴더에서 `app/DeepVisionStudio.exe`를 실행하세요. 실행에 필요한 Python DLL은
+EXE 옆의 `_internal` 폴더에 들어 있습니다. 빌드 PC에서는 `gui/dist/DeepVisionStudio`
+폴더의 EXE를 실행하고, 다른 PC로 옮길 때는 그 폴더 전체를 복사하세요. 오프라인 ZIP을
+받았다면 전체를 압축 해제한 뒤 Setup을 실행하세요.
+
+사용 PC에는 Python/pip/Node/Git을 따로 설치하지 않아도 됩니다.
+개발 예제는 `Examples/cpp`, `Examples/csharp`에 있습니다.
 
 ## 배포 기준 사양
 

@@ -295,6 +295,9 @@ jobs:
           # Only tests the real MSI/Burn compiler. The other job freezes,
           # installs, and executes the actual application.
           Copy-Item "$env:WINDIR\System32\where.exe" (Join-Path $app "DeepVisionStudio.exe")
+          $internal = New-Item -ItemType Directory -Path (Join-Path $app "_internal")
+          $pythonHome = (python -c "import sys; print(sys.base_prefix)").Trim()
+          Copy-Item (Join-Path $pythonHome "python311.dll") $internal.FullName
           pwsh packaging/windows/build_simple_installer.ps1 -AppRoot $app `
             -OutputDirectory (Join-Path $env:RUNNER_TEMP "installer-toolchain-release") -Version 1.0.0
           if ($LASTEXITCODE -ne 0) { throw "Real installer toolchain smoke failed" }

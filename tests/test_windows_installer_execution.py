@@ -6,7 +6,7 @@ import shutil
 
 import pytest
 
-from tools.windows_desktop_smoke import run_msi
+from tools.windows_desktop_smoke import require_frozen_python_dll, run_msi
 
 
 @pytest.mark.skipif(os.name != "nt" or not os.environ.get("DVS_TEST_INSTALLER_MSI"),
@@ -24,6 +24,7 @@ def test_msi_installs_and_removes_from_paths_with_spaces(tmp_path):
     try:
         run_msi(msi, log, install=destination)
         assert log.is_file()
+        require_frozen_python_dll(executable.parent)
         expected = Path(os.environ["SystemRoot"]) / "System32" / "where.exe"
         assert hashlib.sha256(executable.read_bytes()).digest() == hashlib.sha256(expected.read_bytes()).digest()
     finally:

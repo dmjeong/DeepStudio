@@ -364,6 +364,11 @@ def build():
             if not os.path.isfile(exe_path):
                 print(f"빌드 결과 파일 없음: {exe_path}")
                 return 1
+            if sys.platform == "win32":
+                if PROJECT_ROOT not in sys.path:
+                    sys.path.insert(0, PROJECT_ROOT)
+                from tools.windows_desktop_smoke import require_frozen_python_dll
+                require_frozen_python_dll(Path(exe_path).parent)
             print("\n" + "=" * 60)
             print("빌드 성공!")
             print(f"  실행 파일: {exe_path}")

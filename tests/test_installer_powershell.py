@@ -85,6 +85,8 @@ def test_release_collects_and_validates_payload_without_github_environment(tmp_p
     app = tmp_path / "app-source"
     app.mkdir()
     (app / "DeepVisionStudio.exe").write_bytes(b"fixture")
+    (app / "_internal").mkdir()
+    (app / "_internal" / "python311.dll").write_bytes(b"runtime fixture")
     payload = stage(tmp_path / "payload", app=app, example_root=ROOT / "example",
                     cpp_runtime_root=ROOT / "cpp", csharp_runtime_root=ROOT / "sdk/csharp",
                     notice=ROOT / "THIRD_PARTY_NOTICES.md")

@@ -3,8 +3,24 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
+
+
+def require_frozen_python_dll(app_dir: str | Path) -> None:
+    """Confirm the Windows onedir runtime is present beside the executable."""
+    internal = Path(app_dir) / "_internal"
+    if internal.is_dir() and any(
+        re.fullmatch(r"python3[0-9]{1,2}t?\.dll", path.name, re.IGNORECASE)
+        and path.is_file() and path.stat().st_size > 0
+        for path in internal.iterdir()
+    ):
+        return
+    raise FileNotFoundError(
+        f"실행에 필요한 Python DLL이 없습니다: {internal / 'python3xx.dll'}. "
+        "빌드 결과의 DeepVisionStudio 폴더 전체를 사용하세요."
+    )
 
 
 def clean_app_environment(source):
@@ -85,6 +101,7 @@ def run(output, *, app=None, msi=None):
                 executable = Path(app).resolve()
             if not executable.is_file():
                 raise FileNotFoundError(executable)
+            require_frozen_python_dll(executable.parent)
             environment = clean_app_environment(os.environ)
             checked([str(executable), "--smoke-test", str(output)], env=environment, cwd=folder)
             report = json.loads(output.read_text(encoding="utf-8"))

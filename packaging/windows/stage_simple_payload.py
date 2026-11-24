@@ -14,6 +14,13 @@ import argparse
 from pathlib import Path
 import runpy
 import shutil
+import sys
+
+
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from tools.windows_desktop_smoke import require_frozen_python_dll
 
 
 _stage_api = runpy.run_path(str(Path(__file__).with_name("stage_payload.py")))
@@ -89,7 +96,15 @@ def validate_simple_payload(root: str | Path) -> Path:
     missing_files = sorted(path for path in _REQUIRED_FILES if not (payload / path).is_file())
     if missing_files:
         raise PayloadStageError("simple payload is missing required files: " + ", ".join(missing_files))
+    _validate_app_runtime(payload / "app")
     return payload
+
+
+def _validate_app_runtime(app: str | Path) -> None:
+    try:
+        require_frozen_python_dll(app)
+    except FileNotFoundError as exc:
+        raise PayloadStageError(str(exc)) from exc
 
 
 def stage_simple_payload(
@@ -102,6 +117,7 @@ def stage_simple_payload(
     notice: str | Path,
 ) -> Path:
     """Copy a reviewed allow-list into a payload suitable for the simple Setup."""
+    _validate_app_runtime(app)
     examples = Path(example_root)
     cpp = Path(cpp_runtime_root)
     csharp = Path(csharp_runtime_root)
