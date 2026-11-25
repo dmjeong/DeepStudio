@@ -46,7 +46,10 @@ def segmentation_labels(mask, width, height):
 
 
 def segmentation_preview(mask, original, num_classes, *, class_names=(), details_out=None, labels=None, tint_background=False):
-    """Paint predicted foreground only; labels are a separate, zoom-aware UI layer."""
+    """Paint predicted foreground only; labels are a separate, zoom-aware UI layer.
+
+    tint_background: 예전 호출과의 호환용으로만 받는다(무시). 배경은 칠하지 않고 결함만 칠한다.
+    """
     import cv2
     mask = np.asarray(mask)
     if mask.ndim != 2 or mask.dtype.kind not in 'iu' or not mask.size:

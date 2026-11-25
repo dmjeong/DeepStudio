@@ -425,6 +425,13 @@ class SegmentationDataset(Dataset):
     def _find_pairs(self):
         from spatial_data import semantic_training_pairs
         pairs, self.unlabeled = semantic_training_pairs(self.img_dir, self.mask_dir)
+        # 마스크 없는 이미지는 자동 배경이지만, 학습 폴더 전체에 마스크가 하나도 없으면 결함을 배울 수 없다.
+        # (정답이 전부 배경 → 검증 점수는 높게 나오고 결함을 하나도 못 찾는 모델이 Best로 저장된다)
+        # 검증 폴더는 정상 이미지만 있어도 되므로 학습 폴더만 막는다.
+        if self.is_train and pairs and all(mask is None for _image, mask in pairs):
+            raise ValueError(
+                f"정답 마스크가 하나도 없습니다: {self.img_dir} (이미지 {len(self.unlabeled)}장). "
+                "데이터셋 화면에서 이미지를 열어 결함 영역을 그리고 저장하세요.")
         return pairs
 
     def _resized_mask(self, mask_path, image_path=None):

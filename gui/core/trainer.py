@@ -225,6 +225,8 @@ class TrainWorker(TrainingEngine):
             model_name=pretrained_name,
             input_size=self._padded_input_size or cfg.input_size,
             project_dir=self.project.project_dir,
+            # 원본 크기 학습은 다른 학습 경로처럼 '_original_'로 이름 짓는다 (채운 크기 WxH는 사용자가 고른 값이 아님)
+            original_size=bool(getattr(cfg, "original_size_training", False)),
         )
         run_dir = os.path.join(self.project.project_dir, "runs", run_id)
         os.makedirs(run_dir, exist_ok=True)

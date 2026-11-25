@@ -64,6 +64,11 @@ def restore_project(raw):
                           training=TrainingConfig(**training), runs=[RunRecord(**run) for run in raw["runs"]],
                           defect_generation=raw.get("defect_generation", {}))
     project._active_filepath = raw["filepath"]
+    # 저장 파일을 그대로 넘기면 project_dir이 "."(상대)다. 그대로 두면 학습 기록(runs/)이 앱을 실행한
+    # 현재 폴더에 생긴다 → 프로젝트 파일이 있는 폴더 기준으로 푼다 (작업 스냅샷의 절대 경로는 그대로).
+    if project.project_dir and not os.path.isabs(project.project_dir) and raw.get("filepath"):
+        project.project_dir = os.path.normpath(
+            os.path.join(os.path.dirname(os.path.abspath(raw["filepath"])), project.project_dir))
     return project
 
 

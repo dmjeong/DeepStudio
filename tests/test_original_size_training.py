@@ -170,6 +170,7 @@ def test_custom_reconstruction_native_train_and_onnx(tmp_path):
     worker.run()
     assert not errors, errors
     checkpoint = project.runs[-1].checkpoint_path
+    assert "_original_" in str(checkpoint)   # 실행 폴더 이름: 채운 크기(96x65)가 아니라 원본 크기 학습 표시
     engine = load_inference_engine(checkpoint, runtime="pytorch")
     assert engine.infer(str(folder / "0.png")).status in {"ok", "uncalibrated"}
     wrong = tmp_path / "wrong.png"

@@ -112,8 +112,10 @@ def test_quantize_writes_an_int8_model_that_matches_fp32(exported):
 
 
 def test_quantize_rejects_non_dense_tasks(tmp_path):
+    """분류는 22.59부터 INT8을 지원한다. 고정 입력 INT8이 없는 작업(PatchCore 이상검출)은 이미지 확인 전에 거절한다."""
     from quantize_onnx import quantize_segment
-    (tmp_path / "c.json").write_text(json.dumps({"task": "classify", "model_path": "c.onnx"}), encoding="utf-8")
+    (tmp_path / "c.json").write_text(json.dumps({"task": "anomaly", "backend": "patchcore", "model_path": "c.onnx"}),
+                                     encoding="utf-8")
     with pytest.raises(ValueError, match="분할·Dinomaly"):
         quantize_segment(tmp_path / "c.json", tmp_path, log=lambda _m: None)
 

@@ -554,7 +554,7 @@ class InferenceOperations:
         height, width = original.shape[:2]
         review = getattr(self, "segment_review", None)
         labels = segmentation_labels(mask, width, height)
-        preview, counts = segmentation_preview(mask, original, 2, labels=labels, tint_background=review is None)
+        preview, counts = segmentation_preview(mask, original, 2, labels=labels)
         prediction = InferenceResult(image_path, "ok", "segment", "세그멘테이션", "#A78BFA",
                                      details={"num_classes": 2, "pixel_counts": counts,
                                               "class_names": list(self.class_names),

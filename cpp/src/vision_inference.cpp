@@ -1432,7 +1432,12 @@ DetectResult VisionInference::DetectSingle(const cv::Mat& image, bool apply_crop
             if (score > best_class) { best_class = score; class_id = cls; }
         }
         const float confidence = objectness * best_class;
-        if (!std::isfinite(confidence) || confidence <= m_config.detection_confidence_threshold)
+        // 기준과 같은 점수의 처리는 학습 앱과 맞춘다:
+        //   LibreYOLO YOLO9·D-FINE/RT-DETR = score > threshold,  Custom CSP(python/detection.py) = score >= threshold
+        const bool strict = detr_backend || yolo9_backend;
+        if (!std::isfinite(confidence) ||
+            (strict ? confidence <= m_config.detection_confidence_threshold
+                    : confidence < m_config.detection_confidence_threshold))
             continue;
         float x1, y1, x2, y2;
         if (yolo9_backend)

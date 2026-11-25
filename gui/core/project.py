@@ -490,13 +490,21 @@ class ProjectManager:
                 raise RuntimeError("다른 앱에서 프로젝트가 변경되었습니다. 최신 학습 기록을 보호하기 위해 저장하지 않았습니다. 프로젝트를 다시 열어 주세요.")
             unchanged = False
             if current is not None:
-                previous = json.loads(current)
-                unchanged = ({k: v for k, v in previous.items() if k != "modified"}
-                             == {k: v for k, v in data.items() if k != "modified"})
-                if unchanged:
+                # 같은 경로의 기존 파일이 깨졌거나 프로젝트가 아닌 JSON이면 '변경됨'으로 보고 덮어쓴다
+                # (다른 이름으로 저장 대상에 손상된 .json이 있어도 저장이 실패하지 않게).
+                try:
+                    previous = json.loads(current)
+                except (ValueError, UnicodeDecodeError):
+                    previous = None
+                if isinstance(previous, dict):
+                    unchanged = ({k: v for k, v in previous.items() if k != "modified"}
+                                 == {k: v for k, v in data.items() if k != "modified"})
+                if unchanged and isinstance(previous.get("modified"), str):
                     # An inference-only window must not invalidate a trainer's
                     # project snapshot just by saving an unchanged form.
                     modified = previous["modified"]
+                elif unchanged:
+                    unchanged = False   # 수정 시각이 없는 같은 내용: 새 시각으로 다시 쓴다
             if not unchanged:
                 try:
                     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=base,
