@@ -1,6 +1,8 @@
 """Two desktop managers share history without sharing a CPU inference slot."""
 import os
+import shutil
 import time
+from unittest.mock import Mock
 
 import psutil
 import pytest
@@ -109,3 +111,63 @@ def test_failed_request_is_not_left_as_a_live_job(tmp_path):
         manager.start('infer', {'device': 'cpu', 'invalid': object()})
     assert manager.active_id is None
     assert JobManager(tmp_path).list()[0]['status'] == 'failed'
+
+
+def test_running_app_reopens_model_and_infers_after_history_deletion(tmp_path):
+    torch = pytest.importorskip("torch")
+    from PIL import Image
+    from builtin_models import build_builtin_model, make_builtin_checkpoint
+
+    model = build_builtin_model("unet_lite", 2, 3).eval()
+    weights = tmp_path / "model.pt"
+    torch.save(make_builtin_checkpoint("unet_lite", model, num_classes=2, input_size=(32, 32),
+                                      class_names=["background", "crack"]), weights)
+    image = tmp_path / "image.png"
+    Image.new("RGB", (32, 32), "white").save(image)
+    manager = JobManager(tmp_path / "app-state")
+
+    def run(kind, **options):
+        job = manager.start(kind, {"weights": str(weights), "device": "cpu", **options})
+        manager.monitor.join(timeout=60)
+        assert not manager.monitor.is_alive()
+        result = manager.read(job["id"])["job"]
+        assert result["status"] == "completed", result
+        return result
+
+    try:
+        run("inspect_model")
+        assert manager.list()
+        shutil.rmtree(manager.root)
+        assert manager.list() == []
+        assert manager.storage()["jobs"] == []
+
+        reloaded = run("inspect_model")
+        assert reloaded["output"]["weights"] == str(weights)
+        shutil.rmtree(manager.root)
+        inferred = run("infer", threads=1, gradcam=False, images=[str(image)])
+        assert inferred["output"]["completed"] == 1
+        assert [entry["id"] for entry in manager.list()] == [inferred["id"]]
+        assert weights.is_file() and image.is_file()
+    finally:
+        manager.close()
+
+
+def test_deleting_running_job_does_not_leave_manager_busy_after_worker_exits(tmp_path):
+    on_finish = Mock()
+    manager = JobManager(tmp_path, on_finish=on_finish)
+    job_id = "a" * 32
+    write_json(manager.root / job_id / "job.json", {"id": job_id, "kind": "infer",
+               "status": "running", "created_at": "2026-11-25"})
+    manager.active_id = job_id
+    process = Mock()
+    process.wait.return_value = 0
+    manager.process = process
+    shutil.rmtree(manager.root)
+
+    manager._wait(job_id, process)
+
+    assert manager.active_id is None
+    assert manager.process is None
+    assert manager.list() == []
+    on_finish.assert_called_once()
+    manager.require_idle("infer", {"device": "cpu"})

@@ -1,5 +1,6 @@
 """한 번에 한 계산 프로세스만 실행하고 상태를 디스크에 보존한다."""
 
+from contextlib import suppress
 from datetime import datetime, timezone
 import json
 import os
@@ -98,7 +99,7 @@ class JobManager:
             self.require_idle(kind, payload)
             job_id = uuid.uuid4().hex
             directory = self.root / job_id
-            directory.mkdir()
+            directory.mkdir(parents=True)
             import psutil
             owner_started = psutil.Process().create_time()
             job = {"id": job_id, "kind": kind, "status": "running", "created_at": timestamp(),
@@ -128,31 +129,42 @@ class JobManager:
                 self.monitor.start()
             except Exception as exc:
                 job.update(status="failed", error=str(exc), finished_at=timestamp())
-                write_json(directory / "job.json", job)
                 self.active_id = self.process = None
+                write_json(directory / "job.json", job)
                 raise
             return job
 
     def _wait(self, job_id, process):
         code = process.wait()
         with self.lock:
-            directory = self.directory(job_id)
-            job = self._safe_metadata(directory / "job.json") or dict(self._jobs[job_id])
             try:
-                result = read_json(directory / "result.json")
-                if not isinstance(result, dict) or result.get("status") not in TERMINAL:
-                    raise ValueError("완료 기록 형식 오류")
-            except (OSError, ValueError):
-                result = {"status": "failed", "error": f"계산 프로세스 비정상 종료 ({code}). 실행 로그 확인 필요"}
-            job.update(result, finished_at=timestamp())
-            if self.on_finish:
-                try:
-                    self.on_finish()
-                except Exception as exc:
-                    job["project_error"] = f"작업 후 프로젝트 복원 실패: {exc}"
-            write_json(directory / "job.json", job)
-            self._jobs[job_id] = job
-            self.active_id = self.process = None
+                path = self.root / job_id / "job.json"
+                job = None
+                if path.is_file():
+                    job = self._safe_metadata(path) or dict(self._jobs[job_id])
+                    try:
+                        result = read_json(path.with_name("result.json"))
+                        if not isinstance(result, dict) or result.get("status") not in TERMINAL:
+                            raise ValueError("완료 기록 형식 오류")
+                    except (OSError, ValueError):
+                        result = {"status": "failed", "error": f"계산 프로세스 비정상 종료 ({code}). 실행 로그 확인 필요"}
+                    job.update(result, finished_at=timestamp())
+                if self.on_finish:
+                    try:
+                        self.on_finish()
+                    except Exception as exc:
+                        message = f"작업 후 프로젝트 복원 실패: {exc}"
+                        if job is None:
+                            self.warnings.append(message)
+                        else:
+                            job["project_error"] = message
+                if job is not None and path.is_file():
+                    write_json(path, job)
+                    self._jobs[job_id] = job
+                else:
+                    self._jobs.pop(job_id, None)
+            finally:
+                self.active_id = self.process = None
 
     def cancel(self, job_id):
         with self.lock:
@@ -167,23 +179,27 @@ class JobManager:
 
     def list(self, project_path=None, limit=30):
         with self.lock:
-            # A second app has its own monitor. Refresh live records instead of
-            # retaining its initial "running" state forever in this process.
+            try:
+                stat = self.root.stat()
+                revision = (stat.st_dev, stat.st_ino, stat.st_mtime_ns)
+            except FileNotFoundError:
+                revision = None
+            if revision is None or revision != self._root_revision:
+                paths = {path.parent.name: path for path in self.root.glob("*/job.json")}
+                for job_id in self._jobs.keys() - paths.keys():
+                    self._jobs.pop(job_id)
+                for job_id in paths.keys() - self._jobs.keys():
+                    job = self._safe_metadata(paths[job_id])
+                    if job is not None:
+                        self._jobs[job_id] = job
+                self._root_revision = revision
+            # Refresh live records owned by another process as well.
             for job_id, job in list(self._jobs.items()):
                 if job["status"] not in TERMINAL:
-                    path = self.root / job_id / "job.json"
                     try:
-                        self._jobs[job_id] = self._metadata(path)
+                        self._jobs[job_id] = self._metadata(self.root / job_id / "job.json")
                     except ValueError:
                         pass  # Keep the last known record and the corruption warning.
-            revision = self.root.stat().st_mtime_ns
-            if revision != self._root_revision:
-                for path in self.root.glob("*/job.json"):
-                    if path.parent.name not in self._jobs:
-                        job = self._safe_metadata(path)
-                        if job is not None:
-                            self._jobs[job["id"]] = job
-                self._root_revision = revision
             jobs = list(self._jobs.values())
             if project_path is not None:
                 jobs = [j for j in jobs if j.get("project_path") == project_path]
@@ -192,7 +208,7 @@ class JobManager:
     def storage(self):
         with self.lock:
             records = []
-            for directory in self.root.iterdir():
+            for directory in self.root.glob("*"):
                 if not directory.is_dir() or len(directory.name) != 32:
                     continue
                 size = sum(p.stat().st_size for p in directory.rglob("*") if p.is_file())
@@ -283,7 +299,8 @@ class JobManager:
     def close(self):
         with self.lock:
             if self.active_id:
-                self.cancel(self.active_id)
+                with suppress(FileNotFoundError):
+                    self.cancel(self.active_id)
             process = self.process
             monitor = self.monitor
         # 프로세스는 현재 안전한 중단 지점까지 진행하고 결과를 저장한다.

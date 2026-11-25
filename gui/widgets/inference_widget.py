@@ -1143,7 +1143,12 @@ class InferenceWidget(QWidget, InferenceOperations):
 
     def _restore_inference_job(self, job_id):
         from core.desktop_jobs import PersistentInferenceCache, desktop_manager, inference_result
-        cache = PersistentInferenceCache(desktop_manager().directory(job_id))
+        try:
+            directory = desktop_manager().directory(job_id)
+        except FileNotFoundError:
+            QMessageBox.information(self, "추론 결과", "삭제된 추론 결과입니다. 추론을 다시 실행하세요.")
+            return
+        cache = PersistentInferenceCache(directory)
         self._clear_results()
         self._preview_cache = cache
         self._batch_images = list(cache.entries)
