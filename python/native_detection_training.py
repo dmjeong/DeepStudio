@@ -234,7 +234,9 @@ def train_detector(wrapper, *, augmentation=None, patches=None, center_crop=None
                 observer = getattr(trainer.studio_observer, "on_missing_detection_best", None)
                 if observer is not None:
                     observer()
-    result = trainer.train()
+    from libreyolo_workdir import inside_run_directory
+    with inside_run_directory(trainer):   # LibreYOLO 검증 기록(runs/val)이 실행 폴더 밖에 생기지 않게
+        result = trainer.train()
     result["best_metric"] = result["best_mAP50_95"]
     result["best_validation"] = trainer.studio_best_validation
     result["applied_augmentation"] = trainer.studio_augmentation

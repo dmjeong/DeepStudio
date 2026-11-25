@@ -153,7 +153,9 @@ def train_classifier(wrapper, *, resume=False, center_crop=None, augmentation=No
             raise ValueError("중단 재개할 LibreYOLO 체크포인트가 없습니다")
         trainer.setup()
         trainer.resume(str(wrapper.model_path))
-    result = trainer.train()
+    from libreyolo_workdir import inside_run_directory
+    with inside_run_directory(trainer):   # LibreYOLO 검증 기록(runs/val)이 실행 폴더 밖에 생기지 않게
+        result = trainer.train()
     result["applied_augmentation"] = trainer.studio_augmentation
     result["patches"] = patches
     best = result.get("best_checkpoint")

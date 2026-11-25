@@ -151,3 +151,25 @@ def test_restore_project_resolves_a_relative_project_dir_next_to_the_file(tmp_pa
     assert Path(restored.project_dir) == Path(path).parent
     snapshot = restore_project({**raw, "project_dir": str(tmp_path / "abs"), "filepath": path})
     assert snapshot.project_dir == str(tmp_path / "abs")   # 작업 스냅샷의 절대 경로는 그대로
+
+
+# ── ⑤ LibreYOLO 검증 기록이 앱 실행 폴더에 생기지 않음 ─────────────────
+def test_libreyolo_training_runs_inside_the_output_folder_and_restores_cwd(tmp_path, monkeypatch):
+    """LibreYOLO 검증은 현재 폴더에 runs/val을 만든다 → 학습 중에만 출력 상위 폴더로 옮겼다가 되돌린다."""
+    from types import SimpleNamespace
+    from libreyolo_workdir import inside_run_directory
+    app_dir = tmp_path / "install"
+    app_dir.mkdir()
+    monkeypatch.chdir(app_dir)
+    trainer = SimpleNamespace(config=SimpleNamespace(project="out/runs", name="exp"))
+    with inside_run_directory(trainer) as project:
+        assert Path.cwd() == app_dir / "out" / "runs" == project
+        assert trainer.config.project == str(project)          # 상대 경로는 바꾸기 전에 절대 경로로
+        Path("runs/val/x").mkdir(parents=True)                 # LibreYOLO 검증기가 하는 일
+    assert Path.cwd() == app_dir and not (app_dir / "runs").exists()
+    assert (project / "runs" / "val" / "x").is_dir()
+    assert not (project / "exp").exists()                      # 실행 폴더는 미리 만들지 않는다 (name2 방지)
+    with pytest.raises(RuntimeError):
+        with inside_run_directory(trainer):
+            raise RuntimeError("학습 실패")
+    assert Path.cwd() == app_dir                               # 실패해도 되돌린다
