@@ -10,9 +10,9 @@
     </BootstrapperApplication>
     <Chain>
 <?if $(var.RequireOfflineWsl) = 1 ?>
-      <MsiPackage SourceFile="$(var.WslMsiPath)" Vital="yes" Permanent="yes" />
+      <MsiPackage SourceFile="$(var.WslMsiPath)" Vital="yes" Permanent="yes" Compressed="$(var.BundleCompressed)" />
 <?endif?>
-      <MsiPackage SourceFile="$(var.MsiPath)" Vital="yes" />
+      <MsiPackage SourceFile="$(var.MsiPath)" Vital="yes" Compressed="$(var.BundleCompressed)" />
     </Chain>
   </Bundle>
 </Wix>

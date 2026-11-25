@@ -82,6 +82,8 @@ class EfficientNetTrainWorker(TrainWorker):
                      layer_debug_enabled=cfg.layer_debug_enabled,
                      layer_debug_patterns=cfg.layer_debug_patterns,
                      layer_debug_batches=cfg.layer_debug_batches)
+        if checkpoint.get("distillation") and cfg.teacher_checkpoint:
+            saved["teacher_checkpoint"] = cfg.teacher_checkpoint
         self.project.training = TrainingConfig(**saved)
         self.project.model = ModelConfig(**checkpoint["model_settings"])
         self.project.model.pretrained_weights = source
@@ -150,6 +152,9 @@ class EfficientNetTrainWorker(TrainWorker):
         result.update(engine="efficientnet", architecture_name=cfg.efficientnet_model,
                       model_config=dict(self._efficientnet_definition),
                       source_weights=dict(self._weight_provenance))
+        distiller = getattr(self, "_distiller", None)
+        if distiller is not None:
+            result["distillation"] = dict(distiller.config)
         if cfg.in_channels == 1:
             result["preprocessing"]["grayscale_adapter"] = self._efficientnet_definition["input_adapter"]
         return result
@@ -191,6 +196,12 @@ class EfficientNetTrainWorker(TrainWorker):
         if self.project.training.training_mode != "efficientnet_resume":
             return {}
         checkpoint = self._source_checkpoint
+        distiller = getattr(self, "_distiller", None)
+        if checkpoint.get("distillation") != (distiller.config if distiller is not None else None):
+            raise ValueError("재개하려면 중단 당시와 같은 교사 파일·증류 설정을 사용해야 합니다.")
+        from checkpoint import checkpoint_original_size_region
+        if checkpoint_original_size_region(checkpoint) != getattr(self, "_original_size_region", None):
+            raise ValueError("재개할 EfficientNet의 원본 학습 영역과 현재 데이터 크기가 다릅니다.")
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         if scheduler is not None:
             if checkpoint["scheduler_state_dict"] is None:

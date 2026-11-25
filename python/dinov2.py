@@ -27,6 +27,7 @@ INTERPOLATE_OFFSET = 0.1  # 공식 hub 백본 기본값 (부동소수 오차 회
 VARIANTS = {
     "vits14": {"embed_dim": 384, "depth": 12, "num_heads": 6},
     "vitb14": {"embed_dim": 768, "depth": 12, "num_heads": 12},
+    "vitl14": {"embed_dim": 1024, "depth": 24, "num_heads": 16},
 }
 
 

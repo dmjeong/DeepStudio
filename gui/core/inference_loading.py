@@ -5,7 +5,7 @@ import math
 import torch
 from core.inference_engine import InferenceEngine
 from core.gradcam import GradCAM
-from core.inference_settings import require_saved_input_shape
+from core.inference_settings import input_shape, require_saved_input_shape
 
 
 def _sam2_model_id(path, checkpoint):
@@ -48,20 +48,32 @@ def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pyto
         else:
             model = load_sam2_pretrained(sam2_model_id, device=str(device), checkpoint_path=path)
         names = checkpoint.get("class_names") or []
+        region = getattr(model, "dvs_original_size_region", None)
+        shape = tuple(reversed(region)) if region else (1024, 1024)
+        if region:
+            require_saved_input_shape(input_size, shape)
         state.update(_sam2_predictor=SAM2ImagePredictor(model), _sam2_model_id=sam2_model_id,
-                     class_names=list(names), _input_size=(1024, 1024), _center_crop=None)
+                     class_names=list(names), _input_size=shape, _center_crop=None)
         engine = InferenceEngine(state, gradcam=False, input_region=input_region, runtime="pytorch",
                                  threads=threads, segment_review=segment_review, sam2=sam2)
         engine.checkpoint_name = Path(path).name
         return engine
-    if checkpoint.get("type") == "patchcore":
+    if checkpoint.get("type") == "dinomaly":
+        if runtime not in ("auto", "pytorch"):
+            raise ValueError("앱의 Dinomaly .pt 추론은 PyTorch, C++ 배포는 ONNX를 사용합니다")
+        from dinomaly_runtime import DinomalyRuntime
+        model = DinomalyRuntime(checkpoint, device)
+        require_saved_input_shape(input_size, model.input_size)
+        state.update(_patchcore_model=model, _anomaly_threshold=model.normalized_threshold,
+                     _input_size=input_shape(model.input_size))
+    elif checkpoint.get("type") == "patchcore":
         if runtime not in ("auto", "pytorch"):
             raise ValueError("PatchCore CPU 측정은 pytorch 런타임 사용")
         from patchcore import PatchCore
         model = PatchCore.load(str(path), device=device)
         require_saved_input_shape(input_size, model.input_size)
         state.update(_patchcore_model=model, _anomaly_threshold=model.normalized_threshold,
-                     _input_size=(model.input_size, model.input_size))
+                     _input_size=input_shape(model.input_size))
     else:
         from upstream_models import is_upstream_checkpoint
         if is_upstream_checkpoint(checkpoint):
@@ -80,10 +92,20 @@ def load_inference_engine(path, *, gradcam=False, input_size=None, runtime="pyto
             size = int(checkpoint.get("imgsz", 0))
             if size < 1:
                 raise ValueError("LibreYOLO 체크포인트의 입력 크기(imgsz) 누락")
-            require_saved_input_shape(input_size, (size, size))
+            from upstream_original_size import checkpoint_region
+            region = checkpoint_region(checkpoint)
+            shape = region[::-1] if region else (size, size)
+            require_saved_input_shape(input_size, shape)
             model = load_upstream_checkpoint(path, device=str(device))
-            state.update(_upstream_model=model, class_names=class_names, _input_size=(size, size),
+            if task == "classify":
+                from libreyolo_classification import preprocessing_contract
+                preprocessing_contract(shape, checkpoint.get("studio_preprocessing"), original_size_region=region)
+                model.studio_legacy_preprocessing = checkpoint.get("studio_preprocessing") is None
+            state.update(_upstream_model=model, class_names=class_names, _input_size=shape,
                          _normalization=None, _upstream_task=task)
+            from core.upstream_gradcam import LibreYOLOGradCAM, supports_upstream_gradcam
+            if gradcam and supports_upstream_gradcam(model, task):
+                state["_gradcam"] = LibreYOLOGradCAM(model)
         else:
             if runtime not in ("auto", "pytorch") and not (runtime == "onnx" and checkpoint.get("engine") == "efficientnet"):
                 raise ValueError("이 ONNX 경로는 EfficientNet 체크포인트를 지원합니다")

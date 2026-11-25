@@ -100,13 +100,14 @@ class Sam2ExportTests(unittest.TestCase):
         checkpoint = {
             "type": "sam2", "backend": "sam2", "task": "segment",
             "variant": "Hiera Tiny",
-            "input_size": [2, 3], "mask_size": [2, 2],
+            "input_size": [2, 3], "original_size_region": [3, 2], "mask_size": [2, 2],
             "encoder": TinySamEncoder().eval(), "decoder": TinySamDecoder().eval(),
         }
         with tempfile.TemporaryDirectory() as directory:
             result = export_sam2_model(checkpoint, directory, verify=True, opset=17,
                                        log=lambda _: None)
             manifest = json.loads(Path(result["config_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["preprocessing"]["original_size_region"], [3, 2])
             self.assertEqual(manifest["schema_version"], 5)
             self.assertEqual(manifest["backend"], "sam2")
             self.assertEqual(manifest["variant"], "Hiera Tiny")
@@ -129,6 +130,17 @@ class Sam2ExportTests(unittest.TestCase):
             input_shapes = {item.name: item.shape for item in session.get_inputs()}
             self.assertEqual(input_shapes["point_coords"][1], "num_points")
             self.assertEqual(input_shapes["point_labels"][1], "num_points")
+
+            import importlib.util
+            from PIL import Image
+            from precision_benchmark import benchmark_precisions
+
+            Image.new("RGB", (3, 2)).save(Path(directory) / "이미지.png")
+            backends = ("onnxruntime", "openvino") if importlib.util.find_spec("openvino") else ("onnxruntime",)
+            rows = benchmark_precisions(result["config_path"], directory, thread_counts=(1,), backends=backends,
+                                        run_fp16=False, run_int8=False, repeats=1, warmup=0)
+            self.assertEqual([row["status"] for row in rows], ["완료"] * len(backends), rows)
+            self.assertTrue(all(row["model_p50_ms"] > 0 for row in rows))
 
     def test_multi_feature_encoder_exports_contract_consumed_by_cpp_runtime(self):
         checkpoint = {

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import random
 import shutil
@@ -36,6 +37,11 @@ UPSTREAM_MODELS: dict[str, UpstreamModelSpec] = {
     "libreyolo_classify_mobilenetv4_small": UpstreamModelSpec(
         "libreyolo_classify_mobilenetv4_small", "mobilenetv4", "classify", "s", 224,
         "LibreMobileNetV4s-cls.pt"),
+    "libreyolo_classify_mobilenetv4_medium": UpstreamModelSpec(
+        "libreyolo_classify_mobilenetv4_medium", "mobilenetv4", "classify", "m", 224,
+        "LibreMobileNetV4m-cls.pt"),
+    "libreyolo_detect_dfine_nano": UpstreamModelSpec(
+        "libreyolo_detect_dfine_nano", "dfine", "detect", "n", 640, "LibreDFINEn.pt"),
     "libreyolo_detect_9t": UpstreamModelSpec(
         "libreyolo_detect_9t", "yolo9", "detect", "t", 640, "LibreYOLO9t.pt"),
     "re_detr_v4_small": UpstreamModelSpec(
@@ -61,7 +67,7 @@ def upstream_model_ids() -> frozenset[str]:
 def is_upstream_checkpoint(checkpoint: object) -> bool:
     """Return whether a trusted checkpoint uses one of the shipped APIs."""
     return (isinstance(checkpoint, dict) and
-            checkpoint.get("model_family") in {"mobilenetv4", "yolo9", "rtdetrv4"} and
+            checkpoint.get("model_family") in {"mobilenetv4", "yolo9", "rtdetrv4", "dfine"} and
             checkpoint.get("task") in {"classify", "detect"})
 
 
@@ -76,8 +82,24 @@ def load_upstream_checkpoint(path: str | Path, *, device: str):
         ) from exc
     model = LibreYOLO(str(path), device=device)
     family = str(getattr(model, "FAMILY", getattr(model, "family", ""))).lower()
-    if family not in {"mobilenetv4", "yolo9", "rtdetrv4"}:
+    if family not in {"mobilenetv4", "yolo9", "rtdetrv4", "dfine"}:
         raise ValueError(f"Deep Vision Studio 기본 LibreYOLO 모델이 아닙니다: {family or 'unknown'}")
+    if family == "mobilenetv4":
+        from libreyolo_classification import configure_classifier
+        configure_classifier(model)
+    else:
+        from native_detection import configure_detector
+        configure_detector(model)
+        # The factory can return an inner module still in training mode.
+        # Detection inference must use the saved BatchNorm statistics and
+        # the evaluation branch of the decoder before the first frame.
+        model.model.eval()
+    import torch
+    from native_patches import validate_patches
+    saved = torch.load(path, map_location="cpu", weights_only=False)
+    model.studio_patches = validate_patches(saved.get("studio_patches"), saved.get("task"))
+    from upstream_original_size import checkpoint_region
+    model.studio_original_size_region = checkpoint_region(saved)
     return model
 
 
@@ -110,15 +132,25 @@ def build_upstream_model(model_id: str, *, num_classes: int, device: str,
     if num_classes < 1:
         raise ValueError("num_classes must be positive")
     LibreMobileNetV4, LibreYOLO9, LibreRTDETRv4 = _api()
+    def construct(cls, **kwargs):
+        if weights is None and hasattr(cls, "_from_scratch"):
+            model = cls._from_scratch(size=spec.size, nb_classes=num_classes, device=device, **kwargs)
+        else:
+            model = cls(model_path=weights, size=spec.size, nb_classes=num_classes, device=device, **kwargs)
+        if spec.task == "detect":
+            from native_detection import configure_detector
+            model = configure_detector(model)
+        return model
     if spec.family == "mobilenetv4":
-        return LibreMobileNetV4(model_path=weights, size=spec.size,
-                                nb_classes=num_classes, device=device)
+        from libreyolo_classification import configure_classifier
+        return configure_classifier(construct(LibreMobileNetV4))
     if spec.family == "yolo9":
-        return LibreYOLO9(model_path=weights, size=spec.size,
-                          nb_classes=num_classes, device=device, task="detect")
+        return construct(LibreYOLO9, task="detect")
+    if spec.family == "dfine":
+        from libreyolo import LibreDFINE
+        return construct(LibreDFINE, task="detect")
     if spec.family == "rtdetrv4":
-        return LibreRTDETRv4(model_path=weights, size=spec.size,
-                              nb_classes=num_classes, device=device, task="detect")
+        return construct(LibreRTDETRv4, task="detect")
     raise AssertionError(f"unhandled upstream family: {spec.family}")
 
 
@@ -137,9 +169,11 @@ def write_detection_dataset_yaml(root: str | Path, class_names: list[str], outpu
     val = dataset_root / "images" / "val"
     if not train.is_dir():
         raise ValueError(f"검출 학습 이미지 폴더가 없습니다: {train}")
+    if not val.is_dir():
+        raise ValueError(f"검출 검증 이미지 폴더가 없습니다: {val}")
     descriptor = {
         "path": str(dataset_root), "train": "images/train",
-        "val": "images/val" if val.is_dir() else "images/train",
+        "val": "images/val",
         "nc": len(class_names), "names": list(class_names),
     }
     target = Path(output_path)
@@ -244,10 +278,43 @@ def prepare_classification_dataset(
         }
 
 
+_DETECTION_METRIC_NAMES = {
+    "mAP_50": ("mAP_50", "metrics/mAP50", "metrics/mAP50(B)"),
+    "mAP_50_95": ("mAP_50_95", "metrics/mAP50-95", "metrics/mAP50-95(B)"),
+    "AR100": ("AR100", "metrics/AR100", "metrics/ar_100"),
+}
+_DETECTION_POINT_METRICS = (
+    "precision", "recall", "detection_tp", "detection_fp", "detection_fn",
+    "detection_support", "detection_confidence", "detection_iou",
+)
+
+
+def detection_validation_metrics(raw_metrics):
+    """Map pinned LibreYOLO metrics without its deprecated P/R aliases."""
+    metrics = {}
+    for name, keys in _DETECTION_METRIC_NAMES.items():
+        value = next((raw_metrics[key] for key in keys if key in raw_metrics), None)
+        if value is not None and math.isfinite(value) and 0 <= value <= 1:
+            metrics[name] = float(value)
+    for name in _DETECTION_POINT_METRICS:
+        value = raw_metrics.get(name)
+        if value is not None and math.isfinite(value):
+            metrics[name] = value
+    return metrics
+
+
 class _ProgressCallback:
     def __init__(self, emit: Callable[[dict], None]):
         self.emit = emit
         self.elapsed_seconds = 0.0
+        self.detection_validation = None
+
+    def on_detection_validation(self, result):
+        self.detection_validation = result
+
+    def on_missing_detection_best(self):
+        self.emit({"event": "preprocessing_configured", "message":
+                   "이전 Best 체크포인트를 찾지 못했습니다. 재개 후 검증 결과에서 Best를 다시 고릅니다."})
 
     def on_train_start(self, event) -> None:
         self.emit({"event": "training_started", "epoch": int(event.start_epoch),
@@ -271,6 +338,16 @@ class _ProgressCallback:
             raise RuntimeError("upstream validator가 val_loss를 보고하지 않았습니다")
         if metric is None:
             raise RuntimeError("upstream validator가 선택 검증 지표를 보고하지 않았습니다")
+        is_detect = getattr(event, "task", None) == "detect"
+        details = {}
+        if is_detect:
+            metric_name = next((name for name, aliases in _DETECTION_METRIC_NAMES.items()
+                                if metric_name in aliases), metric_name)
+            metrics = detection_validation_metrics(metrics)
+            metrics[metric_name] = float(metric)
+            validation = self.detection_validation
+            if validation and validation["epoch"] == event.epoch:
+                details["detection_per_class"] = validation["per_class"]
         epoch_seconds = float(event.epoch_seconds)
         self.elapsed_seconds += epoch_seconds
         metrics["epoch_time_sec"] = epoch_seconds
@@ -285,7 +362,8 @@ class _ProgressCallback:
                    "learning_rate": min((float(value) for value in event.lr.values()), default=0.0),
                    "is_best": bool(event.is_best),
                    "best_metric": float(event.best_metric) if event.best_metric is not None else None,
-                   "best_epoch": int(event.best_epoch) if event.best_epoch is not None else None})
+                   "best_epoch": int(event.best_epoch) if event.best_epoch is not None else None,
+                   **details})
 
     def on_train_exception(self, event) -> None:
         self.emit({"event": "training_exception", "message": str(event.exception_message)})
@@ -295,7 +373,9 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
                          output_dir: str | Path, epochs: int, batch_size: int,
                          learning_rate: float, device: str, weights: str | None, pretrained: bool = False,
                          resume: bool, use_amp: bool, patience: int,
-                         val_split: float = 0.2, seed: int = 0,
+                         val_split: float = 0.2, seed: int = 0, center_crop=None,
+                         augmentation=None, patch_training=False, patch_scale=1., patches_per_image=0,
+                         small_object_coverage=False, original_size_training=False,
                          emit: Callable[[dict], None]) -> dict:
     """Run an upstream native trainer and return its documented result map."""
     spec = get_upstream_spec(model_id)
@@ -303,26 +383,89 @@ def train_upstream_model(model_id: str, *, data_root: str | Path, class_names: l
     output.mkdir(parents=True, exist_ok=True)
     if resume and not weights:
         raise ValueError("학습 재개에는 같은 모델의 last.pt 또는 best.pt가 필요합니다")
+    from native_patches import patch_contract
+    from studio_augmentation import augmentation_contract
+    augmentation = augmentation_contract(augmentation)
+    if type(original_size_training) is not bool or original_size_training and patch_training:
+        raise ValueError("원본 크기 학습과 패치 학습은 동시에 사용할 수 없습니다.")
+    patches = patch_contract(spec.task, spec.input_size, patch_scale, batch_size) if patch_training else None
+    if type(small_object_coverage) is not bool or (
+        small_object_coverage and (spec.task != "detect" or not patches or not patches_per_image)
+    ):
+        raise ValueError("작은 객체 우선에는 탐지 패치 학습과 이미지당 패치 수 1 이상이 필요합니다")
+    if center_crop is not None:
+        from crop_dataset import prepare_crop_dataset
+        data_root = prepare_crop_dataset(data_root, output.parent / "generated", spec.task,
+                                         center_crop, num_classes=len(class_names))
+    common = {"epochs": int(epochs), "batch": int(batch_size), "imgsz": spec.input_size,
+                  "lr0": float(learning_rate), "device": device, "project": str(output.parent), "name": output.name,
+                  "exist_ok": True, "amp": bool(use_amp), "patience": int(patience),
+                  "callbacks": _ProgressCallback(emit), "val_loss": True, "eval_interval": 1, "seed": int(seed)}
+    emit({"event": "preprocessing_configured", "policy": "native_patches_v1" if patches else ("libreyolo_full_frame_v1" if spec.task == "classify" else "studio_detector_v1"),
+          "message": f"증강 적용: {augmentation} | " +
+          (f"{spec.input_size}px 패치 / 배율 {patch_scale:g} / " +
+           ("원본 한 장 단위 분류" if spec.task == "classify" else "검증 mAP는 패치 단위")
+           if patches else "전체 입력 영역 사용")})
     if spec.task == "detect":
-        source = str(write_detection_dataset_yaml(data_root, class_names, output / "dataset.yaml"))
-        model = build_upstream_model(model_id, num_classes=len(class_names), device=device,
-                                     weights=weights, pretrained=pretrained)
-        callback = _ProgressCallback(emit)
-        return model.train(data=source, epochs=int(epochs), batch=int(batch_size), imgsz=spec.input_size,
-                           lr0=float(learning_rate), device=device, project=str(output.parent),
-                           name=output.name, exist_ok=True, resume=bool(resume), amp=bool(use_amp),
-                           patience=int(patience), callbacks=callback, val_loss=True,
-                           eval_interval=1)
-
+        from libreyolo.data.utils import IMG_FORMATS
+        from native_detection_training import train_detector
+        from spatial_data import validate_spatial_dataset
+        validation = validate_spatial_dataset(data_root, "detect", len(class_names), extensions=IMG_FORMATS)["val"]
+        with tempfile.TemporaryDirectory(prefix="studio-detect-", dir=output.parent) as temp:
+            if patches:
+                from detection_patch_dataset import prepare_detection_patches
+                data_root = prepare_detection_patches(data_root, Path(temp) / "patches", patches,
+                    num_classes=len(class_names), patches_per_image=patches_per_image, seed=seed,
+                    small_object_coverage=small_object_coverage)
+                validation = validate_spatial_dataset(data_root, "detect", len(class_names))["val"]
+                if small_object_coverage:
+                    coverage = json.loads((data_root / "patches.json").read_text(encoding="utf-8"))["small_object_coverage"]
+                    emit({"event": "preprocessing_configured", "policy": "small_object_patch_coverage_v1",
+                          "message": "완전히 포함된 작은 객체 (패치 수가 제한된 학습 이미지) "
+                                     f"{coverage['randomly_covered']} → {coverage['selected_covered']} / {coverage['small_targets']}",
+                          **coverage})
+            unit = "패치" if patches else "이미지"
+            emit({"event": "preprocessing_configured", "message":
+                  f"탐지 검증 {validation['images']}개 {unit} · 정답 박스 {validation['objects']}개"})
+            source = str(write_detection_dataset_yaml(data_root, class_names, output / "dataset.yaml"))
+            if original_size_training:
+                from dataset import native_image_size
+                from spatial_data import image_files
+                from upstream_original_size import detector_size, input_hw
+                height, width = native_image_size(path for split in ("train", "val") for path in
+                                                  image_files(Path(data_root) / "images" / split, extensions=IMG_FORMATS))
+                common["imgsz"] = detector_size(spec.family, height, width)
+                common["studio_original_size_region"] = (width, height)
+                message = f"원본 크기 탐지 학습: {width}×{height} px"
+                canvas_h, canvas_w = input_hw(common["imgsz"])
+                if (height, width) != (canvas_h, canvas_w):
+                    message += f" · 오른쪽·아래 여백 포함 입력 {canvas_w}×{canvas_h} px"
+                emit({"event": "preprocessing_configured", "message": message})
+            model = build_upstream_model(model_id, num_classes=len(class_names), device=device,
+                                         weights=weights, pretrained=pretrained)
+            result = train_detector(model, data=source, resume=resume, center_crop=center_crop,
+                                  augmentation=augmentation, patches=patches,
+                                  small_object_coverage=small_object_coverage, train_patch_limit=patches_per_image,
+                                  **common)
+            if original_size_training:
+                result["input_size"] = [height, width]
+            return result
     with prepare_classification_dataset(
         data_root, class_names, output.parent, val_split=val_split, seed=seed,
     ) as (prepared_root, summary):
         emit({"event": "dataset_prepared", **summary})
+        if original_size_training:
+            from dataset import native_image_size
+            height, width = native_image_size(path for split in ("train", "val") for name in class_names
+                                              for path in _classification_images(prepared_root / split, name))
+            # Native config takes a scalar; Studio supplies the exact transform to both loaders.
+            common["studio_original_size_region"] = (width, height)
+            emit({"event": "preprocessing_configured", "message": f"원본 크기 분류 학습: {width}×{height} px"})
         model = build_upstream_model(model_id, num_classes=len(class_names), device=device,
                                      weights=weights, pretrained=pretrained)
-        callback = _ProgressCallback(emit)
-        return model.train(data=str(prepared_root), epochs=int(epochs), batch=int(batch_size),
-                           imgsz=spec.input_size, lr0=float(learning_rate), device=device,
-                           project=str(output.parent), name=output.name, exist_ok=True,
-                           resume=bool(resume), amp=bool(use_amp), patience=int(patience),
-                           callbacks=callback, val_loss=True, eval_interval=1)
+        from libreyolo_training import train_classifier
+        result = train_classifier(model, data=str(prepared_root), resume=resume,
+                                center_crop=center_crop, augmentation=augmentation, patches=patches, **common)
+        if original_size_training:
+            result["input_size"] = [height, width]
+        return result

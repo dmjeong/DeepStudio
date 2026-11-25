@@ -1,11 +1,39 @@
 """배포 EXE 내부에서 GUI, 모델 로드, 독립 추론과 영구 결과 복원을 검증."""
 from pathlib import Path
 import os
+import sys
 import tempfile
 import time
 
 
-def run(output):
+def _check_openvino_cpu(path):
+    """Exercise the frozen OpenVINO Python bindings, ONNX frontend and CPU plugin."""
+    from importlib.util import find_spec
+
+    if getattr(sys, "frozen", False) and find_spec("openvino_telemetry") is not None:
+        raise RuntimeError("설치본에 OpenVINO 텔레메트리 모듈이 포함되었습니다.")
+    import numpy as np
+    import openvino as ov
+    from onnx import TensorProto, helper, save_model
+
+    graph = helper.make_graph(
+        [helper.make_node("Add", ["pixels", "offset"], ["prediction"])], "openvino_smoke",
+        [helper.make_tensor_value_info("pixels", TensorProto.FLOAT, [1, 1, 2, 2])],
+        [helper.make_tensor_value_info("prediction", TensorProto.FLOAT, [1, 1, 2, 2])],
+        [helper.make_tensor("offset", TensorProto.FLOAT, [], [2.0])],
+    )
+    save_model(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), path)
+    core = ov.Core()
+    model = core.read_model(str(path))
+    compiled = core.compile_model(model, "CPU", {"PERFORMANCE_HINT": "LATENCY", "NUM_STREAMS": 1,
+                                                  "INFERENCE_NUM_THREADS": 1, "INFERENCE_PRECISION_HINT": "f32"})
+    request = compiled.create_infer_request()
+    request.infer({"pixels": np.ones((1, 1, 2, 2), np.float32)})
+    np.testing.assert_array_equal(request.get_output_tensor(0).data, np.full((1, 1, 2, 2), 3, np.float32))
+    return ov.get_version()
+
+
+def run(output, *, require_cuda_runtime=True):
     from PySide6.QtWidgets import QApplication, QMessageBox
     from PySide6.QtCore import QTimer, Qt
     from PIL import Image
@@ -24,13 +52,23 @@ def run(output):
     QMessageBox.warning = failed_dialog
     QMessageBox.critical = failed_dialog
     stage("imports_ready")
-    if not torch.version.cuda:
-        raise RuntimeError("GPU 지원 배포에 CPU 전용 PyTorch 포함됨")
-    library = Path(torch.__file__).parent / "lib"
-    for name in ("torch_cuda.dll", "c10_cuda.dll"):
-        if not (library / name).is_file():
-            raise RuntimeError(f"배포 CUDA DLL 누락: {name}")
-    stage("cuda_runtime_bundled")
+    import importlib
+    runtime_modules = ("timm", "scipy", "safetensors", "model_dependencies", "segmentation_models",
+                       "modern_segmentation", "eomt", "dinomaly", "dense_deployment",
+                       "quantize_dense", "export_fp16_onnx", "benchmark_fp16",
+                       "onnxruntime.transformers.float16", "dinov2_segmentation", "core.project_generation",
+                       "widgets.project_generation_widget")
+    for module in runtime_modules:
+        importlib.import_module(module)
+    stage("model_and_generation_imports_ready")
+    if require_cuda_runtime:
+        if not torch.version.cuda:
+            raise RuntimeError("GPU 지원 배포에 CPU 전용 PyTorch 포함됨")
+        library = Path(torch.__file__).parent / "lib"
+        for name in ("torch_cuda.dll", "c10_cuda.dll"):
+            if not (library / name).is_file():
+                raise RuntimeError(f"배포 CUDA DLL 누락: {name}")
+        stage("cuda_runtime_bundled")
     import torchvision
     kept = torchvision.ops.nms(torch.tensor([[0., 0., 10., 10.], [0., 0., 10., 10.]]),
                                torch.tensor([.9, .8]), .5)
@@ -57,6 +95,11 @@ def run(output):
         app.processEvents()
     with tempfile.TemporaryDirectory(prefix="studio-smoke-") as folder:
         root = Path(folder)
+        frozen = bool(getattr(sys, "frozen", False))
+        openvino_version = None
+        if sys.platform == "win32" or not frozen:
+            openvino_version = _check_openvino_cpu(root / "openvino.onnx")
+            stage("openvino_cpu_ready")
         project = ProjectManager.create_new("검증 프로젝트", "classify", str(root / "project"), ["OK", "NG"])
         ProjectManager.save(project)
         window.set_project(project)
@@ -101,8 +144,10 @@ def run(output):
         stage("defect_preview_start")
         normal = Path(project.data.train_dir) / "OK" / "normal.png"
         Image.new("RGB", (96, 64), (128, 128, 128)).save(normal)
-        defect = window.defect_gen_page
-        window.content_stack.setCurrentWidget(defect)
+        generation_page = window.defect_gen_page
+        window.content_stack.setCurrentWidget(generation_page)
+        generation_page.show_legacy()
+        defect = generation_page.legacy
         defect._start_generation(preview=True)
         wait(lambda: defect._worker is not None)
         if not defect._job_result or defect._job_result["status"] != "completed" or defect.result_list.count() != 1:
@@ -113,13 +158,37 @@ def run(output):
         if defect._job_result["status"] != "completed" or defect._job_result["output"].get("saved") != 1:
             raise RuntimeError("배포 EXE 합성 검수 저장 실패: " + defect.progress_label.text())
         stage("defect_review_saved")
+        stage("project_class_generation_start")
+        custom = generation_page.project_generation
+        generation_page.tabs.setCurrentWidget(custom)
+        custom.classes.item(1, 0).setCheckState(Qt.CheckState.Checked)
+        custom.classes.cellWidget(1, 2).setValue(1)
+        custom.generate()
+        wait(lambda: custom._worker is not None)
+        if custom._result["status"] != "completed" or custom.samples.count() != 1:
+            raise RuntimeError("배포 EXE 프로젝트 클래스 생성 실패: " + custom.message.text())
+        custom.samples.item(0).setCheckState(Qt.CheckState.Checked)
+        custom.publish()
+        wait(lambda: custom._worker is not None)
+        if custom._result["status"] != "completed" or not Path(custom.output_path).is_file():
+            raise RuntimeError("배포 EXE 생성 프로젝트 저장 실패: " + custom.message.text())
+        generated_project = ProjectManager.load(custom.output_path)
+        if not list((Path(generated_project.data.train_dir) / "NG").glob("generated-*.png")):
+            raise RuntimeError("배포 EXE 클래스 폴더 또는 생성 이미지 누락")
+        stage("project_class_generation_saved")
+        wait(lambda: getattr(window.dataset_page, "_scan_worker", None) is not None)
         screenshot = Path(output).with_suffix(".png")
         window.grab().save(str(screenshot))
-        write_json(output, {"version": APP_VERSION, "frozen": bool(getattr(__import__('sys'), 'frozen', False)),
+        write_json(output, {"version": APP_VERSION, "frozen": frozen,
             "cuda_runtime": torch.version.cuda, "cuda_available": torch.cuda.is_available(),
+            "openvino_cpu_version": openvino_version,
             "gui_ticks": len(ticks) - before, "inference_status": result.status,
-            "gradcam_status": result.gradcam_status, "persistent_results": True, "defect_review_saved": True})
+            "gradcam_status": result.gradcam_status, "persistent_results": True, "defect_review_saved": True,
+            "runtime_modules": list(runtime_modules), "project_class_generation_saved": True})
         desktop_manager().close()
         window.project = None  # 종료 확인 대화상자는 자동 배포 검증에서 생략
         window.close()
     timer.stop()
+    from PySide6.QtCore import QCoreApplication, QEvent
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

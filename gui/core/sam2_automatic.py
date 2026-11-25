@@ -47,8 +47,8 @@ def automatic_mask(predictor, image, settings=None):
     """predictor: 이미지를 아직 넣지 않은 SAM2ImagePredictor. image: (H, W, 3) uint8 RGB.
 
     반환: (mask, probabilities, info)
-      mask: 디코더 저해상도(256×256) 0/1 결함 맵 — 이미지 전체를 1024²로 늘린 좌표계라 원본 비율과 무관하다.
-      probabilities: (2, 256, 256) [배경, 결함] 확률. 결함 확률 = 받아들인 후보 중 가장 큰 sigmoid(logit).
+      mask: 원본 판정 영역에 대응하는 디코더 저해상도 0/1 결함 맵.
+      probabilities: (2, 높이, 너비) [배경, 결함] 확률. 결함 확률 = 받아들인 후보 중 가장 큰 sigmoid(logit).
       info: 후보 수·디코더 실행 수·받아들인 수·설정 (결과 상세에 남긴다).
 
     속도: CPU에서 디코더는 점 하나에 약 40 ms(묶어 돌려도 줄지 않음)라 256점이면 10초가 넘는다.
@@ -60,16 +60,23 @@ def automatic_mask(predictor, image, settings=None):
 
     settings = settings_of(settings)
     height, width = image.shape[:2]
-    predictor.set_image(image)
+    region = getattr(getattr(predictor, "model", None), "dvs_original_size_region", None)
+    if region is not None and tuple(region) != (width, height):
+        raise ValueError(f"SAM2 원본 학습 판정 영역 {region[0]}×{region[1]}px가 필요합니다. "
+                         f"현재 {width}×{height}px")
     model = predictor.model
-    features = predictor._features
     points = grid_points(width, height, settings["grid"])
-    # 원본 픽셀 좌표 → 모델 입력(1024²) 좌표. predictor.predict와 같은 변환을 쓴다.
-    coords = predictor._transforms.transform_coords(
-        torch.as_tensor(points, dtype=torch.float32, device=predictor.device),
-        normalize=True, orig_hw=predictor._orig_hw[-1])
-    image_embed = features["image_embed"][-1].unsqueeze(0)
-    high_res = [level[-1].unsqueeze(0) for level in features["high_res_feats"]]
+    coords = torch.as_tensor(points, dtype=torch.float32, device=predictor.device)
+    if region:
+        from sam2_native import encode_native_image, visible_logits
+        image_embed, first, second = encode_native_image(model, image)
+        high_res = [first, second]
+    else:
+        predictor.set_image(image)
+        features = predictor._features
+        coords = predictor._transforms.transform_coords(coords, normalize=True, orig_hw=predictor._orig_hw[-1])
+        image_embed = features["image_embed"][-1].unsqueeze(0)
+        high_res = [level[-1].unsqueeze(0) for level in features["high_res_feats"]]
     dense_pe = model.sam_prompt_encoder.get_dense_pe()
     best = union = covered = None
     accepted = decoded = 0
@@ -91,6 +98,8 @@ def automatic_mask(predictor, image, settings=None):
                 sparse_prompt_embeddings=sparse, dense_prompt_embeddings=dense,
                 multimask_output=False,  # 미세조정 계약과 같다 (sam2_trainer._sam2_logits)
                 repeat_image=False, high_res_features=high_res)
+            if region:
+                logits = visible_logits(logits, region)
             logit, score = logits[0, 0].float(), float(iou[0, 0])
             if not torch.isfinite(logit).all() or not np.isfinite(score):
                 raise ValueError("SAM2 디코더 출력이 유한하지 않습니다")

@@ -1,0 +1,122 @@
+{
+  "platform": "macOS ARM64 / CPU",
+  "scope": "Official downloads, SHA256, manifest-free recognition, model construction and image encoder forward. Not Windows installation, training accuracy or semantic inference acceptance.",
+  "results": [
+    {
+      "model_id": "sam2_hiera_tiny",
+      "bytes": 156008466,
+      "download_verified": true,
+      "manual_offline_verified": true,
+      "model_loaded": true,
+      "feature_shapes": [
+        [
+          1,
+          32,
+          256,
+          256
+        ],
+        [
+          1,
+          64,
+          128,
+          128
+        ],
+        [
+          1,
+          256,
+          64,
+          64
+        ]
+      ],
+      "features_finite": true,
+      "elapsed_sec": 15.32
+    },
+    {
+      "model_id": "sam2_hiera_small",
+      "bytes": 184416285,
+      "download_verified": true,
+      "manual_offline_verified": true,
+      "model_loaded": true,
+      "feature_shapes": [
+        [
+          1,
+          32,
+          256,
+          256
+        ],
+        [
+          1,
+          64,
+          128,
+          128
+        ],
+        [
+          1,
+          256,
+          64,
+          64
+        ]
+      ],
+      "features_finite": true,
+      "elapsed_sec": 17.71
+    },
+    {
+      "model_id": "sam2_hiera_base_plus",
+      "bytes": 323606802,
+      "download_verified": true,
+      "manual_offline_verified": true,
+      "model_loaded": true,
+      "feature_shapes": [
+        [
+          1,
+          32,
+          256,
+          256
+        ],
+        [
+          1,
+          64,
+          128,
+          128
+        ],
+        [
+          1,
+          256,
+          64,
+          64
+        ]
+      ],
+      "features_finite": true,
+      "elapsed_sec": 30.84
+    },
+    {
+      "model_id": "sam2_hiera_large",
+      "bytes": 898083611,
+      "download_verified": true,
+      "manual_offline_verified": true,
+      "model_loaded": true,
+      "feature_shapes": [
+        [
+          1,
+          32,
+          256,
+          256
+        ],
+        [
+          1,
+          64,
+          128,
+          128
+        ],
+        [
+          1,
+          256,
+          64,
+          64
+        ]
+      ],
+      "features_finite": true,
+      "elapsed_sec": 85.53
+    }
+  ]
+}

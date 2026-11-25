@@ -9,6 +9,7 @@ definition during export.
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,14 @@ from torch import nn
 from builtin_models import (CLASS_HEAD_PREFIX, HEAD_PREFIXES, build_builtin_model, get_builtin_spec,
                             make_builtin_checkpoint)
 from dataset import create_classification_loaders, create_segmentation_loaders
+
+
+def _default_num_workers(device_type: str, original_size: bool) -> int:
+    # Windows workers collate each prefetched batch in a committed file mapping.
+    # Train and validation retain separate pools between epochs.
+    if device_type != "cuda" or (original_size and sys.platform == "win32"):
+        return 0
+    return max(2, min((os.cpu_count() or 1) // 2, 8))
 
 
 def _legacy_class_names(count: int) -> list[str]:
@@ -61,15 +70,26 @@ class _BatchProgress:
             self.last = now
 
 
+def _optimizer_step(optimizer, loss, scaler):
+    if scaler is None:
+        loss.backward()
+        optimizer.step()
+    else:
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
+
 def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None,
-                          should_stop=None, progress=None):
+                          should_stop=None, progress=None, scaler=None, distiller=None):
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
     correct = 0
     samples = 0
     confusion = None
-    non_blocking = torch.device(device).type == "cuda"
+    device_type = torch.device(device).type
+    non_blocking = device_type == "cuda"
     context = torch.enable_grad() if training else torch.inference_mode()
     with context:
         for index, (images, labels) in enumerate(loader):
@@ -77,12 +97,15 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
                 raise _Stopped()
             images = images.to(device, non_blocking=non_blocking)
             labels = labels.to(device, non_blocking=non_blocking)
-            logits = model(images)
-            loss = criterion(logits, labels)
             if training:
                 optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                optimizer.step()
+            with (torch.autocast(device_type, dtype=torch.float16) if scaler is not None else nullcontext()):
+                logits = model(images)
+                loss = criterion(logits, labels)
+                if training and distiller is not None:
+                    loss = distiller(images, logits, loss)
+            if training:
+                _optimizer_step(optimizer, loss, scaler)
             total_loss += float(loss.detach()) * labels.shape[0]
             correct += int(logits.argmax(dim=1).eq(labels).sum())
             if metrics_out is not None:
@@ -113,15 +136,24 @@ def _classification_epoch(model, loader, criterion, optimizer=None, device="cpu"
 
 
 def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", metrics_out=None,
-                        pixel_counts_out=None, class_report_out=None, should_stop=None, progress=None):
+                        pixel_counts_out=None, class_report_out=None, should_stop=None, progress=None,
+                        distiller=None, scaler=None):
     training = optimizer is not None
     model.train(training)
+    if training:
+        # Freezing a pretrained backbone must also preserve its BN statistics.
+        for module in model.modules():
+            if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                affine = tuple(module.parameters(recurse=False))
+                if affine and not any(p.requires_grad for p in affine):
+                    module.eval()
     total_loss = 0.0
     samples = 0
     intersection = None
     union = None
     gt_area = None
-    non_blocking = torch.device(device).type == "cuda"
+    device_type = torch.device(device).type
+    non_blocking = device_type == "cuda"
     context = torch.enable_grad() if training else torch.inference_mode()
     with context:
         for index, (images, masks) in enumerate(loader):
@@ -129,12 +161,27 @@ def _segmentation_epoch(model, loader, criterion, optimizer=None, device="cpu", 
                 raise _Stopped()
             images = images.to(device, non_blocking=non_blocking)
             masks = masks.to(device, dtype=torch.long, non_blocking=non_blocking)
-            logits = model(images)
-            loss = criterion(logits, masks)
             if training:
                 optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                optimizer.step()
+            with (torch.autocast(device_type, dtype=torch.float16) if scaler is not None else nullcontext()):
+                if training and hasattr(model, "compute_training_loss"):
+                    logits, loss = model.compute_training_loss(images, masks, criterion)
+                elif training and hasattr(model, "forward_train"):
+                    logits, auxiliary, boundary = model.forward_train(images)
+                    loss = criterion(logits, masks)
+                    config = model.training_loss_config
+                    for aux_logits in auxiliary:
+                        loss = loss + config["auxiliary_segmentation_weight"] * criterion(aux_logits, masks)
+                    if boundary is not None:
+                        from segmentation_models import boundary_loss
+                        loss = loss + config["boundary_weight"] * boundary_loss(boundary, masks)
+                else:
+                    logits = model(images)
+                    loss = criterion(logits, masks)
+                if training and distiller is not None:
+                    loss = distiller(images, logits, masks, loss)
+            if training:
+                _optimizer_step(optimizer, loss, scaler)
             total_loss += float(loss.detach()) * images.shape[0]
             samples += images.shape[0]
             predicted = logits.argmax(dim=1)
@@ -196,7 +243,9 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
                             scheduler=None, metric: float | None = None,
                             training_config: dict | None = None,
                             metrics_history: list[dict] | None = None,
-                            tiling: dict | None = None, center_crop: dict | None = None) -> None:
+                            tiling: dict | None = None, center_crop: dict | None = None,
+                            original_size_region: tuple[int, int] | None = None,
+                            scaler=None) -> None:
     model.eval()
     state = make_builtin_checkpoint(model_id, model, num_classes=num_classes,
                                     input_size=input_size, in_channels=in_channels,
@@ -207,12 +256,16 @@ def save_builtin_checkpoint(path: str | Path, model: nn.Module, *, model_id: str
         from center_crop import validate_center_crop
         state["center_crop"] = validate_center_crop(center_crop)
         state["preprocessing"]["center_crop"] = state["center_crop"]
+    from checkpoint import record_original_size_training
+    record_original_size_training(state, original_size_region)
     state["epoch"] = int(epoch)
     state["metric"] = None if metric is None else float(metric)
     if optimizer is not None:
         state["optimizer_state_dict"] = optimizer.state_dict()
     if scheduler is not None:
         state["scheduler_state_dict"] = scheduler.state_dict()
+    if scaler is not None:
+        state["scaler_state_dict"] = scaler.state_dict()
     state["training_config"] = dict(training_config or {})
     state["metrics_history"] = list(metrics_history or [])
     output = Path(path)
@@ -241,9 +294,29 @@ def _class_report(report, class_names):
     return line, collapsed
 
 
-COLLAPSE_HELP = ("⚠ 검증에서 결함 픽셀을 하나도 예측하지 않았습니다(모두 배경). val loss가 낮아도 결함을 못 찾는 상태입니다. "
-                 "흔한 원인: ① 이미지를 입력 크기로 줄이며 가는 결함이 사라짐 → 패치 학습을 켜거나 학습 화면의 "
-                 "'데이터에 맞게 자동 설정' ② 결함 픽셀이 너무 적음 → 클래스 가중치 Sqrt ③ epoch 부족.")
+def _pixel_count_line(split, counts, names):
+    total = sum(counts)
+    parts = [f"{name} {int(count):,} ({count / total:.3%})" for name, count in zip(names, counts)]
+    return f"  {split} 입력 마스크 정답 픽셀 (255 제외) | " + " · ".join(parts)
+
+
+def _foreground_prediction_line(epoch, training, validation, names):
+    def counts(report):
+        return " · ".join(
+            f"{names[i]} {int(report['truth'][i]):,}→{int(report['predicted'][i]):,}"
+            for i in range(1, len(names))
+        )
+
+    return (f"  에폭 {epoch} 결함 픽셀 (정답→예측) | 학습 배치(증강 설정 반영) {counts(training)}"
+            f" | 검증 {counts(validation)}")
+
+
+def _collapse_help(class_weights):
+    message = ("⚠ 검증 정답에 결함이 있지만 모델이 모든 픽셀을 배경으로 판정했습니다. "
+               "학습·검증 입력 마스크의 결함 픽셀 수와 크롭·축소 후 결함 모양을 확인하세요. ")
+    if class_weights == "none":
+        return message + "희귀 결함 픽셀이 적으면 클래스 가중치 Sqrt를 비교해 보세요."
+    return message + f"현재 클래스 가중치 {class_weights} 적용 중."
 
 
 def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
@@ -264,7 +337,10 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                   segmentation_loss: str = "ce_dice", class_weights: str = "none",
                   patch_training: bool = False, patches_per_image: int = 0, patch_scale: float = 1.0,
                   class_report: bool = False, should_stop=lambda: False,
-                  center_crop: dict | None = None) -> Path:
+                  center_crop: dict | None = None, teacher_checkpoint=None,
+                  distillation_alpha=.3, distillation_temperature=2.,
+                  original_size_training: bool = False, use_amp: bool = False,
+                  mask2former_num_queries: int | None = None) -> Path:
     spec = get_builtin_spec(model_id)
     gui_path = str(Path(__file__).resolve().parents[1] / "gui")
     if gui_path not in sys.path:
@@ -292,7 +368,20 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         raise ValueError("resume and initial_weights are mutually exclusive")
     if pretrained and (resume is not None or initial_weights is not None):
         raise ValueError("ImageNet, resume and initial_weights are mutually exclusive")
-    if input_size is None:
+    if mask2former_num_queries is not None:
+        if model_id != "mask2former_swin_small":
+            raise ValueError("마스크 후보 수는 Mask2Former 학습에서만 설정할 수 있습니다.")
+        if resume is None:
+            from core.training_modes import validate_mask2former_num_queries
+            validate_mask2former_num_queries(mask2former_num_queries)
+    if type(original_size_training) is not bool:
+        raise ValueError("원본 크기 학습 옵션은 boolean 필요")
+    if original_size_training:
+        if patch_training:
+            raise ValueError("원본 크기 학습과 패치 학습은 함께 사용할 수 없습니다.")
+        if spec.task not in {"classify", "segment"}:
+            raise ValueError("선택한 모델은 원본 크기 학습을 지원하지 않습니다.")
+    if input_size is None or original_size_training:
         input_size = spec.default_size
     if isinstance(input_size, int):
         input_size = (input_size, input_size)
@@ -303,18 +392,33 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         raise ValueError("패치 학습은 분할 모델만 지원합니다")
     if patch_training and input_size[0] != input_size[1]:
         raise ValueError("패치 학습은 정사각형 입력 크기(= 패치 크기)가 필요합니다")
-    from checkpoint import tiling_contract
+    from checkpoint import checkpoint_original_size_region, tiling_contract
     region = None
+    original_size_region = None
     if patch_training:
         from dataset import common_image_size
         region = common_image_size(Path(data_root) / "images" / "train")  # C++ 고정 입력 내보내기의 판정 영역
     tiling = tiling_contract(input_size[0] if patch_training else 0, patch_scale if patch_training else 1.0, region)
-    if device.startswith("cuda") and not torch.cuda.is_available():
-        raise ValueError("CUDA device requested but CUDA is unavailable")
     target = torch.device(device)
+    if target.type == "cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA device requested but CUDA is unavailable")
+    # Match the desktop training device policy. Older PyTorch 2.x releases
+    # expose the scaler through torch.cuda.amp rather than torch.amp.
+    amp_enabled = bool(use_amp and target.type == "cuda"
+                       and torch.cuda.get_device_capability(target)[0] >= 7)
+    scaler = None
+    if amp_enabled:
+        grad_scaler = getattr(torch.amp, "GradScaler", None)
+        scaler = grad_scaler("cuda") if grad_scaler else torch.cuda.amp.GradScaler()
+        log("학습 정밀도: AMP (FP16 혼합 정밀도) · 검증 FP32")
+    elif use_amp:
+        log(f"학습 정밀도: FP32 ({target}에서는 CUDA AMP 미적용)")
+    else:
+        log("학습 정밀도: FP32")
     if num_workers is None:
-        cores = os.cpu_count() or 1
-        num_workers = max(2, min(cores // 2, 8)) if target.type == "cuda" else 0
+        num_workers = _default_num_workers(target.type, original_size_training)
+        if sys.platform == "win32" and original_size_training and target.type == "cuda":
+            log("Windows 원본 크기 학습: 큰 배치를 공유 메모리에 미리 쌓지 않도록 현재 프로세스에서 로딩합니다.")
     if num_workers < 0:
         raise ValueError("num_workers must be zero or greater")
     pin_memory = target.type == "cuda"
@@ -328,7 +432,13 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             str(data_root), input_size=input_size, batch_size=batch_size,
             num_workers=num_workers, pin_memory=pin_memory,
             in_channels=in_channels, val_split=val_split,
-            flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter)
+            flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter,
+            original_size=original_size_training)
+        if original_size_training:
+            input_size = train_loader.dataset.original_size
+            height, width = input_size
+            original_size_region = (width, height)
+            log(f"원본 크기 분류 학습: {width}×{height} px")
         num_classes = len(class_names) if num_classes == 0 else num_classes
         if num_classes != len(class_names):
             raise ValueError("num_classes does not match classification folders")
@@ -341,7 +451,14 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             in_channels=in_channels, num_classes=num_classes,
             flip_prob=horizontal_flip, rotation=rotation, color_jitter=color_jitter,
             patch_size=input_size[0] if patch_training else 0, patches_per_image=patches_per_image,
-            patch_scale=patch_scale if patch_training else 1.0)
+            patch_scale=patch_scale if patch_training else 1.0,
+            original_size=original_size_training)
+        if original_size_training:
+            height, width = train_loader.dataset.original_size
+            input_size = train_loader.dataset.padded_size
+            original_size_region = (width, height)
+            log(f"원본 크기 학습: {width}×{height} px → 모델 입력 "
+                f"{input_size[1]}×{input_size[0]} px (가장자리 채움)")
         from dataset import unlabeled_message
         if unlabeled_message(train_loader, val_loader):
             log(unlabeled_message(train_loader, val_loader))
@@ -352,20 +469,48 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         if len(class_names) != num_classes or any(not name for name in class_names):
             raise ValueError("class_names must name every segmentation class")
     initial_checkpoint = None
+    transformer_state = None
     backbone_weights = None
     if initial_weights is not None:
-        payload = torch.load(initial_weights, map_location="cpu", weights_only=True)
+        from transformer_segmenters import MODEL_IDS as transformer_ids, load_local_tensors
+        payload = load_local_tensors(initial_weights)
         if isinstance(payload, dict) and "model_state_dict" in payload:
             if payload.get("model_id") != model_id:
                 raise ValueError("initial checkpoint model_id does not match the requested adapter")
             initial_checkpoint = payload
+        elif model_id in transformer_ids:
+            transformer_state = payload
         else:
             backbone_weights = initial_weights
+        del payload
+    resume_checkpoint = (torch.load(resume, map_location="cpu", weights_only=True)
+                         if resume is not None else None)
+    if resume_checkpoint is not None and resume_checkpoint.get("model_id") != model_id:
+        raise ValueError("resume checkpoint model_id does not match the requested adapter")
+    model_options = {}
+    if model_id == "mask2former_swin_small":
+        from transformer_segmenters import MASK2FORMER_DEFAULT_QUERIES, checkpoint_query_count, transfer_query_weights
+        if resume_checkpoint is not None:
+            mask2former_num_queries = checkpoint_query_count(resume_checkpoint)
+        elif initial_checkpoint is not None:
+            source_count = checkpoint_query_count(initial_checkpoint)
+            if mask2former_num_queries is None:
+                mask2former_num_queries = source_count
+        if mask2former_num_queries is None:
+            mask2former_num_queries = MASK2FORMER_DEFAULT_QUERIES
+        restored = " (체크포인트에서 복원)" if resume_checkpoint is not None else ""
+        log(f"Mask2Former 마스크 후보 수: {mask2former_num_queries}{restored}")
+        model_options["mask2former_num_queries"] = mask2former_num_queries
     model = build_builtin_model(model_id, num_classes, in_channels,
-                                pretrained=pretrained, backbone_weights=backbone_weights)
+                                pretrained=pretrained, backbone_weights=backbone_weights, **model_options)
+    if transformer_state is not None:
+        model.initialize_from_weights(transformer_state, initial_weights)
+        del transformer_state
     if initial_checkpoint is not None:
         # Class order matters even when the number of classes is unchanged.
         source = dict(initial_checkpoint["model_state_dict"])
+        if model_id == "mask2former_swin_small":
+            source = transfer_query_weights(source, mask2former_num_queries, prefix="net.")
         head = CLASS_HEAD_PREFIX[model_id]
         # Older segmentation checkpoints stored placeholder names "0".."N-1". They
         # differ from real project names, so only their backbone is transferred.
@@ -380,6 +525,13 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     model = model.to(target)
     log(f"가중치 로드 완료: {model_id} / {model.weight_provenance}")
     head_prefixes = HEAD_PREFIXES[model_id]
+    if resume_checkpoint is not None and model_id in {"bisenetv2", "stdc1"} and not freeze_backbone:
+        groups = resume_checkpoint.get("optimizer_state_dict", {}).get("param_groups", [])
+        if len(groups) == 1 and len(groups[0]["params"]) == len(list(model.parameters())):
+            # 13.84 trained these scratch-only adapters with one optimizer group.
+            # Preserve its parameter ordering, moments and scheduler on resume.
+            head_prefixes = ("",)
+            log("기존 체크포인트의 단일 학습률 그룹을 유지하여 재개합니다.")
     head_parameters, backbone_parameters = [], []
     for name, parameter in model.named_parameters():
         is_head = any(name.startswith(prefix) for prefix in head_prefixes)
@@ -423,7 +575,7 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                      ))
     else:
         scheduler = main_scheduler
-    loss_details = {}
+    loss_details = {"model_auxiliary_loss": dict(getattr(model, "training_loss_config", {}))}
     if spec.task == "segment":
         from segmentation_loss import SegmentationLoss, pixel_class_weights
 
@@ -441,13 +593,24 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                             class_weight_values=pixel_weights)
     else:
         criterion = nn.CrossEntropyLoss(ignore_index=255, label_smoothing=label_smoothing)
+    distiller = None
+    if teacher_checkpoint:
+        if spec.task == "classify":
+            from classification_distillation import ClassificationDistiller as Distiller
+        else:
+            from segmentation_distillation import SegmentationDistiller as Distiller
+        distiller = Distiller(teacher_checkpoint, class_names, in_channels, target,
+                              alpha=distillation_alpha, temperature=distillation_temperature)
+        log(f"동일 증강 입력 교사 증류: {distiller.config}")
     training_config = {
+        "distillation": distiller.config if distiller else None,
         "optimizer": optimizer_name, "scheduler": scheduler_name,
         "learning_rate": learning_rate, "weight_decay": weight_decay,
         "warmup_epochs": warmup_epochs, "early_stop_patience": early_stop_patience,
         "label_smoothing": label_smoothing, "freeze_backbone": freeze_backbone,
         "backbone_lr_mult": backbone_lr_mult, "val_split": val_split,
         "num_workers": num_workers,
+        "use_amp": amp_enabled,
         "pretrained": pretrained, "weight_provenance": model.weight_provenance,
         "selection_metric": policy.metric, "selection_direction": policy.direction,
         "augmentation": {"horizontal_flip": horizontal_flip, "rotation": rotation,
@@ -455,8 +618,23 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         "patch_training": ({"patch_size": input_size[0], "scale": tiling["scale"],
                             "patches_per_image": train_loader.dataset.patches_per_image, "tiling": tiling}
                            if tiling else None),
+        "original_size_training": original_size_training,
+        "original_size_region": list(original_size_region) if original_size_region else None,
         **loss_details,
     }
+    if model_id == "mask2former_swin_small":
+        training_config["mask2former_num_queries"] = mask2former_num_queries
+    if spec.task == "segment":
+        training_config["unlabeled_policy"] = "background"
+        training_config["automatic_background_images"] = {
+            split: len(getattr(getattr(loader, "dataset", None), "unlabeled", []))
+            for split, loader in (("train", train_loader), ("val", val_loader))}
+        if class_report:
+            input_mode = "패치" if tiling else "원본 크기" if original_size_training else "전체 영역 리사이즈"
+            encoder_lr = f"{learning_rate * backbone_lr_mult * backbone_scale:g}" if trainable_backbone else "동결"
+            log(f"분할 학습 설정 | {input_mode} {input_size[1]}×{input_size[0]} · 배치 {batch_size} · "
+                f"{optimizer_name} · 기준 학습률 헤드 {learning_rate:g} / 백본 {encoder_lr} · "
+                f"준비 에폭 {warmup_epochs} · 클래스 가중치 {class_weights} · Best 기준 {policy.metric}")
     start_epoch = 0
     history: list[dict] = []
     best_metric = float("inf") if policy.direction == "min" else float("-inf")
@@ -464,9 +642,13 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     resume_best_checkpoint = None
     if resume is not None:
         resume_path = Path(resume)
-        checkpoint = torch.load(resume_path, map_location="cpu", weights_only=False)
-        if checkpoint.get("model_id") != model_id:
-            raise ValueError("resume checkpoint model_id does not match the requested adapter")
+        checkpoint = resume_checkpoint
+        if checkpoint_original_size_region(checkpoint) != original_size_region or (
+            original_size_region is not None and checkpoint.get("center_crop") != center_crop
+        ):
+            raise ValueError("재개하려면 원본 크기 학습 설정과 판정 영역을 유지해야 합니다.")
+        if checkpoint.get("training_config", {}).get("distillation") != training_config["distillation"]:
+            raise ValueError("재개할 때 교사 가중치와 증류 설정을 유지해야 합니다")
         saved_metric = checkpoint.get("training_config", {}).get("selection_metric", "engine_default")
         saved_policy = selection_policy(SimpleNamespace(selection_metric=saved_metric), "builtin", spec.task)
         if saved_policy.metric != policy.metric:
@@ -482,15 +664,25 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         if scheduler is not None and checkpoint.get("scheduler_state_dict"):
             scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        if scaler is not None and checkpoint.get("scaler_state_dict"):
+            scaler.load_state_dict(checkpoint["scaler_state_dict"])
         start_epoch = int(checkpoint.get("epoch", -1)) + 1
         history = list(checkpoint.get("metrics_history") or [])
-        previous_best_path = resume_path.parent / "best.pt"
-        if previous_best_path.is_file():
+        from checkpoint import previous_best_path
+        previous_best = previous_best_path(resume_path)
+        if previous_best is not None:
             resume_best_checkpoint = torch.load(
-                previous_best_path, map_location="cpu", weights_only=False
+                previous_best, map_location="cpu", weights_only=True
             )
             if resume_best_checkpoint.get("model_id") != model_id:
                 raise ValueError("best checkpoint model_id does not match the resume adapter")
+            if (model_id == "mask2former_swin_small"
+                    and checkpoint_query_count(resume_best_checkpoint) != mask2former_num_queries):
+                raise ValueError("Best 체크포인트의 Mask2Former 마스크 후보 수가 재개할 모델과 다릅니다.")
+            if checkpoint_original_size_region(resume_best_checkpoint) != original_size_region or (
+                original_size_region is not None and resume_best_checkpoint.get("center_crop") != center_crop
+            ):
+                raise ValueError("Best 체크포인트의 원본 크기 학습 설정이 재개 설정과 다릅니다.")
         else:
             resume_best_checkpoint = checkpoint
         if resume_best_checkpoint.get("metric") is not None:
@@ -502,8 +694,15 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
     if resume_best_checkpoint is not None:
         torch.save(resume_best_checkpoint, destination / "best.pt")
     completed_epochs = start_epoch
+    if model_id == "mask2former_swin_small" and class_report:
+        mode = "체크포인트 재개" if resume is not None else "새 학습"
+        patience = f"{early_stop_patience}에폭" if early_stop_patience else "끔"
+        log(f"Mask2Former {mode} | 에폭당 학습 {len(train_loader)}배치 · 시작 에폭 {start_epoch + 1} · "
+            f"실제 시작 헤드 학습률 {optimizer.param_groups[0]['lr']:.5g} · 조기 종료 {patience} ({policy.metric})")
+    training_precision = {"scaler": scaler} if scaler is not None else {}
     epochs_without_improvement = max(0, start_epoch - best_epoch) if best_epoch else 0
-    collapsed_epochs, collapse_warned = {}, False  # 결함 예측 0인 epoch (데스크톱 class_report)
+    collapse_details, reported_epochs = {}, set()
+    collapse_warned = False
     for epoch in range(start_epoch, epochs):
         if should_stop():
             break
@@ -511,20 +710,26 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
         validation_metrics = {}
         report = None
         # 데스크톱 요청만: 배치마다 중지 요청 확인 + 에폭 안의 진행 기록. 웹 요청은 기본 호출 모양 그대로
-        watch = (lambda label, loader: {"should_stop": should_stop,
-                                        "progress": _BatchProgress(log, f"에폭 {epoch + 1} {label}", len(loader), target)}
-                 if class_report else {})
+        def watch(label, loader):
+            return ({"should_stop": should_stop,
+                     "progress": _BatchProgress(log, f"에폭 {epoch + 1} {label}", len(loader), target)}
+                    if class_report else {})
+        distillation = {"distiller": distiller} if distiller is not None else {}
         try:
             if spec.task == "classify":
                 train_loss, train_metric = _classification_epoch(model, train_loader, criterion, optimizer, target,
+                                                                 **distillation, **training_precision,
                                                                  **watch("학습", train_loader))
                 val_loss, val_metric = _classification_epoch(model, val_loader, criterion, None, target,
                                                              validation_metrics, **watch("검증", val_loader))
             else:
                 seen_pixels = []
+                train_report = {} if class_report else None
                 train_loss, train_metric = _segmentation_epoch(model, train_loader, criterion, optimizer, target,
                                                                pixel_counts_out=seen_pixels,
-                                                               **watch("학습", train_loader))
+                                                               **({"class_report_out": train_report} if class_report else {}),
+                                                               **distillation,
+                                                               **training_precision, **watch("학습", train_loader))
                 if epoch == start_epoch and class_weights == "none":
                     _log_rare_class_hint(seen_pixels, class_names, log)
                 report = {} if class_report else None
@@ -545,9 +750,17 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
             line, collapsed = _class_report(report, class_names or [])
             if line:
                 log(line)
-            collapsed_epochs[epoch + 1] = collapsed
-            if collapsed and epoch + 1 >= 3 and not collapse_warned:
-                log(COLLAPSE_HELP)
+            if collapsed:
+                collapse_details[epoch + 1] = _foreground_prediction_line(epoch + 1, train_report, report, class_names)
+            warn_now = collapsed and epoch + 1 >= 3 and not collapse_warned
+            if epoch == start_epoch or warn_now:
+                log(_pixel_count_line("학습", seen_pixels, class_names))
+                log(_pixel_count_line("검증", report["truth"], class_names))
+                if collapsed:
+                    log(collapse_details[epoch + 1])
+                    reported_epochs.add(epoch + 1)
+            if warn_now:
+                log(_collapse_help(class_weights))
                 collapse_warned = True
         log(f"  Epoch {epoch + 1} 시간 | 소요 {format_hms(epoch_time_sec)} | "
             f"누적 {format_hms(elapsed_time_sec)}")
@@ -570,7 +783,8 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                 in_channels=in_channels, class_names=class_names,
                                 epoch=epoch, optimizer=optimizer, scheduler=scheduler,
                                 metric=selected_value, training_config=training_config,
-                                metrics_history=history, tiling=tiling, center_crop=center_crop)
+                                metrics_history=history, tiling=tiling, center_crop=center_crop,
+                                original_size_region=original_size_region, scaler=scaler)
         improved = selected_value < best_metric if policy.direction == "min" else selected_value > best_metric
         if improved:
             best_metric = selected_value
@@ -581,18 +795,27 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
                                     in_channels=in_channels, class_names=class_names,
                                     epoch=epoch, optimizer=optimizer, scheduler=scheduler,
                                     metric=selected_value, training_config=training_config,
-                                    metrics_history=history, tiling=tiling, center_crop=center_crop)
+                                    metrics_history=history, tiling=tiling, center_crop=center_crop,
+                                    original_size_region=original_size_region, scaler=scaler)
             log({"event": "best_epoch_updated", "epoch": completed_epochs,
                  "train_loss": train_loss, "val_loss": val_loss, "metrics": validation_metrics})
         else:
             epochs_without_improvement += 1
         if early_stop_patience and epochs_without_improvement >= early_stop_patience:
             log(f"early stopping at epoch {completed_epochs}")
+            if (model_id == "mask2former_swin_small" and completed_epochs in collapse_details
+                    and policy.metric in {"mIoU", "dice_score"}):
+                log(f"검증 결함 예측이 0픽셀인 상태에서 {policy.metric}이 {early_stop_patience}에폭 동안 "
+                    "개선되지 않아 멈췄습니다. val_loss가 내려가는 중이라면 학습 화면의 "
+                    "Early Stop을 끄고 같은 설정에서 더 학습해 비교할 수 있습니다.")
             break
     if completed_epochs == start_epoch and start_epoch >= epochs:
         raise ValueError("resume checkpoint already reached the requested epochs")
-    if collapsed_epochs.get(best_epoch):
-        log("⚠ 저장된 best 모델이 검증 결함을 하나도 예측하지 않습니다. " + COLLAPSE_HELP.removeprefix("⚠ "))
+    if best_epoch in collapse_details:
+        log(f"⚠ 저장된 best 모델({best_epoch} 에폭)이 검증 결함을 하나도 예측하지 않았습니다.")
+    for epoch_number in dict.fromkeys((best_epoch, completed_epochs)):
+        if epoch_number in collapse_details and epoch_number not in reported_epochs:
+            log(collapse_details[epoch_number])
     log_total_time(log, training_clock.elapsed())
     (destination / "training.json").write_text(json.dumps({"model_id": model_id,
         "task": spec.task, "epochs": epochs, "input_size": list(input_size),
@@ -606,39 +829,43 @@ def train_builtin(model_id: str, data_root: str | Path, *, num_classes: int = 0,
 
 
 def main() -> None:
-    specs = tuple(get_builtin_spec(model_id) for model_id in (
-        "resnet18", "resnet50", "convnext_v1_tiny", "deeplabv3plus_resnet34", "unet_resnet18",
-        "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg", "unet_lite",
-        "unet_mobilenetv2"))
+    from builtin_models import BUILTIN_MODEL_SPECS
+    specs = tuple(BUILTIN_MODEL_SPECS.values())
     parser = argparse.ArgumentParser(description="Train a built-in Deep Vision Studio adapter")
     parser.add_argument("--model", choices=[spec.model_id for spec in specs], required=True)
     parser.add_argument("--data_root", required=True)
     parser.add_argument("--num_classes", type=int, default=0)
     parser.add_argument("--input_size", type=int, default=0)
+    parser.add_argument("--original_size_training", action="store_true", help="Train on the full, native-size input region")
     parser.add_argument("--in_channels", type=int, choices=(1, 3), default=3)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--learning_rate", type=float, default=1e-3)
     parser.add_argument("--output_dir", default="runs/builtin")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--amp", action="store_true", help="Enable FP16 mixed precision on supported CUDA GPUs")
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--resume")
-    parser.add_argument("--pretrained", action="store_true", help="Load the selected ImageNet backbone")
-    parser.add_argument("--initial_weights", help="Local torchvision backbone or matching Studio checkpoint")
+    parser.add_argument("--pretrained", action="store_true", help="Load the selected model's packaged pretrained backbone")
+    parser.add_argument("--initial_weights", help="Local official backbone or matching Studio checkpoint")
     parser.add_argument("--selection_metric", default="engine_default")
     parser.add_argument("--segmentation_loss", choices=("ce_dice", "ce"), default="ce_dice",
                         help="segment: CE + foreground Dice (default) or plain pixel CE")
     parser.add_argument("--class_weights", choices=("none", "balanced", "sqrt"), default="none",
                         help="segment: class weights from training pixel counts")
+    parser.add_argument("--mask2former_num_queries", type=int,
+                        help="Mask2Former mask candidates, 1–100 (new model: 100; resume uses the checkpoint)")
     args = parser.parse_args()
     train_builtin(args.model, args.data_root, num_classes=args.num_classes,
                   input_size=args.input_size or None, in_channels=args.in_channels,
+                  original_size_training=args.original_size_training,
                   epochs=args.epochs, batch_size=args.batch_size,
                   learning_rate=args.learning_rate, output_dir=args.output_dir,
-                  device=args.device, num_workers=args.num_workers,
+                  device=args.device, num_workers=args.num_workers, use_amp=args.amp,
                   resume=args.resume, pretrained=args.pretrained,
                   initial_weights=args.initial_weights, selection_metric=args.selection_metric,
-                  segmentation_loss=args.segmentation_loss, class_weights=args.class_weights)
+                  segmentation_loss=args.segmentation_loss, class_weights=args.class_weights,
+                  mask2former_num_queries=args.mask2former_num_queries)
 
 
 if __name__ == "__main__":

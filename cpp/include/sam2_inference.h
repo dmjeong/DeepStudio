@@ -98,6 +98,7 @@ private:
     int m_input_channels = 3;
     int m_input_height = 1024;
     int m_input_width = 1024;
+    bool m_native_size = false;
     std::vector<float> m_normalize_mean{0.485f, 0.456f, 0.406f};
     std::vector<float> m_normalize_std{0.229f, 0.224f, 0.225f};
     int m_mask_height = 256;

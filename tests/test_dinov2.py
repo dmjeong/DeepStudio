@@ -25,12 +25,12 @@ def test_registry_lists_dinov2_on_the_desktop_only():
     assert shared <= desktop  # 다른 모델은 그대로
     assert {item["model_id"] for item in registry.as_dict()} == shared  # 웹 화면 카탈로그
     assert [s.model_id for s in registry.list("segment", surface="desktop") if s.family == "DINOv2"] == \
-        ["dinov2_vits14_seg", "dinov2_vitb14_seg"]
+        ["dinov2_vits14", "dinov2_vits14_seg", "dinov2_vitb14_seg"]
     assert registry.get("dinov2_vits14_cls").display_name == "DINOv2 ViT-S/14"
     assert set(DINO_IDS) <= BUILTIN_ADAPTER_IDS
-    # main의 DINOv2 분할 모델 ID(dinov2_vits14)는 이 브랜치에서 쓰지 않는다: 체크포인트가 서로 섞이지 않게
+    # Keep the existing main model ID distinct from the new decoder/checkpoint layout.
     from builtin_models import BUILTIN_MODEL_SPECS
-    assert "dinov2_vits14" not in BUILTIN_MODEL_SPECS and "dinov2_vits14" not in desktop
+    assert "dinov2_vits14" in BUILTIN_MODEL_SPECS and "dinov2_vits14" in desktop
     assert training_capabilities("segment", "builtin_finetune", model_id="dinov2_vits14_seg")["engine"] == "builtin"
 
 
@@ -124,6 +124,15 @@ def test_onnx_export_matches_pytorch(tmp_path):
         expected = model(torch.from_numpy(x)).numpy()
     assert np.abs(session.run(None, {session.get_inputs()[0].name: x})[0] - expected).max() < 1e-4
 
+    from precision_benchmark import benchmark_precisions
+    del model, session
+    Image.fromarray(np.arange(112 * 112, dtype=np.uint8).reshape(112, 112)).save(tmp_path / "chip.png")
+    rows = benchmark_precisions(tmp_path / "c.json", tmp_path, thread_counts=(1,), calibration_dir=tmp_path,
+                                image_count=1, repeats=1, warmup=0, log=lambda _: None)
+    assert [(row["precision"], row["status"]) for row in rows] == [
+        ("FP32", "완료"), ("FP16", "완료"), ("INT8", "완료")], rows
+    assert "Top-1" in rows[-1]["comparison"]
+
 
 def test_training_uses_a_smaller_backbone_learning_rate(tmp_path):
     """ViT 백본 lr = 학습률 × 백본 배수 × 0.1 (기본 1e-3 × 0.1 × 0.1 = 1e-5). 로그에 남긴다."""
@@ -164,13 +173,16 @@ def test_training_page_offers_dinov2_for_segmentation(tmp_path):
 def test_desktop_segmentation_log_reports_defect_iou_and_all_background(tmp_path):
     """mIoU는 배경을 포함해(전부 배경이어도 3클래스 0.33) 결함을 못 찾는 상태가 안 보였다.
     데스크톱 학습(class_report)만 결함 클래스별 IoU와 '전부 배경' 경고를 로그에 남긴다. 기본(웹)은 그대로."""
-    from train_builtin import _class_report, train_builtin
+    from train_builtin import _class_report, _collapse_help, train_builtin
     line, collapsed = _class_report({"iou": [.99, 0.0, 0.0], "predicted": [100, 0, 0], "truth": [90, 5, 5]},
                                     ["background", "scratch", "dot"])
     assert collapsed and "scratch 0.000 · dot 0.000" in line and "전부 배경" in line
     line, collapsed = _class_report({"iou": [.99, .5, 0.0], "predicted": [90, 6, 0], "truth": [90, 5, 0]},
                                     ["background", "scratch", "dot"])
     assert not collapsed and "scratch 0.500" in line and "dot" not in line  # 정답 없는 클래스는 빼고 평균
+    assert "Sqrt를 비교" in _collapse_help("none")
+    for mode in ("sqrt", "balanced"):
+        assert f"{mode} 적용 중" in _collapse_help(mode) and "비교해 보세요" not in _collapse_help(mode)
     for split in ("train", "val"):
         (tmp_path / "data" / "images" / split).mkdir(parents=True)
         (tmp_path / "data" / "masks" / split).mkdir(parents=True)
@@ -178,14 +190,54 @@ def test_desktop_segmentation_log_reports_defect_iou_and_all_background(tmp_path
             Image.new("L", (64, 64), 100).save(tmp_path / "data" / "images" / split / f"{index}.png")
             mask = np.zeros((64, 64), np.uint8)
             mask[20:30, 20:30] = 1
+            mask[0, :] = 255
             Image.fromarray(mask, "L").save(tmp_path / "data" / "masks" / split / f"{index}.png")
     for report in (False, True):
         logs = []
         train_builtin("unet_resnet18", tmp_path / "data", num_classes=2, input_size=64, in_channels=1, epochs=1,
                       batch_size=2, output_dir=tmp_path / f"run{report}", device="cpu", num_workers=0,
+                      horizontal_flip=0, rotation=0, color_jitter=0,
                       class_names=["background", "crack"], class_report=report,
                       log=lambda m: logs.append(m) if isinstance(m, str) else None)
         assert any("결함 클래스 IoU" in line for line in logs) is report
+        for split in ("학습", "검증"):
+            assert any(f"{split} 입력 마스크 정답 픽셀" in line and "crack 200 (2.480%)" in line
+                       for line in logs) is report
+
+
+def test_collapse_log_counts_augmented_training_and_validation_predictions_separately(tmp_path, monkeypatch):
+    import train_builtin as trainer
+
+    class FixedPrediction(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.head = torch.nn.Conv2d(1, 2, 1)
+            self.weight_provenance = {"source": "test"}
+
+        def forward(self, x):
+            scores = self.head(x) * 0
+            bias = scores.new_tensor([0., 1.] if self.training else [1., 0.])
+            return scores + bias.view(1, 2, 1, 1)
+
+    monkeypatch.setattr(trainer, "build_builtin_model", lambda *args, **kwargs: FixedPrediction())
+    for split in ("train", "val"):
+        for subset in ("images", "masks"):
+            (tmp_path / "data" / subset / split).mkdir(parents=True)
+        image = np.zeros((32, 32), np.uint8)
+        mask = image.copy()
+        mask[0] = 255
+        mask[3:5, 4:8] = 1
+        Image.fromarray(image).save(tmp_path / "data/images" / split / "part.png")
+        Image.fromarray(mask).save(tmp_path / "data/masks" / split / "part.png")
+
+    logs = []
+    trainer.train_builtin("unet_resnet18", tmp_path / "data", num_classes=2, input_size=32, in_channels=1,
+                          epochs=5, batch_size=1, output_dir=tmp_path / "run", num_workers=0,
+                          rotation=0, horizontal_flip=0, color_jitter=0, class_names=["bg", "crack"],
+                          class_report=True, log=logs.append)
+    counts = [m for m in logs if isinstance(m, str) and "결함 픽셀 (정답→예측)" in m]
+    assert [int(m.split()[1]) for m in counts] == [1, 3, 5]
+    assert all("학습 배치(증강 설정 반영) crack 8→992 | 검증 crack 8→0" in m for m in counts)
 
 
 def test_only_the_desktop_training_request_asks_for_the_class_report():

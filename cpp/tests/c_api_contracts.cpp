@@ -62,6 +62,7 @@ int main(int argc, char** argv)
         const auto original_graph = fs::u8path(argv[1]) / "classify.onnx";
         auto graph_bytes = std::ifstream(bundle_graph, std::ios::binary);
         std::string graph((std::istreambuf_iterator<char>(graph_bytes)), std::istreambuf_iterator<char>());
+        graph_bytes.close();
         require(!graph.empty(), "Deployment bundle graph fixture is empty.");
         graph[0] = static_cast<char>(graph[0] ^ 0x01);
         std::ofstream(bundle_graph, std::ios::binary)

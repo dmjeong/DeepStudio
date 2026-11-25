@@ -25,18 +25,22 @@ IGNORE_INDEX = 255
 def pixel_class_weights(dataset, num_classes: int, mode: str, class_names):
     """Class weights from the training masks' pixel counts at training size.
 
-    Returns (weights or None, counts or None). Every class needs at least one
-    training pixel: an absent class would get an unbounded weight.
+    Returns (weights or None, counts or None). Absent classes keep their output
+    channel with neutral weight; only present-class frequencies are normalized.
     """
     from class_weights import weights_from_counts
 
     if mode == "none":
         return None, None
     counts = dataset.class_pixel_counts(num_classes)
-    missing = [str(class_names[i]) for i, count in enumerate(counts) if count == 0]
-    if missing:
-        raise ValueError(f"클래스 가중치에는 모든 클래스의 학습 픽셀이 필요합니다. 없음: {missing}")
-    return weights_from_counts(counts, mode), counts
+    present = [count for count in counts if count > 0]
+    if not present:
+        raise ValueError("학습 가능한 마스크 픽셀이 없습니다. 255는 학습 제외 픽셀입니다.")
+    present_weights = iter(weights_from_counts(present, mode))
+    # Keep every channel and penalize false positives for absent classes too.
+    # Their target never occurs, so a neutral positive CE weight is sufficient.
+    return [next(present_weights) if count else 1.0 for count in counts], counts
+
 
 
 class SegmentationLoss(nn.Module):

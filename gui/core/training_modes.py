@@ -9,6 +9,7 @@ MODE_LABELS = {
     "efficientnet_scratch": "EfficientNet 무작위 초기화로 시작",
     "builtin_finetune": "선택 모델의 사전학습 가중치로 시작",
     "builtin_transfer": "선택 모델의 로컬 가중치로 시작",
+    "builtin_resume": "중단한 학습 재개",
     "builtin_scratch": "선택 모델을 무작위 초기화로 시작",
     "upstream_finetune": "선택 모델의 사전학습 가중치로 시작",
     "upstream_transfer": "선택 모델의 로컬 가중치로 시작",
@@ -23,8 +24,9 @@ MODE_HELP = {
     "efficientnet_transfer": "로컬 가중치에서 새 학습을 시작합니다. 클래스가 다르면 분류기를 교체합니다.",
     "efficientnet_resume": "중단한 학습의 모델, optimizer, 스케줄러와 난수 상태를 복원합니다.",
     "efficientnet_scratch": "선택한 EfficientNet B0/B1 구조를 무작위 초기화하고 처음부터 학습합니다.",
-    "builtin_finetune": "선택한 모델의 설치본 사전학습 가중치를 검증 후 로드합니다(DINOv2는 LVD-142M 자기지도, 나머지는 ImageNet). 분할 모델은 백본만 사전학습되어 있고 분할 헤드는 새로 학습합니다.",
-    "builtin_transfer": "같은 모델의 Deep Vision Studio 체크포인트 또는 해당 torchvision 백본의 .pth를 선택하세요. 새 데이터의 클래스로 학습을 시작합니다.",
+    "builtin_finetune": "선택한 모델의 설치본 사전학습 가중치를 검증 후 로드합니다. DINOv2는 LVD-142M, 나머지는 ImageNet 백본입니다. 분할 헤드는 새로 학습합니다.",
+    "builtin_transfer": "같은 모델의 Deep Vision Studio 체크포인트 또는 해당 모델의 공식 백본 .pth를 선택하세요. 새 데이터의 클래스로 학습을 시작합니다.",
+    "builtin_resume": "같은 모델의 last.pt와 best.pt로 옵티마이저·학습 상태를 복원합니다.",
     "builtin_scratch": "선택한 기본 모델 구조를 무작위 초기화하고 처음부터 학습합니다.",
     "upstream_finetune": "선택한 기본 제공 모델의 공식 사전학습 가중치로 시작합니다.",
     "upstream_transfer": "같은 모델군의 로컬 checkpoint를 사용해 새 데이터로 학습합니다.",
@@ -35,17 +37,23 @@ MODE_HELP = {
     "custom": "자체 CSP 구조. 초기 가중치가 없으면 무작위 초기화합니다.",
 }
 
-BUILTIN_ADAPTER_IDS = frozenset({
-    "resnet18", "resnet50", "convnext_v1_tiny",
-    "deeplabv3plus_resnet34", "unet_resnet18",
-    "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vits14_seg", "dinov2_vitb14_seg",
+LOCAL_TRANSFORMER_TEACHERS = frozenset({"mask2former_swin_small", "segformer_b2"})
+
+BUILTIN_ADAPTER_IDS = LOCAL_TRANSFORMER_TEACHERS | frozenset({
+    "resnet18", "resnet50", "convnext_v1_tiny", "dinomaly_vits14",
+    "deeplabv3plus_resnet34", "unet_resnet18", "dinov2_vits14",
+    "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vitl14_cls", "siglip2_so400m_cls",
+    "dinov2_vits14_seg", "dinov2_vitb14_seg",
     "unet_lite", "unet_mobilenetv2",
+    "efficientvit_b0_seg", "efficientvit_b1_seg", "sctnet_s", "eomt_dinov2_small",
+    "unet_mobilenetv4_small", "unet_shufflenetv2", "unet_efficientnet_b1", "bisenetv2", "stdc1",
 })
 # 사전학습 가중치가 없는 기본 모델 (python/builtin_models.SCRATCH_ONLY_MODELS와 같은 목록)
 BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite"})
 
 UPSTREAM_ADAPTER_IDS = frozenset({
     "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",
+    "libreyolo_classify_mobilenetv4_medium", "libreyolo_detect_dfine_nano",
     "re_detr_v4_small", "re_detr_v4_medium", "re_detr_v4_large",
 })
 
@@ -67,16 +75,23 @@ def training_engine_name(mode):
     return "upstream" if str(mode).startswith("upstream") else "custom"
 
 
+def validate_mask2former_num_queries(value):
+    if type(value) is not int or not 1 <= value <= 100:
+        raise ValueError("Mask2Former 마스크 후보 수는 1~100 사이의 정수여야 합니다.")
+
+
 def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""):
     if task == "obb":
         raise ValueError("회전 박스 데이터 편집은 지원하지만 OBB 학습 엔진은 제공하지 않습니다.")
     if task not in {"classify", "segment", "detect", "anomaly"}:
         raise ValueError("태스크 오류")
-    engine = "custom" if task == "anomaly" else training_engine_name(mode)
+    engine = "dinomaly" if model_id == "dinomaly_vits14" else "custom" if task == "anomaly" else training_engine_name(mode)
+    if engine == "dinomaly" and (task != "anomaly" or mode not in {"builtin_finetune", "builtin_transfer", "builtin_resume"}):
+        raise ValueError("Dinomaly는 이상 탐지의 사전학습·로컬 가중치·재개 모드를 사용하세요")
     if engine == "builtin" and model_id not in BUILTIN_ADAPTER_IDS:
         raise ValueError("선택한 모델은 기본 모델의 사전학습 모드를 지원하지 않습니다.")
-    if mode == "builtin_finetune" and model_id in BUILTIN_SCRATCH_ONLY_IDS:
-        raise ValueError("초경량 U-Net은 사전학습 가중치가 없습니다. '처음부터 학습'을 선택하세요.")
+    if mode == "builtin_finetune" and model_id in (BUILTIN_SCRATCH_ONLY_IDS | {"segformer_b2"}):
+        raise ValueError("선택 모델은 기본 사전학습 파일이 없습니다. 처음부터 학습하거나 이전 학습 결과를 선택하세요.")
     if engine == "upstream" and model_id not in UPSTREAM_ADAPTER_IDS:
         raise ValueError("선택한 모델은 upstream native 학습 모드를 지원하지 않습니다.")
     if engine == "sam2" and model_id not in SAM2_ADAPTER_IDS:
@@ -85,15 +100,24 @@ def training_capabilities(task, mode, anomaly_method="patchcore", *, model_id=""
         raise ValueError("SAM2는 분할 태스크만 지원합니다.")
     if engine == "efficientnet" and task != "classify":
         raise ValueError("EfficientNet은 분류 태스크만 지원")
-    patchcore = task == "anomaly" and anomaly_method == "patchcore"
+    patchcore = task == "anomaly" and anomaly_method == "patchcore" and engine != "dinomaly"
     # These adapters run train_builtin, which does not install observation hooks.
     separate_adapter = model_id in BUILTIN_ADAPTER_IDS | UPSTREAM_ADAPTER_IDS | SAM2_ADAPTER_IDS
     return {
         "engine": engine,
+        "distillation": ((task == "classify" and engine in {"builtin", "efficientnet"})
+                         or (task == "segment" and engine == "builtin")),
+        "patch_training": engine == "dinomaly" or (task == "segment" and engine != "sam2") or (engine == "upstream" and task in {"classify", "detect"}),
+        "small_object_coverage": task == "detect" and engine == "upstream",
+        "detection_foreground_supervision": task == "detect" and engine == "custom" and not model_id,
+        "original_size_training": (
+            not model_id or model_id in BUILTIN_ADAPTER_IDS | UPSTREAM_ADAPTER_IDS | SAM2_ADAPTER_IDS
+            or model_id in {"efficientnet_b0", "efficientnet_b1", "patchcore_resnet18", "patchcore_wide_resnet50_2"}
+        ),
         "models": ["efficientnet_b0", "efficientnet_b1"] if engine == "efficientnet" else [],
-        "resume": mode.endswith("_resume") and task != "anomaly",
-        "input_channels": [3] if engine == "sam2" else [1, 3],
-        "augmentation": ["horizontal_flip", "rotation", "color_jitter"] if not patchcore and task == "classify" else [],
+        "resume": mode.endswith("_resume") and (task != "anomaly" or engine == "dinomaly"),
+        "input_channels": [3] if engine in {"sam2", "upstream"} else [1, 3],
+        "augmentation": ["horizontal_flip", "rotation", "color_jitter"] if patchcore or engine == "dinomaly" or task in {"classify", "segment"} or (task == "detect" and engine == "upstream") else [],
         "layer_debug": not patchcore and not separate_adapter,
         "layer_debug_reason": "레이어 관찰은 현재 EfficientNet과 Custom CSP에서 지원합니다. 선택한 모델의 학습 경로에는 연결되어 있지 않습니다.",
         "default_layer_patterns": "features.0,features.1.*,classifier.1" if engine == "efficientnet" else "backbone.stem,backbone.stage1,backbone.stage4",
@@ -117,7 +141,11 @@ def validate_training_options(project, *, require_runnable=True):
         capabilities = training_capabilities(project.task, cfg.training_mode, cfg.anomaly_method,
                                              model_id=getattr(project.model, "model_id", ""))
     model_id = getattr(project.model, "model_id", "")
-    if cfg.training_mode in {"builtin_transfer", "upstream_transfer", "upstream_resume", "sam2_transfer"} and require_runnable:
+    if model_id == "mask2former_swin_small" and cfg.training_mode != "builtin_resume":
+        validate_mask2former_num_queries(cfg.mask2former_num_queries)
+    if getattr(cfg, "teacher_checkpoint", "") and not capabilities.get("distillation"):
+        raise ValueError("교사 증류는 기본 분류·분할 모델과 EfficientNet 학습에서 지원합니다.")
+    if cfg.training_mode in {"builtin_transfer", "builtin_resume", "upstream_transfer", "upstream_resume", "sam2_transfer"} and require_runnable:
         source = getattr(project.model, "pretrained_weights", "")
         if not source or not Path(source).is_file():
             raise ValueError("선택 모델의 로컬 가중치 파일(.pt/.pth)이 필요합니다.")
@@ -142,8 +170,10 @@ def validate_training_options(project, *, require_runnable=True):
             spec = registry.get(model_id)
         except (ImportError, KeyError, ValueError):
             spec = None
-        if spec is not None and not (project.task == "anomaly" and
-                                     cfg.anomaly_method == "patchcore"):
+        legacy_reconstruction = (project.task == "anomaly" and cfg.anomaly_method == "reconstruction"
+                                 and model_id in {"patchcore_resnet18", "patchcore_wide_resnet50_2"})
+        if spec is not None and not legacy_reconstruction and not (project.task == "anomaly" and
+                                                                   cfg.anomaly_method == "patchcore"):
             if spec.task != project.task:
                 raise ValueError(f"선택한 모델 {model_id}은 {project.task} 태스크와 맞지 않습니다.")
             if cfg.in_channels not in spec.input_channels:
@@ -171,6 +201,34 @@ def validate_training_options(project, *, require_runnable=True):
                     raise ValueError("설치된 모델 팩 manifest.json을 읽을 수 없습니다.") from exc
                 if not isinstance(manifest, dict) or manifest.get("model_id") != model_id:
                     raise ValueError("프로젝트 모델 ID와 설치된 모델 팩이 일치하지 않습니다.")
+    original_size = getattr(cfg, "original_size_training", False)
+    if type(original_size) is not bool:
+        raise ValueError("원본 크기 학습 옵션은 boolean 필요")
+    if original_size:
+        if model_id in SAM2_ADAPTER_IDS and getattr(cfg, "patchcore_crop_enabled", False):
+            raise ValueError("SAM2 원본 크기 학습에는 중앙 크롭을 끄고 같은 크기의 이미지와 마스크를 사용하세요.")
+        if getattr(cfg, "patch_training", False):
+            raise ValueError("원본 크기 학습과 패치 학습은 함께 사용할 수 없습니다.")
+        if not capabilities.get("original_size_training", False):
+            raise ValueError("선택한 모델은 원본 크기 학습을 지원하지 않습니다.")
+    if getattr(cfg, "patch_training", False):
+        if not capabilities.get("patch_training", False):
+            raise ValueError("이 모델의 학습 경로는 패치 학습을 지원하지 않습니다")
+        if capabilities["engine"] == "upstream":
+            from native_patches import patch_contract
+            from upstream_models import get_upstream_spec
+            patch_contract(project.task, get_upstream_spec(model_id).input_size, cfg.patch_scale, cfg.batch_size)
+    if type(getattr(cfg, "patches_per_image", 0)) is not int or not 0 <= cfg.patches_per_image <= 256:
+        raise ValueError("이미지당 학습 패치는 0~256 정수 필요")
+    coverage = getattr(cfg, "small_object_coverage", False)
+    foreground = getattr(cfg, "detection_foreground_supervision", False)
+    if type(coverage) is not bool or type(foreground) is not bool:
+        raise ValueError("객체 탐지 학습 옵션은 boolean 필요")
+    if coverage and (not capabilities.get("small_object_coverage", False) or
+                     not getattr(cfg, "patch_training", False) or not cfg.patches_per_image):
+        raise ValueError("작은 물체가 포함된 패치 우선 선택은 지원되는 탐지 모델의 패치 개수를 지정해야 사용할 수 있습니다.")
+    if foreground and not capabilities.get("detection_foreground_supervision", False):
+        raise ValueError("전경 보조 학습은 Custom CSP 객체 탐지에서 지원합니다.")
     if type(cfg.efficientnet_no_decay) is not bool:
         raise ValueError("EfficientNet weight decay 제외 옵션은 boolean 필요")
     if capabilities["engine"] == "efficientnet" and cfg.efficientnet_model not in capabilities["models"]:

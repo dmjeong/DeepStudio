@@ -311,6 +311,9 @@ class BackgroundInsertTests(_FilesystemTests):
 
     def test_insert_shifts_masks_palette_and_polygons_keeping_background_and_ignore(self):
         project = self.project("segment", ["scratch", "dent"])
+        # Legacy project fixture: newly created projects already include background.
+        project.data.class_names = ["scratch", "dent"]
+        project.data.num_classes = 2
         self.assertTrue(ClassManager.needs_background(project))
         root = Path(project.data.root)
         palette = [0] * 768
@@ -347,6 +350,8 @@ class BackgroundInsertTests(_FilesystemTests):
 
     def test_insert_rolls_back_on_save_failure_and_refuses_when_not_needed(self):
         project = self.project("segment", ["scratch", "dent"])
+        project.data.class_names = ["scratch", "dent"]
+        project.data.num_classes = 2
         path = Path(project.data.root) / "masks/train/a.png"
         mask = Image.new("L", (2, 1))
         mask.putdata([0, 1])

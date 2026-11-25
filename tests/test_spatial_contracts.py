@@ -109,7 +109,8 @@ class SpatialContracts(unittest.TestCase):
         rendered, counts = segmentation_preview(np.array([[0, 1], [0, 1]]), original, 2)
         self.assertEqual(counts, {0: 2400, 1: 2400})
         self.assertEqual(rendered.shape, original.shape)
-        self.assertEqual(len(np.unique(rendered.reshape(-1, 3), axis=0)), 2)
+        np.testing.assert_array_equal(rendered[:, :40], original[:, :40])
+        self.assertTrue(rendered[:, 40:].any())  # Foreground fill and inner contour.
         self.assertFalse(original.any())
         with self.assertRaises(ValueError):
             segmentation_preview(np.array([[2]]), original, 2)

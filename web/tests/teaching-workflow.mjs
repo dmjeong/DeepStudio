@@ -37,9 +37,24 @@ export async function verifyTeaching(page, { temp, fixture, output, base = "http
     if (task === "segment") {
       await page.getByRole("button", { name: "브러시 B", exact: true }).click();
       await page.getByLabel("정답 클래스", { exact: true }).selectOption("2");
-      await page.getByLabel("브러시 px", { exact: true }).fill("8");
+      const brushSize = page.getByLabel("브러시 크기 (px)", { exact: true });
+      const brushSlider = page.getByRole("slider", { name: "브러시 크기 조절 (px)" });
+      await brushSize.fill("");
+      await brushSize.pressSequentially("8");
+      assert.equal(await brushSlider.inputValue(), "8");
+      await brushSize.blur();
+      await page.mouse.move(...await point(.4, .5));
+      const cursor = canvas.locator("g[aria-hidden='true']");
+      assert.equal(await cursor.getAttribute("visibility"), "visible");
+      assert.equal(await cursor.locator("circle").first().getAttribute("r"), "4");
+      await page.keyboard.press("]");
+      assert.equal(await brushSize.inputValue(), "10");
+      assert.equal(await cursor.locator("circle").first().getAttribute("r"), "5");
+      await brushSlider.press("ArrowLeft");
+      assert.equal(await brushSize.inputValue(), "9");
       await drag(.4, .5, .6, .5);
       await page.getByRole("button", { name: "지우개 E", exact: true }).click();
+      await brushSize.fill("5");
       await click(.5, .5);
       await page.getByRole("button", { name: "실행 취소 Ctrl+Z", exact: true }).click();
       assert.equal(await page.locator(".annotation-list > div").count(), 2);
@@ -68,7 +83,9 @@ export async function verifyTeaching(page, { temp, fixture, output, base = "http
       assert.equal(saved.persisted, true);
       assert.equal(saved.shapes[0].class_id, 1);
       assert.ok(saved.shapes[0].points[4] > .75, "edited vertex persists");
+      assert.equal(saved.shapes[1].width, 9, "brush width persists in image pixels");
       assert.equal(saved.shapes[2].class_id, 0, "eraser paints background");
+      assert.equal(saved.shapes[2].width, 5, "eraser width persists in image pixels");
     } else assert.ok(saved.annotations[0].coordinates[2] > .55, "resized box persists");
     // Background/negative image still gets an explicit target when saved.
     await page.getByRole("button", { name: "정답 저장 Ctrl+S", exact: true }).click();

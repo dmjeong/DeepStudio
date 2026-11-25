@@ -152,3 +152,20 @@ def test_twelve_megapixel_image_post_processing_stays_fast():
     elapsed = time.perf_counter() - started
     assert len(analysis["defects"]) > 100
     assert elapsed < .4, f"12MP 후처리 {elapsed * 1000:.0f} ms"
+
+
+def test_large_uint8_histogram_keeps_exact_pixel_counts():
+    from core.segment_defects import _histogram
+    # An odd background count above 2**24 cannot be represented by float32.
+    labels = np.zeros((4097, 4097), np.uint8)
+    counts = _histogram(labels)
+    assert counts[0] == labels.size
+    assert counts.sum() == labels.size
+
+
+def test_planar_argmax_preserves_ties_on_a_cropped_tensor():
+    from core.segment_defects import planar_argmax
+
+    rng = np.random.default_rng(9)
+    values = rng.integers(-3, 3, (5, 47, 59)).astype(np.float32)[:, 1:-1, 2:-2]
+    np.testing.assert_array_equal(planar_argmax(values), values.argmax(axis=0))

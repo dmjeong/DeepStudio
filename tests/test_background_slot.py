@@ -76,7 +76,8 @@ def test_workspace_with_background_first_is_unchanged(app, tmp_path):
     dialog = _workspace(tmp_path, ["background", "시프트 더블"])
     dialog.show()
     app.processEvents()
-    assert dialog.class_combo.model().item(0).isEnabled() and dialog.class_combo.itemText(0) == "background"
+    assert not dialog.class_combo.model().item(0).isEnabled()
+    assert "background" in dialog.class_combo.itemText(0)
     assert dialog.background_warning.isHidden()
     dialog.close()
     dialog.deleteLater()

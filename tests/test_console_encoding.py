@@ -40,3 +40,31 @@ def test_utf8_log_preserves_original_text(newline, ending):
             print("📂 데이터 로드")
         stream.flush()
         assert raw.getvalue().decode("utf-8") == "📂 데이터 로드" + ending
+
+
+@pytest.mark.parametrize("encoding", ["cp1252", "cp949"])
+def test_real_export_completes_with_legacy_windows_console(tmp_path, encoding):
+    from example.generate_export_test_assets import generate
+    destination = tmp_path / "모델📂"
+    raw = io.BytesIO()
+    with io.TextIOWrapper(raw, encoding=encoding, errors="strict") as stream:
+        with contextlib.redirect_stdout(stream):
+            generate(destination)
+        assert stream.errors == "strict"  # The caller's stream settings are not changed.
+        stream.flush()
+        output = raw.getvalue().decode(encoding)
+        assert "\\u" in output or "\\U" in output
+    assert (destination / "libreyolo.onnx").is_file()
+    assert (destination / "libreyolo.json").is_file()
+    assert (destination / "expected.json").is_file()
+    assert not list(destination.glob("*.export-error.json"))
+
+
+def test_export_preserves_custom_logger_errors(tmp_path):
+    from export_onnx import export_checkpoint
+
+    def callback(message):
+        message.encode("ascii")
+
+    with pytest.raises(UnicodeEncodeError):
+        export_checkpoint(tmp_path / "unused.pt", tmp_path / "unused.onnx", log=callback)

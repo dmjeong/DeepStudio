@@ -189,6 +189,7 @@ class TrainingForm:
         self.anomaly_method_combo.addItem(
             "Reconstruction (재구성 기반)", "reconstruction"
         )
+        self.anomaly_method_combo.addItem("Dinomaly (정상 특징 재구성 학습)", "dinomaly")
         self.anomaly_method_combo.setToolTip(
             "PatchCore (권장)\n"
             "  사전학습 백본으로 정상 패치 특징을 추출해 메모리 뱅크를 구성합니다.\n"
@@ -228,7 +229,7 @@ class TrainingForm:
         pc_layout.addRow("", self.pc_append_check)
 
         self.pc_sampling_spin = NoWheelDoubleSpinBox()
-        self.pc_sampling_spin.setRange(0.001, 0.5)
+        self.pc_sampling_spin.setRange(0.001, 1.0)
         self.pc_sampling_spin.setDecimals(3)
         self.pc_sampling_spin.setSingleStep(0.005)
         self.pc_sampling_spin.setValue(0.01)
@@ -244,10 +245,9 @@ class TrainingForm:
         self.pc_neighbors_spin.setRange(1, 50)
         self.pc_neighbors_spin.setValue(9)
         self.pc_neighbors_spin.setToolTip(
-            "kNN 이웃 수: 이상 스코어 계산에 사용할 최근접 패치 수\n"
-            "  9 — 기본값, 안정적인 거리 추정\n"
-            "  1~3 — 민감한 감지 (노이즈에 취약)\n"
-            "  20+ — 안정적이지만 미세 이상 놓칠 수 있음"
+            "현재 점수 방식: 패치 지도는 가장 가까운 정상 특징 1개로 계산합니다.\n"
+            "이 값은 이미지 이상 점수 재가중에 쓰는 이웃 수입니다.\n"
+            "값을 바꾼 후에는 판정 기준을 다시 보정하세요."
         )
         pc_layout.addRow("kNN 이웃 수:", self.pc_neighbors_spin)
 
@@ -258,13 +258,17 @@ class TrainingForm:
         self.pc_bank_spin = NoWheelSpinBox()
         self.pc_bank_spin.setRange(1, 100000)
         self.pc_bank_spin.setValue(4096)
+        self.pc_bank_spin.setToolTip(
+            "최종 대표 특징 수의 상한입니다. 비율을 올려도 이 한도에 걸리면 개수가 늘지 않습니다.\n"
+            "현재 C++ ONNX 내보내기는 대표 특징 4096개 이하를 지원합니다."
+        )
         pc_layout.addRow("메모리 뱅크 한도:", self.pc_bank_spin)
         self.pc_seed_spin = NoWheelSpinBox()
         self.pc_seed_spin.setRange(0, 2147483647)
         self.pc_seed_spin.setValue(0)
         pc_layout.addRow("특징 선택 시드:", self.pc_seed_spin)
         self.pc_crop_check = QCheckBox("중앙 크롭 사용")
-        self.pc_crop_check.setToolTip("원본 중앙을 지정한 픽셀 크기로 자른 뒤 모델 입력 크기로 리사이즈합니다. 저장한 모델의 추론에도 같은 크롭을 적용합니다.")
+        self.pc_crop_check.setToolTip("원본 중앙의 지정 영역만 학습합니다. 저장한 모델의 추론에도 같은 크롭을 적용합니다.")
         self.pc_crop_width_spin = NoWheelSpinBox()
         self.pc_crop_height_spin = NoWheelSpinBox()
         for spin, name in ((self.pc_crop_width_spin, "크롭 가로 (px)"), (self.pc_crop_height_spin, "크롭 세로 (px)")):
@@ -278,8 +282,9 @@ class TrainingForm:
         self.pc_crop_height_spin.valueChanged.connect(self._on_patchcore_settings_changed)
         self.pc_info_label = QLabel(
             "사전학습 백본을 고정하고 정상 이미지 특징을 저장합니다. "
-            "에폭, 학습률, 옵티마이저, 증강은 사용하지 않습니다. "
-            "ImageNet은 최초 실행 시 다운로드하며, 오프라인에서는 로컬 가중치를 선택하세요. "
+            "에폭, 학습률, 옵티마이저는 사용하지 않습니다. "
+            "고급 설정의 데이터 증강에서 원본당 추가 증강 수와 변형을 설정할 수 있습니다. "
+            "ImageNet은 준비된 기본 가중치를 사용합니다. "
             "후보/뱅크 한도에 도달하면 특징을 샘플링하므로 성능을 검증하세요."
         )
         self.pc_info_label.setWordWrap(True)
@@ -304,6 +309,19 @@ class TrainingForm:
         self.batch_spin.setRange(1, 512)
         self.batch_spin.setValue(8)
         hp_layout.addRow("배치 크기:", self.batch_spin)
+
+        self.mask2former_queries_spin = NoWheelSpinBox()
+        self.mask2former_queries_spin.setRange(1, 100)
+        self.mask2former_queries_spin.setValue(100)
+        self.mask2former_queries_spin.setToolTip(
+            "이미지 한 장에서 동시에 학습할 마스크 후보 개수입니다. "
+            "각 학습 이미지나 패치에 함께 등장하는 클래스 수(배경 포함) 이상으로 설정하세요."
+        )
+        self.mask2former_resume_queries = QLabel("체크포인트에 저장된 값 사용")
+        hp_layout.addRow("마스크 후보 수", self.mask2former_queries_spin)
+        hp_layout.addRow("마스크 후보 수", self.mask2former_resume_queries)
+        hp_layout.setRowVisible(self.mask2former_queries_spin, False)
+        hp_layout.setRowVisible(self.mask2former_resume_queries, False)
 
         self.lr_spin = NoWheelDoubleSpinBox()
         self.lr_spin.setRange(1e-6, 1.0)
@@ -367,41 +385,69 @@ class TrainingForm:
         )
         self.segmentation_loss_label = QLabel("분할 손실:")
         hp_layout.addRow(self.segmentation_loss_label, self.segmentation_loss_combo)
+        self.distillation_group = QGroupBox("교사 증류 (선택)")
+        kd_layout = QFormLayout(self.distillation_group)
+        self.teacher_edit = QLineEdit()
+        self.teacher_edit.setPlaceholderText("학생 학습 시 교사의 best.pt 선택")
+        kd_row = QHBoxLayout()
+        kd_row.addWidget(self.teacher_edit)
+        kd_browse = QPushButton("찾아보기")
+        kd_browse.clicked.connect(self._browse_teacher)
+        kd_row.addWidget(kd_browse)
+        kd_layout.addRow("교사 모델", kd_row)
+        self.kd_alpha = NoWheelDoubleSpinBox()
+        self.kd_alpha.setRange(.01,.99)
+        self.kd_alpha.setSingleStep(.05)
+        self.kd_alpha.setValue(.3)
+        self.kd_temperature = NoWheelDoubleSpinBox()
+        self.kd_temperature.setRange(.1,20)
+        self.kd_temperature.setValue(2)
+        kd_layout.addRow("증류 손실 비중",self.kd_alpha)
+        kd_layout.addRow("온도",self.kd_temperature)
+        kd_note = QLabel("학습할 학생 모델을 고르고, 증류를 쓰려면 미리 학습한 교사의 best.pt를 선택하세요.")
+        kd_note.setWordWrap(True)
+        kd_layout.addRow(kd_note)
+        hp_layout.addRow(self.distillation_group)
 
-        # ── 입력 크기 (32~1024, 32배수 단위) ──
-        # 640 권장: 해상도 보존 vs 학습 속도 최적 밸런스
+
+        image_group = QGroupBox("학습 이미지")
+        self.image_layout = image_layout = QFormLayout(image_group)
+        image_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        image_layout.setSpacing(8)
+
+        self.original_size_check = QCheckBox("원본 크기로 학습")
+        self.original_size_check.setToolTip(
+            "판정 영역 전체를 리사이즈 없이 이미지 한 장씩 학습 데이터로 사용합니다. "
+            "중앙 크롭을 켜면 그 영역의 픽셀 크기를 그대로 사용합니다."
+        )
+        self.original_size_check.hide()
+        self.original_size_check.toggled.connect(self._on_patchcore_settings_changed)
+        self.patch_check = QCheckBox("패치 학습")
+        self.patch_check.toggled.connect(self._on_patchcore_settings_changed)
+        self.small_object_coverage_check = QCheckBox("작은 물체가 포함된 패치 우선 선택")
+        self.small_object_coverage_check.setToolTip(
+            "지정한 학습 패치 수 안에서 작은 정답 박스가 잘리지 않고 들어간 패치를 우선합니다."
+        )
+        self.detection_foreground_check = QCheckBox("전경 보조 학습 (실험)")
+        self.detection_foreground_check.setToolTip(
+            "학습 중 고해상도 특징에서 물체와 배경을 구분하는 보조 손실을 사용합니다."
+        )
+
         self.input_size_spin = NoWheelSpinBox()
         self.input_size_spin.setRange(32, 1024)
         self.input_size_spin.setSingleStep(32)
         self.input_size_spin.setValue(224)
         self.input_size_spin.setToolTip(
-            "모델에 입력되는 이미지 크기 (32의 배수)\n\n"
-            "원본 이미지가 크더라도 이 크기로 자동 리사이즈됩니다.\n\n"
-            "  224  — 빠른 학습, 기본 분류에 적합\n"
-            "  416  — 디텍션 기본값\n"
-            "  512  — 세밀한 분류/세그멘테이션\n"
-            "  640  — 권장: 해상도↔속도 최적 밸런스\n"
-            "  1024 — 최고 해상도 (batch_size 1~2 필요)\n\n"
-            "클수록 GPU 메모리 사용량 급증\n"
-            "  batch_size를 함께 줄여야 OOM 방지"
+            "전체 영상은 이 크기로 맞춥니다. 패치 학습에서는 이 값이 패치 한 변의 크기입니다."
         )
-        hp_layout.addRow("입력 크기:", self.input_size_spin)
         self.input_size_spin.valueChanged.connect(self._on_patchcore_settings_changed)
 
-        # ── 분할 패치 학습: 큰 이미지의 작은 결함을 줄이지 않고 원본 해상도로 학습 ──
-        self.patch_check = QCheckBox("패치 학습 (입력 크기 = 패치 크기, 끄면 전체 이미지 축소)")
-        self.patch_check.setToolTip(
-            "이미지를 입력 크기로 줄이지 않고, 원본(크롭 후) 해상도에서 입력 크기만큼 잘라 학습합니다.\n"
-            "패치의 절반은 결함 위치에서, 나머지는 임의 위치에서 자릅니다(epoch마다 새 위치).\n"
-            "추론은 겹치는 타일로 나눠 원본 해상도 마스크를 만듭니다. 3500×1504를 512로 줄이면\n"
-            "결함이 약 7배 작아져 1~2px 결함이 사라지는 문제를 피합니다.")
         self.patch_count_spin = NoWheelSpinBox()
         self.patch_count_spin.setRange(0, 256)
         self.patch_count_spin.setSpecialValueText("자동 (이미지 면적 ÷ 패치 면적)")
         self.patch_count_spin.setToolTip("한 epoch에 이미지마다 자르는 패치 수. 0 = 자동(최대 64).")
         self.patch_info = QLabel()
         self.patch_info.setWordWrap(True)
-        self.patch_check.toggled.connect(self._on_patchcore_settings_changed)
         self.patch_count_spin.valueChanged.connect(self._on_patchcore_settings_changed)
         self.patch_count_label = QLabel("이미지당 패치:")
         # 패치 배율: 추론 속도와 작은 결함 크기의 교환. 계산량은 배율²에 비례한다.
@@ -409,9 +455,8 @@ class TrainingForm:
         for label, value in (("100% (원본 해상도)", 1.0), ("75%", .75), ("50%", .5), ("35%", .35), ("25%", .25)):
             self.patch_scale_combo.addItem(label, value)
         self.patch_scale_combo.setToolTip(
-            "판정 영역을 이 배율로 줄인 뒤 패치를 자릅니다. 추론도 같은 배율로 줄여 한 번에 계산합니다.\n"
-            "계산량(추론 시간)은 배율²에 비례합니다: 50% = 1/4, 25% = 1/16.\n"
-            "줄인 뒤 가장 가는 결함이 1.5~2px 이상 남는 배율을 고르세요(마스크는 작은 결함을 보존해 줄입니다).")
+            "판정 영역을 이 배율로 줄인 뒤 패치를 자릅니다. 추론에도 저장한 배율을 사용합니다.\n"
+            "배율을 줄이면 세부 결함이 작아집니다. 미세 결함은 100%부터 확인하세요.")
         self.patch_scale_combo.currentIndexChanged.connect(self._on_patchcore_settings_changed)
         self.patch_scale_label = QLabel("패치 배율:")
         # 데이터에 맞게 자동 설정: 라벨된 결함 굵기로 패치·배율·모델을 고른다 (분할 전용)
@@ -420,15 +465,22 @@ class TrainingForm:
             "라벨된 결함의 굵기와 이미지 크기를 분석해, 가는 결함(미세 크랙 등)이 학습 해상도에서\n"
             "사라지지 않는 패치·배율·모델·가중치를 추천합니다. 항목을 골라 적용합니다.")
         self.advise_btn.clicked.connect(self._open_advisor)
-        hp_layout.addRow("", self.advise_btn)
-        hp_layout.addRow("", self.patch_check)
-        hp_layout.addRow(self.patch_scale_label, self.patch_scale_combo)
-        hp_layout.addRow(self.patch_count_label, self.patch_count_spin)
-        hp_layout.addRow(self.patch_info)
-        hp_layout.addRow("", self.pc_crop_check)
-        hp_layout.addRow("크롭 가로 (px):", self.pc_crop_width_spin)
-        hp_layout.addRow("크롭 세로 (px):", self.pc_crop_height_spin)
-        hp_layout.addRow(self.pc_crop_info)
+        image_layout.addRow(self.original_size_check)
+        image_layout.addRow(self.patch_check)
+        image_layout.addRow("입력 크기 (px)", self.input_size_spin)
+        image_layout.addRow(self.patch_scale_label, self.patch_scale_combo)
+        image_layout.addRow(self.patch_count_label, self.patch_count_spin)
+        image_layout.addRow(self.small_object_coverage_check)
+        image_layout.addRow(self.detection_foreground_check)
+        image_layout.setRowVisible(self.small_object_coverage_check, False)
+        image_layout.setRowVisible(self.detection_foreground_check, False)
+        image_layout.addRow(self.patch_info)
+        image_layout.addRow(self.pc_crop_check)
+        image_layout.addRow("크롭 가로 (px)", self.pc_crop_width_spin)
+        image_layout.addRow("크롭 세로 (px)", self.pc_crop_height_spin)
+        image_layout.addRow(self.pc_crop_info)
+        image_layout.addRow(self.advise_btn)
+        left_layout.addWidget(image_group)
 
         # ── 디바이스 선택 (GPU/CPU) ──
         from core.device_manager import get_device_manager
@@ -493,6 +545,17 @@ class TrainingForm:
         # ── 데이터 증강 ──
         aug_group = QGroupBox("데이터 증강")
         aug_layout = QFormLayout(aug_group)
+
+        self.pc_aug_views_label = QLabel("원본당 추가 증강 수:")
+        self.pc_aug_views_spin = NoWheelSpinBox()
+        self.pc_aug_views_spin.setRange(0, 10)
+        self.pc_aug_views_spin.setValue(0)
+        self.pc_aug_views_spin.setToolTip("0 = 증강 끔. 2 = 원본 1장 + 증강 2장으로 정상 특징 수집. 검증·추론에는 적용하지 않습니다.")
+        self.pc_aug_views_spin.valueChanged.connect(self._on_patchcore_settings_changed)
+        aug_layout.addRow(self.pc_aug_views_label, self.pc_aug_views_spin)
+        self.pc_aug_info = QLabel()
+        self.pc_aug_info.setWordWrap(True)
+        aug_layout.addRow(self.pc_aug_info)
 
         self.hflip_spin = NoWheelDoubleSpinBox()
         self.hflip_spin.setRange(0, 1)

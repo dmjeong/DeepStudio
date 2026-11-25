@@ -23,18 +23,20 @@ class DefectGenWidget(QWidget):
         self.data = {"items": [], "images": [], "datasets": [], "models": [], "samples": []}
         layout = QVBoxLayout(self)
         title = QHBoxLayout()
-        title.addWidget(QLabel("Data Gen | 실제 불량 데이터 학습과 생성"), 1)
+        title.addWidget(QLabel("Data Gen | 프로젝트 클래스별 데이터 생성"), 1)
         self.legacy_btn = self.button("기존 규칙 증강 도구", self.show_legacy)
         title.addWidget(self.legacy_btn)
         layout.addLayout(title)
-        row = QHBoxLayout()
+        self.item_bar = QWidget()
+        row = QHBoxLayout(self.item_bar)
+        row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(QLabel("학습 항목"))
         self.items = QComboBox()
         self.items.currentIndexChanged.connect(self.select_item)
         row.addWidget(self.items, 1)
         self.summary = QLabel()
         row.addWidget(self.summary)
-        layout.addLayout(row)
+        layout.addWidget(self.item_bar)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs, 1)
         self.build_data()
@@ -51,6 +53,18 @@ class DefectGenWidget(QWidget):
         layout.addWidget(self.stop)
         self.tabs.setEnabled(False)
         self.legacy = None
+        self.segmentation = None
+        from widgets.project_generation_widget import ProjectGenerationWidget
+        self.project_generation = ProjectGenerationWidget(self)
+        self.project_generation.generation_finished.connect(self.generation_finished)
+        self.tabs.insertTab(0, self.project_generation, "프로젝트 클래스 생성")
+        self.tabs.currentChanged.connect(self.update_tab_controls)
+
+    def update_tab_controls(self, *_):
+        reference_tab = (self.tabs.currentWidget() is self.project_generation or
+                         self.segmentation is not None and self.tabs.currentWidget() is self.segmentation)
+        for widget in (self.item_bar, self.progress, self.message, self.stop):
+            widget.setVisible(not reference_tab)
 
     def button(self, title, callback):
         button = QPushButton(title)
@@ -245,7 +259,9 @@ class DefectGenWidget(QWidget):
     @property
     def _run_project(self):
         # MainWindow also checks this while a finished signal is still queued.
-        if self._worker is not None or self.legacy is not None and self.legacy._worker is not None:
+        if (self._worker is not None or self.legacy is not None and self.legacy._worker is not None
+                or self.segmentation is not None and self.segmentation._worker is not None
+                or self.project_generation._worker is not None):
             return self.project
         return None
 
@@ -253,7 +269,21 @@ class DefectGenWidget(QWidget):
         if self._run_project is not None:
             return
         self.project = project
+        self.project_generation.set_project(project)
+        if project and project.task == "segment":
+            if self.segmentation is None:
+                from widgets.segmentation_synthesis_widget import SegmentationSynthesisWidget
+                self.segmentation = SegmentationSynthesisWidget(self)
+                self.segmentation.generation_finished.connect(self.generation_finished)
+            if self.tabs.indexOf(self.segmentation) < 0:
+                self.tabs.insertTab(1, self.segmentation, "SEG 정답 참조 생성")
+            self.segmentation.set_project(project)
+        elif self.segmentation is not None:
+            index = self.tabs.indexOf(self.segmentation)
+            if index >= 0:
+                self.tabs.removeTab(index)
         self.tabs.setEnabled(project is not None)
+        self.tabs.setCurrentWidget(self.project_generation)
         self.class_name.clear()
         self.class_name.addItem("미연결: 생성 검수만 가능", "")
         if project:
@@ -273,6 +303,7 @@ class DefectGenWidget(QWidget):
             self.items.clear()
         if self.legacy:
             self.legacy.set_project(project)
+        self.update_tab_controls()
 
     def refresh(self):
         self.data = DataGenStore(self.project).state()
@@ -446,8 +477,10 @@ class DefectGenWidget(QWidget):
         self.action("publish", sample_ids=ids, output=self.output.text())
 
     def launch(self, operation, values):
-        if not self.project or self._worker:
+        if not self.project:
             return
+        if self._run_project is not None:
+            raise ValueError("진행 중인 생성 작업을 먼저 마치거나 중단하세요.")
         self._worker = DesktopJob("datagen_" + operation, {**values, "project": project_view(self.project)}, self)
         self._job_result = None
         self._worker.event.connect(self._event)

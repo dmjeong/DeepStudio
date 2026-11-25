@@ -42,6 +42,7 @@ export interface TrainingConfig {
   selection_metric: string;
   label_smoothing: number;
   class_weights: string;
+  mask2former_num_queries?: number;
   device: string;
   use_amp: boolean;
   training_mode: string;
@@ -50,6 +51,12 @@ export interface TrainingConfig {
   layer_debug_enabled: boolean;
   layer_debug_patterns: string;
   layer_debug_batches: number;
+  original_size_training?: boolean;
+  patch_training: boolean;
+  patch_scale: number;
+  patches_per_image: number;
+  small_object_coverage?: boolean;
+  detection_foreground_supervision?: boolean;
   augmentation: AugmentationConfig;
   anomaly_method: string;
   patchcore_sampling_ratio: number;

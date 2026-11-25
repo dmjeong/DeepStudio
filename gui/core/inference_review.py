@@ -13,6 +13,9 @@ def finite(value):
 
 def source_class(image_path, project=None):
     """Only known dataset split roots establish ground-truth classes."""
+    task = project.get("task") if isinstance(project, dict) else getattr(project, "task", None)
+    if task == "segment":
+        return ""  # Segmentation classes belong to pixels, not image subfolders.
     data = (project or {}).get("data", {}) if isinstance(project, dict) else getattr(project, "data", None)
     if data is None:
         return ""
@@ -36,7 +39,7 @@ def source_class(image_path, project=None):
 
 def normalized_patchcore(record):
     details = record.get("details") or {}
-    return details.get("engine") == "patchcore" and details.get("score_space") == "normalized_0_1"
+    return details.get("engine") in {"patchcore", "dinomaly"} and details.get("score_space") == "normalized_0_1"
 
 
 def classification_decision(record):

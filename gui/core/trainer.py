@@ -106,6 +106,7 @@ class TrainWorker(TrainingEngine):
             )
 
         finally:
+            self._distiller = None
             if getattr(self, "_layer_debug_session", None) is not None:
                 self._layer_debug_session.close()
 
@@ -139,6 +140,8 @@ class TrainWorker(TrainingEngine):
         if cfg.epochs < 1 or cfg.batch_size < 1:
             raise ValueError("에폭과 배치 크기는 1 이상 필요")
         # 실제 클래스 목록을 확정한 뒤 출력 헤드를 생성한다.
+        self._original_size_region = None
+        self._padded_input_size = None
         num_workers = getattr(self, "debug_num_workers", dm.get_optimal_num_workers(device))
         pin_memory = getattr(device, "type", str(device).split(":", 1)[0]) == "cuda"
         train_loader, val_loader = self._create_dataloaders(
@@ -152,6 +155,14 @@ class TrainWorker(TrainingEngine):
             raise ValueError(message)
         if val_loader is None or len(val_loader) == 0:
             raise ValueError("모델 선택을 위한 검증 데이터 필요")
+        self._distiller = None
+        if task == "classify" and getattr(cfg, "teacher_checkpoint", ""):
+            from classification_distillation import ClassificationDistiller
+            self._distiller = ClassificationDistiller(
+                cfg.teacher_checkpoint, data_cfg.class_names, cfg.in_channels, device,
+                alpha=cfg.distillation_alpha, temperature=cfg.distillation_temperature,
+            )
+            self.signals.log_message.emit(f"  분류 교사 증류: {self._distiller.config}")
         model = self._build_model().to(device)
 
         params = model.get_param_count()
@@ -165,6 +176,9 @@ class TrainWorker(TrainingEngine):
         #   사전학습이 적용된 줄 알았다.)
         weights_path = (model_cfg.pretrained_weights or "").strip()
         pretrained_loaded = self._initialize_model(model, weights_path, task)
+        if task == "detect" and getattr(cfg, "detection_foreground_supervision", False):
+            model.enable_detection_foreground_supervision()
+            self.signals.log_message.emit("  전경 보조 학습: P2 특징에 물체/배경 손실 적용")
         if getattr(self, "debug_observer", None) is not None:
             self.debug_observer(model)
 
@@ -209,7 +223,7 @@ class TrainWorker(TrainingEngine):
         run_id = ProjectManager.new_run_id(
             task=task,
             model_name=pretrained_name,
-            input_size=cfg.input_size,
+            input_size=self._padded_input_size or cfg.input_size,
             project_dir=self.project.project_dir,
         )
         run_dir = os.path.join(self.project.project_dir, "runs", run_id)
@@ -231,6 +245,10 @@ class TrainWorker(TrainingEngine):
 
         if getattr(self, "_class_weight_details", None) is not None:
             run_record.config_snapshot["class_weight_details"] = self._class_weight_details
+        if self._distiller is not None:
+            run_record.config_snapshot["distillation"] = dict(self._distiller.config)
+        if self._original_size_region is not None:
+            run_record.config_snapshot["original_size_region"] = list(self._original_size_region)
         self._run_record = run_record
         self.project.runs.append(run_record)
         self._layer_debug_session = None
@@ -326,15 +344,25 @@ class TrainWorker(TrainingEngine):
             else:
                 patience_counter += 1
             checkpoint = self._checkpoint_metadata()
+            model_state = model.state_dict()
+            if task == "detect" and model.head.foreground_aux is not None:
+                # Save the deployable detector schema. Custom CSP supports transfer
+                # learning from this checkpoint; it has no optimizer-resume mode.
+                model_state = {name: value for name, value in model_state.items()
+                               if not name.startswith("head.foreground_aux.")}
             checkpoint.update({
                 "epoch": epoch,
-                "model_state_dict": self._cpu_state(model.state_dict()),
+                "model_state_dict": self._cpu_state(model_state),
                 "optimizer_state_dict": self._cpu_state(optimizer.state_dict()),
                 "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
                 "scaler_state_dict": scaler.state_dict() if scaler else None,
                 "best_metric": best_metric, "best_epoch": best_epoch,
                 "best_metric_name": primary_metric_name, "trained_device": str(device),
             })
+            if self.project.task == "segment":
+                checkpoint["unlabeled_policy"] = "background"
+            if task == "detect":
+                checkpoint["detection_foreground_supervision"] = getattr(cfg, "detection_foreground_supervision", False)
             if getattr(self, "_class_weight_details", None) is not None:
                 checkpoint["class_weight_details"] = self._class_weight_details
             record_epoch_time(self._training_clock, metrics_history,
@@ -395,6 +423,8 @@ class TrainWorker(TrainingEngine):
             ckpt = torch.load(
                 ckpt_path, map_location="cpu", weights_only=False
             )
+            if task == "detect":
+                model.head.foreground_aux = None
             model.load_state_dict(ckpt["model_state_dict"])
             model.to(device)
             self.signals.log_message.emit(
@@ -440,7 +470,9 @@ class TrainWorker(TrainingEngine):
             self.project, engine=self.engine_name,
             effective={"device": str(device), "use_amp": use_amp,
                        "num_workers": num_workers, "pin_memory": pin_memory,
-                       "pretrained_loaded": pretrained_loaded},
+                       "pretrained_loaded": pretrained_loaded,
+                       "input_size": self._padded_input_size or cfg.input_size,
+                       "original_size_region": self._original_size_region},
             applied={"class_weight_details": getattr(self, "_class_weight_details", None)},
         )
         ckpt_path, selection = publish_best(
@@ -495,10 +527,11 @@ class TrainWorker(TrainingEngine):
                 # 크롭한 데이터로 학습했으니 판정 영역도 크롭 크기다 (원본 크기를 쓰면 내보낸 고정 입력이 어긋난다)
                 region = [crop["width"], crop["height"]]
         return make_checkpoint_metadata(self.project.task, data.num_classes, data.class_names,
-            cfg.input_size, cfg.in_channels,
+            getattr(self, "_padded_input_size", None) or cfg.input_size, cfg.in_channels,
             {"backbone_channels": list(model.backbone_channels),
              "csp_depth": list(model.csp_depth), "dropout": model.dropout},
             center_crop=configured_center_crop(cfg),
+            original_size_region=getattr(self, "_original_size_region", None),
             tiling=tiling_contract(cfg.input_size if patch else 0,
                                    float(getattr(cfg, "patch_scale", 1.0)) if patch else 1.0, region))
 
@@ -815,10 +848,10 @@ class TrainWorker(TrainingEngine):
             flip_prob = getattr(aug, "horizontal_flip", 0.5) if aug else 0.5
             rotation = getattr(aug, "rotation", 15.0) if aug else 15.0
             color_jitter = getattr(aug, "color_jitter", 0.2) if aug else 0.2
+            original_size = bool(getattr(cfg, "original_size_training", False))
+            size_label = "원본 크기" if original_size else f"{input_size[1]}×{input_size[0]}"
             self.signals.log_message.emit(
-                f"  입력 크기: {input_size[0]}×{input_size[1]} | "
-                f"증강 — 좌우반전 {flip_prob}, 회전 {rotation}°, 색상 {color_jitter}"
-            )
+                f"  입력 크기: {size_label} | 증강 — 좌우반전 {flip_prob}, 회전 {rotation}°, 색상 {color_jitter}")
 
             if task == "classify":
                 result = create_classification_loaders(
@@ -832,7 +865,13 @@ class TrainWorker(TrainingEngine):
                     rotation=rotation,
                     color_jitter=color_jitter,
                     val_split=data_cfg.val_split,
+                    original_size=original_size,
                 )
+                if original_size:
+                    height, width = result[0].dataset.original_size
+                    self._original_size_region = (width, height)
+                    self._padded_input_size = (height, width)
+                    self.signals.log_message.emit(f"  원본 크기 분류 학습: {width}×{height} px")
                 # (train_loader, val_loader, class_names) 반환
                 if len(result) == 3:
                     train_loader, val_loader, class_names = result
@@ -878,7 +917,15 @@ class TrainWorker(TrainingEngine):
                     patch_size=input_size[0] if patch else 0,
                     patches_per_image=int(getattr(cfg, "patches_per_image", 0)),
                     patch_scale=float(getattr(cfg, "patch_scale", 1.0)) if patch else 1.0,
+                    original_size=original_size,
                 )
+                if original_size:
+                    height, width = loaders[0].dataset.original_size
+                    self._original_size_region = (width, height)
+                    self._padded_input_size = loaders[0].dataset.padded_size
+                    pad_h, pad_w = self._padded_input_size
+                    self.signals.log_message.emit(
+                        f"  원본 크기 학습: {width}×{height} px → 모델 입력 {pad_w}×{pad_h} px (가장자리 채움)")
                 from dataset import unlabeled_message
                 if unlabeled_message(*loaders):
                     self.signals.log_message.emit("  " + unlabeled_message(*loaders))
@@ -888,7 +935,7 @@ class TrainWorker(TrainingEngine):
                 self.signals.log_message.emit(
                     "  Detection 데이터 로더 (정규화 좌표 포맷)"
                 )
-                return create_detection_loaders(
+                loaders = create_detection_loaders(
                     data_root=data_root,
                     input_size=input_size,
                     batch_size=cfg.batch_size,
@@ -896,14 +943,20 @@ class TrainWorker(TrainingEngine):
                     pin_memory=pin_memory,
                     num_classes=data_cfg.num_classes,
                     in_channels=cfg.in_channels,
-                    flip_prob=flip_prob,
+                    flip_prob=flip_prob, original_size=original_size,
                 )
+                if original_size:
+                    height, width = loaders[0].dataset.original_size
+                    self._original_size_region = (width, height)
+                    self._padded_input_size = (height, width)
+                    self.signals.log_message.emit(f"  원본 크기 탐지 학습: {width}×{height} px")
+                return loaders
 
             elif task == "anomaly":
                 self.signals.log_message.emit(
                     "  Anomaly 데이터 로더 (정상 이미지 재구성)"
                 )
-                return create_anomaly_loaders(
+                loaders = create_anomaly_loaders(
                     data_root=data_root,
                     input_size=input_size,
                     batch_size=cfg.batch_size,
@@ -911,8 +964,14 @@ class TrainWorker(TrainingEngine):
                     pin_memory=pin_memory,
                     in_channels=cfg.in_channels,
                     val_split=data_cfg.val_split,
-                    flip_prob=flip_prob,
+                    flip_prob=flip_prob, original_size=original_size,
                 )
+                if original_size:
+                    height, width = loaders[0].dataset.original_size
+                    self._original_size_region = (width, height)
+                    self._padded_input_size = (height, width)
+                    self.signals.log_message.emit(f"  원본 크기 재구성 학습: {width}×{height} px")
+                return loaders
 
         except Exception as e:
             self._dataloader_error = f"{type(e).__name__}: {e}"
@@ -946,6 +1005,9 @@ class TrainWorker(TrainingEngine):
         └──────────────────────────────────────────────┘
         """
         model.train()
+        foreground_weight = (.25 * (total_epochs - epoch + 1) / total_epochs
+                             if self.project.task == "detect" and
+                             getattr(self.project.training, "detection_foreground_supervision", False) else 0.0)
         if self.project.model.freeze_backbone:
             model.backbone.eval()
         total_loss = 0.0
@@ -987,14 +1049,7 @@ class TrainWorker(TrainingEngine):
             # AMP 활성화 시 autocast + GradScaler 사용
             if use_amp and scaler is not None:
                 with torch.amp.autocast("cuda"):
-                    outputs = model(images)
-                    if self.project.task == "anomaly":
-                        # 재구성 타겟 = 원본 [0,1] 이미지 (targets)
-                        loss = self._criterion_loss(criterion, outputs, targets)
-                    elif criterion is not None:
-                        loss = self._criterion_loss(criterion, outputs, targets)
-                    else:
-                        loss = self._compute_detection_loss(outputs, targets)
+                    loss = self._training_batch_loss(model, images, targets, criterion, foreground_weight)
 
                 # Scaled 역전파
                 scaler.scale(loss).backward()
@@ -1004,13 +1059,7 @@ class TrainWorker(TrainingEngine):
                 scaler.update()
             else:
                 # 기본 FP32 학습 (CPU 또는 AMP 미지원 GPU)
-                outputs = model(images)
-                if self.project.task == "anomaly":
-                    loss = self._criterion_loss(criterion, outputs, targets)
-                elif criterion is not None:
-                    loss = self._criterion_loss(criterion, outputs, targets)
-                else:
-                    loss = self._compute_detection_loss(outputs, targets)
+                loss = self._training_batch_loss(model, images, targets, criterion, foreground_weight)
 
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
@@ -1033,6 +1082,19 @@ class TrainWorker(TrainingEngine):
 
         return total_loss / max(processed_batches, 1)
 
+    def _training_batch_loss(self, model, images, targets, criterion, foreground_weight):
+        if foreground_weight:
+            from detection import foreground_supervision_loss
+            outputs, foreground = model.forward_with_detection_foreground(images)
+            return (self._compute_detection_loss(outputs, targets)
+                    + foreground_weight * foreground_supervision_loss(foreground, targets))
+        outputs = model(images)
+        if criterion is not None or self.project.task == "anomaly":
+            loss = self._criterion_loss(criterion, outputs, targets)
+            distiller = getattr(self, "_distiller", None)
+            return distiller(images, outputs, loss) if distiller is not None else loss
+        return self._compute_detection_loss(outputs, targets)
+
     # ── 검증 (에폭 단위 — 간략 메트릭) ────────────────
     @torch.no_grad()
     def _validate(self, model, loader, criterion, device, task, data_cfg):
@@ -1042,7 +1104,7 @@ class TrainWorker(TrainingEngine):
         각 태스크별 적절한 메트릭을 계산하여 반환:
         - classify: accuracy, precision, recall, f1
         - segment: mIoU, dice, pixel accuracy
-        - detect: val_loss (전체 mAP는 학습 후 종합 평가에서)
+        - detect: mAP, 고정 점수·IoU에서의 Precision/Recall
         - anomaly: recon_loss, auroc (테스트셋 있을 때)
         """
         model.eval()
@@ -1140,11 +1202,12 @@ class TrainWorker(TrainingEngine):
                 "val_loss": avg_loss,
             }
         elif task == "detect":
+            operating_point = meter.operating_point()
+            operating_point.pop("per_class")
             metrics = {
                 "mAP_50": computed.get("mAP_50", 0.0),
                 "mAP_50_95": computed.get("mAP_50_95", 0.0),
-                "precision": computed.get("precision", 0.0),
-                "recall": computed.get("recall", 0.0),
+                **operating_point,
                 "val_loss": avg_loss,
             }
         elif task == "anomaly":
@@ -1218,6 +1281,14 @@ class TrainWorker(TrainingEngine):
                 meter.update(scores, labels)
 
         results = meter.compute()
+        if task == "detect":
+            operating_point = meter.operating_point()
+            for row, counts in zip(results["per_class"], operating_point.pop("per_class")):
+                row.update(counts)
+            results.update(operating_point)
+            results["detection_evaluation"] = {"unit": "image", "split": "val", "protocol": "voc11",
+                                               "confidence": operating_point["detection_confidence"],
+                                               "iou": operating_point["detection_iou"]}
 
         # 로그 출력
         self.signals.log_message.emit("  ─── 종합 평가 결과 ───")

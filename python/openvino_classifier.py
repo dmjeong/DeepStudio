@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from onnx_classifier import ImageClassifier
+from openvino_session import compile_cpu_model
 
 
 class OpenVINOClassifier(ImageClassifier):
@@ -37,16 +38,8 @@ class OpenVINOClassifier(ImageClassifier):
         model.reshape({inp: self.input_shape})
         if list(model.output().get_shape()) != [1, cfg["num_classes"]]:
             raise ValueError("ONNX 클래스 개수 불일치")
-        options = {"PERFORMANCE_HINT": "LATENCY", "NUM_STREAMS": 1,
-                   "INFERENCE_PRECISION_HINT": "f32"}
-        if num_threads:
-            options["INFERENCE_NUM_THREADS"] = num_threads
-        self.compiled_model = self.core.compile_model(model, "CPU", options)
+        self.compiled_model, self.runtime_settings = compile_cpu_model(self.core, model, num_threads)
         self.request = self.compiled_model.create_infer_request()
-        self.runtime_settings = {key: str(self.compiled_model.get_property(key)) for key in options}
-        self.runtime_settings["INFERENCE_NUM_THREADS"] = int(
-            self.compiled_model.get_property("INFERENCE_NUM_THREADS"))
-        self.runtime_settings["device"] = self.core.get_property("CPU", "FULL_DEVICE_NAME")
 
     def logits(self, tensor):
         tensor = np.asarray(tensor)

@@ -7,7 +7,9 @@ import type { Annotation, AnnotationEditorProps } from "./annotation-editor";
 type Shape = { kind: "polygon" | "stroke" | "box"; class_id: number; points: number[]; width?: number; operation?: "erase" };
 export interface MaskPayload { schema_version: number; width: number; height: number; base_png: string; shapes: Shape[]; persisted?: boolean; editor_read_only?: boolean; editor_notice?: string }
 type Mode = "polygon" | "rectangle" | "brush" | "erase" | "select" | "pan";
-type Gesture = { type: string; start: number[]; original?: Shape; index: number; handle: number; points: number[] };
+type Gesture = { type: string; start: number[]; original?: Shape; index: number; handle: number; points: number[]; brushWidth?: number };
+const MIN_BRUSH = 1, MAX_BRUSH = 1024;
+const brushWidth = (value: number) => Math.max(MIN_BRUSH, Math.min(MAX_BRUSH, Math.round(value)));
 const copy = (shapes: Shape[]) => structuredClone(shapes);
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
 const boxPoints = (p: number[]) => [p[0]-p[2]/2, p[1]-p[3]/2, p[0]+p[2]/2, p[1]-p[3]/2,
@@ -24,6 +26,7 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
   const [mode, setMode] = useState<Mode>(segment ? "polygon" : "rectangle");
   const [classId, setClassId] = useState(segment && names.length > 1 ? 1 : 0);
   const [brush, setBrush] = useState(20);
+  const [brushInputEmpty, setBrushInputEmpty] = useState(false);
   const [opacity, setOpacity] = useState(45);
   const [zoom, setZoom] = useState(100);
   const [fitWidth, setFitWidth] = useState(640);
@@ -38,6 +41,7 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
   const undo = useRef<Shape[][]>([]), redo = useRef<Shape[][]>([]);
   const gesture = useRef<Gesture | null>(null), space = useRef(false);
   const scroll = useRef<HTMLDivElement>(null);
+  const brushCursor = useRef<SVGGElement>(null);
   const submitLock = useRef(false);
   useEffect(() => {
     const element = scroll.current; if (!element || !data) return;
@@ -141,8 +145,7 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
       else if (key === "enter" && points.length) { event.preventDefault(); finish(); }
       else if (key === "delete") { event.preventDefault(); remove(); }
       else if (key === "backspace" && points.length) { event.preventDefault(); setPoints(points.slice(0, -2)); }
-      else if (segment && key === "[") { event.preventDefault(); setBrush(value => Math.max(1, value - 2)); }
-      else if (segment && key === "]") { event.preventDefault(); setBrush(value => Math.min(1024, value + 2)); }
+      else if (segment && (key === "[" || key === "]")) { event.preventDefault(); setBrush(value => brushWidth(value + (key === "[" ? -2 : 2))); }
       else if (!ctrl && /^[1-9]$/.test(key)) setClassId(Math.min(names.length-1, Number(key)-1));
       else if (key === "0") setZoom(100);
       else if (key === "k" && navigation && navigation.index+1 < navigation.count) save(1);
@@ -151,13 +154,13 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
         chooseMode(({ p: "polygon", b: "brush", e: "erase", r: "rectangle", v: "select", h: "pan" } as Record<string, Mode>)[key]);
     };
     const up = (event: KeyboardEvent) => { if (event.key === " ") space.current = false; };
-    const blur = () => { space.current = false; gesture.current = null; setPreview(null); };
+    const blur = () => { space.current = false; gesture.current = null; setPreview(null); brushCursor.current?.setAttribute("visibility", "hidden"); };
     window.addEventListener("keydown", down, true); window.addEventListener("keyup", up); window.addEventListener("blur", blur);
     return () => { window.removeEventListener("keydown", down, true); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
   });
   useEffect(() => {
     const element = scroll.current; if (!element) return;
-    const wheel = (event: WheelEvent) => { event.preventDefault(); setZoom(value => Math.max(25, Math.min(800, value*(event.deltaY < 0 ? 1.2 : 1/1.2)))); };
+    const wheel = (event: WheelEvent) => { event.preventDefault(); brushCursor.current?.setAttribute("visibility", "hidden"); setZoom(value => Math.max(25, Math.min(800, value*(event.deltaY < 0 ? 1.2 : 1/1.2)))); };
     element.addEventListener("wheel", wheel, { passive: false });
     return () => element.removeEventListener("wheel", wheel);
   }, []);
@@ -165,6 +168,13 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
     const rect = event.currentTarget.getBoundingClientRect();
     return [clamp((event.clientX-rect.left)/rect.width * (segment ? data!.width/Math.max(1, data!.width-1) : 1)),
       clamp((event.clientY-rect.top)/rect.height * (segment ? data!.height/Math.max(1, data!.height-1) : 1))];
+  };
+  const hideBrushCursor = () => brushCursor.current?.setAttribute("visibility", "hidden");
+  const placeBrushCursor = (point: number[]) => {
+    const cursor = brushCursor.current;
+    if (!cursor || !data) return;
+    cursor.setAttribute("transform", `translate(${point[0]*(data.width-1)} ${point[1]*(data.height-1)})`);
+    cursor.setAttribute("visibility", "visible");
   };
   const down = (event: React.PointerEvent<SVGSVGElement>) => {
     if (!data || busy || submitting || readOnly || !names.length) return;
@@ -175,6 +185,7 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
     event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
     const p = coordinate(event);
     if (event.button === 1 || space.current || mode === "pan") {
+      hideBrushCursor();
       gesture.current = { type: "pan", start: [event.clientX, event.clientY, scroll.current!.scrollLeft, scroll.current!.scrollTop], index: -1, handle: -1, points: [] }; return;
     }
     if (event.button !== 0) return;
@@ -195,17 +206,23 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
       // stroke remains an explicit background operation so save/reopen and
       // undo can reproduce the exact mask subtraction.
       const gestureMode = segment && mode === "brush" && event.shiftKey ? "erase" : mode;
-      gesture.current = { type: gestureMode, start: p, index: -1, handle: -1, points: p };
+      gesture.current = { type: gestureMode, start: p, index: -1, handle: -1, points: p, brushWidth: brush };
+      placeBrushCursor(p);
     }
   };
   const move = (event: React.PointerEvent<SVGSVGElement>): Shape | null => {
-    const value = gesture.current; if (!value || !data) return null;
-    if (value.type === "pan") { scroll.current!.scrollLeft = value.start[2]+value.start[0]-event.clientX; scroll.current!.scrollTop = value.start[3]+value.start[1]-event.clientY; return null; }
-    const p = coordinate(event), [x, y] = p, [sx, sy] = value.start;
+    const value = gesture.current;
+    if (!data || (!value && !brushCursor.current)) return null;
+    if (value?.type === "pan") { scroll.current!.scrollLeft = value.start[2]+value.start[0]-event.clientX; scroll.current!.scrollTop = value.start[3]+value.start[1]-event.clientY; return null; }
+    const p = coordinate(event);
+    if (space.current) hideBrushCursor();
+    else placeBrushCursor(p);
+    if (!value) return null;
+    const [x, y] = p, [sx, sy] = value.start;
     let shape: Shape;
     if (value.type === "brush" || value.type === "erase") {
       if (value.points.at(-2) !== x || value.points.at(-1) !== y) value.points.push(...p);
-      shape = { kind: "stroke", class_id: value.type === "erase" ? 0 : classId, points: [...value.points], width: brush,
+      shape = { kind: "stroke", class_id: value.type === "erase" ? 0 : classId, points: [...value.points], width: value.brushWidth,
         ...(value.type === "erase" ? { operation: "erase" as const } : {}) };
     } else if (value.type === "rectangle") {
       shape = { kind: segment ? "polygon" : "box", class_id: classId,
@@ -243,17 +260,30 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
       <polygon key={index} data-shape={index} points={svgPoints(p)} fill={segment ? "transparent" : color} fillOpacity={segment ? 1 : .12} stroke={segment && index !== selected && !live ? "transparent" : color} strokeWidth={2} vectorEffect="non-scaling-stroke" />;
   };
   const disabled = busy || submitting || readOnly || !data || !!points.length || !names.length || (segment && !base);
+  const brushRadius = (preview?.width ?? brush) / 2;
   return <DatasetDialog className="teaching-dialog" title={`데이터 티칭 — ${item.name}`} onClose={() => { if (!busy && !submitting && ((!dirty && !points.length) || window.confirm("저장하지 않은 변경을 버리고 닫을까요?"))) onClose(); }}>
     {(error || saveError) && <p className="error" role="alert">{error || saveError}</p>}
     {readOnly && <p role="status">{data?.editor_notice}</p>}
     {segment && names.length < 2 && <p className="error">클래스 ID 0은 배경입니다. 클래스 사이드바에 배경을 첫 번째로 두고, 그 다음에 실제 전경 클래스를 추가해야 마스크를 그릴 수 있습니다.</p>}
     <div className="annotation-toolbar"><Field label="정답 클래스"><select value={classId} disabled={busy || submitting || readOnly} onChange={e => setClassId(Number(e.target.value))}>{names.map((name, i) => <option key={i} value={i}>{i === 0 && segment ? `${i}: 배경 (${name})` : `${i}: ${name}`}</option>)}</select></Field>
-      {segment && <><Field label="브러시 px"><input type="number" min="1" max="1024" value={brush} onChange={e => setBrush(Math.max(1, Math.min(1024, Number(e.target.value) || 1)))} /></Field><Field label="마스크 농도"><input type="range" min="0" max="100" value={opacity} onChange={e => setOpacity(Number(e.target.value))} /></Field></>}
+      {segment && <Field label="마스크 농도"><input type="range" min="0" max="100" value={opacity} onChange={e => setOpacity(Number(e.target.value))} /></Field>}
       <span>{zoom.toFixed(0)}%</span><button onClick={() => setZoom(100)}>화면 맞춤 0</button></div>
     <div className="row teaching-tools">{([...(segment ? [["polygon", "다각형 P"], ["brush", "브러시 B"], ["erase", "지우개 E"]] : [["erase", "클릭 삭제 E"]]), ["rectangle", "사각형 R"], ["select", "선택/수정 V"], ["pan", "이동 H"]] as [Mode, string][]).map(([key, label]) => <button key={key} aria-pressed={mode === key} disabled={busy || submitting || readOnly} className={mode === key ? "primary" : ""} onClick={() => chooseMode(key)}>{label}</button>)}
+      {segment && <fieldset className="teaching-brush-size" disabled={busy || submitting || readOnly} aria-label="브러시 크기">
+        <label htmlFor="teaching-brush-size">브러시 크기 (px)</label>
+        <input id="teaching-brush-size" type="number" min={MIN_BRUSH} max={MAX_BRUSH}
+          value={brushInputEmpty ? "" : brush} onBlur={() => setBrushInputEmpty(false)}
+          onChange={event => {
+            const value = event.currentTarget.valueAsNumber;
+            setBrushInputEmpty(!Number.isFinite(value));
+            if (Number.isFinite(value)) setBrush(brushWidth(value));
+          }} />
+        <input aria-label="브러시 크기 조절 (px)" type="range" min={MIN_BRUSH} max={MAX_BRUSH} value={brush}
+          onChange={event => setBrush(brushWidth(event.currentTarget.valueAsNumber))} />
+      </fieldset>}
       <button disabled={busy || submitting || readOnly || !undo.current.length} onClick={() => history(true)}>실행 취소 Ctrl+Z</button><button disabled={busy || submitting || readOnly || !redo.current.length} onClick={() => history(false)}>다시 실행</button></div>
     <p className="muted">휠: 확대 · Space+드래그: 이동 · 1~9: 클래스 · 선택 후 꼭짓점 드래그: 수정 · Delete: 삭제 · Ctrl+S: 저장{segment ? " · Enter/첫 점: 다각형 완료 · Shift+브러시/지우개: 배경으로 지우기 · [ ]: 브러시 크기 · 지우개는 객체 목록에 추가되지 않습니다" : " · E: 객체 클릭 삭제 · Ctrl+D: 박스 복제"}</p>
-    <div ref={scroll} className="annotation-canvas-scroll" onContextMenu={e => { e.preventDefault(); cancel(); }}>{data && <svg aria-label="정답 그리기 캔버스" className="annotation-canvas" viewBox={`0 0 ${data.width} ${data.height}`} style={{ width: `${fitWidth*zoom/100}px`, minWidth: `${fitWidth*zoom/100}px`, margin: "auto", aspectRatio: `${data.width}/${data.height}`, cursor: mode === "pan" ? "grab" : mode === "select" ? "default" : "crosshair" }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancel}>
+    <div ref={scroll} className="annotation-canvas-scroll" onScroll={hideBrushCursor} onContextMenu={e => { e.preventDefault(); cancel(); }}>{data && <svg aria-label="정답 그리기 캔버스" className="annotation-canvas" viewBox={`0 0 ${data.width} ${data.height}`} style={{ width: `${fitWidth*zoom/100}px`, minWidth: `${fitWidth*zoom/100}px`, margin: "auto", aspectRatio: `${data.width}/${data.height}`, cursor: mode === "pan" ? "grab" : mode === "select" ? "default" : "crosshair" }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={hideBrushCursor} onPointerCancel={() => { cancel(); hideBrushCursor(); }}>
       <image href={`/api/image?path=${encodeURIComponent(item.path)}&size=4096&v=${item.revision}`} width={data.width} height={data.height} style={{ pointerEvents: "none" }} />
       {segment && maskUrl && <image href={maskUrl} width={data.width} height={data.height} opacity={opacity/100} style={{ pointerEvents: "none", imageRendering: "pixelated" }} />}
       {shapes.map((shape, i) => renderShape(shape, i))}{preview && renderShape(preview, -1, true)}
@@ -262,6 +292,11 @@ export function TeachingEditor({ item, project, busy, saveError, onSave, onClose
         const shape = preview || shapes[selected], p = shape.kind === "box" ? boxPoints(shape.points) : shape.points;
         return p.map((v, i) => i%2 ? null : <circle key={i} data-handle={i/2} cx={v*drawWidth} cy={p[i+1]*drawHeight} r={6*data.width/fitWidth*100/zoom} fill="#ffb000" stroke="#ffffff" strokeWidth="1" vectorEffect="non-scaling-stroke" />);
       })()}
+      {segment && !busy && !submitting && !readOnly && (mode === "brush" || mode === "erase") &&
+        <g ref={brushCursor} visibility="hidden" fill="none" pointerEvents="none" aria-hidden="true">
+          <circle r={brushRadius} stroke="#131820" strokeWidth="3" vectorEffect="non-scaling-stroke" />
+          <circle r={brushRadius} stroke="#ffffff" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+        </g>}
     </svg>}</div>
     {points.length > 0 && <div className="row"><button disabled={points.length < 6} onClick={finish}>다각형 완료 Enter</button><button onClick={cancel}>취소 Esc</button></div>}
     <div className="annotation-list">{shapes.map((shape, i) => shape.operation === "erase" ? null : <div key={i} className={i === selected ? "teaching-selected" : ""}>

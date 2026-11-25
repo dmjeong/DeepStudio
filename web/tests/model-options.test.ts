@@ -11,4 +11,6 @@ test("다른 모델에 EfficientNet 가중치 선택을 표시하지 않는다",
   assert.equal(modelModes("classify", "resnet50", "ResNet 50")[0][0], "builtin_finetune");
   assert.equal(modelModes("segment", "deeplabv3plus_resnet34", "DeepLab")[0][0], "builtin_finetune");
   assert.equal(modelModes("classify", "efficientnet_b1", "EfficientNet B1")[0][0], "efficientnet_finetune");
+  assert.deepEqual(modelModes("segment", "mask2former_swin_small", "Mask2Former").map(([key]) => key),
+    ["builtin_finetune", "builtin_transfer", "builtin_resume", "builtin_scratch"]);
 });

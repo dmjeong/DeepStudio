@@ -1,6 +1,5 @@
 """Offline payload hash/size/budget validation."""
 
-import json
 import sys
 from pathlib import Path
 
@@ -54,3 +53,10 @@ def test_payload_manifest_requires_offline_windows_x64_contract(tmp_path):
     manifest["requirements"]["windows_arch"] = "arm64"
     with pytest.raises(ValueError, match="offline Windows x64"):
         verify_payload(root, manifest)
+
+
+def test_payload_budget_is_not_limited_to_a_single_executable(tmp_path):
+    (tmp_path / "model.bin").write_bytes(b"model")
+    manifest = collect_payload(tmp_path, version="17.90.0", budget_bytes=8 * 1024**3)
+    assert manifest["budget_bytes"] == 8 * 1024**3
+    verify_payload(tmp_path, manifest)

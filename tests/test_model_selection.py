@@ -15,6 +15,14 @@ from core.inference_types import InferenceResult
 
 class SelectionTests(unittest.TestCase):
 
+    def test_native_detector_default_matches_checkpoint_selection(self):
+        config = SimpleNamespace(selection_metric="engine_default")
+        self.assertEqual(selection_policy(config, "upstream", "detect").metric, "mAP_50_95")
+        self.assertEqual(selection_policy(config, "custom", "detect").metric, "mAP_50")
+        config.selection_metric = "mAP_50"
+        with self.assertRaises(ValueError):
+            selection_policy(config, "upstream", "detect")
+
     def test_task_selection_validates_supported_metrics_and_finite_scores(self):
         policy = selection_policy(SimpleNamespace(selection_metric="f1_macro"), "custom", "classify")
         self.assertEqual(policy.metric, "f1_macro")

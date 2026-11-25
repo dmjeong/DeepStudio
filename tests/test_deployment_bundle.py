@@ -39,21 +39,27 @@ def test_build_and_verify_single_onnx_bundle(tmp_path):
     assert json.loads((bundle / "manifest.json").read_text())["config"] == "model.json"
 
 
-def test_export_checkpoint_can_emit_sdk_bundle(tmp_path):
+@pytest.mark.parametrize(("precision", "verification"), [("float32", "passed"), ("float16", "fp16_compared")])
+def test_export_checkpoint_can_emit_sdk_bundle(tmp_path, precision, verification):
     import torch
     sys.path.insert(0, str(ROOT / "python"))
     from builtin_models import build_builtin_model, make_builtin_checkpoint
     from export_onnx import export_checkpoint
 
-    model = build_builtin_model("resnet18", 2, 3).eval()
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(42)
+        model = build_builtin_model("resnet18", 2, 3).eval()
     checkpoint = tmp_path / "checkpoint.pt"
     torch.save(make_builtin_checkpoint("resnet18", model, num_classes=2,
                                        input_size=32, class_names=["ok", "ng"]), checkpoint)
     bundle = tmp_path / "model.dvdeploy"
-    result = export_checkpoint(checkpoint, tmp_path / "model.onnx", verify=True,
+    result = export_checkpoint(checkpoint, tmp_path / "model.onnx", verify=True, precision=precision,
                                log=lambda _: None, bundle_output=bundle)
     assert result["bundle_path"] == str(bundle)
-    assert verify_deployment_bundle(bundle)["backend"] == "builtin"
+    manifest = verify_deployment_bundle(bundle)
+    assert manifest["backend"] == "builtin" and manifest["verification"] == verification
+    config = json.loads((bundle / manifest["config"]).read_text(encoding="utf-8"))
+    assert config["export"]["precision"] == precision
 
 
 def test_build_renames_config_to_model_json_and_copies_companion_graphs(tmp_path):

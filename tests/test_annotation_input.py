@@ -106,8 +106,7 @@ def test_consecutive_brush_strokes_still_paint_one_object_that_can_be_split(work
 
 # ── unlabeled images ───────────────────────────────────────────
 
-def test_images_without_masks_train_as_background_and_say_so(tmp_path):
-    """Unlabelled images used to stop training ("정답 마스크 누락"); they train as all-background."""
+def test_training_includes_images_without_masks_as_background_and_says_so(tmp_path):
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
     from spatial_data import labeled_semantic_pairs, semantic_pairs
@@ -127,20 +126,18 @@ def test_images_without_masks_train_as_background_and_say_so(tmp_path):
     dataset = SegmentationDataset(str(images), str(masks), input_size=(16, 16), in_channels=1,
                                   is_train=False, num_classes=2)
     assert len(dataset) == 3 and len(dataset.unlabeled) == 1
-    _image, target = dataset[2]  # the mask-less image
-    assert int(np.asarray(target).max()) == 0
-    assert dataset.class_pixel_counts(2) == [256 * 2, 256]
+    assert (dataset[2][1] == 0).all()
 
     class Loader:
         pass
     loader = Loader()
     loader.dataset = dataset
-    assert "train 1장" in unlabeled_message(loader, None) and "배경으로 학습" in unlabeled_message(loader, None)
+    assert "train 1장" in unlabeled_message(loader, None) and "배경(ID 0)으로 학습" in unlabeled_message(loader, None)
     (masks / "0.png").unlink()
     (masks / "1.png").unlink()
-    with pytest.raises(ValueError, match="정답 마스크가 하나도 없습니다"):
-        SegmentationDataset(str(images), str(masks), input_size=(16, 16), in_channels=1,
-                            is_train=False, num_classes=2)
+    background = SegmentationDataset(str(images), str(masks), input_size=(16, 16), in_channels=1,
+                                     is_train=False, num_classes=2)
+    assert len(background) == 3 and all((background[i][1] == 0).all() for i in range(3))
 
 
 # ── Shift: click selects, drag erases; a picked class applies to the selection ──

@@ -146,6 +146,29 @@ QGroupBox::title {
 }
 
 
+#export_page > QGroupBox {
+    margin-top: 18px;
+    padding: 8px 12px 10px;
+}
+
+#export_page > QGroupBox::title {
+    left: 12px;
+}
+
+#export_page > QGroupBox QScrollBar:vertical {
+    width: 10px;
+}
+
+#export_page > QGroupBox QScrollBar::handle:vertical {
+    background: #49556b;
+    min-height: 24px;
+}
+
+#export_page > QGroupBox QScrollBar::handle:vertical:hover {
+    background: #65738f;
+}
+
+
 /* ══════════════════════════════════════════════════
    버튼  — Premium Button System
    ══════════════════════════════════════════════════ */

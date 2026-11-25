@@ -1,4 +1,4 @@
-"""Built-in architectures with explicit ImageNet/local initialization.
+"""Built-in architectures with explicit packaged/local pretrained initialization.
 
 Construction stays weight-free by default, including checkpoint restoration
 and ONNX export. Only an explicit pretrained request may fetch weights.
@@ -13,6 +13,10 @@ from typing import Iterable
 import torch
 from torch import nn
 import torch.nn.functional as F
+from segmentation_models import MODEL_IDS as SEGMENT_CANDIDATES
+from transformer_segmenters import (MASK2FORMER_DEFAULT_QUERIES, MODEL_IDS as TRANSFORMER_SEGMENT_IDS,
+                                   TASK_HEADS, checkpoint_query_count)
+from modern_segmentation import MODEL_IDS as MODERN_SEGMENT_IDS
 
 
 @dataclass(frozen=True)
@@ -29,9 +33,12 @@ BUILTIN_MODEL_SPECS = {
     "convnext_v1_tiny": BuiltinModelSpec("convnext_v1_tiny", "classify", (224, 224), (3,)),
     "deeplabv3plus_resnet34": BuiltinModelSpec("deeplabv3plus_resnet34", "segment", (512, 512), (3,)),
     "unet_resnet18": BuiltinModelSpec("unet_resnet18", "segment", (512, 512), (1, 3)),
+    "dinov2_vits14": BuiltinModelSpec("dinov2_vits14", "segment", (392, 392), (1, 3)),
     # DINOv2 (자기지도 ViT, 패치 14px). 224·448은 14와 32의 공배수라 학습 화면의 입력 크기 단계(32)와 맞는다.
     "dinov2_vits14_cls": BuiltinModelSpec("dinov2_vits14_cls", "classify", (224, 224), (1, 3)),
     "dinov2_vitb14_cls": BuiltinModelSpec("dinov2_vitb14_cls", "classify", (224, 224), (1, 3)),
+    "dinov2_vitl14_cls": BuiltinModelSpec("dinov2_vitl14_cls", "classify", (224, 224), (1, 3)),
+    "siglip2_so400m_cls": BuiltinModelSpec("siglip2_so400m_cls", "classify", (384, 384), (1, 3)),
     "dinov2_vits14_seg": BuiltinModelSpec("dinov2_vits14_seg", "segment", (448, 448), (1, 3)),
     "dinov2_vitb14_seg": BuiltinModelSpec("dinov2_vitb14_seg", "segment", (448, 448), (1, 3)),
     # 초경량 U-Net: 사전학습 가중치 없이 처음부터 학습(라이선스 걱정 없음). 원본 해상도 패치 학습용.
@@ -41,28 +48,56 @@ BUILTIN_MODEL_SPECS = {
 }
 
 # 사전학습 가중치가 없는 모델: '처음부터 학습'과 같은 모델의 로컬 체크포인트로만 시작한다.
+for _model_id in SEGMENT_CANDIDATES:
+    BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (640, 640), (1, 3))
+for _model_id in MODERN_SEGMENT_IDS:
+    BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (448, 448), (1, 3))
+for _model_id in TRANSFORMER_SEGMENT_IDS:
+    BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (512, 512), (1, 3))
 SCRATCH_ONLY_MODELS = frozenset({"unet_lite"})
 
 # 새로 학습하는 머리 부분(나머지는 사전학습 백본: 백본 학습률 배수·동결 대상)과,
 # 클래스 순서가 다른 체크포인트로 추가 학습할 때 버리는 마지막 분류층.
 HEAD_PREFIXES = {
+    "dinov2_vits14": ("projections.", "fusion.", "detail.", "decoder.", "head."),
     "resnet18": ("fc.",), "resnet50": ("fc.",),
     "convnext_v1_tiny": ("classifier.",),
     "deeplabv3plus_resnet34": ("aspp.", "low_projection.", "decoder."),
     "unet_resnet18": ("dec", "head."),
     "dinov2_vits14_cls": ("head.",), "dinov2_vitb14_cls": ("head.",),
+    "dinov2_vitl14_cls": ("head.",), "siglip2_so400m_cls": ("head.",),
     "dinov2_vits14_seg": ("neck.", "detail", "fuse", "head."),
     "dinov2_vitb14_seg": ("neck.", "detail", "fuse", "head."),
     "unet_lite": ("",),  # 사전학습 백본이 없어 전부 머리(같은 학습률)
     "unet_mobilenetv2": ("dec", "head."),
 }
 CLASS_HEAD_PREFIX = {
+    "dinov2_vits14": "head.",
     "resnet18": "fc.", "resnet50": "fc.", "convnext_v1_tiny": "classifier.2.",
     "deeplabv3plus_resnet34": "decoder.6.", "unet_resnet18": "head.",
     "dinov2_vits14_cls": "head.", "dinov2_vitb14_cls": "head.",
+    "dinov2_vitl14_cls": "head.", "siglip2_so400m_cls": "head.",
     "dinov2_vits14_seg": "head.", "dinov2_vitb14_seg": "head.",
     "unet_lite": "head.", "unet_mobilenetv2": "head.",
 }
+HEAD_PREFIXES.update({model_id: ("dec.", "head.") for model_id in SEGMENT_CANDIDATES})
+HEAD_PREFIXES["bisenetv2"] = ("net.head.", "net.aux")
+HEAD_PREFIXES["stdc1"] = ("cp.arm16.", "cp.arm32.", "cp.conv_head32.", "cp.conv_head16.",
+                          "cp.conv_avg.", "ffm.", "head.", "aux16.", "aux32.", "boundary.")
+CLASS_HEAD_PREFIX.update({model_id: "head." for model_id in SEGMENT_CANDIDATES})
+CLASS_HEAD_PREFIX["bisenetv2"] = ("net.head.", "net.aux2.", "net.aux3.", "net.aux4.", "net.aux5_4.")
+CLASS_HEAD_PREFIX["stdc1"] = ("head.", "aux16.", "aux32.")
+
+HEAD_PREFIXES.update({mid: ("projections.", "middle.", "expand.", "fusion.", "head.", "aux.") for mid in MODERN_SEGMENT_IDS})
+HEAD_PREFIXES["eomt_dinov2_small"] = ("q.", "class_head.", "mask_head.", "upscale.", "detail.")
+CLASS_HEAD_PREFIX.update({mid: ("fusion.head.", "head.head.", "aux.") for mid in MODERN_SEGMENT_IDS})
+CLASS_HEAD_PREFIX["eomt_dinov2_small"] = ("q.", "class_head.", "detail.2.")
+
+HEAD_PREFIXES["segformer_b2"] = ("net.decode_head.",)
+HEAD_PREFIXES["mask2former_swin_small"] = ("net.model.pixel_level_module.decoder.",
+                                           "net.model.transformer_module.", "net.class_predictor.")
+for _model_id in TRANSFORMER_SEGMENT_IDS:
+    CLASS_HEAD_PREFIX[_model_id] = tuple("net." + name for name in TASK_HEADS[_model_id])
 
 # Pin a concrete revision rather than torchvision's mutable DEFAULT alias.
 IMAGENET_WEIGHTS = {
@@ -71,6 +106,7 @@ IMAGENET_WEIGHTS = {
     "resnet50": ("ResNet50_Weights", "IMAGENET1K_V2"),
     "convnext_tiny": ("ConvNeXt_Tiny_Weights", "IMAGENET1K_V1"),
     "mobilenet_v2": ("MobileNet_V2_Weights", "IMAGENET1K_V1"),
+    "shufflenet_v2_x1_0": ("ShuffleNet_V2_X1_0_Weights", "IMAGENET1K_V1"),
 }
 
 
@@ -86,7 +122,8 @@ def _torchvision_base(name, *, pretrained=False, weights_path=None):
         enum, revision = IMAGENET_WEIGHTS[name]
         weights = getattr(getattr(models, enum), revision)
         key = {"resnet18": "resnet18", "resnet34": "resnet34", "resnet50": "resnet50",
-               "convnext_tiny": "convnext_v1_tiny", "mobilenet_v2": "mobilenet_v2"}[name]
+               "convnext_tiny": "convnext_v1_tiny", "mobilenet_v2": "mobilenet_v2",
+               "shufflenet_v2_x1_0": "shufflenet_v2_x1_0"}[name]
         source = builtin_asset_path(key)
         provenance.update(source="imagenet", weights=f"{enum}.{revision}", url=weights.url)
     elif weights_path:
@@ -109,11 +146,22 @@ _GRADCAM_TARGET_LAYERS = {
     "convnext_v1_tiny": "features.7",
     "deeplabv3plus_resnet34": "layer4",
     "unet_resnet18": "enc4",
+    "dinov2_vits14": "fusion",
     "dinov2_vits14_cls": "feature_map", "dinov2_vitb14_cls": "feature_map",  # 패치 토큰을 펼친 (B, D, h, w) 지도
+    "dinov2_vitl14_cls": "feature_map", "siglip2_so400m_cls": "feature_map",
     "dinov2_vits14_seg": "neck", "dinov2_vitb14_seg": "neck",
     "unet_lite": "e4",
     "unet_mobilenetv2": "encoder.17",
 }
+_GRADCAM_TARGET_LAYERS.update({model_id: "dec.3" for model_id in SEGMENT_CANDIDATES})
+_GRADCAM_TARGET_LAYERS.update(bisenetv2="net.bga", stdc1="ffm")
+
+
+_GRADCAM_TARGET_LAYERS.update({mid: "backbone" for mid in MODERN_SEGMENT_IDS})
+
+
+_GRADCAM_TARGET_LAYERS.update(segformer_b2="net.decode_head.linear_fuse",
+                              mask2former_swin_small="net.model.pixel_level_module.decoder.mask_projection")
 
 
 def get_builtin_spec(model_id: str) -> BuiltinModelSpec:
@@ -158,8 +206,11 @@ def _classification_model(model_id: str, num_classes: int, in_channels: int, **w
         model.features[0][0] = _replace_conv_in_channels(first, in_channels)
         model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
         return model
-    if model_id in ("dinov2_vits14_cls", "dinov2_vitb14_cls"):
+    if model_id.startswith("dinov2_"):
         return DinoV2Classifier(model_id.removeprefix("dinov2_").removesuffix("_cls"), num_classes, in_channels, **weights)
+    if model_id == "siglip2_so400m_cls":
+        from siglip2_classifier import SigLIP2Classifier
+        return SigLIP2Classifier(num_classes, in_channels, **weights)
     raise ValueError(f"Unsupported classification adapter: {model_id}")
 
 
@@ -463,13 +514,16 @@ class UNetLite(nn.Module):
 
 
 def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *,
-                        pretrained: bool = False, backbone_weights=None) -> nn.Module:
+                        pretrained: bool = False, backbone_weights=None,
+                        mask2former_num_queries: int = MASK2FORMER_DEFAULT_QUERIES) -> nn.Module:
     """Construct the adapter; pretrained/local loading must be requested explicitly."""
     spec = get_builtin_spec(model_id)
     if isinstance(num_classes, bool) or int(num_classes) != num_classes or num_classes < 1:
         raise ValueError("num_classes must be a positive integer")
     if in_channels not in spec.input_channels:
         raise ValueError(f"{model_id} does not support {in_channels} input channels")
+    from model_dependencies import require_model_runtime
+    require_model_runtime(model_id)
     if spec.task == "classify":
         model = _classification_model(model_id, int(num_classes), in_channels,
                                       pretrained=pretrained, weights_path=backbone_weights)
@@ -479,6 +533,33 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
     elif model_id == "unet_resnet18":
         model = UNetResNet18(int(num_classes), in_channels,
                             pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id == "dinov2_vits14":
+        from dinov2_segmentation import DinoV2Segmentation
+        model = DinoV2Segmentation(int(num_classes), in_channels,
+                                  pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id in TRANSFORMER_SEGMENT_IDS:
+        from transformer_segmenters import TransformerSegmenter, load_local_tensors
+        model = TransformerSegmenter(model_id, int(num_classes), in_channels,
+                                     mask2former_num_queries=mask2former_num_queries)
+        if pretrained:
+            if model_id != "mask2former_swin_small" or backbone_weights is not None:
+                raise ValueError("해당 사전학습 옵션을 사용할 수 없습니다. 로컬 가중치 또는 처음부터 학습을 선택하세요.")
+            from builtin_assets import builtin_asset_path
+            backbone_weights = builtin_asset_path("swin_small_imagenet")
+        if backbone_weights is not None:
+            model.initialize_from_weights(load_local_tensors(backbone_weights), backbone_weights)
+            if pretrained:
+                from builtin_assets import PINNED_SHA256, SOURCE_URLS
+                model.weight_provenance.update(source="microsoft_swin_imagenet",
+                                               url=SOURCE_URLS["swin_small_imagenet"],
+                                               sha256=PINNED_SHA256[Path(backbone_weights).name])
+    elif model_id in MODERN_SEGMENT_IDS:
+        from modern_segmentation import build_modern_segmenter
+        model = build_modern_segmenter(model_id, int(num_classes), in_channels, pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id in SEGMENT_CANDIDATES:
+        from segmentation_models import build_segment_candidate
+        model = build_segment_candidate(model_id, int(num_classes), in_channels,
+                                        pretrained=pretrained, weights_path=backbone_weights)
     elif model_id == "unet_mobilenetv2":
         model = UNetMobileNetV2(int(num_classes), in_channels,
                                 pretrained=pretrained, weights_path=backbone_weights)
@@ -500,10 +581,10 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
     model.gradcam_target_layer = _GRADCAM_TARGET_LAYERS[model_id]
     # ViT는 주의(attention)가 입력 전체를 본다: 패치 학습 모델을 큰 영역에 한 번에 넣으면 학습과 다른 함수가 된다.
     # 추론 엔진은 이 표시가 있으면 학습한 패치 크기의 타일로 추론한다 (합성곱 모델은 한 번에).
-    model.global_attention = model_id.startswith("dinov2_")
+    model.global_attention = getattr(model, "global_attention", False) or model_id.startswith("dinov2_")
     # ViT 미세조정은 합성곱보다 훨씬 작은 백본 학습률이 필요하다. 클래스당 10장 분류(20 epoch)에서
     # 백본 lr 1e-4(기본 배수 0.1)는 정확도가 우연 수준(0.33)으로 무너졌고, 1e-5(×0.1 더)는 0.97이었다.
-    model.backbone_lr_scale = 0.1 if model_id.startswith("dinov2_") else 1.0
+    model.backbone_lr_scale = getattr(model, "backbone_lr_scale", 0.1 if model_id.startswith("dinov2_") else 1.0)
     return model
 
 
@@ -540,6 +621,8 @@ def make_builtin_checkpoint(model_id: str, model: nn.Module, *, num_classes: int
                            "layout": "NCHW", "value_scale": 255.0,
                            "color_order": "GRAY" if in_channels == 1 else "RGB"},
     }
+    if model_id == "mask2former_swin_small":
+        payload["model_config"]["num_queries"] = checkpoint_query_count(payload)
     if tiling:
         if spec.task != "segment":
             raise ValueError("타일 추론은 분할 모델만 지원합니다")
@@ -552,7 +635,9 @@ def load_builtin_checkpoint(checkpoint: dict) -> nn.Module:
     model_id = checkpoint.get("model_id") or (checkpoint.get("model_config") or {}).get("model_id")
     if not isinstance(model_id, str):
         raise ValueError("builtin checkpoint model_id is required")
-    model = build_builtin_model(model_id, int(checkpoint["num_classes"]), int(checkpoint["in_channels"]))
+    options = ({"mask2former_num_queries": checkpoint_query_count(checkpoint)}
+               if model_id == "mask2former_swin_small" else {})
+    model = build_builtin_model(model_id, int(checkpoint["num_classes"]), int(checkpoint["in_channels"]), **options)
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     model.weight_provenance = dict(checkpoint.get("weight_provenance", {}))
     return model.cpu().eval()

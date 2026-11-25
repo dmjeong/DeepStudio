@@ -188,7 +188,7 @@ try {
   await page.getByRole("button", {name:"선택 해제",exact:true}).click();
   await page.getByText("조건에 맞는 결과가 없습니다.", {exact:true}).waitFor();
   await page.getByLabel("선택한 행만 보기", {exact:true}).uncheck();
-  await page.getByLabel("결과 클래스", {exact:true}).selectOption("good");
+  await page.getByLabel("데이터셋 클래스 (정답)", {exact:true}).selectOption("good");
   await page.getByLabel("결과 판정", {exact:true}).selectOption("OK");
   await page.getByLabel("결과 파일명 검색", {exact:true}).fill("image-01");
   await page.waitForFunction(() => document.querySelectorAll('.inference-results tbody tr').length === 5);

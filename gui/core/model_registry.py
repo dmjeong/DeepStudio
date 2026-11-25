@@ -199,6 +199,8 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         ModelSpec("resnet50", "ResNet", "50", "classify", ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified", pretrained_asset="ResNet50_Weights.IMAGENET1K_V2", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
         ModelSpec("convnext_v1_tiny", "ConvNeXt V1", "Tiny", "classify", ("windows_native", "onnx"), common, (224, 224), (3,), "export_verified", pretrained_asset="ConvNeXt_Tiny_Weights.IMAGENET1K_V1", notes="ImageNet 다운로드/캐시 또는 로컬 가중치"),
         ModelSpec("libreyolo_classify_mobilenetv4_small", "LibreYOLO", "MobileNetV4 Small", "classify", ("windows_native", "onnx"), common, (224, 224), (3,)),
+        ModelSpec("libreyolo_classify_mobilenetv4_medium", "LibreYOLO", "MobileNetV4 Medium", "classify", ("windows_native", "onnx"), common, (224, 224), (3,), notes="Small보다 표현 용량이 큰 분류 후보. Apache-2.0 ImageNet-1k 가중치; 속도와 검사 정확도는 데이터별 비교 필요"),
+        ModelSpec("libreyolo_detect_dfine_nano", "D-FINE", "Nano (COCO)", "detect", ("windows_native", "onnx"), common, (640, 640), (3,), notes="ICLR 2025 경량 DETR 후보. Apache-2.0 COCO 전용 가중치; Objects365 사전학습 없음"),
         ModelSpec("patchcore_wide_resnet50_2", "PatchCore", "Wide-ResNet50-2", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
         ModelSpec("patchcore_resnet18", "PatchCore", "ResNet18", "anomaly", ("windows_native", "onnx"), frozenset({"fit", "infer", "export_onnx", "csharp", "cpp"}), (224, 224), (3,), "export_verified", notes="memory bank와 kNN 포함"),
     ]
@@ -217,9 +219,17 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         ModelSpec("libreyolo_detect_9t", "LibreYOLO", "9 Tiny", "detect", ("windows_native", "onnx"), common, (640, 640), (3,)),
         ModelSpec("deeplabv3plus_resnet34", "DeepLab V3+", "ResNet34", "segment", ("windows_native", "onnx"), common, (512, 512), (3,), "export_verified", pretrained_asset="ResNet34_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
         ModelSpec("unet_resnet18", "U-Net", "ResNet18", "segment", ("windows_native", "onnx"), common, (512, 512), (1, 3), "export_verified", pretrained_asset="ResNet18_Weights.IMAGENET1K_V1", notes="ImageNet 백본; 분할 헤드는 새로 학습"),
+        ModelSpec("dinov2_vits14", "DINOv2", "ViT-S/14 + Detail", "segment", ("windows_native", "onnx"), common, (392, 392), (1, 3), "export_verified", pretrained_asset="Meta DINOv2 ViT-S/14 LVD-142M", notes="Apache-2.0 사전학습 백본 + 원본 해상도 세부 경로; 분할 헤드는 새로 학습. CPU 속도는 장비별 측정 필요"),
     ])
     # DINOv2: 데스크톱 앱에만 보인다(surfaces). 웹 화면의 모델 목록은 바꾸지 않는다.
     desktop = {"surfaces": ["desktop"]}
+    for model_id, family, variant in (("mask2former_swin_small", "Mask2Former", "Swin-Small"),
+                                       ("segformer_b2", "SegFormer", "MiT-B2")):
+        specs.append(ModelSpec(
+            model_id, family, variant, "segment", ("windows_native", "onnx"), common,
+            (512, 512), (1, 3), "trained_verified", metadata=desktop,
+            pretrained_asset="Microsoft Swin-Small ImageNet-1K" if model_id == "mask2former_swin_small" else "",
+            notes="픽셀 분할 및 교사 학습. 로컬 가중치로 추가 학습 또는 처음부터 학습."))
     for variant, label in (("vits14", "ViT-S/14"), ("vitb14", "ViT-B/14")):
         asset = f"facebookresearch/dinov2 dinov2_{variant}_pretrain (LVD-142M)"
         specs.append(ModelSpec(
@@ -230,6 +240,16 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
             f"dinov2_{variant}_seg", "DINOv2", label, "segment", ("windows_native", "onnx"), common, (448, 448), (1, 3),
             "export_verified", pretrained_asset=asset, metadata=desktop,
             notes="ViT 의미 특징(1/14) + 합성곱 세부 경로(1/2·1/4) 디코더; 1~2px 결함은 U-Net 원본 해상도가 낫다"))
+    specs.extend((
+        ModelSpec("dinov2_vitl14_cls", "DINOv2", "ViT-L/14", "classify", ("windows_native", "onnx"),
+                  common, (224, 224), (1, 3), "export_verified", metadata=desktop,
+                  pretrained_asset="Meta DINOv2 ViT-L/14 LVD-142M (Apache-2.0)",
+                  notes="대형 자기지도 사전학습 ViT. 교사 학습 및 분류 증류 지원."),
+        ModelSpec("siglip2_so400m_cls", "SigLIP 2", "So400m/16 · 384", "classify", ("windows_native", "onnx"),
+                  common, (384, 384), (1, 3), "export_verified", metadata=desktop,
+                  pretrained_asset="Google SigLIP 2 vision encoder, timm WebLI (Apache-2.0)",
+                  notes="대형 이미지 인코더. 교사 학습 및 분류 증류 지원."),
+    ))
     specs.append(ModelSpec(
         "unet_lite", "U-Net", "Lite", "segment", ("windows_native", "onnx"), common, (256, 256), (1, 3),
         "export_verified", metadata=desktop,
@@ -239,6 +259,34 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         "export_verified", pretrained_asset="MobileNet_V2_Weights.IMAGENET1K_V1", metadata=desktop,
         notes="경량 사전학습 백본 U-Net(ImageNet MobileNetV2 + 얇은 디코더); ResNet18 U-Net처럼 넓게 보고 "
               "3504×1504 CPU 약 0.7초(ResNet18 U-Net 약 2.5초). 패치 학습 = 전체 추론 (전역 연산 없음)"))
+    for model_id, family, variant, asset, notes in (
+        ("unet_mobilenetv4_small", "U-Net", "MobileNetV4 Conv-S", "timm MobileNetV4 Conv-S ImageNet",
+         "ImageNet 사전학습 백본 + 얇은 디코더. 원본 ROI 해상도 유지; 속도와 정확도는 검사 데이터로 비교하세요."),
+        ("unet_shufflenetv2", "U-Net", "ShuffleNetV2 x1.0", "ShuffleNet_V2_X1_0_Weights.IMAGENET1K_V1",
+         "ImageNet 사전학습 백본 + 얇은 디코더. INT8 가속 효과는 CPU에 따라 다릅니다."),
+        ("unet_efficientnet_b1", "U-Net", "EfficientNet-B1", "timm EfficientNet-B1 RA4 ImageNet",
+         "ImageNet 사전학습 백본 + 얇은 디코더. SE 전역 문맥을 사용하므로 실제 판정 ROI로 품질을 평가하세요."),
+        ("bisenetv2", "BiSeNetV2", "Standard", "CoinCheung backbone_v2 ImageNet",
+         "ImageNet 사전학습 세부/의미/융합 백본 + 새 분할 헤드. 보조 손실은 학습에만 적용."),
+        ("stdc1", "STDC", "STDC1", "STDCNet813M_73.91 ImageNet",
+         "공식 ImageNet 사전학습 STDCNet813 + 새 분할 헤드. 보조 분할/경계 손실은 학습에만 적용."),
+    ):
+        specs.append(ModelSpec(model_id, family, variant, "segment", ("windows_native", "onnx"),
+                               common, (640, 640), (1, 3), "export_verified",
+                               pretrained_asset=asset, metadata=desktop, notes=notes))
+    specs.append(ModelSpec("dinomaly_vits14", "Dinomaly", "DINOv2-S/14", "anomaly",
+                           ("windows_native", "onnx"), common, (224, 224), (1, 3), "export_verified",
+                           pretrained_asset="Meta DINOv2 ViT-S/14 LVD-142M", metadata=desktop,
+                           notes="고정 인코더 + 재구성기 에폭 학습. 정상 영상만 학습, 검증 정상 상한으로 임계값 보정. S/14 변형."))
+    for model_id, family, variant, asset in (
+        ("efficientvit_b0_seg", "EfficientViT", "B0 + Detail", "EfficientViT B0 ImageNet"),
+        ("efficientvit_b1_seg", "EfficientViT", "B1 + Detail", "EfficientViT B1 ImageNet"),
+        ("sctnet_s", "SCTNet", "Small + Detail", "SCTNet-S official backbone"),
+        ("eomt_dinov2_small", "EoMT", "DINOv2-S + Detail", "Meta DINOv2 ViT-S/14 LVD-142M"),
+    ):
+        specs.append(ModelSpec(model_id, family, variant, "segment", ("windows_native", "onnx"),
+                               common, (448, 448), (1, 3), "export_verified", pretrained_asset=asset, metadata=desktop,
+                               notes="분할 전용 구조 + 원본 해상도 세부 경로. 패치 학습 시 같은 크기 타일 추론."))
     sam2_contract = {"contracts": {"graphs": {
         "encoder": {"file": "sam2_encoder.onnx", "inputs": {"image": "input_image"},
                     "outputs": ["image_embeddings", "image_features_0", "image_features_1"]},

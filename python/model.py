@@ -43,7 +43,7 @@ CustomCSP 모델 정의
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Tuple, Optional
+from typing import List
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -431,6 +431,7 @@ class DetectionHead(nn.Module):
         self.cls_pred = nn.Conv2d(fpn_channels, num_classes, 1)
         self.bbox_pred = nn.Conv2d(fpn_channels, 4, 1)
         self.obj_pred = nn.Conv2d(fpn_channels, 1, 1)
+        self.foreground_aux = None
 
     def forward(self, features: List[torch.Tensor]) -> torch.Tensor:
         """
@@ -527,7 +528,7 @@ class AnomalyHead(nn.Module):
             nn.Conv2d(32, in_channels, 3, padding=1),
         )
 
-    def forward(self, features: List[torch.Tensor]) -> torch.Tensor:
+    def forward(self, features: List[torch.Tensor], output_size=None) -> torch.Tensor:
         """
         Args:
             features: [P2, P3, P4, P5] 백본 출력
@@ -557,7 +558,9 @@ class AnomalyHead(nn.Module):
         d2 = self.dec2(torch.cat([d3_up, p2], dim=1))
 
         # 최종 업샘플 (P2는 입력의 1/4) → 원본 해상도
-        d2_up = F.interpolate(d2, scale_factor=4, mode='bilinear',
+        if output_size is None:
+            output_size = (p2.shape[-2] * 4, p2.shape[-1] * 4)
+        d2_up = F.interpolate(d2, size=output_size, mode='bilinear',
                               align_corners=False)
         return self.reconstruct(d2_up)
 
@@ -660,6 +663,21 @@ class CustomCSP(nn.Module):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.zeros_(m.bias)
 
+    def enable_detection_foreground_supervision(self) -> None:
+        """Attach a training-only classifier to the stride-4 detection features."""
+        if self.task != "detect":
+            raise ValueError("전경 보조 학습은 객체 탐지에서만 지원합니다.")
+        if self.head.foreground_aux is None:
+            first_projection = self.backbone.stage1[0].conv
+            self.head.foreground_aux = nn.Conv2d(first_projection.out_channels, 1, 1).to(
+                device=first_projection.weight.device, dtype=first_projection.weight.dtype)
+
+    def forward_with_detection_foreground(self, x: torch.Tensor):
+        if self.task != "detect" or self.head.foreground_aux is None:
+            raise ValueError("전경 보조 헤드를 먼저 활성화하세요.")
+        features = self.backbone(x)
+        return self.head(features), self.head.foreground_aux(features[0])
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         순전파
@@ -671,6 +689,8 @@ class CustomCSP(nn.Module):
             segment:  (B, num_classes, H, W) 세그멘테이션 맵
         """
         features = self.backbone(x)
+        if self.task == "anomaly":
+            return self.head(features, x.shape[-2:])
         output = self.head(features)
         if self.task == "segment" and output.shape[-2:] != x.shape[-2:]:
             output = F.interpolate(output, size=x.shape[-2:], mode="bilinear", align_corners=False)

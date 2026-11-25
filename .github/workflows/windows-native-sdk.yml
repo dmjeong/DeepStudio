@@ -17,6 +17,8 @@ on:
       - "tests/test_model_crypto.py"
       - "python/export_onnx.py"
       - "python/export_patchcore_onnx.py"
+      - "tests/test_cpp_patchcore_export.py"
+      - "tests/test_patchcore_onnx_export.py"
       - "python/export_sam2_onnx.py"
       - "python/builtin_models.py"
       - "packaging/windows/**"
@@ -45,6 +47,8 @@ on:
       - "tests/test_model_crypto.py"
       - "python/export_onnx.py"
       - "python/export_patchcore_onnx.py"
+      - "tests/test_cpp_patchcore_export.py"
+      - "tests/test_patchcore_onnx_export.py"
       - "python/export_sam2_onnx.py"
       - "python/builtin_models.py"
       - "packaging/windows/**"
@@ -61,6 +65,11 @@ on:
       - ".github/workflows/windows-native-sdk.yml"
   workflow_dispatch:
     inputs:
+      installed_build_run_id:
+        description: "Optional completed SDK/payload run to recheck on a fresh runner without rebuilding"
+        required: false
+        default: ""
+        type: string
       require_offline_wsl:
         description: "Require the licensed offline WSL/Docker payload for a production installer"
         required: true
@@ -74,13 +83,24 @@ on:
 
 permissions:
   contents: read
+  actions: read
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
 
 jobs:
+  installed-app-recheck:
+    if: ${{ inputs.installed_build_run_id != '' }}
+    uses: ./.github/workflows/windows-installed-app.yml
+    with:
+      build_run_id: ${{ inputs.installed_build_run_id }}
   cpp-example-windows:
+    if: ${{ !inputs.installed_build_run_id }}
     # The public example must not wait for the 40+ minute vcpkg/full GUI build.
     # Use official binary SDKs, with the same ORT/OpenCV versions as that build.
     runs-on: windows-2022
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -91,7 +111,7 @@ jobs:
         run: |
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           if ($LASTEXITCODE -ne 0) { throw "CPU torch installation failed" }
-          python -m pip install onnx onnxruntime==1.29.0 "cryptography>=44"
+          python -m pip install onnx onnxruntime==1.29.0 "cryptography>=44" opencv-python-headless scipy
           if ($LASTEXITCODE -ne 0) { throw "Export dependencies installation failed" }
           python example/generate_export_test_assets.py "$env:RUNNER_TEMP/studio-export-assets"
           if ($LASTEXITCODE -ne 0) { throw "Studio export regression fixture failed" }
@@ -177,6 +197,28 @@ jobs:
           ctest --test-dir example/build-v141-opencv -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "v141 OpenCV execution failed" }
 
+      - name: Build and evaluate semantic segmentation with VS2017 C++17
+        shell: pwsh
+        run: |
+          python -m pip install torchvision --index-url https://download.pytorch.org/whl/cpu
+          if ($LASTEXITCODE -ne 0) { throw "CPU torchvision installation failed" }
+          python -m pip install pytest pillow opencv-python-headless
+          if ($LASTEXITCODE -ne 0) { throw "Segmentation test dependencies failed" }
+          $deps = $env:EXAMPLE_DEPS
+          cmake -S example/cpp/segmentation_eval -B example/build-segment -G "Visual Studio 17 2022" -A x64 -T v141 `
+            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" "-DOpenCV_DIR=$deps/opencv/build/x64/vc16/lib"
+          if ($LASTEXITCODE -ne 0) { throw "Segmentation configure failed" }
+          foreach ($config in @('Release', 'Debug')) {
+            cmake --build example/build-segment --config $config --target segmentation_eval segmentation_metrics_test --parallel 2
+            if ($LASTEXITCODE -ne 0) { throw "Segmentation $config build failed" }
+            ctest --test-dir example/build-segment -C $config --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw "Segmentation $config metrics failed" }
+          }
+          $env:SEGMENT_EVALUATOR = (Resolve-Path example/build-segment/Release/segmentation_eval.exe).Path
+          $env:OMP_NUM_THREADS = '1'
+          python -m pytest -q tests/test_cpp_segmentation_evaluation.py
+          if ($LASTEXITCODE -ne 0) { throw "Export -> C++ segmentation evaluation failed" }
+
       - name: VS2017 encrypted BW8 Debug build and execution
         shell: pwsh
         run: |
@@ -185,7 +227,26 @@ jobs:
           ctest --test-dir example/build-v141-bw8 -C Debug --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "v141 Debug execution failed" }
 
+      - name: Build dense segmentation and anomaly example with VS2017 C++17
+        shell: pwsh
+        run: |
+          $deps = $env:EXAMPLE_DEPS
+          cmake -S example/cpp/dense_models -B example/build-dense -G "Visual Studio 17 2022" -A x64 -T v141 `
+            "-DONNXRUNTIME_ROOT=$deps/onnxruntime-win-x64-1.29.0" "-DOpenCV_DIR=$deps/opencv/build/x64/vc16/lib"
+          if ($LASTEXITCODE -ne 0) { throw "Dense example configure failed" }
+          foreach ($config in @('Release', 'Debug')) {
+            cmake --build example/build-dense --config $config --target dense_model_example --parallel 2
+            if ($LASTEXITCODE -ne 0) { throw "Dense example $config build failed" }
+          }
+
+      - name: Verify the batch helper uses an isolated SDK build cache
+        shell: pwsh
+        run: |
+          cmake "-DONNXRUNTIME_ROOT=$env:EXAMPLE_DEPS/onnxruntime-win-x64-1.29.0" -P example/cpp/build_encrypted.cmake
+          if ($LASTEXITCODE -ne 0) { throw "Encrypted example batch helper failed" }
+
   csharp-sdk:
+    if: ${{ !inputs.installed_build_run_id }}
     runs-on: windows-latest
     defaults:
       run:
@@ -203,13 +264,8 @@ jobs:
       - name: Build encrypted C# example
         run: dotnet build example/csharp/encrypted/EncryptedExample.csproj --configuration Release --artifacts-path example/dotnet-encrypted
 
-      - name: Verify the batch helper uses an isolated SDK build cache
-        shell: pwsh
-        run: |
-          cmake "-DONNXRUNTIME_ROOT=$env:EXAMPLE_DEPS/onnxruntime-win-x64-1.29.0" -P example/cpp/build_encrypted.cmake
-          if ($LASTEXITCODE -ne 0) { throw "Encrypted example batch helper failed" }
-
   payload-contracts:
+    if: ${{ !inputs.installed_build_run_id }}
     runs-on: windows-latest
     defaults:
       run:
@@ -219,14 +275,67 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
       - name: Install contract test dependencies
-        run: python -m pip install pytest cryptography numpy
+        run: python -m pip install pytest cryptography numpy psutil
       - name: Run Windows packaging and worker contracts
-        run: python -m pytest -q tests/test_windows_packaging_contracts.py tests/test_model_pack_template.py tests/test_worker_runtime.py tests/test_model_pack_worker.py tests/test_model_registry.py tests/test_asset_resolver.py tests/test_deployment_bundle.py -k "not emit_sdk_bundle"
+        run: python -m pytest -q tests/test_windows_packaging_contracts.py tests/test_installer_powershell.py tests/test_model_pack_template.py tests/test_worker_runtime.py tests/test_model_pack_worker.py tests/test_model_registry.py tests/test_asset_resolver.py tests/test_deployment_bundle.py -k "not emit_sdk_bundle"
       - name: Compile frozen GUI builder
         run: python -m py_compile gui/build_exe.py
+      - name: Build small installer with real WiX before the full GUI build finishes
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { throw "WiX tool installation failed" }
+          $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+          $app = Join-Path $env:RUNNER_TEMP "installer-toolchain-app"
+          New-Item -ItemType Directory -Force $app | Out-Null
+          # Only tests the real MSI/Burn compiler. The other job freezes,
+          # installs, and executes the actual application.
+          Copy-Item "$env:WINDIR\System32\where.exe" (Join-Path $app "DeepVisionStudio.exe")
+          $internal = New-Item -ItemType Directory -Path (Join-Path $app "_internal")
+          $pythonHome = (python -c "import sys; print(sys.base_prefix)").Trim()
+          Copy-Item (Join-Path $pythonHome "python311.dll") $internal.FullName
+          pwsh packaging/windows/build_simple_installer.ps1 -AppRoot $app `
+            -OutputDirectory (Join-Path $env:RUNNER_TEMP "installer-toolchain-release") -Version 1.0.0
+          if ($LASTEXITCODE -ne 0) { throw "Real installer toolchain smoke failed" }
+          pwsh packaging/windows/build_simple_installer.ps1 -AppRoot $app -ExternalPayload `
+            -OutputDirectory (Join-Path $env:RUNNER_TEMP "installer-toolchain-external") -Version 1.0.0
+          if ($LASTEXITCODE -ne 0) { throw "External cabinet/ZIP toolchain smoke failed" }
+      - name: Install the real MSI using Unicode paths with spaces
+        timeout-minutes: 3
+        env:
+          DVS_TEST_INSTALLER_MSI: ${{ runner.temp }}/installer-toolchain-release/DeepVisionStudio-1.0.0.msi
+        run: python -m pytest -q -s tests/test_windows_installer_execution.py
+      - name: Install and uninstall both real Setup layouts
+        shell: pwsh
+        run: |
+          $single = Join-Path $env:RUNNER_TEMP "installer-toolchain-release"
+          $external = Join-Path $env:RUNNER_TEMP "installer-toolchain-external"
+          $relocated = Join-Path $env:RUNNER_TEMP "relocated-offline-installer"
+          Expand-Archive -LiteralPath (Join-Path $external "DeepVisionStudio-Offline-1.0.0-win-x64.zip") -DestinationPath $relocated
+          Remove-Item -Recurse -Force $external
+          foreach ($folder in @($single, $relocated)) {
+            $setup = Join-Path $folder "DeepVisionStudio-Setup-1.0.0-win-x64.exe"
+            try {
+              $process = Start-Process -FilePath $setup -ArgumentList @("/quiet", "/norestart", "/log", (Join-Path $folder "install.log")) -PassThru -Wait
+              if ($process.ExitCode -notin @(0, 3010)) {
+                Get-Content (Join-Path $folder "install.log") -Tail 50
+                throw "Setup install failed: $($process.ExitCode)"
+              }
+              $installed = Join-Path $env:ProgramFiles "DeepVisionStudio\app\DeepVisionStudio.exe"
+              $expected = (Get-FileHash "$env:WINDIR\System32\where.exe").Hash
+              if ((Get-FileHash $installed).Hash -ne $expected) { throw "Installed payload mismatch" }
+            } finally {
+              $process = Start-Process -FilePath $setup -ArgumentList @("/uninstall", "/quiet", "/norestart") -PassThru -Wait
+              if ($process.ExitCode -notin @(0, 3010)) { throw "Setup uninstall failed: $($process.ExitCode)" }
+            }
+          }
 
   wix-installer-contract:
+    needs: payload-contracts
     # The C++ ABI is built with the Visual Studio 2022 generator. Pin the image
     # instead of following windows-latest when GitHub changes its VS toolchain.
     runs-on: windows-2022
@@ -246,8 +355,18 @@ jobs:
         run: |
           $vcpkg = $env:VCPKG_INSTALLATION_ROOT
           if ([string]::IsNullOrWhiteSpace($vcpkg)) { throw "VCPKG_INSTALLATION_ROOT is missing" }
-          & (Join-Path $vcpkg "vcpkg.exe") install opencv4:x64-windows nlohmann-json:x64-windows --clean-after-build
+          & (Join-Path $vcpkg "vcpkg.exe") install nlohmann-json:x64-windows --clean-after-build
           if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency build failed" }
+          # Use the same published SDK as the passing public Windows examples.
+          # An unpinned vcpkg OpenCV brought a different native runtime and a
+          # 46-minute build of unused DNN/DirectML/video dependencies.
+          $deps = Join-Path $env:RUNNER_TEMP "native-deps"
+          New-Item -ItemType Directory -Force $deps | Out-Null
+          curl.exe --fail --location --retry 3 "https://github.com/opencv/opencv/releases/download/4.12.0/opencv-4.12.0-windows.exe" -o "$deps\opencv.exe"
+          if ($LASTEXITCODE -ne 0) { throw "OpenCV SDK download failed" }
+          7z x "$deps\opencv.exe" "-o$deps" "opencv/build/*" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "OpenCV SDK extraction failed" }
+          "NATIVE_OPENCV_ROOT=$deps/opencv/build" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Download pinned ONNX Runtime native package
         shell: pwsh
         run: |
@@ -267,7 +386,10 @@ jobs:
           $native = Join-Path $env:RUNNER_TEMP "vision-native"
           $vcpkg = $env:VCPKG_INSTALLATION_ROOT
           $toolchain = Join-Path $vcpkg "scripts\buildsystems\vcpkg.cmake"
+          $testPython = (Get-Command python).Source
           cmake -S cpp -B $build -G "Visual Studio 17 2022" -A x64 `
+            "-DPython3_EXECUTABLE=$testPython" `
+            "-DOpenCV_DIR=$env:NATIVE_OPENCV_ROOT" `
             "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT" `
             -DVISION_BUILD_DEMO=OFF -DBUILD_TESTING=ON
           if ($LASTEXITCODE -ne 0) { throw "C++ configure failed" }
@@ -280,11 +402,14 @@ jobs:
           $ort = Get-ChildItem -Path $env:ONNXRUNTIME_ROOT -Recurse -Filter "onnxruntime.dll" | Select-Object -First 1
           if ($null -eq $ort) { throw "onnxruntime.dll was not found" }
           Copy-Item $ort.FullName $native
-          $opencv = Join-Path $vcpkg "installed\x64-windows\bin"
-          $opencvDlls = Get-ChildItem -Path $opencv -Filter "*.dll"
+          $opencvDlls = Get-ChildItem -Path $env:NATIVE_OPENCV_ROOT -Recurse -Filter "opencv_world4120.dll"
           if ($opencvDlls.Count -eq 0) { throw "OpenCV runtime DLLs were not found" }
           Copy-Item $opencvDlls.FullName $native
           $env:PATH = "$native;$env:PATH"
+          $loadedOrt = & (Join-Path $build "Release/segment_probe.exe") --runtime-version
+          if ($LASTEXITCODE -ne 0 -or "$loadedOrt".Trim() -ne "1.29.0") {
+            throw "Wrong native ONNX Runtime loaded: $loadedOrt (expected 1.29.0)"
+          }
           ctest --test-dir $build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "Native all-task encryption contracts failed" }
           "VISION_NATIVE_RUNTIME_DIR=$native" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -294,6 +419,7 @@ jobs:
           $build = Join-Path $env:RUNNER_TEMP "vision-example-build"
           $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT "scripts\buildsystems\vcpkg.cmake"
           cmake -S example/cpp -B $build -G "Visual Studio 17 2022" -A x64 `
+            "-DOpenCV_DIR=$env:NATIVE_OPENCV_ROOT" `
             "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "Example CMake configure failed" }
           cmake --build $build --config Release --target onnx_cpp_example onnx_cpp_self_test onnx_encrypted_example --parallel 2
@@ -321,6 +447,48 @@ jobs:
           if (-not (Test-Path "gui\dist\DeepVisionStudio\DeepVisionStudio.exe")) {
             throw "PyInstaller did not produce DeepVisionStudio.exe"
           }
+      - name: Verify actual PatchCore exports in native C++
+        shell: pwsh
+        run: |
+          python -m pip install pytest
+          if ($LASTEXITCODE -ne 0) { throw "PatchCore test dependencies failed" }
+          $env:ANOMALY_PROBE = Join-Path $env:RUNNER_TEMP "vision-cpp-build/Release/anomaly_probe.exe"
+          if (-not (Test-Path $env:ANOMALY_PROBE)) { throw "PatchCore native probe is missing" }
+          $env:PATH = "$env:VISION_NATIVE_RUNTIME_DIR;$env:PATH"
+          python -m pytest -q tests/test_cpp_patchcore_export.py
+          if ($LASTEXITCODE -ne 0) { throw "PatchCore export -> C++ inference failed" }
+      - name: Launch the actual frozen GUI and its inference and generation workers
+        timeout-minutes: 18
+        run: python tools/windows_desktop_smoke.py --app gui/dist/DeepVisionStudio/DeepVisionStudio.exe --output desktop-smoke/frozen.json
+      - name: Verify LibreYOLO full-frame export in native C++
+        shell: pwsh
+        run: |
+          python -m pip install libreyolo==1.5.0 pycocotools==2.0.11
+          if ($LASTEXITCODE -ne 0) { throw "LibreYOLO test dependencies failed" }
+          $env:CLASSIFY_PROBE = Join-Path $env:RUNNER_TEMP "vision-cpp-build/Release/classify_probe.exe"
+          $env:DETECT_PROBE = Join-Path $env:RUNNER_TEMP "vision-cpp-build/Release/detect_probe.exe"
+          if (-not (Test-Path $env:CLASSIFY_PROBE)) { throw "Classification native probe is missing" }
+          $env:PATH = "$env:VISION_NATIVE_RUNTIME_DIR;$env:PATH"
+          $env:OMP_NUM_THREADS = "1"
+          $env:MKL_NUM_THREADS = "1"
+          python -m pytest -q tests/test_libreyolo_full_frame.py tests/test_native_patches.py
+          if ($LASTEXITCODE -ne 0) { throw "LibreYOLO export -> C++ inference failed" }
+      - name: Verify modern dense model exports in native Windows C++
+        shell: pwsh
+        run: |
+          python python/prepare_builtin_assets.py --only efficientvit_b0,efficientvit_b1,sctnet_s_backbone,dinov2_vits14 --strict
+          if ($LASTEXITCODE -ne 0) { throw "Modern pretrained asset preparation failed" }
+          $env:SEGMENT_PROBE = Join-Path $env:RUNNER_TEMP "vision-cpp-build/Release/segment_probe.exe"
+          $env:ANOMALY_PROBE = Join-Path $env:RUNNER_TEMP "vision-cpp-build/Release/anomaly_probe.exe"
+          $env:PATH = "$env:VISION_NATIVE_RUNTIME_DIR;$env:PATH"
+          $env:DVS_RUN_MODERN_INTEGRATION = "1"
+          $env:DVS_MODERN_INPUT_SIZE = "448"
+          $env:DVS_DINOMALY_INPUT_SIZE = "224"
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:OMP_NUM_THREADS = "2"
+          $env:MKL_NUM_THREADS = "2"
+          python -m pytest -q tests/test_modern_dense_models.py -o tmp_path_retention_policy=failed
+          if ($LASTEXITCODE -ne 0) { throw "Modern FP32/INT8 encrypted C++ parity failed" }
       - name: Verify frozen CUDA training runtime without a GPU
         shell: pwsh
         run: |
@@ -335,7 +503,7 @@ jobs:
       - name: Install pinned WiX toolset
         shell: pwsh
         run: |
-          dotnet tool install --global wix --version 7.0.0
+          dotnet tool install --global wix --version 5.0.2
           $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
           "PATH=$env:PATH" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           wix --version
@@ -350,7 +518,19 @@ jobs:
             throw "Minimal app/example Setup was not produced"
           }
       - name: Publish C# SDK into the payload source
+        # This remains a separate SDK payload; the simple installer contains examples.
         run: dotnet publish sdk/csharp/VisionRuntime.csproj --configuration Release --output "$env:RUNNER_TEMP\csharp-sdk"
+      - name: Install the simple MSI, run the installed app, then uninstall
+        timeout-minutes: 25
+        run: python tools/windows_desktop_smoke.py --msi "${{ runner.temp }}/studio-simple-release/DeepVisionStudio-1.0.0.msi" --output desktop-smoke/installed.json
+      - name: Preserve frozen and installed execution diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop-execution
+          path: desktop-smoke/
+          retention-days: 3
+          if-no-files-found: ignore
       - name: Stage deterministic offline payload
         shell: pwsh
         run: |
@@ -411,14 +591,19 @@ jobs:
           pwsh @releaseArgs
           Get-ChildItem $output | Format-Table Name,Length
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: deepvisionstudio-wix-contract
           path: |
             ${{ runner.temp }}/studio-release/*.msi
             ${{ runner.temp }}/studio-release/*.exe
+            ${{ runner.temp }}/studio-release/*.cab
             ${{ runner.temp }}/studio-simple-release/*.msi
             ${{ runner.temp }}/studio-simple-release/*.exe
+            ${{ runner.temp }}/studio-simple-release/*.cab
           if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
     env:
       REQUIRE_OFFLINE_WSL: ${{ inputs.require_offline_wsl || false }}
       REQUIRE_RELEASE_READY_MODELS: ${{ inputs.require_release_ready_models || false }}

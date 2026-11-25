@@ -219,9 +219,12 @@ def _remap_drawings(path, lut, classes_before, classes_after, expected):
             document = MaskDocument.from_image(image, image.width, image.height, classes_before)
         if not document.shapes:          # 기록이 무효였거나 없으면 지킬 것도 없다
             return None
-        remap = lambda value: int(lut[int(value)])
-        key = lambda value: (f"base:{remap(value.split(':', 1)[1])}"
-                             if isinstance(value, str) and value.startswith("base:") else value)
+        def remap(value):
+            return int(lut[int(value)])
+
+        def key(value):
+            return (f"base:{remap(value.split(':', 1)[1])}"
+                    if isinstance(value, str) and value.startswith("base:") else value)
         shapes = []
         for shape in document.shapes:
             shape = dict(shape)
@@ -581,6 +584,14 @@ class ClassManager:
         if class_name.casefold() in {name.casefold() for name in project.data.class_names}:
             raise ValueError("이미 존재하는 클래스 이름입니다.")
         previous = list(project.data.class_names)
+        names = list(previous)
+        if project.task == "segment":
+            from core.project import segmentation_class_names
+            names = names or segmentation_class_names([])
+            if class_name.casefold() in {name.casefold() for name in names}:
+                raise ValueError("배경은 이미 자동 등록되어 있습니다. 전경 클래스 이름을 입력하세요.")
+            if len(names) >= 255:
+                raise ValueError("분할 클래스는 배경 포함 255개까지입니다. 255는 학습 제외 픽셀입니다.")
         previous_count, previous_modified = project.data.num_classes, project.modified
         created = []
         try:
@@ -591,7 +602,7 @@ class ClassManager:
                         raise ValueError(f"같은 이름의 데이터 폴더가 이미 존재합니다: {target}")
                     target.mkdir(parents=True)
                     created.append(target)
-            project.data.class_names = previous + [class_name]
+            project.data.class_names = names + [class_name]
             project.data.num_classes = len(project.data.class_names)
             ProjectManager.save(project)
         except Exception:

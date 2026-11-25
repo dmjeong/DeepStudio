@@ -27,6 +27,7 @@
 #include <limits>
 #include <utility>
 #include <nlohmann/json.hpp>
+#include "dense_tiles.h"
 #ifdef VISION_WITH_OPENVINO
 #include <openvino/openvino.hpp>
 #endif
@@ -67,6 +68,7 @@ struct VisionInference::ClassificationState
 VisionInference::VisionInference()
     : m_env(ORT_LOGGING_LEVEL_WARNING, "Vision")  // 로깅 레벨 설정
 {
+    m_env.DisableTelemetryEvents();
 }
 
 VisionInference::~VisionInference()
@@ -101,18 +103,35 @@ void ValidateConfig(const InferenceConfig& config)
         config.crop_width > 65536 || config.crop_height > 65536 ||
         ((config.crop_width == 0) != (config.crop_height == 0)))
         throw std::invalid_argument("Invalid center crop dimensions.");
-    if (config.backend != "custom" && config.backend != "builtin" && config.backend != "patchcore" &&
+    if (config.native_input && (config.patch_size || config.dense_tile ||
+            (config.crop_width && (config.crop_width != config.input_width || config.crop_height != config.input_height))))
+        throw std::invalid_argument("Native input dimensions conflict with crop or patch settings.");
+    if (config.backend != "custom" && config.backend != "builtin" && config.backend != "patchcore" && config.backend != "dinomaly" &&
         config.backend != "redetr_v4" && config.backend != "libreyolo_mobilenetv4" &&
-        config.backend != "libreyolo_yolo9" && config.backend != "libreyolo_rtdetrv4" &&
+        config.backend != "libreyolo_yolo9" && config.backend != "libreyolo_rtdetrv4" && config.backend != "libreyolo_dfine" &&
         !(config.backend == "efficientnet" && config.task == "classify"))
         throw std::invalid_argument("Unsupported deployment backend.");
-    if (config.backend == "patchcore" && config.task != "anomaly")
+    if ((config.backend == "patchcore" || config.backend == "dinomaly") && config.task != "anomaly")
         throw std::invalid_argument("PatchCore backend requires anomaly task.");
     if ((config.backend == "redetr_v4" || config.backend == "libreyolo_yolo9" ||
-         config.backend == "libreyolo_rtdetrv4") && config.task != "detect")
+         (config.backend == "libreyolo_rtdetrv4" || config.backend == "libreyolo_dfine")) && config.task != "detect")
         throw std::invalid_argument("Detection backend requires detect task.");
-    if (config.resize_mode != "stretch" || config.classification_output != "logits")
+    if ((config.resize_mode != "stretch" && !(config.backend == "libreyolo_yolo9" && config.resize_mode == "letterbox_top_left")) || config.classification_output != "logits")
         throw std::invalid_argument("Custom and EfficientNet models require stretch resize and logits.");
+    if (config.patch_size && (config.patch_size < 32 || config.patch_size > 4096 ||
+        config.patch_size != config.input_width || config.patch_size != config.input_height ||
+        config.patch_overlap != config.patch_size / 4 || !std::isfinite(config.patch_scale) ||
+        config.patch_scale < .1 || config.patch_scale > 1 || config.region_width ||
+        (config.task != "classify" && config.task != "detect")))
+        throw std::invalid_argument("Invalid native patch contract.");
+    if (config.dense_tile && (config.dense_tile < 32 || config.dense_tile > 4096 ||
+        config.dense_tile != config.input_width || config.dense_tile != config.input_height ||
+        config.dense_overlap < 0 || config.dense_overlap >= config.dense_tile ||
+        !std::isfinite(config.dense_scale) || config.dense_scale <= 0 || config.dense_scale > 1 ||
+        (config.dense_interpolation != cv::INTER_AREA && config.dense_interpolation != cv::INTER_LINEAR_EXACT) ||
+        config.patch_size || config.region_width ||
+        (config.task != "segment" && !(config.task == "anomaly" && config.backend == "dinomaly"))))
+        throw std::invalid_argument("Invalid dense tiling contract.");
     if (config.task != "classify" && config.task != "segment" &&
         config.task != "detect" && config.task != "anomaly")
         throw std::invalid_argument("Supported tasks: classify, segment, detect, anomaly.");
@@ -132,7 +151,7 @@ void ValidateConfig(const InferenceConfig& config)
             config.detection_box_encoding != "normalized_xyxy" &&
             config.detection_box_encoding != "pixel_xyxy")
             throw std::invalid_argument("Unsupported detection box encoding.");
-        const bool detr = config.backend == "redetr_v4" || config.backend == "libreyolo_rtdetrv4";
+        const bool detr = config.backend == "redetr_v4" || (config.backend == "libreyolo_rtdetrv4" || config.backend == "libreyolo_dfine");
         const bool yolo9 = config.backend == "libreyolo_yolo9";
         if ((!detr && !yolo9 && config.detection_objectness != "sigmoid") ||
             ((detr || yolo9) && config.detection_objectness != "none") ||
@@ -182,7 +201,10 @@ void ValidateOutput(const Ort::Value& output, const InferenceConfig& config, siz
         (rank == 3 && shape[1] <= 0) || (rank == 4 && (shape[2] <= 0 || shape[3] <= 0)))
         throw std::runtime_error("Model output does not match the deployment contract.");
     const float* values = output.GetTensorData<float>();
-    for (size_t i = 0; i < info.GetElementCount(); ++i)
+    // GetElementCount crosses the ORT C API. Query once, not once per pixel/class
+    // (26+ million calls for a full-resolution five-class segmentation output).
+    const size_t element_count = info.GetElementCount();
+    for (size_t i = 0; i < element_count; ++i)
         if (!std::isfinite(values[i]))
             throw std::runtime_error("Model returned non-finite values.");
 }
@@ -281,35 +303,34 @@ bool VisionInference::InitializeModel(const InferenceConfig& config, const dvs_c
         const auto output = output_type.GetTensorTypeAndShapeInfo();
         const auto out_shape = output.GetShape();
         const size_t rank = config.task == "classify" ? 2 : (config.task == "detect" ? 3 : 4);
-        if (config.backend == "patchcore") {
+        if (config.backend == "patchcore" || config.backend == "dinomaly") {
             if (session->GetOutputCount() != 2 || output.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
                 out_shape.size() != 1 || (out_shape[0] > 0 && out_shape[0] != 1))
                 throw std::invalid_argument("PatchCore score output does not match the deployment contract.");
-            const auto map = session->GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo();
+            const auto map_type = session->GetOutputTypeInfo(1);
+            const auto map = map_type.GetTensorTypeAndShapeInfo();
             const auto map_shape = map.GetShape();
-            // Some ONNX Runtime builds report a rank-0 type descriptor for a
-            // constant secondary output even though the runtime tensor has its
-            // declared shape.  Validate known metadata here and always repeat
-            // the complete contract check on the actual Run() result below.
+            // Keep TypeInfo alive while using its borrowed tensor descriptor.
+            // Validate available metadata, then repeat on the actual Run output.
             if (!map_shape.empty() &&
                 (map.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || map_shape.size() != 4 ||
                  map_shape[0] != 1 || (map_shape[1] > 0 && map_shape[1] != 1) ||
                  (map_shape[2] > 0 && map_shape[2] != config.input_height) ||
                  (map_shape[3] > 0 && map_shape[3] != config.input_width)))
                 throw std::invalid_argument("PatchCore map output does not match the deployment contract.");
-        } else if (config.backend == "redetr_v4" || config.backend == "libreyolo_rtdetrv4") {
+        } else if (config.backend == "redetr_v4" || (config.backend == "libreyolo_rtdetrv4" || config.backend == "libreyolo_dfine")) {
             if (session->GetOutputCount() != 2 || output.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
                 out_shape.size() != 3 || (out_shape[0] > 0 && out_shape[0] != 1))
                 throw std::invalid_argument("Re-DETR output does not match the deployment contract.");
-            const bool native_order = config.backend == "libreyolo_rtdetrv4";
-            const auto boxes = native_order ? session->GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo() : output;
-            const auto logits = native_order ? output : session->GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo();
+            const bool native_order = (config.backend == "libreyolo_rtdetrv4" || config.backend == "libreyolo_dfine");
+            const auto secondary_type = session->GetOutputTypeInfo(1);
+            const auto secondary = secondary_type.GetTensorTypeAndShapeInfo();
+            const auto boxes = native_order ? secondary : output;
+            const auto logits = native_order ? output : secondary;
             const auto boxes_shape = boxes.GetShape();
             const auto logits_shape = logits.GetShape();
-            // As with PatchCore's constant map output, some ORT builds expose
-            // no static type descriptor for a constant secondary output.  If
-            // metadata is known, validate it here; the runtime tensor is
-            // checked again in Detect() in all cases.
+            // The secondary descriptor borrows secondary_type above. Validate
+            // available metadata and always check actual tensors in Detect().
             if (!logits_shape.empty() &&
                 (logits.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || logits_shape.size() != 3 ||
                  (logits_shape[0] > 0 && logits_shape[0] != 1) ||
@@ -375,8 +396,8 @@ bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::s
         const auto path = std::filesystem::u8path(config_path);
         if (!doc.is_object()) throw std::invalid_argument("Configuration must be an object.");
         if (!doc.contains("schema_version") || !doc.at("schema_version").is_number_integer() ||
-            (doc.at("schema_version") != 5 && doc.at("schema_version") != 6))
-            throw std::invalid_argument("Re-export this model: supported schemas are 5 and 6.");
+            (doc.at("schema_version") != 5 && doc.at("schema_version") != 6 && doc.at("schema_version") != 7 && doc.at("schema_version") != 8))
+            throw std::invalid_argument("Re-export this model: supported schemas are 5, 6, 7 and 8.");
         if (doc.at("schema_version") == 6 &&
             (!doc.contains("onnxruntime") || !doc.at("onnxruntime").is_object() ||
              !doc.at("onnxruntime").contains("graph_optimization_level") || !doc.contains("num_threads")))
@@ -424,6 +445,23 @@ bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::s
         config.input_channels = integer("input_channels");
         config.input_height = integer("input_height");
         config.input_width = integer("input_width");
+        if (doc.contains("patches")) {
+            const auto& tile = doc.at("patches");
+            if (doc.at("schema_version") != 7 || !tile.is_object() || tile.size() != 8 ||
+                !tile.at("version").is_number_integer() || tile.at("version") != 1 ||
+                tile.at("task") != config.task || !tile.at("size").is_number_integer() ||
+                !tile.at("overlap").is_number_integer() || !tile.at("batch").is_number_integer() ||
+                !tile.at("scale").is_number() || tile.at("size").get<double>() < 32 ||
+                tile.at("size").get<double>() > 4096 || tile.at("overlap").get<double>() < 0 ||
+                tile.at("overlap").get<double>() > 1024 || tile.at("batch").get<double>() < 1 ||
+                tile.at("batch").get<double>() > 256 ||
+                tile.at("aggregation") != (config.task == "classify" ? "max_logits" : "class_aware_nms") ||
+                tile.at("evaluation_unit") != (config.task == "classify" ? "image" : "patch"))
+                throw std::invalid_argument("Invalid patch aggregation contract.");
+            config.patch_size = tile.at("size").get<int>();
+            config.patch_overlap = tile.at("overlap").get<int>();
+            config.patch_scale = tile.at("scale").get<double>();
+        }
         config.input_name = doc.at("input_name").get<std::string>();
         config.output_name = doc.at("output_name").get<std::string>();
         if (doc.contains("output_names")) {
@@ -467,8 +505,20 @@ bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::s
                 config.detection_objectness = post.value("objectness", config.backend == "redetr_v4" ? std::string("none") : std::string("sigmoid"));
                 config.detection_class_scores = post.value("class_scores", std::string("sigmoid"));
                 config.detection_confidence_threshold = post.value("confidence_threshold", 0.25f);
+                if (post.contains("validated_confidence_floor")) {
+                    const float floor = post.at("validated_confidence_floor").get<float>();
+                    if (!std::isfinite(floor) || floor < 0 || floor > 1 || config.detection_confidence_threshold < floor || post.value("max_detections", 300) > 300)
+                        throw std::invalid_argument("Detection threshold is below the export verification floor. Re-export and verify at the required threshold.");
+                }
                 config.detection_iou_threshold = post.value("iou_threshold", 0.5f);
                 config.detection_max_detections = post.value("max_detections", 300);
+                const auto selection = post.value("selection", std::string("query_argmax_nms"));
+                if (selection != "query_class_topk" && selection != "query_argmax_nms")
+                    throw std::invalid_argument("Unknown detection selection policy.");
+                config.detection_query_class_topk = selection == "query_class_topk";
+                if (config.detection_query_class_topk && (doc.at("schema_version") != 7 ||
+                    (config.backend != "libreyolo_rtdetrv4" && config.backend != "libreyolo_dfine")))
+                    throw std::invalid_argument("query_class_topk requires schema 7 native DETR.");
             }
             if (config.task == "anomaly")
                 config.anomaly_threshold = post.value("threshold", 0.0f);
@@ -511,6 +561,7 @@ bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::s
         if (doc.contains("preprocessing"))
         {
             const auto& prep = doc.at("preprocessing");
+            config.resize_mode = prep.value("resize_mode", std::string("stretch"));
             if (prep.is_object() && prep.contains("in_channels") &&
                 (!prep.at("in_channels").is_number_integer() ||
                  prep.at("in_channels").get<int64_t>() != config.input_channels))
@@ -525,6 +576,14 @@ bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::s
             if (!prep.contains("resize_implementation") || !prep.contains("antialias") ||
                 prep.value("interpolation", std::string()) != "INTER_LINEAR_EXACT")
                 throw std::invalid_argument("Schema 5 requires explicit resize metadata.");
+            if (prep.contains("original_size_region"))
+            {
+                const auto& size = prep.at("original_size_region");
+                if (size != nlohmann::json::array({config.input_width, config.input_height}) ||
+                    !size.at(0).is_number_integer() || !size.at(1).is_number_integer())
+                    throw std::invalid_argument("Native region must match ONNX input width and height.");
+                config.native_input = true;
+            }
             if (prep.contains("center_crop") && !prep.at("center_crop").is_null())
             {
                 const auto& crop = prep.at("center_crop");
@@ -574,6 +633,20 @@ bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::s
                 config.scaled_height = scaled.second;
                 config.region_interpolation = interpolation == "INTER_AREA" ? cv::INTER_AREA : cv::INTER_LINEAR_EXACT;
             }
+            if (prep.contains("tiling") && !prep.at("tiling").is_null() && !config.region_width) {
+                const auto& tile = prep.at("tiling");
+                if (doc.at("schema_version") != 8 || !tile.is_object() ||
+                    !tile.at("tile").is_number_integer() || !tile.at("overlap").is_number_integer() ||
+                    tile.value("blend", std::string()) != (config.task == "segment" ? "center_weighted_softmax" : "center_weighted_map"))
+                    throw std::invalid_argument("Dense tiles require schema 8 and an explicit blend policy.");
+                config.dense_tile = tile.at("tile").get<int>();
+                config.dense_overlap = tile.at("overlap").get<int>();
+                config.dense_scale = tile.value("scale", 1.0);
+                const auto interpolation = tile.value("interpolation", std::string("INTER_LINEAR_EXACT"));
+                if (interpolation != "INTER_AREA" && interpolation != "INTER_LINEAR_EXACT")
+                    throw std::invalid_argument("Unsupported dense interpolation.");
+                config.dense_interpolation = interpolation == "INTER_AREA" ? cv::INTER_AREA : cv::INTER_LINEAR_EXACT;
+            }
             if (config.backend == "patchcore" &&
                 (config.input_value_range != "uint8_0_255_or_uint16_0_65535" ||
                  prep.value("implementation", std::string()) != "opencv_full_range_v2"))
@@ -581,6 +654,11 @@ bool VisionInference::InitializeDocument(const nlohmann::json& doc, const std::s
         }
         if (!doc.contains("preprocessing"))
             throw std::invalid_argument("Schema 5 requires preprocessing metadata.");
+        if (config.backend == "dinomaly" &&
+            (doc.at("schema_version") != 8 || !doc.contains("postprocessing") ||
+             doc.at("postprocessing").value("score", std::string()) != "dinomaly_cosine_map_max_v1" ||
+             !std::isfinite(config.anomaly_threshold) || config.anomaly_threshold <= 0))
+            throw std::invalid_argument("Dinomaly requires schema 8, raw cosine map scores and a calibrated threshold.");
         return InitializeModel(config, package);
     }
     catch (const std::exception& e)
@@ -603,11 +681,11 @@ void VisionInference::Release()
 //  전처리
 // ═══════════════════════════════════════════════════
 
-std::vector<float> VisionInference::Preprocess(const cv::Mat& source)
+std::vector<float> VisionInference::Preprocess(const cv::Mat& source, bool apply_crop)
 {
     std::vector<float> tensor(static_cast<size_t>(m_config.input_channels) * m_config.input_height * m_config.input_width);
     cv::Mat converted, resized;
-    PreprocessInto(source, tensor.data(), tensor.size(), converted, resized);
+    PreprocessInto(source, tensor.data(), tensor.size(), converted, resized, apply_crop);
     return tensor;
 }
 
@@ -647,18 +725,8 @@ std::vector<float> VisionInference::PreprocessWholeRegion(const cv::Mat& region)
                    m_config.region_interpolation);
     else
         scaled = *pixels;
-    const int width = m_config.input_width, height = m_config.input_height;
-    const size_t plane = static_cast<size_t>(width) * height;
-    std::vector<float> tensor(plane * channels, 0.0f);
-    for (int y = 0; y < scaled.rows; ++y) {
-        const uint8_t* row = scaled.ptr<uint8_t>(y);
-        for (int x = 0; x < scaled.cols; ++x)
-            for (int c = 0; c < channels; ++c)
-                tensor[c * plane + static_cast<size_t>(y) * width + x] =
-                    (static_cast<float>(row[x * channels + c]) / 255.0f - m_config.normalize_mean[c]) /
-                    m_config.normalize_std[c];
-    }
-    return tensor;
+    return vision_preprocess::normalize_padded_u8(scaled, m_config.input_width, m_config.input_height,
+                                                 m_config.normalize_mean, m_config.normalize_std);
 }
 
 void VisionInference::ApplyDefectRules(cv::Mat& mask, const cv::Mat& scores, const cv::Size& output_size,
@@ -672,25 +740,18 @@ void VisionInference::ApplyDefectRules(cv::Mat& mask, const cv::Mat& scores, con
      *   모델 해상도에서 블록 넓이(row_h × col_w)를 가중치로 세면 원본에서 센 것과 같다.
      */
     cv::Mat work = mask, work_scores = scores;
-#if CV_VERSION_MAJOR > 4 || (CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR >= 5)
-    const int nearest = cv::INTER_NEAREST_EXACT;
-#else
-    const int nearest = cv::INTER_NEAREST;
-#endif
     // 모델 행·열마다 확대 뒤 몇 개의 원본 행·열이 되는지 (마스크 확대와 같은 보간으로 번호를 확대해 센다)
-    auto counts = [nearest](int source, int target) {
-        cv::Mat index(1, source, CV_32S), mapped;
-        for (int i = 0; i < source; ++i) index.at<int>(0, i) = i;
-        cv::resize(index, mapped, cv::Size(target, 1), 0, 0, nearest);
+    auto counts = [](int source, int target) {
+        const auto mapped = PreviewNearestIndices(source, target);
         std::vector<int> count(static_cast<size_t>(source), 0);
-        for (int i = 0; i < target; ++i) ++count[static_cast<size_t>(mapped.at<int>(0, i))];
+        for (int i : mapped) ++count[static_cast<size_t>(i)];
         return count;
     };
     std::vector<int> row_h = counts(work.rows, output_size.height), col_w = counts(work.cols, output_size.width);
     if (std::count(row_h.begin(), row_h.end(), 0) || std::count(col_w.begin(), col_w.end(), 0)) {
         // 원본이 모델 출력보다 작다(축소): 사라지는 모델 픽셀이 있어 원본 크기에서 그대로 센다
-        cv::resize(mask, work, output_size, 0, 0, nearest);
-        cv::resize(scores, work_scores, output_size, 0, 0, nearest);
+        work = ResizePreviewNearest(mask, output_size);
+        work_scores = ResizePreviewNearest(scores, output_size);
         row_h.assign(static_cast<size_t>(output_size.height), 1);
         col_w.assign(static_cast<size_t>(output_size.width), 1);
     }
@@ -741,10 +802,10 @@ void VisionInference::ApplyDefectRules(cv::Mat& mask, const cv::Mat& scores, con
 }
 
 void VisionInference::PreprocessInto(const cv::Mat& source, float* data, size_t count,
-                                   cv::Mat& converted, cv::Mat& resized)
+                                   cv::Mat& converted, cv::Mat& resized, bool apply_crop)
 {
     cv::Mat image = source;
-    if (m_config.crop_width > 0)
+    if (apply_crop && m_config.crop_width > 0)
     {
         if (source.cols < m_config.crop_width || source.rows < m_config.crop_height)
             throw std::invalid_argument("Center crop exceeds original image size.");
@@ -754,6 +815,8 @@ void VisionInference::PreprocessInto(const cv::Mat& source, float* data, size_t 
     }
     if (image.empty() || (image.depth() != CV_8U && image.depth() != CV_16U))
         throw std::invalid_argument("Input must be a nonempty 8-bit or uint16 image.");
+    if (m_config.native_input && (image.cols != m_config.input_width || image.rows != m_config.input_height))
+        throw std::invalid_argument("Input region dimensions differ from native-size training.");
     if (image.depth() == CV_16U && m_config.input_value_range != "uint8_0_255_or_uint16_0_65535")
         throw std::invalid_argument("Deployment input contract accepts 8-bit images only.");
     const int source_channels = image.channels();
@@ -767,6 +830,17 @@ void VisionInference::PreprocessInto(const cv::Mat& source, float* data, size_t 
     } else {
         cv::cvtColor(image, converted, source_channels == 1 ? cv::COLOR_GRAY2RGB :
                                       source_channels == 3 ? cv::COLOR_BGR2RGB : cv::COLOR_BGRA2RGB);
+    }
+    cv::Mat letterboxed;
+    if (m_config.resize_mode == "letterbox_top_left") {
+        const double ratio = std::min(double(m_config.input_width) / pixels->cols,
+                                      double(m_config.input_height) / pixels->rows);
+        const int width = std::max(1, int(pixels->cols * ratio));
+        const int height = std::max(1, int(pixels->rows * ratio));
+        letterboxed = cv::Mat(m_config.input_height, m_config.input_width, pixels->type(), cv::Scalar::all(114));
+        cv::Mat target = letterboxed(cv::Rect(0, 0, width, height));
+        cv::resize(*pixels, target, target.size(), 0, 0, cv::INTER_LINEAR_EXACT);
+        pixels = &letterboxed;
     }
     vision_preprocess::resize_normalize_into(*pixels, m_config.input_width, m_config.input_height,
         m_config.normalize_mean, m_config.normalize_std, data, count, resized);
@@ -897,7 +971,123 @@ cv::Mat VisionInference::ColorizeMask(const cv::Mat& mask, int num_classes)
 //  Classification 추론
 // ═══════════════════════════════════════════════════
 
+namespace {
+std::vector<int> PatchOrigins(int length, int size, int stride)
+{
+    std::vector<int> positions{0};
+    if (length <= size) return positions;
+    positions.clear();
+    for (int p = 0; p <= length - size; p += stride) positions.push_back(p);
+    if (positions.back() != length - size) positions.push_back(length - size);
+    return positions;
+}
+}
+
+cv::Mat VisionInference::PatchRegion(const cv::Mat& image, cv::Rect& roi) const
+{
+    if (image.empty() || image.depth() != CV_8U) throw std::invalid_argument("Patches require a nonempty uint8 image.");
+    roi = cv::Rect(0, 0, image.cols, image.rows);
+    if (m_config.crop_width) {
+        if (image.cols < m_config.crop_width || image.rows < m_config.crop_height)
+            throw std::invalid_argument("Center crop exceeds image.");
+        roi = cv::Rect((image.cols - m_config.crop_width) / 2, (image.rows - m_config.crop_height) / 2,
+                       m_config.crop_width, m_config.crop_height);
+    }
+    cv::Mat region = image(roi), scaled;
+    const cv::Size size(std::max(1, int(roi.width * m_config.patch_scale + .5)),
+                        std::max(1, int(roi.height * m_config.patch_scale + .5)));
+    if (size == region.size()) return region;
+    cv::resize(region, scaled, size, 0, 0, cv::INTER_AREA);
+    return scaled;
+}
+
 ClassifyResult VisionInference::Classify(const cv::Mat& image)
+{
+    if (!m_config.patch_size) return ClassifySingle(image, true);
+    if (!m_bInitialized || m_config.task != "classify") throw std::logic_error("Classification model not initialized.");
+    const auto start = std::chrono::steady_clock::now();
+    cv::Rect roi;
+    const cv::Mat region = PatchRegion(image, roi);
+    const int size = m_config.patch_size, stride = size - m_config.patch_overlap;
+    ClassifyResult result;
+    std::vector<float> combined(m_config.num_classes, -std::numeric_limits<float>::infinity());
+    cv::Mat tile(size, size, region.type());
+    for (int y : PatchOrigins(region.rows, size, stride)) {
+        for (int x : PatchOrigins(region.cols, size, stride)) {
+            const int width = std::min(size, region.cols - x), height = std::min(size, region.rows - y);
+            tile.setTo(cv::Scalar::all(114));
+            region(cv::Rect(x, y, width, height)).copyTo(tile(cv::Rect(0, 0, width, height)));
+            std::vector<float> logits;
+            const auto part = ClassifySingle(tile, false, &logits);
+            for (int c = 0; c < m_config.num_classes; ++c) combined[c] = std::max(combined[c], logits.at(c));
+            result.preprocess_ms += part.preprocess_ms;
+            result.model_ms += part.model_ms;
+            result.postprocess_ms += part.postprocess_ms;
+        }
+    }
+    result.probabilities = Softmax(combined);
+    result.class_id = int(std::max_element(combined.begin(), combined.end()) - combined.begin());
+    result.confidence = result.probabilities[result.class_id];
+    result.class_name = result.class_id < int(m_config.class_names.size()) ? m_config.class_names[result.class_id]
+        : "class_" + std::to_string(result.class_id);
+    result.inference_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    // Includes image crop/scale, tile copying and lock wait in this total.
+    result.preprocess_ms += std::max(0., result.inference_ms - result.preprocess_ms - result.model_ms - result.postprocess_ms);
+    return result;
+}
+
+DetectResult VisionInference::Detect(const cv::Mat& image)
+{
+    if (!m_config.patch_size) return DetectSingle(image, true);
+    if (!m_bInitialized || m_config.task != "detect") throw std::logic_error("Detection model not initialized.");
+    const auto start = std::chrono::steady_clock::now();
+    cv::Rect roi;
+    const cv::Mat region = PatchRegion(image, roi);
+    const int size = m_config.patch_size, stride = size - m_config.patch_overlap;
+    DetectResult result;
+    std::vector<Detection> candidates;
+    cv::Mat tile(size, size, region.type());
+    for (int y : PatchOrigins(region.rows, size, stride)) {
+        for (int x : PatchOrigins(region.cols, size, stride)) {
+            const int width = std::min(size, region.cols - x), height = std::min(size, region.rows - y);
+            tile.setTo(cv::Scalar::all(114));
+            region(cv::Rect(x, y, width, height)).copyTo(tile(cv::Rect(0, 0, width, height)));
+            const auto part = DetectSingle(tile, false);
+            result.preprocess_ms += part.preprocess_ms;
+            result.model_ms += part.model_ms;
+            result.postprocess_ms += part.postprocess_ms;
+            for (auto item : part.detections) {
+                item.x1 = std::clamp(item.x1, 0.f, float(width));
+                item.y1 = std::clamp(item.y1, 0.f, float(height));
+                item.x2 = std::clamp(item.x2, 0.f, float(width));
+                item.y2 = std::clamp(item.y2, 0.f, float(height));
+                if (item.x2 <= item.x1 || item.y2 <= item.y1) continue;
+                item.x1 = roi.x + (item.x1 + x) * roi.width / region.cols;
+                item.x2 = roi.x + (item.x2 + x) * roi.width / region.cols;
+                item.y1 = roi.y + (item.y1 + y) * roi.height / region.rows;
+                item.y2 = roi.y + (item.y2 + y) * roi.height / region.rows;
+                candidates.push_back(item);
+            }
+        }
+    }
+    std::stable_sort(candidates.begin(), candidates.end(), [](const Detection& a, const Detection& b) { return a.confidence > b.confidence; });
+    for (const auto& item : candidates) {
+        bool suppressed = false;
+        for (const auto& prior : result.detections)
+            if (item.class_id == prior.class_id && IntersectionOverUnion(item, prior) > m_config.detection_iou_threshold) {
+                suppressed = true; break;
+            }
+        if (!suppressed) {
+            result.detections.push_back(item);
+            if (int(result.detections.size()) >= m_config.detection_max_detections) break;
+        }
+    }
+    result.inference_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    result.postprocess_ms += std::max(0., result.inference_ms - result.preprocess_ms - result.model_ms - result.postprocess_ms);
+    return result;
+}
+
+ClassifyResult VisionInference::ClassifySingle(const cv::Mat& image, bool apply_crop, std::vector<float>* raw_logits)
 {
     ClassifyResult result;
     // ORT can accept independent Run calls, but these tensor buffers and the
@@ -921,7 +1111,7 @@ ClassifyResult VisionInference::Classify(const cv::Mat& image)
     if (m_openvino)
     {
 #ifdef VISION_WITH_OPENVINO
-        std::vector<float> input_tensor = Preprocess(image);
+        std::vector<float> input_tensor = Preprocess(image, apply_crop);
         auto tensor = m_openvino->request.get_input_tensor();
         std::copy(input_tensor.begin(), input_tensor.end(), tensor.data<float>());
         model_start = std::chrono::steady_clock::now();
@@ -938,7 +1128,7 @@ ClassifyResult VisionInference::Classify(const cv::Mat& image)
     else
     {
         auto& state = *m_classification;
-        PreprocessInto(image, state.input.data(), state.input.size(), state.converted, state.resized);
+        PreprocessInto(image, state.input.data(), state.input.size(), state.converted, state.resized, apply_crop);
         const char* input_names[] = {m_config.input_name.c_str()};
         const char* output_names[] = {m_config.output_name.c_str()};
         model_start = std::chrono::steady_clock::now();
@@ -952,6 +1142,7 @@ ClassifyResult VisionInference::Classify(const cv::Mat& image)
     inference_lock.unlock();
     if (logits.empty() || std::any_of(logits.begin(), logits.end(), [](float v) { return !std::isfinite(v); }))
         throw std::runtime_error("Invalid classification output.");
+    if (raw_logits) *raw_logits = logits;
     result.probabilities = Softmax(logits);
     // Avoid changing rank when FP32 softmax rounds unequal logits to a tie.
     result.class_id = static_cast<int>(std::max_element(logits.begin(), logits.end()) - logits.begin());
@@ -997,65 +1188,46 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
     if (m_config.task != "segment") throw std::logic_error("Segment requires a segmentation model.");
     auto start = std::chrono::steady_clock::now();
 
-    // ── 1. 전처리 ────────────────────────────────────
-    cv::Rect roi(0, 0, image.cols, image.rows);
+    cv::Rect roi(0,0,image.cols,image.rows);
     if (m_config.crop_width > 0)
-        roi = cv::Rect((image.cols-m_config.crop_width)/2, (image.rows-m_config.crop_height)/2,
-                       m_config.crop_width, m_config.crop_height);
-    const bool whole = m_config.region_width > 0;
-    if (whole && (roi.x < 0 || roi.y < 0 || roi.br().x > image.cols || roi.br().y > image.rows))
-        throw std::invalid_argument("Center crop exceeds original image size.");
-    // 판정 영역 한 번에: 중앙 크롭이 있으면 크롭한 영역이 판정 영역이다 (학습 데이터와 같은 영역)
-    std::vector<float> input_tensor = whole ? PreprocessWholeRegion(image(roi)) : Preprocess(image);
-
-    // ── 2. 입력 텐서 ─────────────────────────────────
-    std::vector<int64_t> input_shape = {
-        1, m_config.input_channels,
-        m_config.input_height, m_config.input_width
-    };
-
-    auto memory_info = Ort::MemoryInfo::CreateCpu(
-        OrtArenaAllocator, OrtMemTypeDefault
-    );
-
-    Ort::Value input_ort = Ort::Value::CreateTensor<float>(
-        memory_info,
-        input_tensor.data(),
-        input_tensor.size(),
-        input_shape.data(),
-        input_shape.size()
-    );
-
-    // ── 3. 추론 실행 ─────────────────────────────────
-    const char* input_names[] = { m_config.input_name.c_str() };
-    const char* output_names[] = { m_config.output_name.c_str() };
-
-    auto output_tensors = m_session->Run(
-        Ort::RunOptions{nullptr},
-        input_names, &input_ort, 1,
-        output_names, 1
-    );
-
-    // ── 4. 후처리 ────────────────────────────────────
-    ValidateOutput(output_tensors[0], m_config, 4);
-    float* output_data = output_tensors[0].GetTensorMutableData<float>();
-    auto output_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
-
-    // 출력 형태: (1, num_classes, H, W)
-    int out_classes = static_cast<int>(output_shape[1]);
-    int out_height = static_cast<int>(output_shape[2]);
-    int out_width = static_cast<int>(output_shape[3]);
+        roi=cv::Rect((image.cols-m_config.crop_width)/2,(image.rows-m_config.crop_height)/2,m_config.crop_width,m_config.crop_height);
+    if (image.empty() || roi.x<0 || roi.y<0 || roi.br().x>image.cols || roi.br().y>image.rows)
+        throw std::invalid_argument("Invalid segmentation image / center crop.");
+    const bool whole=m_config.region_width>0, tiled=m_config.dense_tile>0;
+    DenseOutput dense;
+    std::vector<float> input_tensor;
+    if (!tiled) input_tensor=whole?PreprocessWholeRegion(image(roi)):Preprocess(image);
+    const auto model_start=std::chrono::steady_clock::now();
+    std::vector<Ort::Value> output_tensors;
+    if (tiled) dense=DenseTiles(image(roi),m_config,*m_session,true);
+    else {
+        const std::vector<int64_t> input_shape{1,m_config.input_channels,m_config.input_height,m_config.input_width};
+        auto memory_info=Ort::MemoryInfo::CreateCpu(OrtArenaAllocator,OrtMemTypeDefault);
+        auto input=Ort::Value::CreateTensor<float>(memory_info,input_tensor.data(),input_tensor.size(),input_shape.data(),input_shape.size());
+        const char* input_names[]={m_config.input_name.c_str()};
+        const char* output_names[]={m_config.output_name.c_str()};
+        output_tensors=m_session->Run(Ort::RunOptions{nullptr},input_names,&input,1,output_names,1);
+    }
+    const auto model_end=std::chrono::steady_clock::now();
+    if (!tiled) ValidateOutput(output_tensors[0],m_config,4);
+    const auto validation_end=std::chrono::steady_clock::now();
+    const float* output_data=tiled?dense.values.data():output_tensors[0].GetTensorData<float>();
+    const auto output_shape=tiled?std::vector<int64_t>{1,m_config.num_classes,dense.height,dense.width}:
+        output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
+    int out_classes=static_cast<int>(output_shape[1]);
+    int out_height=static_cast<int>(output_shape[2]);
+    int out_width=static_cast<int>(output_shape[3]);
 
     // Argmax 마스크 생성 (판정 영역 한 번에 모델: 0으로 채운 오른쪽·아래는 잘라 낸다)
     const int valid_height = whole ? std::min(m_config.scaled_height, out_height) : out_height;
     const int valid_width = whole ? std::min(m_config.scaled_width, out_width) : out_width;
-    cv::Mat seg_mask;
+    cv::Mat seg_mask, scores;
     if (!whole && m_config.defect_rules.empty()) {
         seg_mask = ArgmaxMask(output_data, out_classes, out_height, out_width);
     } else {
         // 판정 기준에는 픽셀마다 이긴 클래스의 softmax 확률이 필요하다
         seg_mask.create(valid_height, valid_width, CV_8UC1);
-        cv::Mat scores(valid_height, valid_width, CV_32F);
+        scores.create(valid_height, valid_width, CV_32F);
         const size_t plane = static_cast<size_t>(out_height) * out_width;
         for (int h = 0; h < valid_height; ++h) {
             uchar* label = seg_mask.ptr<uchar>(h);
@@ -1068,32 +1240,31 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
                     if (pixel[c * plane] > best_value) { best_value = pixel[c * plane]; best = c; }
                 label[w] = static_cast<uchar>(best);
                 if (m_config.defect_rules.empty()) continue;
-                double sum = 0.0;
-                for (int c = 0; c < out_classes; ++c) sum += std::exp(static_cast<double>(pixel[c * plane] - best_value));
-                probability[w] = static_cast<float>(1.0 / sum);
-            }
-        }
-        if (!m_config.defect_rules.empty()) {
-            ApplyDefectRules(seg_mask, scores, roi.size(), result);
-            for (auto& defect : result.defects) {  // 크롭 좌표 → 원본 좌표 (데스크톱 결함 목록과 같은 기준)
-                defect.box.x += roi.x;
-                defect.box.y += roi.y;
+                if (tiled) probability[w] = best_value;
+                else {
+                    double sum = 0.0;
+                    for (int c = 0; c < out_classes; ++c) sum += std::exp(static_cast<double>(pixel[c * plane] - best_value));
+                    probability[w] = static_cast<float>(1.0 / sum);
+                }
             }
         }
     }
+    const auto decode_end = std::chrono::steady_clock::now();
+    if (!m_config.defect_rules.empty()) {
+        ApplyDefectRules(seg_mask, scores, roi.size(), result);
+        for (auto& defect : result.defects) {  // 크롭 좌표 → 원본 좌표 (데스크톱 결함 목록과 같은 기준)
+            defect.box.x += roi.x;
+            defect.box.y += roi.y;
+        }
+    }
+    scores.release();  // Retain the original lifetime: release probability storage before rendering.
+    const auto rules_end = std::chrono::steady_clock::now();
 
     // 원본 이미지 크기로 리사이즈
     if (seg_mask.size() != roi.size())
     {
-        // 클래스 번호는 보간하지 않는다. INTER_NEAREST_EXACT는 픽셀 중심 기준이라
-        // Python 미리보기(PIL NEAREST)·학습 마스크와 같은 격자를 쓴다. INTER_NEAREST는
-        // 정수배가 아닌 크기(예: 512→1920×1080)에서 경계 픽셀이 다른 클래스로 밀린다.
-#if CV_VERSION_MAJOR > 4 || (CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR >= 5)
-        const int mask_interpolation = cv::INTER_NEAREST_EXACT;
-#else
-        const int mask_interpolation = cv::INTER_NEAREST;  // OpenCV 4.5 미만 호환
-#endif
-        cv::resize(seg_mask, seg_mask, roi.size(), 0, 0, mask_interpolation);
+        // Same nearest mapping as the desktop preview and defect area counts.
+        seg_mask = ResizePreviewNearest(seg_mask, roi.size());
     }
 
     result.mask = cv::Mat::zeros(image.size(), CV_8UC1);
@@ -1118,9 +1289,23 @@ SegmentResult VisionInference::Segment(const cv::Mat& image)
 
     // 소요 시간
     auto end = std::chrono::steady_clock::now();
-    result.inference_ms = std::chrono::duration<double, std::milli>(
-        end - start
-    ).count();
+    const auto milliseconds = [](auto from, auto to) {
+        return std::chrono::duration<double, std::milli>(to - from).count();
+    };
+    result.preprocess_ms = milliseconds(start, model_start);
+    result.model_ms = milliseconds(model_start, model_end);
+    result.validation_ms = milliseconds(model_end, validation_end);
+    result.decode_ms = milliseconds(validation_end, decode_end);
+    result.rules_ms = milliseconds(decode_end, rules_end);
+    result.render_ms = milliseconds(rules_end, end);
+    result.postprocess_ms = milliseconds(model_end, end);
+    if (tiled) {
+        result.preprocess_ms += dense.preprocess_ms;
+        result.model_ms = dense.model_ms;
+        result.postprocess_ms += dense.postprocess_ms;
+        result.decode_ms += dense.postprocess_ms;
+    }
+    result.inference_ms = milliseconds(start, end);
 
     return result;
 }
@@ -1148,13 +1333,13 @@ float VisionInference::IntersectionOverUnion(const Detection& left, const Detect
     return denominator > 0.0f ? intersection / denominator : 0.0f;
 }
 
-DetectResult VisionInference::Detect(const cv::Mat& image)
+DetectResult VisionInference::DetectSingle(const cv::Mat& image, bool apply_crop)
 {
     DetectResult result;
     if (!m_bInitialized) throw std::logic_error("Model is not initialized.");
     if (m_config.task != "detect") throw std::logic_error("Detect requires a detection model.");
     const auto start = std::chrono::steady_clock::now();
-    const auto input_tensor = Preprocess(image);
+    const auto input_tensor = Preprocess(image, apply_crop);
     const auto preprocess_end = std::chrono::steady_clock::now();
     const std::vector<int64_t> input_shape{1, m_config.input_channels,
                                            m_config.input_height, m_config.input_width};
@@ -1173,11 +1358,11 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
     const float* boxes = nullptr;
     const float* scores = nullptr;
     int64_t candidates = 0;
-    const bool detr_backend = m_config.backend == "redetr_v4" || m_config.backend == "libreyolo_rtdetrv4";
+    const bool detr_backend = m_config.backend == "redetr_v4" || (m_config.backend == "libreyolo_rtdetrv4" || m_config.backend == "libreyolo_dfine");
     const bool yolo9_backend = m_config.backend == "libreyolo_yolo9";
     if (detr_backend) {
         if (outputs.size() != 2) throw std::runtime_error("Re-DETR output count mismatch.");
-        const bool native_order = m_config.backend == "libreyolo_rtdetrv4";
+        const bool native_order = (m_config.backend == "libreyolo_rtdetrv4" || m_config.backend == "libreyolo_dfine");
         const auto box_info = outputs[native_order ? 1 : 0].GetTensorTypeAndShapeInfo();
         const auto box_shape = box_info.GetShape();
         const auto logit_info = outputs[native_order ? 0 : 1].GetTensorTypeAndShapeInfo();
@@ -1191,9 +1376,11 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
         boxes = outputs[native_order ? 1 : 0].GetTensorData<float>();
         scores = outputs[native_order ? 0 : 1].GetTensorData<float>();
         candidates = box_shape[1];
-        for (size_t index = 0; index < logit_info.GetElementCount(); ++index)
+        const size_t score_count = logit_info.GetElementCount();
+        const size_t box_count = box_info.GetElementCount();
+        for (size_t index = 0; index < score_count; ++index)
             if (!std::isfinite(scores[index])) throw std::runtime_error("Re-DETR returned non-finite scores.");
-        for (size_t index = 0; index < box_info.GetElementCount(); ++index)
+        for (size_t index = 0; index < box_count; ++index)
             if (!std::isfinite(boxes[index])) throw std::runtime_error("Re-DETR returned non-finite boxes.");
     } else {
         if (outputs.size() != 1) throw std::runtime_error("Detection output count mismatch.");
@@ -1208,14 +1395,17 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
         candidates = yolo9_backend ? shape[2] : shape[1];
     }
     const int stride = 5 + m_config.num_classes;
-    const int roi_width = m_config.crop_width > 0 ? m_config.crop_width : image.cols;
-    const int roi_height = m_config.crop_height > 0 ? m_config.crop_height : image.rows;
-    const int roi_x = m_config.crop_width > 0 ? (image.cols - m_config.crop_width) / 2 : 0;
-    const int roi_y = m_config.crop_height > 0 ? (image.rows - m_config.crop_height) / 2 : 0;
+    const int roi_width = apply_crop && m_config.crop_width > 0 ? m_config.crop_width : image.cols;
+    const int roi_height = apply_crop && m_config.crop_height > 0 ? m_config.crop_height : image.rows;
+    const int roi_x = apply_crop && m_config.crop_width > 0 ? (image.cols - m_config.crop_width) / 2 : 0;
+    const int roi_y = apply_crop && m_config.crop_height > 0 ? (image.rows - m_config.crop_height) / 2 : 0;
     std::vector<Detection> candidates_to_keep;
     candidates_to_keep.reserve(static_cast<size_t>(candidates));
-    for (int64_t index = 0; index < candidates; ++index)
+    const bool topk = m_config.detection_query_class_topk;
+    const int64_t iterations = topk ? candidates * m_config.num_classes : candidates;
+    for (int64_t k = 0; k < iterations; ++k)
     {
+        const int64_t index = topk ? k / m_config.num_classes : k;
         const float* row = boxes + index * (detr_backend ? 4 : stride);
         const auto yolo9_value = [&](int channel) { return boxes[channel * candidates + index]; };
         const float objectness = (detr_backend || yolo9_backend) && m_config.detection_objectness == "none"
@@ -1230,7 +1420,9 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
             for (int cls = 0; cls < m_config.num_classes; ++cls)
                 score_sum += std::exp(scores[index * m_config.num_classes + cls] - score_max);
         }
-        for (int cls = 0; cls < m_config.num_classes; ++cls)
+        const int cls_start = topk ? int(k % m_config.num_classes) : 0;
+        const int cls_end = topk ? cls_start + 1 : m_config.num_classes;
+        for (int cls = cls_start; cls < cls_end; ++cls)
         {
             const float raw_score = detr_backend ? scores[index * m_config.num_classes + cls]
                 : yolo9_backend ? yolo9_value(4 + cls) : row[5 + cls];
@@ -1240,15 +1432,19 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
             if (score > best_class) { best_class = score; class_id = cls; }
         }
         const float confidence = objectness * best_class;
-        if (!std::isfinite(confidence) || confidence < m_config.detection_confidence_threshold)
+        if (!std::isfinite(confidence) || confidence <= m_config.detection_confidence_threshold)
             continue;
         float x1, y1, x2, y2;
         if (yolo9_backend)
         {
-            x1 = yolo9_value(0) / m_config.input_width;
-            y1 = yolo9_value(1) / m_config.input_height;
-            x2 = yolo9_value(2) / m_config.input_width;
-            y2 = yolo9_value(3) / m_config.input_height;
+            const double ratio = std::min(double(m_config.input_width) / roi_width,
+                                          double(m_config.input_height) / roi_height);
+            const float denom_x = m_config.resize_mode == "letterbox_top_left" ? float(roi_width * ratio) : float(m_config.input_width);
+            const float denom_y = m_config.resize_mode == "letterbox_top_left" ? float(roi_height * ratio) : float(m_config.input_height);
+            x1 = yolo9_value(0) / denom_x;
+            y1 = yolo9_value(1) / denom_y;
+            x2 = yolo9_value(2) / denom_x;
+            y2 = yolo9_value(3) / denom_y;
         }
         else if (m_config.detection_box_encoding == "normalized_cxcywh")
         {
@@ -1278,7 +1474,7 @@ DetectResult VisionInference::Detect(const cv::Mat& image)
     {
         bool suppressed = false;
         for (const auto& selected : result.detections)
-            if (candidate.class_id == selected.class_id &&
+            if (!topk && candidate.class_id == selected.class_id &&
                 IntersectionOverUnion(candidate, selected) > m_config.detection_iou_threshold)
             { suppressed = true; break; }
         if (!suppressed) {
@@ -1300,6 +1496,28 @@ AnomalyResult VisionInference::Anomaly(const cv::Mat& image)
     if (!m_bInitialized) throw std::logic_error("Model is not initialized.");
     if (m_config.task != "anomaly") throw std::logic_error("Anomaly requires an anomaly model.");
     const auto start = std::chrono::steady_clock::now();
+    if (m_config.dense_tile) {
+        cv::Rect roi(0,0,image.cols,image.rows);
+        if (m_config.crop_width>0) roi=cv::Rect((image.cols-m_config.crop_width)/2,(image.rows-m_config.crop_height)/2,
+                                               m_config.crop_width,m_config.crop_height);
+        if (image.empty() || roi.x<0 || roi.y<0 || roi.br().x>image.cols || roi.br().y>image.rows)
+            throw std::invalid_argument("Invalid anomaly image / center crop.");
+        auto dense=DenseTiles(image(roi),m_config,*m_session,false);
+        cv::Mat map(dense.height,dense.width,CV_32F,dense.values.data()), resized;
+        double maximum=0;
+        cv::minMaxLoc(map,nullptr,&maximum);
+        result.score=static_cast<float>(maximum);
+        cv::resize(map,resized,roi.size(),0,0,cv::INTER_LINEAR);
+        result.anomaly_map=cv::Mat::zeros(image.size(),CV_32F);
+        resized.copyTo(result.anomaly_map(roi));
+        result.threshold=m_config.anomaly_threshold;
+        result.anomalous=result.score>=result.threshold;
+        result.inference_ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+        result.preprocess_ms=dense.preprocess_ms;
+        result.model_ms=dense.model_ms;
+        result.postprocess_ms=result.inference_ms-result.preprocess_ms-result.model_ms;
+        return result;
+    }
     const auto input_tensor = Preprocess(image);
     const auto preprocess_end = std::chrono::steady_clock::now();
     const std::vector<int64_t> input_shape{1, m_config.input_channels,
@@ -1317,7 +1535,7 @@ AnomalyResult VisionInference::Anomaly(const cv::Mat& image)
                                   output_names.data(), output_names.size());
     const auto model_end = std::chrono::steady_clock::now();
     cv::Mat input_map;
-    if (m_config.backend == "patchcore") {
+    if (m_config.backend == "patchcore" || m_config.backend == "dinomaly") {
         const auto score_shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
         const auto score_type = outputs[0].GetTensorTypeAndShapeInfo().GetElementType();
         const auto map_shape = outputs[1].GetTensorTypeAndShapeInfo().GetShape();
@@ -1331,8 +1549,11 @@ AnomalyResult VisionInference::Anomaly(const cv::Mat& image)
         const int map_width = static_cast<int>(map_shape[3]);
         input_map = cv::Mat(map_height, map_width, CV_32FC1);
         const float* map_data = outputs[1].GetTensorData<float>();
+        for (size_t i = 0; i < static_cast<size_t>(map_height) * map_width; ++i)
+            if (!std::isfinite(map_data[i])) throw std::runtime_error("Anomaly map contains NaN/Inf.");
         std::memcpy(input_map.data, map_data, static_cast<size_t>(map_height) * map_width * sizeof(float));
         result.score = outputs[0].GetTensorData<float>()[0];
+        if (!std::isfinite(result.score)) throw std::runtime_error("Anomaly score contains NaN/Inf.");
     } else {
         ValidateOutput(outputs[0], m_config, 4);
         const auto shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
@@ -1359,7 +1580,7 @@ AnomalyResult VisionInference::Anomaly(const cv::Mat& image)
     cv::resize(input_map, resized, cv::Size(roi_width, roi_height), 0, 0, cv::INTER_LINEAR);
     result.anomaly_map = cv::Mat::zeros(image.size(), CV_32FC1);
     resized.copyTo(result.anomaly_map(cv::Rect(roi_x, roi_y, roi_width, roi_height)));
-    if (m_config.backend != "patchcore") {
+    if (m_config.backend != "patchcore" && m_config.backend != "dinomaly") {
         double maximum = 0.0;
         cv::minMaxLoc(result.anomaly_map, nullptr, &maximum);
         result.score = static_cast<float>(maximum);

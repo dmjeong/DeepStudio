@@ -69,6 +69,15 @@ def load_backbone_weights(backbone, path, name):
         if tensor.shape != expected[normalized].shape or not torch.isfinite(tensor).all():
             raise ValueError(f"백본 가중치 크기/값 불일치: {normalized}")
         loaded[normalized] = tensor
+    loaded_count = len(loaded)
+    # Older torchvision ResNet weights predate this training-only BN counter.
+    # PyTorch defaults it to zero during deserialization. The frozen PatchCore
+    # backbone still requires both running_mean and running_var at inference.
+    for module_name, module in backbone.named_modules():
+        if isinstance(module, nn.BatchNorm2d) and module.track_running_stats:
+            key = (module_name + "." if module_name else "") + "num_batches_tracked"
+            if key in expected and key not in loaded:
+                loaded[key] = torch.zeros_like(expected[key])
     missing = sorted(set(expected) - set(loaded))
     if missing:
         raise ValueError(f"{name} 백본 가중치 누락 {len(missing)}개: {', '.join(missing[:5])}\n"
@@ -79,4 +88,4 @@ def load_backbone_weights(backbone, path, name):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return {"kind": "local_backbone", "name": path.name, "sha256": digest.hexdigest(),
-            "backbone": name, "loaded_tensors": len(loaded)}
+            "backbone": name, "loaded_tensors": loaded_count}

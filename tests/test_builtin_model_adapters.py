@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "python"))
         ("convnext_v1_tiny", "classify", (1, 3, 32, 32)),
         ("deeplabv3plus_resnet34", "segment", (1, 3, 64, 64)),
         ("unet_resnet18", "segment", (1, 3, 64, 64)),
+        ("dinov2_vits14", "segment", (1, 1, 57, 71)),
     ],
 )
 def test_builtin_models_are_constructible_without_pretrained_download(model_id, task, shape):
@@ -48,6 +49,7 @@ def test_builtin_models_are_constructible_without_pretrained_download(model_id, 
         ("convnext_v1_tiny", "features.7"),
         ("deeplabv3plus_resnet34", "layer4"),
         ("unet_resnet18", "enc4"),
+        ("dinov2_vits14", "fusion"),
     ],
 )
 def test_builtin_model_runtime_contract_supports_gradcam(model_id, target_layer):

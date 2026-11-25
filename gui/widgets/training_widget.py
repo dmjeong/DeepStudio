@@ -7,12 +7,15 @@ from dataclasses import asdict
 from pathlib import Path
 import numpy as np
 from PySide6.QtWidgets import QWidget, QFileDialog, QMessageBox
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtGui import QTextCursor
 
-from core.project import ProjectData, ProjectManager
+from core.project import ProjectData, ProjectManager, TrainingConfig
+from core.best_metrics import (best_epoch_metrics, display_metrics, metric_label, saved_detection_evaluation,
+                               selection_value_for_display)
 from core.qt_training import TrainWorker, PatchCoreWorker
 from core.training_modes import (training_engine_name, training_capabilities, MODE_LABELS,
-                                 BUILTIN_ADAPTER_IDS, BUILTIN_SCRATCH_ONLY_IDS, UPSTREAM_ADAPTER_IDS,
+                                 BUILTIN_ADAPTER_IDS, BUILTIN_SCRATCH_ONLY_IDS, LOCAL_TRANSFORMER_TEACHERS, UPSTREAM_ADAPTER_IDS,
                                  SAM2_ADAPTER_IDS)
 from core.training_progress import remaining_seconds, run_description
 from core.training_time import format_hms
@@ -56,13 +59,14 @@ class TrainingWidget(TrainingForm, QWidget):
         └──────────────────────┴─────────┴──────────┴──────────┘
         """
         is_anomaly = self.project is not None and self.project.task == "anomaly"
-        mode = "custom" if is_anomaly else self.mode_combo.currentData()
-        self.mode_group.setVisible(not is_anomaly)
+        is_dinomaly = self.model_id_combo.currentData() == "dinomaly_vits14"
+        mode = "custom" if is_anomaly and not is_dinomaly else self.mode_combo.currentData()
+        self.mode_group.setVisible(not is_anomaly or is_dinomaly)
         # 모델 피커: 파인튜닝에서만
         self.efficientnet_frame.setVisible(str(mode).startswith("efficientnet") and mode != "efficientnet_resume")
         self.efficientnet_model_combo.setEnabled(mode != "efficientnet_resume")
         # 이전 모델 경로: 이어학습에서만
-        self.resume_frame.setVisible(mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+        self.resume_frame.setVisible(mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer", "builtin_resume",
                                               "upstream_resume", "upstream_transfer", "sam2_transfer"})
         from core.training_modes import MODE_HELP
         help_text = MODE_HELP.get(mode, "지원하지 않는 학습 모드입니다. 현재 엔진을 선택하세요.")
@@ -72,6 +76,18 @@ class TrainingWidget(TrainingForm, QWidget):
             help_text = "Settings에서 추가한 모델의 .dvmodel 팩에 포함된 학습 코드와 가중치를 사용합니다."
             if not self._selected_container_spec()[1]:
                 help_text = "선택한 추가 모델 팩이 설치되지 않았습니다. Settings에서 .dvmodel을 설치하세요."
+        elif self.project is not None:
+            from builtin_assets import builtin_asset_path, required_pretrained_asset
+            asset = required_pretrained_asset(
+                self.project.task, str(mode), self.model_id_combo.currentData() or "",
+                efficientnet_model=self.efficientnet_model_combo.currentData() or "efficientnet_b0")
+            if asset:
+                try:
+                    path = builtin_asset_path(asset, verify=False)
+                    help_text += f"\n기본 가중치 파일 있음: {path.name} (학습 시작 시 무결성 검사)"
+                except (OSError, ValueError, RuntimeError):
+                    help_text += (f"\n기본 가중치 준비 필요: {asset}. "
+                                  "Python 실행은 gui/prepare_model_weights.bat을 먼저 실행하세요.")
         self.mode_help.setText(help_text)
         self.hp_group.setEnabled(True)
         self.aug_group.setEnabled(mode not in {"efficientnet_resume"})
@@ -92,17 +108,32 @@ class TrainingWidget(TrainingForm, QWidget):
         """Only offer initialization paths that belong to the selected model."""
         model_id = self.model_id_combo.currentData() or ""
         name = self.model_id_combo.currentText()
-        if model_id in BUILTIN_SCRATCH_ONLY_IDS:
+        if model_id == "dinomaly_vits14":
+            choices = [("builtin_finetune", "DINOv2 기본 가중치 + 새 재구성기"),
+                       ("builtin_transfer", "로컬 Dinomaly / DINOv2 가중치로 시작"),
+                       ("builtin_resume", "중단한 Dinomaly 학습 재개")]
+            self.mode_desc.setText("정상 이미지만 에폭 학습. 인코더는 고정하고 재구성기를 학습합니다.")
+        elif model_id in LOCAL_TRANSFORMER_TEACHERS:
+            choices = [("builtin_scratch", f"{name} 처음부터 학습"),
+                       ("builtin_transfer", f"{name} 로컬 가중치로 추가 학습"),
+                       ("builtin_resume", f"{name} 중단한 학습 재개")]
+            if model_id == "mask2former_swin_small":
+                choices.insert(0, ("builtin_finetune", f"{name} Swin-Small ImageNet 백본으로 시작"))
+            self.mode_desc.setText("프로젝트 마스크로 교사를 학습합니다. 사용 권한이 있는 같은 구조의 "
+                                   "Hugging Face 가중치 또는 DeepStudio 체크포인트로 시작할 수 있습니다.")
+        elif model_id in BUILTIN_SCRATCH_ONLY_IDS:
             # 사전학습 가중치가 없는 모델: 고를 수 없는 '사전학습으로 시작'은 보여 주지 않는다
             choices = [("builtin_scratch", f"{name} 처음부터 학습"),
                        ("builtin_transfer", f"{name} 이전 학습 결과(.pt)로 이어서")]
-            self.mode_desc.setText(f"선택 모델: {name}\n사전학습 가중치 없음 — 라이선스 걱정 없이 내 데이터로만 학습합니다.")
+            self.mode_desc.setText(f"선택 모델: {name}\n기본 사전학습 파일은 제공하지 않습니다. 내 데이터로 학습하거나 이전 학습 결과를 불러옵니다.")
         elif model_id in BUILTIN_ADAPTER_IDS:
-            source = "LVD-142M" if model_id.startswith("dinov2_") else "ImageNet"  # DINOv2는 자기지도 사전학습
+            source = ("WebLI" if model_id.startswith("siglip2_") else
+                      "LVD-142M" if model_id.startswith(("dinov2_", "eomt_")) else "ImageNet")
             choices = [("builtin_finetune", f"{name} {source} 가중치로 시작"),
                        ("builtin_transfer", f"{name} 로컬 가중치로 시작"),
-                       ("builtin_scratch", f"{name} 처음부터 학습")]
-            scope = "분류 모델" if self.project.task == "classify" else "백본 (분할 헤드는 새로 학습)"
+                       ("builtin_scratch", f"{name} 처음부터 학습"),
+                       ("builtin_resume", f"{name} 중단한 학습 재개")]
+            scope = "백본 (프로젝트 클래스용 헤드는 새로 학습)"
             self.mode_desc.setText(f"선택 모델: {name}\n사전학습 범위: {scope}")
         elif model_id.startswith("efficientnet_") or (not model_id and self.project.task == "classify"):
             choices = [(key, MODE_LABELS[key]) for key in
@@ -134,7 +165,7 @@ class TrainingWidget(TrainingForm, QWidget):
             self.mode_combo.setCurrentIndex(max(0, self.mode_combo.findData(preferred)))
         finally:
             self.mode_combo.blockSignals(False)
-        self.mode_combo.setEnabled(self.project.task not in {"anomaly", "obb"} and len(choices) > 1)
+        self.mode_combo.setEnabled((self.project.task not in {"anomaly", "obb"} or model_id == "dinomaly_vits14") and len(choices) > 1)
 
     def _set_model_options(self, project):
         """Filter the shared catalog to the current task and restore model_id."""
@@ -149,6 +180,8 @@ class TrainingWidget(TrainingForm, QWidget):
             for spec in registry.list(project.task, surface="desktop"):
                 self.model_id_combo.addItem(
                     spec.display_name, spec.model_id)
+            if project.task == "detect":
+                self.model_id_combo.addItem("Custom CSP", "")
             if model_id and self.model_id_combo.findData(model_id) < 0:
                 self.model_id_combo.addItem(f"저장된 모델 팩 · {model_id}", model_id)
             index = self.model_id_combo.findData(model_id)
@@ -225,6 +258,23 @@ class TrainingWidget(TrainingForm, QWidget):
                 self.resume_edit.clear()
                 self.weights_edit.clear()
         self._displayed_model_id = model_id
+        mask2former = model_id == "mask2former_swin_small"
+        if not mask2former and self.patience_spin.value() == 0:
+            # Switching models must not turn "off" into a one-epoch patience.
+            self.patience_spin.setValue(self.project.training.early_stop_patience or TrainingConfig.early_stop_patience)
+        self.patience_spin.setMinimum(0 if mask2former else 1)
+        self.patience_spin.setSpecialValueText("0 (사용 안 함)" if mask2former else "")
+        self.patience_spin.setToolTip(
+            "Mask2Former는 초기에 검증 손실이 줄어도 mIoU가 한동안 같을 수 있습니다. "
+            "0이면 조기 종료 없이 설정한 에폭까지 학습합니다." if mask2former else "")
+        if self.project.task == "anomaly":
+            method = "dinomaly" if model_id == "dinomaly_vits14" else "patchcore"
+            self.anomaly_method_combo.blockSignals(True)
+            self.anomaly_method_combo.setCurrentIndex(self.anomaly_method_combo.findData(method))
+            self.anomaly_method_combo.blockSignals(False)
+            self.anomaly_method_combo.setEnabled(model_id != "dinomaly_vits14")
+            self.project.training.anomaly_method = method
+
         # The selected catalog ID is the source of truth for the worker too.
         self.project.model.model_id = model_id
         try:
@@ -457,71 +507,55 @@ class TrainingWidget(TrainingForm, QWidget):
         if not hasattr(self, "tl_group"):
             return
         is_anomaly = self.project is not None and self.project.task == "anomaly"
-        is_pc = is_anomaly and self.anomaly_method_combo.currentData() == "patchcore"
-        resume = not is_anomaly and self.mode_combo.currentData() in {"efficientnet_resume"}
+        is_dinomaly = self.model_id_combo.currentData() == "dinomaly_vits14"
+        if is_anomaly and not is_dinomaly and self.anomaly_method_combo.currentData() == "dinomaly":
+            self.model_id_combo.setCurrentIndex(self.model_id_combo.findData("dinomaly_vits14"))
+            return
+        is_pc = is_anomaly and not is_dinomaly and self.anomaly_method_combo.currentData() == "patchcore"
+        resume = (not is_anomaly or is_dinomaly) and str(self.mode_combo.currentData()).endswith("_resume")
         source = self.pc_source_combo.currentData()
         self.pc_backbone_combo.setEnabled(is_pc and source != "patchcore")
         self.pc_weights_edit.setEnabled(is_pc and source != "imagenet")
         self.pc_weights_browse.setEnabled(is_pc and source != "imagenet")
         self.pc_append_check.setEnabled(is_pc and source == "patchcore")
-        self.pc_crop_check.setEnabled(not resume)
-        cropped = self.pc_crop_check.isChecked()
-        self.pc_crop_width_spin.setEnabled(cropped and not resume)
-        self.pc_crop_height_spin.setEnabled(cropped and not resume)
-        self.pc_crop_info.setVisible(True)
-        self.pc_crop_info.setText(
-            f"중앙 {self.pc_crop_width_spin.value()}×{self.pc_crop_height_spin.value()} px → 모델 입력 {self.input_size_spin.value()}×{self.input_size_spin.value()} px\n"
-            "모든 태스크의 학습과 추론에 적용합니다. 박스와 마스크도 함께 자릅니다. 분류와 이상 탐지는 크롭 안의 내용에 맞는 이미지 라벨이 필요합니다."
-            if cropped else "전체 이미지를 모델 입력 크기로 리사이즈합니다.")
         for control in (self.pc_source_combo, self.pc_sampling_spin, self.pc_neighbors_spin,
                         self.pc_candidates_spin, self.pc_bank_spin, self.pc_seed_spin):
             control.setEnabled(is_pc)
         for control in (self.epochs_spin, self.lr_spin, self.wd_spin, self.optimizer_combo,
-                        self.scheduler_combo, self.patience_spin, self.hflip_spin,
-                        self.rotation_spin, self.color_jitter_spin):
+                        self.scheduler_combo, self.patience_spin):
             control.setEnabled(not is_pc and not resume)
-        for control in (self.batch_spin, self.input_size_spin, self.class_weight_combo):
+        # Built-in trainers accept an extended total epoch count on resume.
+        # EfficientNet/upstream resume restore their checkpoint schedule.
+        self.epochs_spin.setEnabled(not is_pc and (not resume or self.mode_combo.currentData() == "builtin_resume"))
+        for control in (self.pc_aug_views_label, self.pc_aug_views_spin, self.pc_aug_info):
+            control.setVisible(is_pc)
+        self.pc_aug_views_spin.setEnabled(is_pc)
+        views = self.pc_aug_views_spin.value()
+        self.pc_aug_info.setText(
+            (f"원본 1장 + 증강 {views}장으로 특징 수집. " if views else "현재 증강 꺼짐: 추가 증강 수를 1 이상으로 설정하세요. ")
+            + "반전·회전이 불량에 해당하면 아래 값을 0으로 두세요. 증강도 정상으로 저장됩니다.")
+        for control in (self.batch_spin, self.class_weight_combo):
             control.setEnabled(not resume)
         # SAM2는 자체 prompt 손실을 쓰므로 분할 손실·가중치 선택이 적용되지 않는다.
         sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
         self.segmentation_loss_combo.setEnabled(not resume and not sam2)
+        mask2former = self.model_id_combo.currentData() == "mask2former_swin_small"
+        self.hp_group.layout().setRowVisible(self.mask2former_queries_spin, mask2former and not resume)
+        self.hp_group.layout().setRowVisible(self.mask2former_resume_queries, mask2former and resume)
+        self.finetune_freeze_check.setEnabled(not is_dinomaly)
+        self.backbone_lr_spin.setEnabled(not is_dinomaly and not resume)
+        self.amp_check.setEnabled(not is_dinomaly)
+        if is_dinomaly:
+            self.finetune_freeze_check.setChecked(True)
+            self.amp_check.setChecked(False)
+
         if self.project and self.project.task == "segment" and sam2:
             self.class_weight_combo.setEnabled(False)
-        # 패치 학습: 분할(SAM2 제외)만. SAM2는 1024 고정 입력의 자체 학습을 쓴다.
-        segment = self.project is not None and self.project.task == "segment"
-        self.advise_btn.setVisible(segment)
-        self.advise_btn.setEnabled(segment and not resume and getattr(self, "_advice_scan", None) is None)
-        self.patch_check.setVisible(segment)
-        self.patch_check.setEnabled(segment and not sam2 and not resume)
-        patch = segment and not sam2 and self.patch_check.isChecked()
-        for control in (self.patch_count_label, self.patch_count_spin, self.patch_info,
-                        self.patch_scale_label, self.patch_scale_combo):
-            control.setVisible(segment and self.patch_check.isChecked())
-        self.patch_count_spin.setEnabled(patch and not resume)
-        self.patch_scale_combo.setEnabled(patch and not resume)
-        if patch:
-            size = self.input_size_spin.value()
-            scale = float(self.patch_scale_combo.currentData() or 1.0)
-            area, small = "원본" + (f" × {scale:.0%}" if scale != 1 else ""), False
-            if self.pc_crop_check.isChecked():
-                width = max(1, round(self.pc_crop_width_spin.value() * scale))
-                height = max(1, round(self.pc_crop_height_spin.value() * scale))
-                area, small = f"{width}×{height} px", size > min(width, height)
-            # 두 줄 이내 (폼 레이아웃은 긴 줄바꿈 라벨의 높이를 덜 잡아 겹친다)
-            self.patch_info.setText(
-                f"{area}에서 {size}px 패치로 학습 · 추론은 같은 배율로 한 번에(계산량 원본의 {scale * scale:.0%})"
-                + (f"\n⚠ 패치가 줄인 영역보다 큽니다. 입력 크기를 {min(width, height) // 32 * 32 or 32} 이하로 줄이세요."
-                   if small else ""))
-            self.patch_info.setStyleSheet("color: #E5A832;" if small else "")
-            if self.pc_crop_check.isChecked():  # 크롭 설명의 '→ 모델 입력 N×N'은 전체 축소일 때만 맞다
-                self.pc_crop_info.setText(
-                    f"중앙 {self.pc_crop_width_spin.value()}×{self.pc_crop_height_spin.value()} px를 자른 뒤 "
-                    "패치 학습합니다(위 설정). 박스와 마스크도 함께 자르고, 저장한 모델의 추론에도 같은 크롭을 적용합니다.")
-        elif segment and sam2:
-            self.patch_info.setText("SAM2는 패치 학습을 쓰지 않습니다.")
+        capabilities = self._training_capabilities()
+        self.distillation_group.setVisible(self.project is not None and capabilities.get("distillation", False))
+        self._update_image_settings(capabilities, resume, is_dinomaly)
         self.selection_combo.setEnabled(not is_pc and not resume)
         self._selection_changed()
-        capabilities = self._training_capabilities()
         for control in (self.debug_check, self.debug_patterns, self.debug_batches, self.debug_default):
             control.setEnabled(capabilities["layer_debug"])
         self.debug_info.setText("선택한 초기 배치만 관찰한 뒤 전체 학습을 계속합니다. Gradient는 AMP 배율을 제거합니다."
@@ -534,6 +568,97 @@ class TrainingWidget(TrainingForm, QWidget):
         self.tl_group.setVisible(not is_pc and self._selected_container_spec()[0] is None and
                                  (is_anomaly or self.mode_combo.currentData() == "custom"))
 
+    def _update_image_settings(self, capabilities, resume, is_dinomaly):
+        task = self.project.task if self.project is not None else ""
+        segment = task == "segment"
+        native = task in {"classify", "detect"} and capabilities.get("engine") == "upstream"
+        original_available = capabilities.get("original_size_training", False)
+        self.original_size_check.setVisible(original_available)
+        self.original_size_check.setEnabled(original_available and not resume)
+        if not original_available and self.original_size_check.isChecked():
+            with QSignalBlocker(self.original_size_check):
+                self.original_size_check.setChecked(False)
+        original = self.original_size_check.isChecked()
+        if original and self.patch_check.isChecked():
+            with QSignalBlocker(self.patch_check):
+                self.patch_check.setChecked(False)
+
+        patch_available = capabilities.get("patch_training", False)
+        patch = patch_available and self.patch_check.isChecked() and not original
+        self.patch_check.setVisible(segment or native or is_dinomaly)
+        self.patch_check.setEnabled(patch_available and not original and not resume)
+        if original:
+            self.patch_check.setToolTip("원본 크기로 학습을 해제하면 패치 학습을 선택할 수 있습니다.")
+        elif native:
+            self.patch_check.setToolTip("25% 겹침 격자로 전체 영역을 자릅니다. 학습한 배율과 패치 규칙을 추론과 배포에도 적용합니다.")
+        else:
+            self.patch_check.setToolTip("입력 크기만큼 잘라 학습합니다. 추론은 모델에 저장한 영역 처리 방식을 따릅니다.")
+
+        if native:
+            from upstream_models import get_upstream_spec
+            with QSignalBlocker(self.input_size_spin):
+                self.input_size_spin.setValue(get_upstream_spec(self.project.model.model_id).input_size)
+        self.input_size_spin.setEnabled(not original and not native and not resume)
+        self.advise_btn.setVisible(segment)
+        self.advise_btn.setEnabled(segment and not resume and getattr(self, "_advice_scan", None) is None)
+        for control in (self.patch_scale_combo, self.patch_count_spin, self.patch_info):
+            self.image_layout.setRowVisible(control, patch)
+        self.patch_count_spin.setSpecialValueText("전체 패치" if native else "자동 (이미지 면적 ÷ 패치 면적)")
+        self.patch_count_spin.setToolTip("0=모든 격자 패치. 양수는 원본별 고정 표본 수. 검증은 항상 모든 패치." if native
+                                        else "한 epoch에 이미지마다 자르는 패치 수. 0=자동(최대 64).")
+        self.patch_count_spin.setEnabled(patch and not resume and not (native and task == "classify"))
+        self.patch_scale_combo.setEnabled(patch and not resume)
+        coverage_available = patch and capabilities.get("small_object_coverage", False)
+        self.image_layout.setRowVisible(self.small_object_coverage_check, coverage_available)
+        has_patch_limit = self.patch_count_spin.value() > 0
+        self.small_object_coverage_check.setEnabled(coverage_available and has_patch_limit and not resume)
+        self.image_layout.setRowVisible(self.detection_foreground_check,
+                                        capabilities.get("detection_foreground_supervision", False))
+
+        native_sam = original and capabilities.get("engine") == "sam2"
+        if native_sam and self.pc_crop_check.isChecked():
+            with QSignalBlocker(self.pc_crop_check):
+                self.pc_crop_check.setChecked(False)
+        self.pc_crop_check.setEnabled(not resume and not native_sam)
+        cropped = self.pc_crop_check.isChecked()
+        for control in (self.pc_crop_width_spin, self.pc_crop_height_spin):
+            self.image_layout.setRowVisible(control, cropped)
+            control.setEnabled(cropped and not resume)
+        self.image_layout.setRowVisible(self.pc_crop_info, original or cropped)
+        width, height = self.pc_crop_width_spin.value(), self.pc_crop_height_spin.value()
+        size = self.input_size_spin.value()
+        if native_sam:
+            self.pc_crop_info.setText("SAM2는 같은 크기의 원본 이미지와 마스크를 사용합니다. 모델에 필요한 여백만 가장자리에 채웁니다.")
+        elif original:
+            area = f"중앙 {width}×{height} px" if cropped else "이미지 전체"
+            self.pc_crop_info.setText(f"{area}를 원본 해상도로 학습합니다. 메모리가 부족하면 배치 크기를 줄이세요.")
+        elif cropped:
+            if patch:
+                self.pc_crop_info.setText(f"중앙 {width}×{height} px 안에서 패치를 만듭니다.")
+            else:
+                self.pc_crop_info.setText(f"중앙 {width}×{height} px를 잘라 입력 크기 {size}×{size} px에 맞춥니다.")
+
+        if not patch:
+            return
+        scale = float(self.patch_scale_combo.currentData() or 1.0)
+        self.patch_info.setStyleSheet("")
+        if native:
+            self.patch_info.setText(
+                f"{size}px · 배율 {scale:g} · 겹침 25% · "
+                + ("모든 패치를 합쳐 원본 한 장의 클래스 학습/판정 (배치=패치 묶음)"
+                   if task == "classify" else "박스도 함께 자름 · 추론 시 원본 좌표로 합침 · 검증 mAP는 패치 단위"))
+            return
+        area = "원본" + (f" × {scale:.0%}" if scale != 1 else "")
+        if cropped:
+            width, height = max(1, round(width * scale)), max(1, round(height * scale))
+            area = f"{width}×{height} px"
+        small = cropped and size > min(width, height)
+        self.patch_info.setText(
+            f"{area}에서 {size}px 패치로 학습 · 배율 적용 면적은 원본의 {scale * scale:.0%}"
+            + (f"\n⚠ 패치가 줄인 영역보다 큽니다. 입력 크기를 {min(width, height) // 32 * 32 or 32} 이하로 줄이세요."
+               if small else ""))
+        self.patch_info.setStyleSheet("color: #E5A832;" if small else "")
+
     def _update_selection_options(self):
         if not hasattr(self, "selection_combo") or not self.project:
             return
@@ -542,7 +667,7 @@ class TrainingWidget(TrainingForm, QWidget):
             self.selection_combo.clear()
             self.selection_info.setText("현재 태스크 또는 저장된 학습 모드는 지원하지 않습니다.")
             return
-        engine = training_engine_name(self.mode_combo.currentData())
+        engine = "dinomaly" if self.model_id_combo.currentData() == "dinomaly_vits14" else training_engine_name(self.mode_combo.currentData())
         current = self.selection_combo.currentData() or "engine_default"
         self.selection_combo.blockSignals(True)
         self.selection_combo.clear()
@@ -563,24 +688,30 @@ class TrainingWidget(TrainingForm, QWidget):
         if self.project.task == "anomaly" and self.anomaly_method_combo.currentData() == "patchcore":
             self.selection_info.setText("PatchCore는 메모리 뱅크 1회 구축: 에폭별 Best 비교 없음")
             return
-        engine = training_engine_name(self.mode_combo.currentData())
+        engine = "dinomaly" if self.model_id_combo.currentData() == "dinomaly_vits14" else training_engine_name(self.mode_combo.currentData())
         policy = selection_policy(SimpleNamespace(selection_metric=self.selection_combo.currentData() or "engine_default"),
                                   engine, self.project.task)
         self.selection_info.setText(policy.describe() + "\nBest 저장과 조기 종료에 동일하게 적용")
 
+    def _browse_teacher(self):
+        path, _ = QFileDialog.getOpenFileName(self, "교사 체크포인트", "", "PyTorch (*.pt *.pth)")
+        if path:
+            self.teacher_edit.setText(path)
+
     def _browse_patchcore_weights(self):
         filepath, _ = QFileDialog.getOpenFileName(
-            self, "PatchCore 전이학습 가중치 선택", "", "PyTorch 체크포인트 (*.pt *.pth)"
+            self, "PatchCore 전이학습 가중치 선택", "", "PyTorch 체크포인트 (*.pt *.pth *.tar)"
         )
         if filepath:
             self.pc_weights_edit.setText(filepath)
 
     def _browse_resume_weights(self):
         """이어학습용 이전 체크포인트 선택"""
-        filepath, _ = QFileDialog.getOpenFileName(
-            self, "이전 학습 모델 선택", "",
-            "PyTorch 체크포인트 (*.pt *.pth)"
-        )
+        supports_safe_tensors = self.model_id_combo.currentData() in (LOCAL_TRANSFORMER_TEACHERS | {"siglip2_so400m_cls"})
+        local_backbone = supports_safe_tensors and self.mode_combo.currentData() == "builtin_transfer"
+        formats = ("모델 가중치 (*.pt *.pth *.bin *.safetensors)" if local_backbone
+                   else "PyTorch 체크포인트 (*.pt *.pth *.tar)")
+        filepath, _ = QFileDialog.getOpenFileName(self, "이전 학습 모델 선택", "", formats)
         if filepath:
             self.resume_edit.setText(filepath)
 
@@ -600,7 +731,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self.debug_batches.setValue(cfg.layer_debug_batches)
 
         # ── 학습 모드 복원 ──
-        mode = "custom" if project.task == "anomaly" else getattr(cfg, "training_mode", "efficientnet_finetune")
+        mode = "custom" if project.task == "anomaly" and project.model.model_id != "dinomaly_vits14" else getattr(cfg, "training_mode", "builtin_finetune")
         self._populate_training_modes(mode)
         if hasattr(self, "_on_model_id_changed"):
             self._on_model_id_changed(keep_mode=True)
@@ -616,6 +747,7 @@ class TrainingWidget(TrainingForm, QWidget):
         self.wd_spin.setValue(cfg.weight_decay)
         self.input_size_spin.setValue(cfg.input_size)
         self.patience_spin.setValue(cfg.early_stop_patience)
+        self.mask2former_queries_spin.setValue(cfg.mask2former_num_queries)
 
         # 옵티마이저 매핑
         opt_map = {"adamw": 0, "sgd": 1, "adam": 2}
@@ -632,8 +764,21 @@ class TrainingWidget(TrainingForm, QWidget):
                 break
         loss_index = self.segmentation_loss_combo.findData(getattr(cfg, "segmentation_loss", "ce_dice"))
         self.segmentation_loss_combo.setCurrentIndex(max(loss_index, 0))
-        self.patch_check.setChecked(bool(getattr(cfg, "patch_training", False)))
+        self.teacher_edit.setText(cfg.teacher_checkpoint)
+        self.kd_alpha.setValue(cfg.distillation_alpha)
+        self.kd_temperature.setValue(cfg.distillation_temperature)
+        original = bool(getattr(cfg, "original_size_training", False))
+        self.original_size_check.blockSignals(True)
+        self.patch_check.blockSignals(True)
+        try:
+            self.original_size_check.setChecked(original)
+            self.patch_check.setChecked(not original and bool(getattr(cfg, "patch_training", False)))
+        finally:
+            self.original_size_check.blockSignals(False)
+            self.patch_check.blockSignals(False)
         self.patch_count_spin.setValue(int(getattr(cfg, "patches_per_image", 0)))
+        self.small_object_coverage_check.setChecked(getattr(cfg, "small_object_coverage", False))
+        self.detection_foreground_check.setChecked(getattr(cfg, "detection_foreground_supervision", False))
         scale_index = self.patch_scale_combo.findData(float(getattr(cfg, "patch_scale", 1.0)))
         if scale_index < 0:  # 목록에 없는 값(직접 편집한 프로젝트)도 그대로 보여 준다
             self.patch_scale_combo.addItem(f"{float(cfg.patch_scale):.0%}", float(cfg.patch_scale))
@@ -667,7 +812,7 @@ class TrainingWidget(TrainingForm, QWidget):
         # 이어학습 경로 복원
         self.resume_edit.setText(
             (getattr(mcfg, "pretrained_weights", "") or "")
-            if mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+            if mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer", "builtin_resume",
                         "upstream_resume", "upstream_transfer", "sam2_transfer"}
             else ""
         )
@@ -692,7 +837,7 @@ class TrainingWidget(TrainingForm, QWidget):
         if is_anomaly:
             # 이상 탐지 방법 복원 (patchcore / reconstruction)
             method = getattr(cfg, "anomaly_method", "patchcore")
-            idx = 0 if method == "patchcore" else 1
+            idx = max(0, self.anomaly_method_combo.findData("dinomaly" if project.model.model_id == "dinomaly_vits14" else method))
             self.anomaly_method_combo.setCurrentIndex(idx)
 
             # 코어셋 비율 · kNN 이웃 수 복원
@@ -712,6 +857,7 @@ class TrainingWidget(TrainingForm, QWidget):
             self.pc_candidates_spin.setValue(cfg.patchcore_max_candidates)
             self.pc_bank_spin.setValue(cfg.patchcore_max_memory_bank)
             self.pc_seed_spin.setValue(cfg.patchcore_seed)
+            self.pc_aug_views_spin.setValue(getattr(cfg, "patchcore_augmentation_views", 0))
 
         self.pc_crop_check.setChecked(cfg.patchcore_crop_enabled)
         self.pc_crop_width_spin.setValue(cfg.patchcore_crop_width)
@@ -741,6 +887,12 @@ class TrainingWidget(TrainingForm, QWidget):
         self._progress_total_epochs = 0
         self.progress_bar.setRange(0, 100)
         self.run_identity_label.setText("선택된 학습 결과 없음")
+        if project.task == "detect":
+            latest = next((run for run in reversed(project.runs) if run.status == "completed" and run.best_epoch > 0),
+                          None)
+            if latest:
+                self.run_identity_label.setText(run_description(latest))
+                self._display_finished_run(project, latest)
 
     def collect_config(self):
         """저장과 클래스 변경에서 호출하는 공개 설정 동기화 진입점."""
@@ -750,7 +902,7 @@ class TrainingWidget(TrainingForm, QWidget):
         """사전학습 가중치 파일 선택"""
         filepath, _ = QFileDialog.getOpenFileName(
             self, "가중치 파일 선택", "",
-            "PyTorch 체크포인트 (*.pt *.pth)"
+            "PyTorch 체크포인트 (*.pt *.pth *.tar)"
         )
         if filepath:
             self.weights_edit.setText(filepath)
@@ -767,6 +919,7 @@ class TrainingWidget(TrainingForm, QWidget):
         cfg.weight_decay = self.wd_spin.value()
         cfg.input_size = self.input_size_spin.value()
         cfg.early_stop_patience = self.patience_spin.value()
+        cfg.mask2former_num_queries = self.mask2former_queries_spin.value()
         cfg.selection_metric = self.selection_combo.currentData() or "engine_default"
 
         opt_map = {0: "adamw", 1: "sgd", 2: "adam"}
@@ -776,10 +929,11 @@ class TrainingWidget(TrainingForm, QWidget):
         cfg.scheduler = sch_map.get(self.scheduler_combo.currentIndex(), "cosine")
 
         # ── 학습 모드 ──
-        cfg.training_mode = "custom" if self.project.task == "anomaly" else self.mode_combo.currentData()
+        cfg.training_mode = "custom" if self.project.task == "anomaly" and self.model_id_combo.currentData() != "dinomaly_vits14" else self.mode_combo.currentData()
         cfg.efficientnet_model = self.efficientnet_model_combo.currentData() or "efficientnet_b0"
         cfg.efficientnet_no_decay = self.efficientnet_no_decay_check.isChecked()
-        cfg.layer_debug_enabled = self.debug_check.isChecked() and self._training_capabilities()["layer_debug"]
+        capabilities = self._training_capabilities()
+        cfg.layer_debug_enabled = self.debug_check.isChecked() and capabilities["layer_debug"]
         cfg.layer_debug_patterns = self.debug_patterns.text().strip()
         cfg.layer_debug_batches = self.debug_batches.value()
 
@@ -797,7 +951,7 @@ class TrainingWidget(TrainingForm, QWidget):
                     mcfg.pretrained_weights = ""
         if mcfg.model_id not in {"efficientnet_b0", "efficientnet_b1"} and cfg.training_mode.startswith("efficientnet"):
             cfg.training_mode = "custom"
-        if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+        if cfg.training_mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer", "builtin_resume",
                                  "upstream_resume", "upstream_transfer", "sam2_transfer"}:
             # 이어학습: resume_edit → pretrained_weights
             mcfg.pretrained_weights = self.resume_edit.text().strip()
@@ -834,18 +988,29 @@ class TrainingWidget(TrainingForm, QWidget):
         cfg.class_weights = (self.class_weight_combo.currentData()
                              if self.project.task in ("classify", "segment") else "none")
         cfg.segmentation_loss = self.segmentation_loss_combo.currentData() or "ce_dice"
-        sam2 = str(self.mode_combo.currentData() or "").startswith("sam2")
-        cfg.patch_training = (self.project.task == "segment" and not sam2 and self.patch_check.isChecked())
-        cfg.patches_per_image = self.patch_count_spin.value()
+        cfg.teacher_checkpoint = (self.teacher_edit.text().strip()
+                                  if capabilities.get("distillation") else "")
+        cfg.distillation_alpha = self.kd_alpha.value()
+        cfg.distillation_temperature = self.kd_temperature.value()
+        native = self.project.task in {"classify", "detect"} and capabilities.get("engine") == "upstream"
+        cfg.original_size_training = (capabilities.get("original_size_training", False)
+                                      and self.original_size_check.isChecked())
+        cfg.patch_training = (capabilities.get("patch_training", False)
+                              and self.patch_check.isChecked() and not cfg.original_size_training)
+        cfg.patches_per_image = 0 if native and self.project.task == "classify" else self.patch_count_spin.value()
         cfg.patch_scale = float(self.patch_scale_combo.currentData() or 1.0)
+        cfg.small_object_coverage = bool(capabilities.get("small_object_coverage", False)
+                                         and cfg.patch_training and cfg.patches_per_image
+                                         and self.small_object_coverage_check.isChecked())
+        cfg.detection_foreground_supervision = bool(capabilities.get("detection_foreground_supervision", False)
+                                                    and self.detection_foreground_check.isChecked())
         cfg.augmentation.horizontal_flip = self.hflip_spin.value()
         cfg.augmentation.rotation = self.rotation_spin.value()
         cfg.augmentation.color_jitter = self.color_jitter_spin.value()
 
         # ── PatchCore 설정 동기화 (이상 탐지 전용) ──────
         if self.project and self.project.task == "anomaly":
-            method_idx = self.anomaly_method_combo.currentIndex()
-            cfg.anomaly_method = "patchcore" if method_idx == 0 else "reconstruction"
+            cfg.anomaly_method = "dinomaly" if mcfg.model_id == "dinomaly_vits14" else self.anomaly_method_combo.currentData()
             cfg.patchcore_sampling_ratio = self.pc_sampling_spin.value()
             cfg.patchcore_n_neighbors = self.pc_neighbors_spin.value()
             cfg.patchcore_backbone = self.pc_backbone_combo.currentData()
@@ -857,6 +1022,7 @@ class TrainingWidget(TrainingForm, QWidget):
             cfg.patchcore_max_candidates = self.pc_candidates_spin.value()
             cfg.patchcore_max_memory_bank = self.pc_bank_spin.value()
             cfg.patchcore_seed = self.pc_seed_spin.value()
+            cfg.patchcore_augmentation_views = self.pc_aug_views_spin.value()
 
         cfg.patchcore_crop_enabled = self.pc_crop_check.isChecked()
         cfg.patchcore_crop_width = self.pc_crop_width_spin.value()
@@ -934,6 +1100,8 @@ class TrainingWidget(TrainingForm, QWidget):
         if "input_size" in settings:
             self.input_size_spin.setValue(int(settings["input_size"]))
         if "patch_training" in settings:
+            if settings["patch_training"]:
+                self.original_size_check.setChecked(False)
             self.patch_check.setChecked(bool(settings["patch_training"]))
         if "patch_scale" in settings:
             choose(self.patch_scale_combo, float(settings["patch_scale"]))
@@ -1036,7 +1204,7 @@ class TrainingWidget(TrainingForm, QWidget):
 
         # 사전학습 가중치가 설치본에 없으면 학습을 시작한 뒤가 아니라 지금 알리고 받는 방법을 안내한다
         cfg = self.project.training
-        from builtin_assets import builtin_asset_path, required_pretrained_asset
+        from builtin_assets import builtin_asset_path, required_pretrained_asset, missing_asset_help
         asset = required_pretrained_asset(
             self.project.task, cfg.training_mode,
             cfg.efficientnet_model if cfg.training_mode.startswith("efficientnet") else getattr(self.project.model, "model_id", ""),
@@ -1046,7 +1214,10 @@ class TrainingWidget(TrainingForm, QWidget):
             try:
                 # 손상·다른 파일도 지금 거른다 (해시는 파일마다 한 번만 계산)
                 builtin_asset_path(asset)
-            except (FileNotFoundError, RuntimeError, ValueError):
+            except (RuntimeError, ValueError, OSError) as exc:
+                if not isinstance(exc, FileNotFoundError):
+                    QMessageBox.warning(self, "사전학습 가중치 확인 실패", f"{exc}\n\n{missing_asset_help(asset)}")
+                    return
                 # 받는 주소·넣는 곳을 알리고 그 자리에서 가져오게 한다. 가져오면 그대로 학습을 시작한다.
                 from widgets.pretrained_weights import offer_weight_import
                 if not offer_weight_import(self, asset):
@@ -1082,7 +1253,7 @@ class TrainingWidget(TrainingForm, QWidget):
             if not path or not os.path.isfile(path):
                 QMessageBox.warning(self, "가중치 파일 확인", f"전이학습 가중치 파일이 없습니다:\n{path}")
                 return
-        if not is_anomaly and mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer",
+        if not is_anomaly and mode in {"efficientnet_resume", "efficientnet_transfer", "builtin_transfer", "builtin_resume",
                                        "upstream_resume", "upstream_transfer", "sam2_transfer"}:
             resume_path = self.project.model.pretrained_weights
             if not resume_path:
@@ -1246,7 +1417,9 @@ class TrainingWidget(TrainingForm, QWidget):
         self.loss_chart.update_chart(epoch, train_loss, val_loss)
 
         # Metric 차트
-        self.metric_chart.update_metrics(epoch, metrics)
+        project = self._run_snapshot or self.project
+        self.metric_chart.update_metrics(epoch, display_metrics(metrics, project.task) if project and
+                                         project.task == "detect" else metrics)
         show_timing = getattr(self, "_show_epoch_timing", None)
         if callable(show_timing):
             show_timing(metrics)
@@ -1262,16 +1435,18 @@ class TrainingWidget(TrainingForm, QWidget):
                     label.setText(format_hms(value))
 
     def _render_best_metrics(self, epoch, values, project=None):
-        from core.best_metrics import scalar_metrics
         project = project or self._run_snapshot or self.project
-        values = scalar_metrics(values)
+        task = project.task if project else "classify"
+        values = display_metrics(values, task)
         timing = {key: self.metric_cards[key].text() for key in ("최근 에폭 시간", "누적 시간")
                   if key in self.metric_cards}
-        self._rebuild_metric_cards(project.task if project else "classify", project=project, metrics=values)
+        self._rebuild_metric_cards(task, project=project, metrics=values)
         self._best_display_metrics, self._best_display_epoch = values, epoch
         self.metric_cards["Best Epoch"].setText(str(epoch) if epoch else "N/A")
         for key, name in self._metric_card_keys.items():
-            self.metric_cards[name].setText(_format_metric(values[key]))
+            value = values[key]
+            count = task == "detect" and key.startswith("detection_")
+            self.metric_cards[name].setText(str(int(value)) if count and value is not None else _format_metric(value))
         for key, value in timing.items():
             self.metric_cards[key].setText(value)
         if hasattr(self, "best_selection_label"):
@@ -1282,8 +1457,13 @@ class TrainingWidget(TrainingForm, QWidget):
         values = {**(metrics or {}), "train_loss": train_loss, "val_loss": val_loss}
         self._render_best_metrics(epoch, values)
         project = self._run_snapshot or self.project
-        self.eval_widget.update_results({"task": project.task if project else "classify"},
-                                        metrics=self._best_display_metrics)
+        results = {"task": project.task if project else "classify"}
+        if project and project.task == "detect":
+            details = values.get("detection_evaluation") or {}
+            if not details and str(project.training.training_mode).startswith("upstream_"):
+                details = {"unit": "patch" if project.training.patch_training else "image", "protocol": "coco"}
+            results.update(detection_evaluation=details, per_class=values.get("detection_per_class") or [])
+        self.eval_widget.update_results(results, metrics=self._best_display_metrics)
 
     def _on_batch_finished(self, epoch, batch_idx, total_batches, loss):
         """배치 완료"""
@@ -1326,8 +1506,8 @@ class TrainingWidget(TrainingForm, QWidget):
                 self.cm_chart.update_matrix(cm, class_names)
 
         # 평가 결과 테이블
-        from core.best_metrics import scalar_metrics
-        values = {**scalar_metrics(eval_results), **getattr(self, "_best_display_metrics", {})}
+        values = {**display_metrics(eval_results, eval_results.get("task")),
+                  **getattr(self, "_best_display_metrics", {})}
         epoch = getattr(self, "_best_display_epoch", None)
         if epoch is not None:
             self._render_best_metrics(epoch, values)
@@ -1439,7 +1619,9 @@ class TrainingWidget(TrainingForm, QWidget):
             QMessageBox.warning(self, "결과 표시 오류", f"학습 기록은 저장되었습니다.\n{display_error}")
         elif status == "completed" and result:
             best_metric, best_epoch, ckpt_path = result
-            metric_name = new_runs[-1].best_metric_name if new_runs else "metric"
+            metric_name = metric_label(new_runs[-1].best_metric_name, snapshot.task) if new_runs else "metric"
+            if new_runs:
+                best_metric = selection_value_for_display(new_runs[-1], snapshot.task)
             metric_text = "평가 불가" if metric_name == "unavailable" else _format_metric(best_metric)
             self.progress_bar.setValue(100)
             epoch_text = str(best_epoch) if best_epoch > 0 else "N/A"
@@ -1466,13 +1648,12 @@ class TrainingWidget(TrainingForm, QWidget):
         self.loss_chart.clear()
         self.metric_chart.clear()
         self.lr_chart.clear()
-        from core.best_metrics import scalar_metrics
         for index, epoch in enumerate(epochs):
             values = {key: sequence[index] if index < len(sequence) else None
                       for key, sequence in history.items() if key != "epoch"}
             redraw = index == len(epochs) - 1
             self.loss_chart.update_chart(epoch, values.get("train_loss"), values.get("val_loss"), redraw=redraw)
-            self.metric_chart.update_metrics(epoch, {key: value for key, value in scalar_metrics(values).items()
+            self.metric_chart.update_metrics(epoch, {key: value for key, value in display_metrics(values, snapshot.task).items()
                                                    if key not in {"train_loss", "val_loss"}}, redraw=redraw)
             if index < len(run.lr_history):
                 self.lr_chart.update_lr(epoch, run.lr_history[index], redraw=index == min(len(epochs), len(run.lr_history)) - 1)
@@ -1483,16 +1664,19 @@ class TrainingWidget(TrainingForm, QWidget):
                 for key, values in history.items()
                 if key in {"epoch_time_sec", "elapsed_time_sec"}
             })
-        from core.best_metrics import best_epoch_metrics
-        values = best_epoch_metrics(run)
+        values = best_epoch_metrics(run, snapshot.task)
         self._render_best_metrics(run.best_epoch, values, project=snapshot)
+        label = metric_label(run.best_metric_name, snapshot.task)
+        selected = selection_value_for_display(run, snapshot.task)
         self.best_selection_label.setText(
-            f"Best epoch {run.best_epoch} | 저장 기준: {run.best_metric_name} = {_format_metric(run.best_metric)}")
+            f"Best epoch {run.best_epoch} | 저장 기준: {label} = {_format_metric(selected)}")
         self.cm_chart.clear()
         self.eval_widget.clear()
         # Built-in, upstream and SAM2 runs need not have a separate full evaluation.
         # Their saved best-epoch history is still a complete display source.
         results = {"task": snapshot.task, **run.eval_results}
+        if snapshot.task == "detect":
+            results["detection_evaluation"] = saved_detection_evaluation(run)
         self.eval_widget.update_results(results, metrics=values)
         if "confusion_matrix" in results:
             names = snapshot.data.class_names if snapshot.task == "classify" else ["Normal", "Anomaly"]

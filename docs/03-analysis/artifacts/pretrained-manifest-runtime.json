@@ -1,0 +1,98 @@
+{
+  "download_seconds": 23.297,
+  "downloaded_files": {
+    "resnet18": {
+      "file": "torchvision/resnet18-f37072fd.pth",
+      "bytes": 46830571
+    },
+    "resnet34": {
+      "file": "torchvision/resnet34-b627a593.pth",
+      "bytes": 87319819
+    },
+    "resnet50": {
+      "file": "torchvision/resnet50-11ad3fa6.pth",
+      "bytes": 102540417
+    }
+  },
+  "manual_copy_without_manifest": {
+    "resnet18": "resnet18-f37072fd.pth",
+    "resnet34": "resnet34-b627a593.pth",
+    "resnet50": "resnet50-11ad3fa6.pth"
+  },
+  "forward": {
+    "resnet18": {
+      "shape": [
+        1,
+        2
+      ],
+      "finite": true,
+      "provenance": {
+        "source": "imagenet",
+        "backbone": "resnet18",
+        "weights": "ResNet18_Weights.IMAGENET1K_V1",
+        "url": "https://download.pytorch.org/models/resnet18-f37072fd.pth"
+      }
+    },
+    "resnet50": {
+      "shape": [
+        1,
+        2
+      ],
+      "finite": true,
+      "provenance": {
+        "source": "imagenet",
+        "backbone": "resnet50",
+        "weights": "ResNet50_Weights.IMAGENET1K_V2",
+        "url": "https://download.pytorch.org/models/resnet50-11ad3fa6.pth"
+      }
+    },
+    "unet_resnet18": {
+      "shape": [
+        1,
+        2,
+        64,
+        64
+      ],
+      "finite": true,
+      "provenance": {
+        "source": "imagenet",
+        "backbone": "resnet18",
+        "weights": "ResNet18_Weights.IMAGENET1K_V1",
+        "url": "https://download.pytorch.org/models/resnet18-f37072fd.pth"
+      }
+    },
+    "deeplabv3plus_resnet34": {
+      "shape": [
+        1,
+        2,
+        64,
+        64
+      ],
+      "finite": true,
+      "provenance": {
+        "source": "imagenet",
+        "backbone": "resnet34",
+        "weights": "ResNet34_Weights.IMAGENET1K_V1",
+        "url": "https://download.pytorch.org/models/resnet34-b627a593.pth"
+      }
+    }
+  },
+  "registered_manifest": {
+    "schema_version": 1,
+    "files": {
+      "torchvision/resnet18-f37072fd.pth": {
+        "sha256": "f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec",
+        "bytes": 46830571
+      },
+      "torchvision/resnet34-b627a593.pth": {
+        "sha256": "b627a593bcbe140c234610266fe4f8ae95ea42fc881d091c9b6052e6b1d0590f",
+        "bytes": 87319819
+      },
+      "torchvision/resnet50-11ad3fa6.pth": {
+        "sha256": "11ad3fa62ca79e40addfd354a8ec4b7c75143b3038b8d2a807fbc68deab379ca",
+        "bytes": 102540417
+      }
+    }
+  },
+  "network_after_copy": "forbidden; all runtime checks passed"
+}

@@ -13,6 +13,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import runpy
+import shutil
+import sys
+
+
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from tools.windows_desktop_smoke import require_frozen_python_dll
 
 
 _stage_api = runpy.run_path(str(Path(__file__).with_name("stage_payload.py")))
@@ -23,6 +31,7 @@ PayloadStageError = _stage_api["PayloadStageError"]
 _TOP_LEVEL = frozenset({"app", "Examples", "THIRD_PARTY_NOTICES.md"})
 _REQUIRED_FILES = frozenset({
     "app/DeepVisionStudio.exe",
+    "app/README.ko.md",
     "Examples/README.md",
     "Examples/ENCRYPTED_MODELS.md",
     "Examples/assets/test.dvsenc",
@@ -56,6 +65,10 @@ _REQUIRED_FILES = frozenset({
     "Examples/cpp/vision-runtime/include/vision_inference.h",
     "Examples/cpp/vision-runtime/include/ort_vs2017.cmake",
     "Examples/cpp/vision-runtime/src/vision_inference.cpp",
+    "Examples/cpp/vision-runtime/src/dense_tiles.h",
+    "Examples/cpp/dense_models/main.cpp",
+    "Examples/cpp/dense_models/CMakeLists.txt",
+    "Examples/cpp/dense_models/build.bat",
     "Examples/csharp/OnnxExample.csproj",
     "Examples/csharp/Program.cs",
     "Examples/csharp/vision-runtime/VisionRuntime.csproj",
@@ -83,7 +96,15 @@ def validate_simple_payload(root: str | Path) -> Path:
     missing_files = sorted(path for path in _REQUIRED_FILES if not (payload / path).is_file())
     if missing_files:
         raise PayloadStageError("simple payload is missing required files: " + ", ".join(missing_files))
+    _validate_app_runtime(payload / "app")
     return payload
+
+
+def _validate_app_runtime(app: str | Path) -> None:
+    try:
+        require_frozen_python_dll(app)
+    except FileNotFoundError as exc:
+        raise PayloadStageError(str(exc)) from exc
 
 
 def stage_simple_payload(
@@ -96,6 +117,7 @@ def stage_simple_payload(
     notice: str | Path,
 ) -> Path:
     """Copy a reviewed allow-list into a payload suitable for the simple Setup."""
+    _validate_app_runtime(app)
     examples = Path(example_root)
     cpp = Path(cpp_runtime_root)
     csharp = Path(csharp_runtime_root)
@@ -122,6 +144,7 @@ def stage_simple_payload(
             ("Examples/cpp/nlohmann", examples / "cpp" / "nlohmann"),
             ("Examples/cpp/with_opencv", examples / "cpp" / "with_opencv"),
             ("Examples/cpp/with_evision", examples / "cpp" / "with_evision"),
+            ("Examples/cpp/dense_models", examples / "cpp" / "dense_models"),
             ("Examples/cpp/vision-runtime/CMakeLists.txt", cpp / "CMakeLists.txt"),
             ("Examples/cpp/vision-runtime/include", cpp / "include"),
             ("Examples/cpp/vision-runtime/src", cpp / "src"),
@@ -132,6 +155,7 @@ def stage_simple_payload(
         ],
         notice=notice,
     )
+    shutil.copyfile(Path(__file__).with_name("INSTALL.ko.md"), root / "app" / "README.ko.md")
     return validate_simple_payload(root)
 
 

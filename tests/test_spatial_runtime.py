@@ -238,7 +238,10 @@ class SpatialRuntime(unittest.TestCase):
         self.assertIn(result.summary.split()[0], ('OK', 'NG'))
         web = load_inference_engine(checkpoint).infer(str(image))
         self.assertNotIn('defects', web.details)
-        self.assertEqual(web.summary, '세그멘테이션')
+        # Main's foreground summary/evaluation remain available without defect rules.
+        self.assertIn('segmentation_regions', web.details)
+        self.assertIn('segmentation_evaluation', web.details)
+        self.assertNotIn(web.summary.split()[0], ('OK', 'NG'))
 
     def widget(self, checkpoint):
         from widgets.inference_widget import InferenceWidget

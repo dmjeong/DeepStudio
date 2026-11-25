@@ -1,0 +1,194 @@
+학습 장치 검사: 요청=cuda:0, 실제=cuda:0
+실행 장치: NVIDIA RTX 4000 Ada Generation | PyTorch 2.14.0+cu132 | CUDA 13.2
+GPU 합성곱과 역전파 검사 통과
+기본 모델 학습: mask2former_swin_small
+학습 정밀도: AMP (FP16 혼합 정밀도) · 검증 FP32
+  학습 장치: cuda:0 (NVIDIA RTX 4000 Ada Generation)
+data loader: workers=8, pin_memory=True, persistent_workers=True, prefetch_factor=2
+마스크 없는 이미지(train 2장)는 자동 배경(ID 0)으로 학습·검증에 포함합니다. 결함이 있는 이미지는 결함 영역을 표시해 주세요.
+가중치 로드 완료: mask2former_swin_small / {'source': 'microsoft_swin_imagenet', 'architecture': 'mask2former_swin_small', 'file': 'swin_small_patch4_window7_224.pth', 'url': 'https://huggingface.co/microsoft/swin-small-patch4-window7-224/resolve/1e8f54cc3d19ded9cda11db863080c79b1096289/pytorch_model.bin', 'sha256': 'c17c4edf3230695f4de854105601b1adb96e737d77a9a8b718010c8a103fc7e5'}
+segmentation class weights (sqrt): background=0.794, Broken=7.055, Flip=5.593, Wall Broken=16.076
+  에폭 1 학습: 첫 배치 완료 48.32초 (cuda:0)
+  에폭 1 검증: 첫 배치 완료 10.16초 (cuda:0)
+epoch 1/100: train_loss=11.032850 val_loss=1.919246 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 1 시간 | 소요 00:01:10 | 누적 00:01:10
+  에폭 2 학습: 첫 배치 완료 3.20초 (cuda:0)
+  에폭 2 검증: 첫 배치 완료 1.65초 (cuda:0)
+epoch 2/100: train_loss=9.706919 val_loss=1.902938 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 2 시간 | 소요 00:00:17 | 누적 00:01:29
+  에폭 3 학습: 첫 배치 완료 2.89초 (cuda:0)
+  에폭 3 검증: 첫 배치 완료 1.64초 (cuda:0)
+epoch 3/100: train_loss=9.639865 val_loss=1.861863 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+⚠ 검증에서 결함 픽셀을 하나도 예측하지 않았습니다(모두 배경). val loss가 낮아도 결함을 못 찾는 상태입니다. 흔한 원인: ① 이미지를 입력 크기로 줄이며 가는 결함이 사라짐 → 패치 학습을 켜거나 학습 화면의 '데이터에 맞게 자동 설정' ② 결함 픽셀이 너무 적음 → 클래스 가중치 Sqrt ③ epoch 부족.
+  Epoch 3 시간 | 소요 00:00:16 | 누적 00:01:47
+  에폭 4 학습: 첫 배치 완료 3.05초 (cuda:0)
+  에폭 4 검증: 첫 배치 완료 1.64초 (cuda:0)
+epoch 4/100: train_loss=9.670266 val_loss=1.850828 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 4 시간 | 소요 00:00:16 | 누적 00:02:05
+  에폭 5 학습: 첫 배치 완료 2.95초 (cuda:0)
+  에폭 5 검증: 첫 배치 완료 1.65초 (cuda:0)
+epoch 5/100: train_loss=9.605134 val_loss=1.871664 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 5 시간 | 소요 00:00:17 | 누적 00:02:23
+  에폭 6 학습: 첫 배치 완료 2.92초 (cuda:0)
+  에폭 6 검증: 첫 배치 완료 1.67초 (cuda:0)
+epoch 6/100: train_loss=9.620999 val_loss=1.875684 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 6 시간 | 소요 00:00:16 | 누적 00:02:41
+  에폭 7 학습: 첫 배치 완료 3.06초 (cuda:0)
+  에폭 7 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 7/100: train_loss=9.608424 val_loss=1.849110 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 7 시간 | 소요 00:00:17 | 누적 00:02:59
+  에폭 8 학습: 첫 배치 완료 3.04초 (cuda:0)
+  에폭 8 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 8/100: train_loss=9.616979 val_loss=1.854333 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 8 시간 | 소요 00:00:17 | 누적 00:03:17
+  에폭 9 학습: 첫 배치 완료 3.09초 (cuda:0)
+  에폭 9 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 9/100: train_loss=9.620461 val_loss=1.908209 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 9 시간 | 소요 00:00:17 | 누적 00:03:35
+  에폭 10 학습: 첫 배치 완료 3.00초 (cuda:0)
+  에폭 10 검증: 첫 배치 완료 1.65초 (cuda:0)
+epoch 10/100: train_loss=9.621596 val_loss=1.858830 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 10 시간 | 소요 00:00:16 | 누적 00:03:54
+  에폭 11 학습: 첫 배치 완료 2.94초 (cuda:0)
+  에폭 11 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 11/100: train_loss=9.604416 val_loss=1.850556 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 11 시간 | 소요 00:00:16 | 누적 00:04:12
+  에폭 12 학습: 첫 배치 완료 2.95초 (cuda:0)
+  에폭 12 검증: 첫 배치 완료 1.65초 (cuda:0)
+epoch 12/100: train_loss=9.595690 val_loss=1.858301 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 12 시간 | 소요 00:00:16 | 누적 00:04:30
+  에폭 13 학습: 첫 배치 완료 3.10초 (cuda:0)
+  에폭 13 검증: 첫 배치 완료 1.65초 (cuda:0)
+epoch 13/100: train_loss=9.593207 val_loss=1.870341 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 13 시간 | 소요 00:00:17 | 누적 00:04:48
+  에폭 14 학습: 첫 배치 완료 2.96초 (cuda:0)
+  에폭 14 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 14/100: train_loss=9.591559 val_loss=1.862854 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 14 시간 | 소요 00:00:16 | 누적 00:05:06
+  에폭 15 학습: 첫 배치 완료 3.08초 (cuda:0)
+  에폭 15 검증: 첫 배치 완료 1.67초 (cuda:0)
+epoch 15/100: train_loss=9.591223 val_loss=1.859211 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 15 시간 | 소요 00:00:17 | 누적 00:05:24
+  에폭 16 학습: 첫 배치 완료 3.03초 (cuda:0)
+  에폭 16 검증: 첫 배치 완료 1.68초 (cuda:0)
+epoch 16/100: train_loss=9.604540 val_loss=1.847262 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 16 시간 | 소요 00:00:17 | 누적 00:05:42
+  에폭 17 학습: 첫 배치 완료 3.07초 (cuda:0)
+  에폭 17 검증: 첫 배치 완료 1.67초 (cuda:0)
+epoch 17/100: train_loss=9.592508 val_loss=1.871187 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 17 시간 | 소요 00:00:17 | 누적 00:06:00
+  에폭 18 학습: 첫 배치 완료 2.95초 (cuda:0)
+  에폭 18 검증: 첫 배치 완료 1.68초 (cuda:0)
+epoch 18/100: train_loss=9.603203 val_loss=1.878259 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 18 시간 | 소요 00:00:16 | 누적 00:06:18
+  에폭 19 학습: 첫 배치 완료 2.99초 (cuda:0)
+  에폭 19 검증: 첫 배치 완료 1.67초 (cuda:0)
+epoch 19/100: train_loss=9.613063 val_loss=1.857229 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 19 시간 | 소요 00:00:16 | 누적 00:06:36
+  에폭 20 학습: 첫 배치 완료 2.92초 (cuda:0)
+  에폭 20 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 20/100: train_loss=9.602295 val_loss=1.851061 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 20 시간 | 소요 00:00:16 | 누적 00:06:54
+  에폭 21 학습: 첫 배치 완료 2.99초 (cuda:0)
+  에폭 21 검증: 첫 배치 완료 1.65초 (cuda:0)
+epoch 21/100: train_loss=9.591283 val_loss=1.859984 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 21 시간 | 소요 00:00:16 | 누적 00:07:12
+  에폭 22 학습: 첫 배치 완료 3.04초 (cuda:0)
+  에폭 22 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 22/100: train_loss=9.597100 val_loss=1.871392 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 22 시간 | 소요 00:00:16 | 누적 00:07:30
+  에폭 23 학습: 첫 배치 완료 2.98초 (cuda:0)
+  에폭 23 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 23/100: train_loss=9.602360 val_loss=1.863986 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 23 시간 | 소요 00:00:16 | 누적 00:07:48
+  에폭 24 학습: 첫 배치 완료 3.03초 (cuda:0)
+  에폭 24 검증: 첫 배치 완료 1.65초 (cuda:0)
+epoch 24/100: train_loss=9.593032 val_loss=1.854400 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 24 시간 | 소요 00:00:16 | 누적 00:08:06
+  에폭 25 학습: 첫 배치 완료 2.93초 (cuda:0)
+  에폭 25 검증: 첫 배치 완료 1.65초 (cuda:0)
+epoch 25/100: train_loss=9.602380 val_loss=1.860387 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 25 시간 | 소요 00:00:16 | 누적 00:08:24
+  에폭 26 학습: 첫 배치 완료 2.93초 (cuda:0)
+  에폭 26 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 26/100: train_loss=9.595896 val_loss=1.851616 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 26 시간 | 소요 00:00:16 | 누적 00:08:42
+  에폭 27 학습: 첫 배치 완료 2.95초 (cuda:0)
+  에폭 27 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 27/100: train_loss=9.586650 val_loss=1.861144 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 27 시간 | 소요 00:00:16 | 누적 00:09:00
+  에폭 28 학습: 첫 배치 완료 3.03초 (cuda:0)
+  에폭 28 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 28/100: train_loss=9.594592 val_loss=1.857641 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 28 시간 | 소요 00:00:16 | 누적 00:09:18
+  에폭 29 학습: 첫 배치 완료 2.94초 (cuda:0)
+  에폭 29 검증: 첫 배치 완료 1.67초 (cuda:0)
+epoch 29/100: train_loss=9.599455 val_loss=1.857435 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 29 시간 | 소요 00:00:16 | 누적 00:09:36
+  에폭 30 학습: 첫 배치 완료 2.97초 (cuda:0)
+  에폭 30 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 30/100: train_loss=9.596589 val_loss=1.872919 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 30 시간 | 소요 00:00:16 | 누적 00:09:54
+  에폭 31 학습: 첫 배치 완료 2.92초 (cuda:0)
+  에폭 31 검증: 첫 배치 완료 1.65초 (cuda:0)
+epoch 31/100: train_loss=9.591942 val_loss=1.861786 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 31 시간 | 소요 00:00:16 | 누적 00:10:12
+  에폭 32 학습: 첫 배치 완료 2.92초 (cuda:0)
+  에폭 32 검증: 첫 배치 완료 1.65초 (cuda:0)
+epoch 32/100: train_loss=9.596799 val_loss=1.850607 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 32 시간 | 소요 00:00:16 | 누적 00:10:30
+  에폭 33 학습: 첫 배치 완료 3.03초 (cuda:0)
+  에폭 33 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 33/100: train_loss=9.593733 val_loss=1.868078 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 33 시간 | 소요 00:00:16 | 누적 00:10:48
+  에폭 34 학습: 첫 배치 완료 3.05초 (cuda:0)
+  에폭 34 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 34/100: train_loss=9.591324 val_loss=1.864244 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 34 시간 | 소요 00:00:16 | 누적 00:11:06
+  에폭 35 학습: 첫 배치 완료 2.99초 (cuda:0)
+  에폭 35 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 35/100: train_loss=9.588650 val_loss=1.852146 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 35 시간 | 소요 00:00:17 | 누적 00:11:24
+  에폭 36 학습: 첫 배치 완료 2.96초 (cuda:0)
+  에폭 36 검증: 첫 배치 완료 1.66초 (cuda:0)
+epoch 36/100: train_loss=9.590314 val_loss=1.860588 metric=0.239939
+  결함 클래스 IoU (배경 제외): Broken 0.000 · Flip 0.000 · Wall Broken 0.000 | 평균 0.000 | ⚠ 결함 픽셀 예측 0 (전부 배경)
+  Epoch 36 시간 | 소요 00:00:16 | 누적 00:11:42
+early stopping at epoch 36
+⚠ 저장된 best 모델이 검증 결함을 하나도 예측하지 않습니다. 검증에서 결함 픽셀을 하나도 예측하지 않았습니다(모두 배경). val loss가 낮아도 결함을 못 찾는 상태입니다. 흔한 원인: ① 이미지를 입력 크기로 줄이며 가는 결함이 사라짐 → 패치 학습을 켜거나 학습 화면의 '데이터에 맞게 자동 설정' ② 결함 픽셀이 너무 적음 → 클래스 가중치 Sqrt ③ epoch 부족.
+  총 학습시간: 00:11:43 (703.534초)

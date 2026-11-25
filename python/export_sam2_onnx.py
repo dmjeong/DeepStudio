@@ -19,6 +19,7 @@ import torch
 # Encoder and decoder are verified with the same bounded FP32 profile used by
 # the generic exporter. It is recorded in sam2.json for release audits.
 from export_onnx import validate_outputs, verification_tolerances
+from sam2_native import image_embeddings, native_mask_size, pad_image, pad_mask_prompt, visible_logits
 
 VERIFICATION_TOLERANCE = verification_tolerances("segment")
 SAM2_VARIANTS = frozenset({"Hiera Tiny", "Hiera Small", "Hiera Base+", "Hiera Large"})
@@ -39,13 +40,10 @@ class _OfficialSam2Encoder(torch.nn.Module):
         self.model = model
 
     def forward(self, input_image):
-        features = self.model.forward_image(input_image)["backbone_fpn"]
-        # SAM2ImagePredictor injects this embedding for a static image before
-        # calling the prompt decoder. Preserve that exact image path in ONNX.
-        image_embeddings = features[2]
-        if self.model.directly_add_no_mem_embed:
-            image_embeddings = image_embeddings + self.model.no_mem_embed.reshape(1, -1, 1, 1)
-        return image_embeddings, features[0], features[1]
+        region = getattr(self.model, "dvs_original_size_region", None)
+        if region:
+            input_image = pad_image(input_image, region)
+        return image_embeddings(self.model, input_image)
 
 
 class _OfficialSam2Decoder(torch.nn.Module):
@@ -63,6 +61,9 @@ class _OfficialSam2Decoder(torch.nn.Module):
         # avoids tracing a Python boolean branch that would freeze this option.
         sparse, empty_dense = prompt_encoder(
             points=(point_coords, point_labels), boxes=None, masks=None)
+        region = getattr(self.model, "dvs_original_size_region", None)
+        if region:
+            mask_input = pad_mask_prompt(mask_input, region, prompt_encoder.mask_input_size)
         _, mask_dense = prompt_encoder(
             points=(point_coords, point_labels), boxes=None, masks=mask_input)
         use_mask = has_mask_input.reshape(-1, 1, 1, 1)
@@ -72,7 +73,7 @@ class _OfficialSam2Decoder(torch.nn.Module):
             image_pe=prompt_encoder.get_dense_pe(),
             sparse_prompt_embeddings=sparse,
             dense_prompt_embeddings=dense,
-            multimask_output=True,
+            multimask_output=getattr(self.model, "dvs_multimask_output", True),
             repeat_image=False,
             high_res_features=[image_features_0, image_features_1],
         )
@@ -80,6 +81,8 @@ class _OfficialSam2Decoder(torch.nn.Module):
         # prompt ABI. Decoder output stays low-resolution by design, but retain
         # the input in the graph so the ABI is validated, rather than silently
         # dropping it during export.
+        if region:
+            masks = visible_logits(masks, region)
         return masks, scores + orig_im_size.sum() * 0.0
 
 
@@ -110,13 +113,18 @@ def export_official_sam2_checkpoint(model_id: str, checkpoint_path, output_dir: 
         "encoder_output_names": list(SAM2_ENCODER_OUTPUTS),
         "decoder_input_order": [*SAM2_ENCODER_OUTPUTS, *SAM2_PROMPT_INPUTS],
     }
+    if getattr(model, "dvs_original_size_region", None) is not None:
+        region = model.dvs_original_size_region
+        checkpoint.update(original_size_region=list(region), input_size=list(reversed(region)),
+                          mask_size=list(native_mask_size(region)))
     result = export_sam2_model(checkpoint, output_dir, verify=verify, opset=opset,
                                log=log, bundle_output=bundle_output)
     output = Path(output_dir).expanduser().resolve()
     result.update({
         "model_id": model_id,
         "checkpoint_path": str(Path(checkpoint_path).expanduser().resolve()),
-        "verification_reference": "official_sam2.1_pytorch_image_predictor_path",
+        "verification_reference": ("native_resolution_sam2.1_pytorch" if "original_size_region" in checkpoint
+                                   else "official_sam2.1_pytorch_image_predictor_path"),
         # Keep the generic export-widget result shape while making it clear
         # that SAM2 deployment consists of the encoder, decoder, and JSON.
         "output_path": str(output / "sam2_encoder.onnx"),
@@ -281,6 +289,9 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
         size = [size, size]
     if not isinstance(size, (list, tuple)) or len(size) != 2 or any(int(value) <= 0 for value in size):
         raise Sam2ExportError("SAM2 input_size must be [height, width]")
+    native_region = checkpoint.get("original_size_region")
+    if native_region is not None and native_region != [int(size[1]), int(size[0])]:
+        raise Sam2ExportError("SAM2 원본 판정 영역과 모델 입력 크기가 다릅니다.")
     channels = int(checkpoint.get("in_channels", 3))
     if channels != 3:
         raise Sam2ExportError("SAM2 encoder requires three input channels")
@@ -432,6 +443,8 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
             "automatic_mask": {"mode": "positive_point_grid_union", "max_grid": 32},
             "mask_size": [int(mask_size[0]), int(mask_size[1])]},
     }
+    if native_region is not None:
+        config["preprocessing"]["original_size_region"] = native_region
     config_file.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     result = {"output_dir": str(output), "encoder_path": str(encoder_file),
             "decoder_path": str(decoder_file), "config_path": str(config_file),

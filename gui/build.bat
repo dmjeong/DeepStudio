@@ -10,6 +10,9 @@ REM    build.bat             — NVIDIA GPU 자동 감지 후 EXE 빌드
 REM    build.bat gpu         — CUDA GPU 학습을 필수로 검사 후 EXE 빌드
 REM    build.bat cpu         — CPU 전용 PC에서 EXE 빌드
 REM    build.bat installer gpu — GPU 학습 EXE와 간단한 설치파일 빌드
+REM    build.bat setup gpu -- Prepare Python runtime and all weights, without EXE
+REM    build.bat weights -- Prepare weights only, without EXE
+REM    build.bat weights segment -- Repair all segmentation weights
 REM    build.bat clean   — 빌드 산출물 삭제
 REM
 REM  이 스크립트는 requirements.txt의 데스크톱 런타임을 설치한 뒤
@@ -27,6 +30,12 @@ REM ═════════════════════════�
 echo ================================================
 echo  Deep Vision Studio - EXE Builder
 echo ================================================
+
+if /I "%~1"=="weights" (
+    set "DVS_WEIGHTS_NONINTERACTIVE=1"
+    call prepare_model_weights.bat %2 %3
+    exit /b
+)
 
 if "%1"=="clean" (
     echo Cleaning build artifacts...
@@ -67,12 +76,24 @@ if errorlevel 1 (
 REM 1.5. 기본 모델의 사전학습 가중치를 빌드 시 받아 EXE에 포함한다.
 REM 회사망 등으로 받지 못한 가중치는 경고와 다운로드 주소만 출력하고 빌드를 계속한다.
 REM 그 파일은 앱의 Settings - 모델 관리 - 사전학습 가중치에서 나중에 가져온다.
-REM 모두 받아야만 빌드하려면 아래 명령에 --strict 를 붙인다.
+REM installer 모드는 추가 설치 없는 배포를 위해 모든 가중치를 요구한다.
 echo Downloading/verifying packaged basic-model weights...
-python ..\python\prepare_builtin_assets.py --output builtin_assets
+if /I "%~1"=="installer" (
+    set "DVS_REQUIRE_ALL_BUILTIN_ASSETS=1"
+    python ..\python\prepare_builtin_assets.py --strict
+) else (
+    python ..\python\prepare_builtin_assets.py --allow-partial
+)
 if errorlevel 1 (
     echo BASIC MODEL WEIGHT PREPARATION FAILED!
+    echo See the model-specific [failed] messages above. Completed files are preserved.
+    echo To retry weights without an EXE build, run build.bat weights.
     exit /b 1
+)
+
+if /I "%~1"=="setup" (
+    echo Python runtime and all basic-model weights are ready. Run python main.py.
+    exit /b 0
 )
 
 REM 2. 빌드 실행

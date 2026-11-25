@@ -1137,6 +1137,10 @@ button.primary { color: #fff; }
 .dataset-dialog::backdrop { background:#0b143e88; }
 .annotation-toolbar { display:flex; gap:16px; align-items:center; }
 .teaching-tools { flex-wrap:wrap; margin-top:12px; }
+.teaching-brush-size { display:flex; align-items:center; gap:8px; }
+.teaching-brush-size label { white-space:nowrap; font-size:.875rem; }
+.teaching-brush-size input[type="number"] { width:6ch; padding:5px 4px; }
+.teaching-brush-size input[type="range"] { width:110px; }
 .teaching-selected { outline:2px solid #d88900; outline-offset:2px; }
 .teaching-dialog[open] { display:flex; flex-direction:column; width:min(96vw,1380px); height:94vh; gap:8px; }
 .teaching-dialog > * { flex-shrink:0; }

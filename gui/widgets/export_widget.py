@@ -11,16 +11,18 @@ Deep Vision Studio — 모델 내보내기 페이지
 └─────────────────────────────────────────────────────────────┘
 """
 
+import json
 import os
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QFileDialog, QMessageBox, QGroupBox,
-    QFormLayout, QSpinBox,
-    QCheckBox, QTextEdit, QProgressBar,
+    QFormLayout,
+    QCheckBox, QTextEdit, QProgressBar, QScrollArea, QFrame,
 )
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QFont, QTextCursor
+from PySide6.QtGui import QFont
 
 
 # 프로젝트 모듈 경로 추가 (PyInstaller EXE 호환)
@@ -29,6 +31,7 @@ ensure_python_path()
 
 from export_onnx import deployment_preview, export_checkpoint
 from core.project import ProjectData
+from widgets.common import NoWheelComboBox, NoWheelSpinBox
 
 
 class ExportWorker(QThread):
@@ -41,11 +44,12 @@ class ExportWorker(QThread):
     def __init__(self, checkpoint_path, output_path, opset_version,
                  dynamic_batch, simplify, verify, parent=None, *, sam2_model_id="",
                  validation_dir=None, allow_precision_fallback=False, encryption_key_path=None, overrides=None,
-                 merge_with=""):
+                 merge_with="", precision="float32", calibration_dir=None):
         super().__init__(parent)
         self.checkpoint_path = checkpoint_path
         self.output_path = output_path
         self.options = dict(opset_version=opset_version, dynamic_batch=dynamic_batch,
+                            precision=precision, calibration_dir=calibration_dir,
                             simplify=simplify, verify=verify, validation_dir=validation_dir,
                             allow_precision_fallback=allow_precision_fallback,
                             encryption_key_path=encryption_key_path, overrides=overrides)
@@ -55,6 +59,8 @@ class ExportWorker(QThread):
     def run(self):
         try:
             if self.merge_with:
+                if self.options["precision"] != "float32":
+                    raise ValueError("두 분할 모델을 합칠 때는 FP32 정밀도를 선택하세요.")
                 from merge_segmenters import export_merged
                 region = (self.options.get("overrides") or {}).get("region_size")
                 result = export_merged(self.checkpoint_path, self.merge_with, self.output_path, region=region,
@@ -77,8 +83,25 @@ class ExportWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("export_page")
         self.project = None
+        self._benchmark_reference = ""
         self._init_ui()
+
+    @staticmethod
+    def _scrollable_form(title):
+        group = QGroupBox(title)
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setAccessibleName(title)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        form = QFormLayout(content)
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+        return group, form
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -98,8 +121,7 @@ class ExportWidget(QWidget):
         layout.addWidget(subtitle)
 
         # ── 입력 설정 ──
-        input_group = QGroupBox("입력 설정")
-        input_layout = QFormLayout(input_group)
+        input_group, input_layout = self._scrollable_form("입력 설정")
 
         # 체크포인트 경로
         ckpt_row = QHBoxLayout()
@@ -125,7 +147,7 @@ class ExportWidget(QWidget):
         self.region_row = QWidget()
         region_layout = QHBoxLayout(self.region_row)
         region_layout.setContentsMargins(0, 0, 0, 0)
-        self.region_w, self.region_h = QSpinBox(), QSpinBox()
+        self.region_w, self.region_h = NoWheelSpinBox(), NoWheelSpinBox()
         for spin, name in ((self.region_w, "가로"), (self.region_h, "세로")):
             spin.setRange(0, 65536)
             spin.setSpecialValueText("입력 필요")  # 0 = 아직 정하지 않음 (예전 체크포인트)
@@ -165,20 +187,19 @@ class ExportWidget(QWidget):
         self._deploy_preview = {}
         self._show_deploy_preview()
         self.ckpt_edit.editingFinished.connect(self._refresh_deploy_preview)
-        self.ckpt_edit.textChanged.connect(lambda _text: self._preview_timer.start())
+        self.ckpt_edit.textChanged.connect(self._checkpoint_changed)
         from PySide6.QtCore import QTimer
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(400)
         self._preview_timer.timeout.connect(self._refresh_deploy_preview)
 
-        layout.addWidget(input_group)
+        layout.addWidget(input_group, 2)
 
         # ── ONNX 옵션 ──
-        opt_group = QGroupBox("ONNX 옵션")
-        opt_layout = QFormLayout(opt_group)
+        opt_group, opt_layout = self._scrollable_form("ONNX 옵션")
 
-        self.opset_spin = QSpinBox()
+        self.opset_spin = NoWheelSpinBox()
         self.opset_spin.setRange(11, 20)
         self.opset_spin.setValue(17)
         self.opset_spin.setFixedWidth(120)
@@ -187,6 +208,21 @@ class ExportWidget(QWidget):
         opset_row.addWidget(self.opset_spin)
         opset_row.addStretch(1)
         opt_layout.addRow("Opset 버전:", opset_row)
+
+        self.export_precision = NoWheelComboBox()
+        self.export_precision.addItem("FP32 (원본 정밀도)", "float32")
+        self.export_precision.addItem("FP16 (16비트 부동소수점)", "float16")
+        self.export_precision.addItem("INT8 QDQ (분류·객체 탐지·분할·Dinomaly)", "int8")
+        opt_layout.addRow("정밀도:", self.export_precision)
+        self.calibration_edit = QLineEdit()
+        self.calibration_edit.setPlaceholderText("INT8 보정용 학습 이미지 폴더 (정상·불량 혼합)")
+        calibration_row = QHBoxLayout()
+        calibration_row.addWidget(self.calibration_edit)
+        self.calibration_browse = QPushButton("찾아보기...")
+        self.calibration_browse.clicked.connect(self._browse_calibration)
+        calibration_row.addWidget(self.calibration_browse)
+        opt_layout.addRow("INT8 보정 이미지:", calibration_row)
+        self.calibration_edit.setToolTip("INT8은 FP32와 값이 달라질 수 있습니다. 출력 차이 리포트를 저장하며 검증/시험 데이터의 실제 판정도 비교하세요.")
 
         self.dynamic_check = QCheckBox("동적 배치 크기 지원")
         opt_layout.addRow("", self.dynamic_check)
@@ -210,14 +246,16 @@ class ExportWidget(QWidget):
         validation_row.addWidget(validation_browse)
         opt_layout.addRow("비교 이미지:", validation_row)
         validation_hint = QLabel(
-            "정답률을 측정하는 기능이 아니라, 같은 이미지에서 PyTorch와 ONNX 출력이 "
-            "같은지 확인합니다. 이미지 0장 클래스는 자동 제외됩니다."
+            "선택한 폴더의 이미지로 변환 전후의 출력을 비교합니다. 이미지가 든 폴더 또는 클래스별 하위 폴더를 사용할 수 있습니다. "
+            "빈 클래스 폴더는 자동으로 건너뜁니다."
         )
         validation_hint.setWordWrap(True)
         validation_hint.setStyleSheet("color: #8A92A4;")
         opt_layout.addRow("", validation_hint)
         self.precision_check = QCheckBox("고정밀 호환 내보내기 허용 (느려질 수 있음, 실제 이미지 검증 모드에서는 미사용)")
         opt_layout.addRow("", self.precision_check)
+        self._previous_precision = "float32"
+        self.export_precision.currentIndexChanged.connect(self._precision_changed)
 
         self.encrypt_check = QCheckBox("모델과 설정을 암호화해서 내보내기 (.dvsenc)")
         self.encrypt_check.toggled.connect(self._encryption_changed)
@@ -237,11 +275,16 @@ class ExportWidget(QWidget):
         key_hint.setWordWrap(True)
         opt_layout.addRow("", key_hint)
 
-        layout.addWidget(opt_group)
+        layout.addWidget(opt_group, 4)
 
         # ── 내보내기 버튼 ──
         btn_row = QHBoxLayout()
         btn_row.addStretch()
+
+        self.benchmark_btn = QPushButton("CPU 실행기·정밀도 비교…")
+        self.benchmark_btn.setToolTip("ONNX Runtime과 OpenVINO의 정밀도와 CPU 스레드 수를 비교합니다.")
+        self.benchmark_btn.clicked.connect(self._open_precision_benchmark)
+        btn_row.addWidget(self.benchmark_btn)
 
         self.export_btn = QPushButton("ONNX Export")
         self.export_btn.setProperty("cssClass", "primary")
@@ -261,20 +304,23 @@ class ExportWidget(QWidget):
         # ── 로그 ──
         log_group = QGroupBox("변환 로그")
         log_layout = QVBoxLayout(log_group)
+        log_layout.setContentsMargins(0, 0, 0, 0)
         self.log_text = QTextEdit()
+        self.log_text.setAccessibleName("변환 로그")
         self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(250)
+        self.log_text.setMinimumHeight(56)
         log_layout.addWidget(self.log_text)
-        layout.addWidget(log_group)
-
-        layout.addStretch()
+        layout.addWidget(log_group, 2)
 
     def set_project(self, project: ProjectData):
         """프로젝트 설정"""
         if self.project is not project:
             self.encrypt_check.setChecked(False)
             self.key_edit.clear()
+            self._benchmark_reference = ""
         self.project = project
+        self.export_precision.setCurrentIndex(0)
+        self.calibration_edit.setText(project.data.train_dir or "")
         self.validation_edit.clear()
         efficientnet = project.task == "classify" and str(getattr(project.model, "model_id", "")).startswith("efficientnet_")
         self.dataset_verify_check.setChecked(efficientnet)
@@ -320,18 +366,80 @@ class ExportWidget(QWidget):
             os.path.join(export_dir, f"model_{project.task}" + (".dvsenc" if self.encrypt_check.isChecked() else ".onnx"))
         )
 
+    def _checkpoint_changed(self):
+        self._benchmark_reference = ""
+        self._preview_timer.start()
+
+    def _open_precision_benchmark(self):
+        from widgets.precision_benchmark_dialog import PrecisionBenchmarkDialog
+        from core.class_management import IMAGE_EXTENSIONS
+
+        data = self.project.data if self.project else None
+        image_dirs = [directory for directory in (
+            getattr(data, "test_dir", ""), getattr(data, "val_dir", ""), getattr(data, "train_dir", ""),
+        ) if directory and os.path.isdir(directory)]
+        image_dir = next((directory for directory in image_dirs if any(
+            file.is_file() and file.suffix.lower() in IMAGE_EXTENSIONS
+            for file in Path(directory).rglob("*")
+        )), image_dirs[0] if image_dirs else "")
+        fp32_path = self._benchmark_reference if os.path.isfile(self._benchmark_reference) else ""
+        output = self.output_edit.text().strip()
+        fp16_path = int8_path = ""
+        if output and Path(output).suffix.lower() == ".onnx":
+            config = Path(output).with_suffix(".json")
+            if config.is_file():
+                try:
+                    manifest = json.loads(config.read_text(encoding="utf-8"))
+                    precision = manifest.get("export", {}).get("precision", "float32")
+                    if manifest.get("model_path") and precision == "float32":
+                        fp32_path = str(config)
+                    elif manifest.get("model_path") and precision == "float16":
+                        fp16_path = str(config)
+                    elif manifest.get("model_path") and precision == "int8":
+                        int8_path = str(config)
+                except (OSError, ValueError, AttributeError, TypeError):
+                    pass  # The chooser remains available for exported manifests in other locations.
+        checkpoint = self.ckpt_edit.text().strip()
+        temporary_export = None
+        if not self.merge_check.isChecked() and not self.encrypt_check.isChecked() and os.path.isfile(checkpoint):
+            temporary_export = {"checkpoint_path": checkpoint, "opset_version": self.opset_spin.value(),
+                                "allow_precision_fallback": self.precision_check.isChecked()}
+            if self.dataset_verify_check.isChecked() and os.path.isdir(self.validation_edit.text().strip()):
+                temporary_export["validation_dir"] = self.validation_edit.text().strip()
+            if self._deploy_preview.get("patch") and not self._deploy_preview.get("vit"):
+                temporary_export["overrides"] = {"region_size": [self.region_w.value(), self.region_h.value()]}
+            model_id = getattr(getattr(self.project, "model", None), "model_id", "")
+            if model_id.startswith("sam2_hiera_"):
+                temporary_export["sam2_model_id"] = model_id
+        self._benchmark_dialog = PrecisionBenchmarkDialog(
+            self, fp32_path=fp32_path, fp16_path=fp16_path, int8_path=int8_path,
+            checkpoint_export=temporary_export, image_dir=image_dir,
+            calibration_dir=self.calibration_edit.text().strip(),
+            browse_dir=str(Path(output).parent) if output else "",
+        )
+        try:
+            self._benchmark_dialog.exec()
+        finally:
+            self._benchmark_dialog.deleteLater()
+            self._benchmark_dialog = None
+
     def _refresh_deploy_preview(self):
         path = self.ckpt_edit.text().strip()
         self._deploy_preview = deployment_preview(path) if path and os.path.isfile(path) else {}
         self._show_deploy_preview()
 
     def _show_deploy_preview(self):
-        """체크포인트를 고르면: 패치 학습 모델은 판정 영역 입력을 보이고, 함께 담길 판정 기준을 알린다."""
+        """체크포인트의 판정 영역과 함께 담길 판정 기준을 보여 준다."""
         preview = self._deploy_preview
         patch = bool(preview.get("patch")) and not preview.get("vit")
         self.region_row.setVisible(patch)
         lines = []
-        if patch:
+        if preview.get("region_error"):
+            lines.append(f"<b>판정 영역 오류</b>: {preview['region_error']}")
+        elif preview.get("original_size_region"):
+            width, height = preview["original_size_region"]
+            lines.append(f"원본 크기 학습 모델 · 고정 판정 영역 {width}×{height} px")
+        elif patch:
             region = preview.get("region") or [0, 0]
             self.region_w.setValue(int(region[0]))
             self.region_h.setValue(int(region[1]))
@@ -342,7 +450,7 @@ class ExportWidget(QWidget):
                             ". <b>판정 영역 크기를 입력하세요</b> — 설비에서 넘기는 영상 크기"
                             "(예전 체크포인트라 학습 영상 크기 기록이 없습니다)."))
         elif preview.get("patch") and preview.get("vit"):
-            lines.append("ViT 패치 모델은 타일 추론이 필요해 C++ SDK에서는 쓸 수 없습니다(데스크톱 추론 전용).")
+            lines.append("전역 문맥 모델: 학습 크기 타일로 내보냅니다. 새 C++ SDK(schema 8)가 자동으로 영역을 나누고 결과를 합칩니다.")
         if preview.get("task") == "segment":
             rules = preview.get("rules")
             if preview.get("rules_error"):
@@ -382,6 +490,43 @@ class ExportWidget(QWidget):
         if self.output_edit.text().strip():
             self.output_edit.setText(str(Path(self.output_edit.text()).with_suffix(".dvsenc" if checked else ".onnx")))
 
+    def _precision_changed(self):
+        precision = self.export_precision.currentData()
+        fp16 = precision == "float16"
+        if fp16:
+            self._verify_before_fp16 = self.verify_check.isChecked()
+            self.verify_check.setChecked(True)
+        elif self._previous_precision == "float16":
+            self.verify_check.setChecked(self._verify_before_fp16)
+        self.verify_check.setText("출력 검증 (PyTorch → FP32 ONNX → FP16 ONNX)" if fp16 else
+                                  "출력 검증 (PyTorch vs ONNX)")
+        self.verify_check.setEnabled(not fp16)
+        self.precision_check.setEnabled(not fp16)
+        self.calibration_edit.setEnabled(not fp16)
+        self.calibration_browse.setEnabled(not fp16)
+        if self.project is not None:
+            task = self.project.task
+            efficientnet = task == "classify" and self.project.model.model_id.startswith("efficientnet_")
+            real_images = efficientnet or (fp16 and task in {"classify", "segment"})
+            self.dataset_verify_check.setEnabled(real_images)
+            if not real_images:
+                self.dataset_verify_check.setChecked(False)
+        self.dataset_verify_check.setText(
+            "실제 이미지로 FP32·FP16 출력 추가 비교" if fp16 else
+            "실제 이미지 추가 검증 (PyTorch·ONNX 판정 일치·확률 차이 0.1%p 이하)")
+
+        # Give each precision its own file beside the current destination.
+        # A path explicitly chosen after switching is used as entered.
+        path = Path(self.output_edit.text().strip())
+        if path.suffix.lower() in (".onnx", ".dvsenc"):
+            suffixes = {"float32": "", "float16": "_fp16", "int8": "_int8"}
+            stem = path.stem.removesuffix(suffixes[self._previous_precision]) or path.stem
+            suffix = suffixes[precision]
+            if not stem.endswith(suffix):
+                stem += suffix
+            self.output_edit.setText(str(path.with_name(stem + path.suffix)))
+        self._previous_precision = precision
+
     def _browse_key(self):
         path, _ = QFileDialog.getOpenFileName(self, "암호키 선택", "", "암호키 (*.key);;모든 파일 (*)")
         if path:
@@ -398,8 +543,13 @@ class ExportWidget(QWidget):
             except Exception as exc:
                 QMessageBox.warning(self, "키 생성 실패", str(exc))
 
+    def _browse_calibration(self):
+        folder = QFileDialog.getExistingDirectory(self, "INT8 보정 이미지 폴더", self.calibration_edit.text())
+        if folder:
+            self.calibration_edit.setText(folder)
+
     def _browse_validation(self):
-        folder = QFileDialog.getExistingDirectory(self, "분류 비교 이미지 폴더", self.validation_edit.text())
+        folder = QFileDialog.getExistingDirectory(self, "비교 이미지 폴더", self.validation_edit.text())
         if folder:
             self.validation_edit.setText(folder)
 
@@ -407,14 +557,18 @@ class ExportWidget(QWidget):
         """내보내기 시작"""
         ckpt_path = self.ckpt_edit.text().strip()
         output_path = self.output_edit.text().strip()
+        precision = self.export_precision.currentData()
+        sam2 = (self.project is not None and self.project.task == "segment" and
+                str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_"))
+        if precision == "float16" and (sam2 or self.merge_check.isChecked()):
+            QMessageBox.warning(self, "FP16 설정", "SAM2 인코더·디코더 또는 두 분할 모델 합치기에는 FP32를 선택하세요.")
+            return
 
         # The selection can change on the Training page after this page was
         # initially bound to the project.  A blank SAM2 source resolves to the
         # bundled official checkpoint; a selected SAM2 fine-tune result stays
         # selected so its learned prompt/mask-decoder weights are exported.
-        if (self.project is not None and self.project.task == "segment" and
-                str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_") and
-                not ckpt_path):
+        if sam2 and not ckpt_path:
             from builtin_assets import builtin_asset_path
             ckpt_path = str(builtin_asset_path(self.project.model.model_id))
             self.ckpt_edit.setText(ckpt_path)
@@ -454,6 +608,10 @@ class ExportWidget(QWidget):
                 QMessageBox.warning(self, "모델 합치기", "합친 모델은 아직 암호화 내보내기를 지원하지 않습니다. 암호화를 끄세요.")
                 return
 
+        if precision == "int8":
+            if merge_with or not self.verify_check.isChecked() or not os.path.isdir(self.calibration_edit.text().strip()):
+                QMessageBox.warning(self, "INT8 설정", "출력 검증과 보정 이미지 폴더가 필요합니다. 모델 합치기는 FP32로 먼저 내보내세요.")
+                return
         validation_dir = None
         if self.dataset_verify_check.isChecked() and self.verify_check.isChecked():
             validation_dir = self.validation_edit.text().strip()
@@ -465,6 +623,7 @@ class ExportWidget(QWidget):
             return
         self.log_text.clear()
         self.export_btn.setEnabled(False)
+        self.benchmark_btn.setEnabled(False)
         self.progress_bar.show()
         self.worker = ExportWorker(
             checkpoint_path=ckpt_path, output_path=output_path,
@@ -473,15 +632,14 @@ class ExportWidget(QWidget):
             simplify=self.simplify_check.isChecked(),
             verify=self.verify_check.isChecked(), parent=self,
             validation_dir=validation_dir,
-            allow_precision_fallback=self.precision_check.isChecked(),
+            precision=precision, calibration_dir=(self.calibration_edit.text().strip() or None) if precision == "int8" else None,
+            allow_precision_fallback=precision != "float16" and self.precision_check.isChecked(),
             encryption_key_path=encryption_key_path,
             merge_with=merge_with,
             overrides=({"region_size": [self.region_w.value(), self.region_h.value()]}
                        if self.region_row.isVisible() or (self._deploy_preview.get("patch") and
                                                           not self._deploy_preview.get("vit")) else None),
-            sam2_model_id=(getattr(self.project.model, "model_id", "")
-                           if self.project is not None and self.project.task == "segment" and
-                           str(getattr(self.project.model, "model_id", "")).startswith("sam2_hiera_") else ""),
+            sam2_model_id=self.project.model.model_id if sam2 else "",
         )
         self.worker.log.connect(self._on_log)
         self.worker.completed.connect(self._on_finished)
@@ -525,16 +683,26 @@ class ExportWidget(QWidget):
     def _worker_finished(self):
         self.worker = None
         self.export_btn.setEnabled(True)
+        self.benchmark_btn.setEnabled(True)
         self.progress_bar.hide()
 
     def _on_log(self, message):
+        scroll = self.log_text.verticalScrollBar()
+        position = scroll.value()
+        at_end = position == scroll.maximum()
         self.log_text.append(message)
-        cursor = self.log_text.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        self.log_text.setTextCursor(cursor)
+        scroll.setValue(scroll.maximum() if at_end else position)
 
     def _on_finished(self, result):
-        status = "검증 통과" if result["verification"] == "passed" else "검증 건너뜀"
+        config_path = result.get("config_path")
+        if config_path and not result.get("encrypted") and Path(config_path).suffix.lower() == ".json":
+            if result.get("precision", "float32") == "float32":
+                self._benchmark_reference = str(config_path)
+            elif self._benchmark_reference == str(config_path):
+                self._benchmark_reference = ""
+        status = ("FP16 실행·FP32 출력 비교 완료" if result.get("verification") == "fp16_compared" else
+                  "INT8 실행·보정 영상 비교 완료" if result.get("precision") == "int8" else
+                  "검증 통과" if result["verification"] == "passed" else "검증 건너뜀")
         if result.get("merged"):
             text = (f"두 모델 합치기 완료 ({status})\n\n모델: {result['output_path']}\n설정: {result['config_path']}\n"
                     f"크기: {result['file_size_mb']:.1f} MB\n클래스: {', '.join(result['class_names'])}\n"
@@ -542,13 +710,27 @@ class ExportWidget(QWidget):
                     "설비는 지금처럼 Segment를 한 번 부르면 됩니다. 마스크의 클래스 번호는 위 순서입니다.")
             if result.get("rules"):
                 text += "\n두 모델의 판정 기준이 함께 담겼습니다 (C++ SDK가 기준 미달 덩어리를 지움)."
-            self.log_text.append(text)
+            self._on_log(text)
             QMessageBox.information(self, "완료", text)
             return
         text = (f"ONNX 내보내기 완료 ({status})\n\n"
                 f"모델: {result['output_path']}\n"
                 f"설정: {result.get('config_path') or '암호화 파일에 포함'}\n"
                 f"크기: {result['file_size_mb']:.1f} MB")
+        if result.get("fp16_comparison"):
+            report = result["fp16_comparison"]
+            text += f"\nFP32 비교 입력: 합성 {len(report['probes'])}개 · 실제 이미지 {report['validation_images']}장"
+            if "pixel_agreement" in report:
+                text += f"\n비교 입력의 분할 픽셀 일치율: {report['pixel_agreement']:.2%}"
+        if result.get("precision") == "int8":
+            text += "\nINT8은 FP32와 수치·정확도가 달라질 수 있습니다. 보정 영상 비교 결과는 로그와 JSON에 저장했습니다. 별도 시험 영상으로 확인하세요."
+            report = result.get("quantization_comparison", {})
+            if result.get("task") == "classify" and "top1_agreement" in report:
+                text += f"\nFP32 대비 분류 판정 일치율: {report['top1_agreement']:.2%} ({report['windows']}개 입력)"
+                if report["top1_agreement"] < 1:
+                    text += "\n판정이 바뀐 보정 영상이 있습니다. JSON의 changed_images를 확인하세요."
+            if result.get("task") == "detect" and report.get("fp32_positive_images") == 0:
+                text += "\n보정 영상에서 FP32 검출이 없어 불량 검출 일치는 확인되지 않았습니다."
         if result.get("backend") == "sam2" and not result.get("encrypted"):
             text += "\nSAM2는 encoder ONNX, decoder ONNX, sam2.json 세 파일을 함께 배포합니다."
         if result.get("encrypted"):
@@ -580,9 +762,9 @@ class ExportWidget(QWidget):
                 text += (f"\n결정론적 합성 입력 {validation['probe_count']}개: top-1·확률·판정 마진 검증 통과 (FP32)"
                          f"\n현재 PC 모델 추론 중앙값: {measured['model_median_ms']:.2f} ms"
                          "\n실제 이미지 검증 자료가 없어 합성 입력 범위만 인증했습니다.")
-        self.log_text.append(text)
+        self._on_log(text)
         QMessageBox.information(self, "완료", text)
 
     def _on_error(self, error_msg):
-        self.log_text.append(f"\n오류: {error_msg}")
+        self._on_log(f"\n오류: {error_msg}")
         QMessageBox.critical(self, "오류", f"내보내기 실패:\n{error_msg}")

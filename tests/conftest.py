@@ -13,6 +13,11 @@ Deep Vision Studio 테스트 — 공통 Fixture
 
 import os
 import sys
+
+# Set before importing ORT: DisableTelemetryEvents() alone leaves the POSIX
+# uploader alive, which can race interpreter shutdown in ORT 1.29.
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
 import pytest
 import numpy as np
 
@@ -23,6 +28,83 @@ sys.path.insert(0, os.path.abspath(GUI_DIR))
 # python/ 경로 추가 (model.py 등)
 PYTHON_DIR = os.path.join(os.path.dirname(__file__), "..", "python")
 sys.path.insert(0, os.path.abspath(PYTHON_DIR))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _retain_qt_application():
+    """Keep one QApplication alive across GUI fixtures, including on Windows.
+
+    Individual dialogs must not own/destruct the process-wide application.
+    Pure numerical environments that have not imported Qt remain Qt-free.
+    """
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    app = None
+    if widgets is not None:
+        app = widgets.QApplication.instance() or widgets.QApplication([])
+        app.setQuitOnLastWindowClosed(False)
+    yield app
+    # Some unittest classes retain closed widgets in class attributes. Destroy
+    # them while Python/Qt are both alive, not during PySide's atexit sweep
+    # after the interpreter starts unloading extension modules on Windows.
+    if widgets is not None and widgets.QApplication.instance() is not None:
+        from PySide6.QtCore import QCoreApplication, QEvent, QThread, QThreadPool
+        import shiboken6
+
+        for window in widgets.QApplication.topLevelWidgets():
+            window.close()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.MetaCall)
+        assert QThreadPool.globalInstance().waitForDone(10000), "Qt thread pool did not finish"
+        for window in widgets.QApplication.topLevelWidgets():
+            for worker in window.findChildren(QThread):
+                assert not worker.isRunning() or worker.wait(10000), (
+                    f"GUI thread did not finish: {type(worker).__name__}"
+                )
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.MetaCall)
+        for window in widgets.QApplication.topLevelWidgets():
+            window.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        shiboken6.delete(widgets.QApplication.instance())
+
+
+def pytest_runtest_logreport(report):
+    # Preserve the real first error even if a later native/Qt teardown exits
+    # before pytest can write its final summary or JUnit report.
+    if report.failed:
+        sys.__stderr__.write(f"\nFAILED {report.nodeid}\n{report.longreprtext}\n")
+        sys.__stderr__.flush()
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Finish deferred Qt destruction after *all* test fixture finalizers.
+
+    These tests do not run QApplication.exec(). processEvents() does not drain
+    DeferredDelete, so closed widgets can otherwise survive until PySide's
+    atexit sweep (QObject/QPushButton destructor crash on macOS). Do not create
+    an application or process unrelated events for non-GUI tests.
+    """
+    yield
+    qt = sys.modules.get("PySide6.QtCore")
+    if qt is not None and qt.QCoreApplication.instance() is not None:
+        # Several legacy GUI fixtures queue deleteLater immediately after
+        # close(), while close() is still saving the draft asynchronously.
+        # In an offscreen test we must finish those IO threads before draining
+        # deferred deletion; otherwise Windows aborts the entire test process.
+        writers = sys.modules.get("widgets.annotation_io")
+        widgets = sys.modules.get("PySide6.QtWidgets")
+        if writers is not None and widgets is not None:
+            for _ in range(4):
+                running = [
+                    worker for window in widgets.QApplication.topLevelWidgets()
+                    for worker in window.findChildren(writers.AnnotationWrite)
+                    if worker.isRunning()
+                ]
+                for worker in running:
+                    assert worker.wait(10000), "Annotation draft IO did not finish before GUI teardown"
+                qt.QCoreApplication.sendPostedEvents(None, qt.QEvent.Type.MetaCall)
+                if not running:
+                    break
+        qt.QCoreApplication.sendPostedEvents(None, qt.QEvent.Type.DeferredDelete)
 
 
 @pytest.fixture

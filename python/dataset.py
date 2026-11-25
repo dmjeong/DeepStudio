@@ -35,7 +35,7 @@ import torchvision.transforms as T
 import numpy as np
 from PIL import Image
 from opencv_preprocess import OpenCVResize, read_image, resize
-from checkpoint import PATCH_SCALE_INTERPOLATION
+from checkpoint import PATCH_SCALE_INTERPOLATION, padded_region_size
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -69,7 +69,7 @@ def get_normalize_params(in_channels: int = 3):
 
 
 def get_classification_transforms(
-    input_size: Tuple[int, int] = (224, 224),
+    input_size: Optional[Tuple[int, int]] = (224, 224),
     is_train: bool = True,
     in_channels: int = 3,
     flip_prob: float = 0.5,
@@ -90,9 +90,10 @@ def get_classification_transforms(
     # 채널 수에 맞는 정규화 값 선택
     mean, std = get_normalize_params(in_channels)
 
+    spatial = [] if input_size is None else [OpenCVResize(input_size)]
     if is_train:
         augmentations = [
-            OpenCVResize(input_size),
+            *spatial,
             T.ToTensor(),
             T.RandomHorizontalFlip(p=flip_prob),
             T.RandomRotation(degrees=rotation),
@@ -118,7 +119,7 @@ def get_classification_transforms(
         return T.Compose(augmentations)
     else:
         return T.Compose([
-            OpenCVResize(input_size),
+            *spatial,
             T.ToTensor(),
             T.Normalize(mean=mean, std=std),
         ])
@@ -203,6 +204,7 @@ class ClassificationDataset(Dataset):
         self.transform = transform
         self.in_channels = in_channels
         self.extensions = extensions or self.SUPPORTED_EXT
+        self.original_size = None
         # 각 DataLoader worker가 디코딩 결과를 제한된 크기로 재사용한다.
         # 원본 해상도가 큰 데이터에서도 메모리가 무한히 증가하지 않는다.
         self.cache_images = bool(cache_images)
@@ -268,6 +270,8 @@ class ClassificationDataset(Dataset):
             self._image_cache[key] = cached
             return cached
         image = read_image(key, self.in_channels)
+        if self.original_size is not None and image.shape[:2] != self.original_size:
+            raise ValueError(f"원본 크기 학습 중 이미지 해상도가 달라졌습니다: {key}")
         size = int(image.nbytes)
         if self.cache_images and self.cache_limit_bytes and size <= self.cache_limit_bytes:
             while self._image_cache and self._image_cache_bytes + size > self.cache_limit_bytes:
@@ -416,36 +420,27 @@ class SegmentationDataset(Dataset):
         print("Segmentation 데이터셋 로드")
         print(f"   이미지-마스크 쌍: {len(self.pairs)}")
         if self.unlabeled:
-            print(f"   마스크 없는 이미지 {len(self.unlabeled)}장은 배경(결함 없음)으로 학습")
+            print(f"   마스크 없는 이미지 {len(self.unlabeled)}장은 자동 배경(ID 0)으로 학습에 포함")
 
-    def _find_pairs(self) -> List[Tuple[str, str]]:
-        from spatial_data import labeled_semantic_pairs
-        # 마스크가 없는 이미지(라벨링 안 함)는 결함이 없는 이미지로 보고 전부 배경(0)인 정답으로 학습한다.
-        # 쌍의 마스크 자리는 None이다 (_resized_mask가 배경 마스크를 만든다).
-        pairs, self.unlabeled = labeled_semantic_pairs(self.img_dir, self.mask_dir)
-        if not pairs:
-            raise ValueError(
-                f"정답 마스크가 하나도 없습니다: {self.img_dir} (이미지 {len(self.unlabeled)}장). "
-                "데이터셋 화면에서 이미지를 열어 결함 영역을 그리고 저장하세요.")
-        return pairs + [(image, None) for image in self.unlabeled]
+    def _find_pairs(self):
+        from spatial_data import semantic_training_pairs
+        pairs, self.unlabeled = semantic_training_pairs(self.img_dir, self.mask_dir)
+        return pairs
 
-    def _resized_mask(self, mask_path: Optional[str]) -> Tuple[np.ndarray, Optional[Tuple[int, int]]]:
-        """학습 크기로 줄인 클래스 마스크(복사본)와 원본 (W, H). 마스크 없는 이미지는 전부 배경 (크기 None)."""
+    def _resized_mask(self, mask_path, image_path=None):
+        """Training-size labels and original (W, H), without modifying source files."""
+        from spatial_data import load_semantic_mask
         if mask_path is None:
-            return np.zeros(tuple(self.input_size), dtype=np.uint8), None
+            with Image.open(image_path) as image:
+                size = image.size
+            return np.zeros(self.input_size, dtype=np.uint8), size
         stat = os.stat(mask_path)
-        key = (mask_path, stat.st_mtime_ns, stat.st_size)
+        key = (mask_path, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
         cached = self._mask_cache.get(key)
         if cached is None:
-            # 팔레트 마스크는 표시 색이 아닌 인덱스를 보존한다.
-            with Image.open(mask_path) as source_mask:
-                if source_mask.mode not in ("P", "L", "I", "I;16"):
-                    raise ValueError(
-                        f"정답 마스크는 클래스 인덱스 이미지 필요 (팔레트/L/I): {mask_path}"
-                    )
-                original = np.asarray(source_mask)
-                size = source_mask.size
-            cached = (resize_label_mask(original, self.input_size), size)
+            original, size = load_semantic_mask(image_path or mask_path, mask_path, self.num_classes)
+            mask = original if original.shape == tuple(self.input_size) else resize_label_mask(original, self.input_size)
+            cached = (mask, size)
             nbytes = cached[0].nbytes
             if nbytes <= self._mask_cache_limit:
                 while self._mask_cache and self._mask_cache_bytes + nbytes > self._mask_cache_limit:
@@ -460,8 +455,8 @@ class SegmentationDataset(Dataset):
     def class_pixel_counts(self, num_classes: int) -> List[int]:
         """학습 크기 마스크의 클래스별 픽셀 수 (255 학습 제외 픽셀은 세지 않음)."""
         counts = np.zeros(num_classes, dtype=np.int64)
-        for _, mask_path in self.pairs:
-            mask = self._resized_mask(mask_path)[0]
+        for image_path, mask_path in self.pairs:
+            mask = self._resized_mask(mask_path, image_path)[0]
             values = np.bincount(mask[mask != 255].ravel().astype(np.int64), minlength=num_classes)
             if values.size > num_classes:
                 raise ValueError(f"정답 마스크 클래스 범위 오류: {mask_path}")
@@ -471,18 +466,22 @@ class SegmentationDataset(Dataset):
     def __len__(self) -> int:
         return len(self.pairs)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _load_pair(self, idx):
         img_path, mask_path = self.pairs[idx]
 
         # 이미지 로드 — 채널 수에 따라 RGB 또는 Grayscale 변환
-        image = Image.fromarray(read_image(img_path, self.in_channels))
-        mask_array, mask_size = self._resized_mask(mask_path)
-        if mask_size is not None and image.size != mask_size:
-            raise ValueError(f"이미지/마스크 원본 크기 불일치: {img_path} {image.size}, {mask_path} {mask_size}")
+        image = read_image(img_path, self.in_channels)
+        mask_array, mask_size = self._resized_mask(mask_path, img_path)
+        image_size = (image.shape[1], image.shape[0])
+        if image_size != mask_size:
+            raise ValueError(f"이미지/마스크 원본 크기 불일치: {img_path} {image_size}, {mask_path} {mask_size}")
+        return image, mask_array, mask_path
 
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        image, mask_array, mask_path = self._load_pair(idx)
         # 리사이즈 (이미지: 픽셀 중심 기준 bilinear, 마스크: 픽셀 중심 기준 nearest
         # + 축소로 사라지는 작은 결함 보존). resize_label_mask 설명 참고.
-        image = Image.fromarray(resize(np.asarray(image), self.input_size))
+        image = Image.fromarray(resize(image, self.input_size))
         return self._augment_to_tensors(image, Image.fromarray(mask_array), mask_path)
 
     def _augment_to_tensors(self, image: Image.Image, mask: Image.Image, mask_path) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -520,6 +519,50 @@ class SegmentationDataset(Dataset):
                            (self.num_classes is not None and valid.max() >= self.num_classes)):
             raise ValueError(f"정답 마스크 클래스 범위 오류: {mask_path}")
         mask = torch.from_numpy(mask_array)
+        return image, mask
+
+
+def native_image_size(paths, expected_size=None):
+    """Read every raw image header and return the shared (height, width)."""
+    size = expected_size
+    for path in paths:
+        with Image.open(path) as image:
+            current = (image.height, image.width)
+        if size is None:
+            size = current
+        if current != size:
+            raise ValueError(
+                f"원본 크기 학습에는 학습·검증 이미지 크기가 모두 같아야 합니다. "
+                f"기준 {size[1]}×{size[0]}, {path}: {current[1]}×{current[0]}. "
+                "크기가 다른 이미지에는 공통 중앙 크롭을 설정해 주세요."
+            )
+    if size is None:
+        raise ValueError("원본 크기를 확인할 학습 이미지가 없습니다.")
+    return size
+
+
+class OriginalSizeSegmentationDataset(SegmentationDataset):
+    """판정 영역 전체를 원본 픽셀 크기로 사용하고 오른쪽·아래만 채운다."""
+
+    def __init__(self, img_dir: str, mask_dir: str, *, expected_size=None, **kwargs):
+        super().__init__(img_dir, mask_dir, **kwargs)
+        self.original_size = self.input_size = native_image_size(
+            (image_path for image_path, _ in self.pairs), expected_size)
+        height, width = self.original_size
+        self.padded_size = padded_region_size((width, height))
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        image, mask, mask_path = self._load_pair(idx)
+        if image.shape[:2] != self.original_size:
+            raise ValueError(f"학습 중 이미지 크기가 변경되었습니다: {self.pairs[idx][0]}")
+        image, mask = self._augment_to_tensors(Image.fromarray(image), Image.fromarray(mask), mask_path)
+        height, width = self.original_size
+        padded_height, padded_width = self.padded_size
+        if self.padded_size != self.original_size:
+            # 배포 추론과 같은 위치에 정규화 후 0을 채우고, 정답에서는 그 픽셀을 제외한다.
+            padding = (0, padded_width - width, 0, padded_height - height)
+            image = torch.nn.functional.pad(image, padding, value=0)
+            mask = torch.nn.functional.pad(mask, padding, value=255)
         return image, mask
 
 
@@ -762,6 +805,7 @@ class AnomalyDataset(Dataset):
         super().__init__()
         self.root = root
         self.input_size = input_size
+        self.original_size = None
         self.in_channels = in_channels
         self.is_train = is_train
         self.flip_prob = flip_prob
@@ -782,8 +826,8 @@ class AnomalyDataset(Dataset):
 
         print(f"Anomaly 데이터셋 로드: {root}")
         print(f"   이미지 수: {len(self.samples)}")
-        good_count = sum(1 for l in self.labels if l == 0)
-        defect_count = sum(1 for l in self.labels if l == 1)
+        good_count = sum(1 for label in self.labels if label == 0)
+        defect_count = sum(1 for label in self.labels if label == 1)
         print(f"   Good: {good_count} | Defect: {defect_count}")
 
     def _scan_directory(self, root):
@@ -807,8 +851,12 @@ class AnomalyDataset(Dataset):
         label = self.labels[idx]
 
         # 이미지 로드 — 채널 수에 따라 RGB 또는 Grayscale 변환
-        image = Image.fromarray(read_image(img_path, self.in_channels))
-        image = Image.fromarray(resize(np.asarray(image), self.input_size))
+        image = read_image(img_path, self.in_channels)
+        if self.original_size is None:
+            image = resize(image, self.input_size)
+        elif image.shape[:2] != self.original_size:
+            raise ValueError(f"원본 학습 중 이미지 크기가 변경됐습니다: {img_path}")
+        image = Image.fromarray(image)
 
         # 학습 시 약간의 증강 (너무 강하면 재구성이 어려워짐)
         if self.is_train:
@@ -863,7 +911,8 @@ class DetectionDataset(Dataset):
                  num_classes: int = 20,
                  in_channels: int = 3,
                  is_train: bool = True,
-                 max_objects: int = 50, flip_prob: float = 0.5):
+                 max_objects: int = 50, flip_prob: float = 0.5,
+                 original_size: bool = False, expected_size=None):
         super().__init__()
         self.img_dir = img_dir
         self.label_dir = label_dir
@@ -888,6 +937,10 @@ class DetectionDataset(Dataset):
                 f"  레이블 형식: class_id x_center y_center width height"
             )
 
+        self.original_size = (native_image_size((path for path, _ in self.samples), expected_size)
+                              if original_size else None)
+        if self.original_size:
+            self.input_size = self.original_size
         print("Detection 데이터셋 로드")
         print(f"   이미지-레이블 쌍: {len(self.samples)}")
 
@@ -906,7 +959,11 @@ class DetectionDataset(Dataset):
 
         # 이미지 로드 & 리사이즈 — 채널 수에 따라 RGB 또는 Grayscale
         image = Image.fromarray(read_image(img_path, self.in_channels))
-        image = Image.fromarray(resize(np.asarray(image), self.input_size))
+        if self.original_size:
+            if image.size[::-1] != self.original_size:
+                raise ValueError(f"원본 학습 이미지 크기가 변경되었습니다: {img_path}")
+        else:
+            image = Image.fromarray(resize(np.asarray(image), self.input_size))
 
         # 학습 시 데이터 증강
         flip = False
@@ -972,6 +1029,7 @@ def create_classification_loaders(
     val_split: float = 0.2,
     seed: int = 0,
     pin_memory: bool = False,
+    original_size: bool = False,
     **aug_kwargs
 ) -> Tuple[DataLoader, DataLoader, List[str]]:
     """
@@ -994,14 +1052,13 @@ def create_classification_loaders(
         os.path.isdir(train_dir)
         and _has_classification_images(val_dir, ClassificationDataset.SUPPORTED_EXT)
     )
+    transform_size = None if original_size else input_size
+    train_transform = get_classification_transforms(
+        transform_size, is_train=True, in_channels=in_channels, **aug_kwargs)
+    val_transform = get_classification_transforms(
+        transform_size, is_train=False, in_channels=in_channels)
     if use_explicit_validation:
         # val에 이미지가 있는 경우에만 사용자가 명시적으로 분리한 세트다.
-        train_transform = get_classification_transforms(
-            input_size, is_train=True, in_channels=in_channels, **aug_kwargs
-        )
-        val_transform = get_classification_transforms(
-            input_size, is_train=False, in_channels=in_channels
-        )
         train_dataset = ClassificationDataset(
             train_dir, train_transform, in_channels=in_channels
         )
@@ -1020,12 +1077,6 @@ def create_classification_loaders(
         # │ 해결: _TransformOverrideSubset 래퍼로 val subset의        │
         # │       transform만 증강 없는 버전으로 교체한다.             │
         # └──────────────────────────────────────────────────────────┘
-        train_transform = get_classification_transforms(
-            input_size, is_train=True, in_channels=in_channels, **aug_kwargs
-        )
-        val_transform = get_classification_transforms(
-            input_size, is_train=False, in_channels=in_channels
-        )
         full_dataset = ClassificationDataset(
             train_dir if os.path.isdir(train_dir) else data_root,
             train_transform, in_channels=in_channels
@@ -1049,6 +1100,15 @@ def create_classification_loaders(
                    if hasattr(train_dataset, 'classes')
                    else train_dataset.dataset.classes)
 
+    if original_size:
+        train_base = train_dataset if use_explicit_validation else full_dataset
+        native = native_image_size(path for path, _ in train_base.samples)
+        if min(native) < 32:
+            raise ValueError(f"원본 크기 분류 학습에는 가로·세로 각각 32px 이상이 필요합니다: {native[1]}×{native[0]}")
+        if use_explicit_validation:
+            native_image_size((path for path, _ in val_dataset.samples), native)
+        train_base.original_size = train_dataset.original_size = val_dataset.original_size = native
+
     loader_options = _loader_runtime_options(num_workers, pin_memory)
     train_loader = DataLoader(
         train_dataset,
@@ -1068,14 +1128,14 @@ def create_classification_loaders(
 
 
 def unlabeled_message(*loaders) -> str:
-    """배경으로 학습하는 마스크 없는 이미지 안내 문구. 없으면 빈 문자열."""
+    """자동 배경으로 포함한 미라벨 이미지 개수. 없으면 빈 문자열."""
     counts = [(name, len(getattr(getattr(loader, "dataset", None), "unlabeled", []) or []))
               for name, loader in zip(("train", "val"), loaders)]
     if not any(count for _, count in counts):
         return ""
     detail = ", ".join(f"{name} {count}장" for name, count in counts if count)
-    return (f"마스크 없는 이미지({detail})는 결함이 없는 이미지로 보고 전부 배경으로 학습합니다. "
-            "결함이 있는데 아직 그리지 않은 이미지가 있으면 그 결함을 놓치도록 학습되니 먼저 표시하세요.")
+    return (f"마스크 없는 이미지({detail})는 자동 배경(ID 0)으로 학습·검증에 포함합니다. "
+            "결함이 있는 이미지는 결함 영역을 표시해 주세요.")
 
 
 def create_segmentation_loaders(
@@ -1092,12 +1152,15 @@ def create_segmentation_loaders(
     patch_size: int = 0,
     patches_per_image: int = 0,
     patch_scale: float = 1.0,
+    *,
+    original_size: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Segmentation 데이터 로더 생성
 
     patch_size > 0이면 패치 학습(PatchSegmentationDataset). input_size는 무시하고 패치 크기를 쓴다.
     patch_scale < 1이면 이미지를 그 배율로 줄인 뒤 자른다 (1 = 원본 해상도).
+    original_size=True이면 학습·검증 이미지의 해상도를 유지하며, 패치 학습과 함께 쓸 수 없다.
 
     필요 구조:
         data_root/images/train/, data_root/images/val/
@@ -1109,7 +1172,12 @@ def create_segmentation_loaders(
     Returns:
         train_loader, val_loader
     """
-    if patch_size:
+    if original_size and patch_size:
+        raise ValueError("원본 크기 학습과 패치 학습을 동시에 사용할 수 없습니다.")
+    if original_size:
+        common = {}
+        dataset_type = OriginalSizeSegmentationDataset
+    elif patch_size:
         common = {"patch_size": int(patch_size), "patches_per_image": int(patches_per_image),
                   "scale": float(patch_scale)}
         dataset_type = PatchSegmentationDataset
@@ -1127,6 +1195,8 @@ def create_segmentation_loaders(
         num_classes=num_classes,
         **common,
     )
+    if original_size:
+        common["expected_size"] = train_dataset.original_size
     val_dataset = dataset_type(
         img_dir=os.path.join(data_root, "images", "val"),
         mask_dir=os.path.join(data_root, "masks", "val"),
@@ -1164,6 +1234,7 @@ def create_anomaly_loaders(
     flip_prob: float = 0.5,
     seed: int = 0,
     pin_memory: bool = False,
+    original_size: bool = False,
 ) -> Tuple[DataLoader, Optional[DataLoader]]:
     """
     Anomaly Detection 데이터 로더 생성
@@ -1205,6 +1276,10 @@ def create_anomaly_loaders(
                               in_channels=in_channels, is_train=True,
                               flip_prob=0.0)
     val_dataset = torch.utils.data.Subset(val_base, val_subset.indices)
+    if original_size:
+        size = native_image_size(full_dataset.samples)
+        full_dataset.original_size = val_base.original_size = size
+        train_dataset.original_size = val_dataset.original_size = size
 
     loader_options = _loader_runtime_options(num_workers, pin_memory)
     train_loader = DataLoader(
@@ -1234,6 +1309,7 @@ def create_detection_loaders(
     max_objects: int = 50,
     flip_prob: float = 0.5,
     pin_memory: bool = False,
+    original_size: bool = False,
 ) -> Tuple[DataLoader, Optional[DataLoader]]:
     """
     Detection 데이터 로더 생성 (정규화 좌표 포맷)
@@ -1259,6 +1335,7 @@ def create_detection_loaders(
         is_train=True,
         max_objects=max_objects,
         flip_prob=flip_prob,
+        original_size=original_size,
     )
 
     val_img_dir = os.path.join(data_root, "images", "val")
@@ -1275,6 +1352,7 @@ def create_detection_loaders(
                 in_channels=in_channels,
                 is_train=False,
                 max_objects=max_objects,
+                original_size=original_size, expected_size=train_dataset.original_size,
             )
             loader_options = _loader_runtime_options(num_workers, pin_memory)
             val_loader = DataLoader(

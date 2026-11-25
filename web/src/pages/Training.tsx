@@ -4,7 +4,8 @@ import type { TrainingConfig, ModelConfig, AugmentationConfig } from "../project
 import { api, number, terminal, type Config, type Project } from "../api";
 import { Check, Empty, Field, JobMonitor, LossChart, Panel, PathField, Stat, useJob } from "../components";
 import type { PageProps } from "../page-context";
-import { CURRENT_RUN, initialRunIndex, runModel, trainingView } from "../training-view";
+import { CURRENT_RUN, detectionEvaluationText, initialRunIndex, runModel, trainingMetricLabel,
+  trainingSelectionValue, trainingView } from "../training-view";
 import { builtinAdapters, modelModes } from "../model-options";
 
 type CatalogModel = { model_id: string; family: string; variant: string; input_size: number[]; input_channels: number[] };
@@ -36,16 +37,24 @@ export function Training({
     () => initialRunIndex(project.runs.length, hasLiveJob, !!jobId),
   );
   const patch =
-    project.task === "anomaly" && cfg.anomaly_method === "patchcore";
+    project.task === "anomaly" && cfg.anomaly_method === "patchcore" && model.model_id !== "dinomaly_vits14";
   const modelId = model.model_id || "";
   const selectedModel = catalog.find(item => item.model_id === modelId);
   const modelName = selectedModel ? `${selectedModel.family} ${selectedModel.variant}` : modelId;
   const modes = modelModes(project.task, modelId, modelName);
+  if (modelId === "mask2former_swin_small" && cfg.training_mode === "custom") {
+    modes.push(["custom", `${modelName} 기존 프로젝트 설정으로 학습`]);
+  }
   const builtin = builtinAdapters.has(modelId);
   const sam2 = project.task === "segment" && modelId.startsWith("sam2_hiera_");
+  const upstreamDetection = project.task === "detect" && cfg.training_mode.startsWith("upstream_");
+  const selectionMetric = upstreamDetection && !["engine_default", "mAP_50_95"].includes(cfg.selection_metric)
+    ? "engine_default" : cfg.selection_metric;
   const unsupported = project.task !== "anomaly" && !modes.some(([value]) => value === cfg.training_mode);
   const efficientnet = project.task === "classify" && cfg.training_mode.startsWith("efficientnet");
   const resume = cfg.training_mode === "efficientnet_resume";
+  const engine = modelId === "dinomaly_vits14" ? "dinomaly" : project.task === "anomaly" ? "custom" : cfg.training_mode.split("_")[0];
+  const original = Boolean(cfg.original_size_training && options.capabilities.original_size_training);
   const set = (key: keyof TrainingConfig, value: unknown) => {
     setCfg({ ...cfg, [key]: value });
     setDirty(true);
@@ -67,16 +76,25 @@ export function Training({
     setOptionError("");
     setOptions({ metrics: [], models: [], capabilities: {} });
     api(
-      `/options?task=${project.task}&engine=${efficientnet ? "efficientnet" : cfg.training_mode.startsWith("builtin") ? "builtin" : "custom"}&mode=${project.task === "anomaly" ? "custom" : cfg.training_mode}&anomaly_method=${cfg.anomaly_method}&model_id=${encodeURIComponent(modelId)}`,
+      `/options?task=${project.task}&engine=${engine}&mode=${engine === "custom" ? "custom" : cfg.training_mode}&anomaly_method=${cfg.anomaly_method}&model_id=${encodeURIComponent(modelId)}`,
     )
       .then((d) => active && setOptions(d))
       .catch((e) => active && setOptionError(e.message));
     return () => {
       active = false;
     };
-  }, [project.task, unsupported, efficientnet, cfg.training_mode, cfg.anomaly_method, modelId]);
+  }, [project.task, engine, cfg.training_mode, cfg.anomaly_method, modelId]);
   const save = async () => {
-    await api("/project", "PUT", { training: cfg, model });
+    const training = { ...cfg, selection_metric: selectionMetric,
+      original_size_training: Boolean(cfg.original_size_training && options.capabilities.original_size_training !== false),
+      patch_training: original ? false : cfg.patch_training,
+      patchcore_crop_enabled: original && sam2 ? false : cfg.patchcore_crop_enabled,
+      small_object_coverage: Boolean(!original && cfg.small_object_coverage && cfg.patch_training && cfg.patches_per_image
+        && upstreamDetection),
+      detection_foreground_supervision: Boolean(cfg.detection_foreground_supervision
+        && project.task === "detect" && cfg.training_mode === "custom" && !modelId) };
+    await api("/project", "PUT", { training, model });
+    setCfg(training);
     setDirty(false);
     await refresh();
   };
@@ -98,8 +116,11 @@ export function Training({
       />
     </Field>
   );
-  const { runIndex: selectedIndex, selectedRun, train, val, best, epochNumbers, bestMetrics, missingResult } =
-    trainingView(project.runs, runIndex, hasLiveJob, events, job);
+  const { runIndex: selectedIndex, selectedRun, train, val, best, epochNumbers, bestMetrics, missingResult,
+    detectionEvaluation, detectionClasses } = trainingView(project.runs, runIndex, hasLiveJob, events, job, project.task);
+  const metricLabel = (key: string) => trainingMetricLabel(key, project.task);
+  const metricNumber = (key: string, value: number | null) =>
+    project.task === "detect" && key.startsWith("detection_") && value !== null ? String(value) : number(value);
   return (
     <>
       <div className="training-layout">
@@ -123,6 +144,7 @@ export function Training({
                   efficientnet_model: id.startsWith("efficientnet_") ? id : cfg.efficientnet_model,
                   patchcore_backbone: id.startsWith("patchcore_") ? id.slice(10) : cfg.patchcore_backbone,
                   input_size: item?.input_size[0] ?? cfg.input_size,
+                  patchcore_crop_enabled: id.startsWith("sam2_hiera_") && cfg.original_size_training ? false : cfg.patchcore_crop_enabled,
                   in_channels: item && !item.input_channels.includes(cfg.in_channels) ? item.input_channels[0] : cfg.in_channels,
                   layer_debug_enabled: false, selection_metric: "engine_default" });
                 setDirty(true);
@@ -133,7 +155,7 @@ export function Training({
               </select>
             </Field>}
             <div className="form-grid">
-              {project.task === "anomaly" ? (
+              {project.task === "anomaly" && modelId !== "dinomaly_vits14" ? (
                 <Field label="이상 탐지 모델">
                   <select
                     value={cfg.anomaly_method}
@@ -154,7 +176,7 @@ export function Training({
                         layer_debug_enabled: false,
                         selection_metric: "engine_default",
                       });
-                      if (["efficientnet_finetune", "builtin_finetune"].includes(e.target.value)) setModel({ ...model, pretrained_weights: "" });
+                      if (["efficientnet_finetune", "builtin_finetune", "builtin_scratch"].includes(e.target.value)) setModel({ ...model, pretrained_weights: "" });
                       setDirty(true);
                     }}
                   >
@@ -183,10 +205,10 @@ export function Training({
                 <option value="efficientnet_b1">EfficientNet B1</option>
               </select>
             </Field>}
-            {!patch && !unsupported && !["efficientnet_finetune", "builtin_finetune"].includes(cfg.training_mode) && (
+            {!patch && !unsupported && !["efficientnet_finetune", "builtin_finetune", "builtin_scratch"].includes(cfg.training_mode) && (
               <PathField
                 label={
-                  resume
+                  resume || cfg.training_mode === "builtin_resume"
                     ? "중단 시 저장된 last.pt (필수)"
                     : efficientnet || cfg.training_mode === "builtin_transfer" ? "추가 학습할 가중치 (필수)" : "초기 가중치 (선택)"
                 }
@@ -197,12 +219,7 @@ export function Training({
             )}
             {unsupported && <p className="learning-mode-help">선택 모델에 맞는 학습 모드를 다시 선택하세요.</p>}
             {sam2 && <p className="learning-mode-help">SAM2 학습은 train과 val 양쪽에 이미지와 같은 이름의 픽셀 마스크가 있어야 합니다. 전경 영역을 1번 이상 클래스 ID로 그리세요. 배경만 있거나 0번 클래스만 표시된 마스크는 학습 대상이 아닙니다.</p>}
-            {modelId.startsWith("libreyolo_") && <p className="learning-mode-help">
-              LibreYOLO 완성 .dvmodel 팩은 현재 기본 설치본과 저장소에 포함되지 않습니다. 모델 이름만으로 학습할 수 있는 상태는 아닙니다.
-              .pt의 확장자를 바꾸는 방식이 아니라 학습 코드·가중치·Docker 이미지를 묶은 팩이 필요합니다.
-              {" "}<a href="https://github.com/dmjeong/DeepStudio/blob/main/docs/LIBREYOLO_MODEL_PACKS.ko.md" target="_blank" rel="noreferrer">팩 구성·설치 방법</a>
-            </p>}
-            {builtin && <p className="learning-mode-help">{modelName}: ImageNet 가중치는 최초 1회 다운로드하며 캐시 또는 로컬 .pth로 오프라인 학습할 수 있습니다.
+            {builtin && cfg.training_mode === "builtin_finetune" && <p className="learning-mode-help">{modelName}의 기본 제공 백본 가중치로 학습합니다.
               {project.task === "segment" && " 분할 모델은 백본만 사전학습되며 분할 헤드는 새로 학습합니다."}</p>}
             {efficientnet && <p className="learning-mode-help">{resume
               ? "last.pt에서 모델과 optimizer, 스케줄러, 난수 상태, 학습 설정을 복원합니다. 데이터가 바뀌면 추가 학습을 선택하세요."
@@ -210,6 +227,15 @@ export function Training({
                 ? "내 가중치로 새 학습을 시작합니다. 클래스 구성이 달라지면 마지막 분류기를 새로 학습합니다."
                 : "ImageNet 사전학습 가중치를 검증하고 로드합니다. 내 클래스 분류기를 새로 학습하며 전체 백본도 조정할 수 있습니다."}</p>}
             <fieldset disabled={resume}>
+            {modelId === "mask2former_swin_small" && (
+              cfg.training_mode === "builtin_resume"
+                ? <p className="muted">마스크 후보 수는 이어학습할 체크포인트에서 복원합니다.</p>
+                : <Field label="마스크 후보 수" hint="기본값은 100입니다. 16개로 비교해 볼 수 있습니다. 한 입력에 함께 등장하는 클래스 수(배경 포함) 이상으로 설정하세요.">
+                    <input type="number" min="1" max="100" step="1"
+                      value={cfg.mask2former_num_queries ?? 100}
+                      onChange={e => set("mask2former_num_queries", Number(e.target.value))} />
+                  </Field>
+            )}
             {patch ? (
               <>
                 <Field label="사전학습 백본">
@@ -281,7 +307,7 @@ export function Training({
                   {numeric("학습률", "learning_rate", 0.0000001, 1, 0.0001)}
                   <Field label="Best 선정 지표">
                     <select
-                      value={cfg.selection_metric}
+                      value={selectionMetric}
                       onChange={(e) => set("selection_metric", e.target.value)}
                     >
                       {options.metrics.map((v: Config) => (
@@ -315,18 +341,30 @@ export function Training({
                 />
               </>
             )}
+            {options.capabilities.original_size_training && <label className="check">
+              <input type="checkbox" checked={original} disabled={options.capabilities.resume}
+                onChange={event => {
+                  const enabled = event.target.checked;
+                  setCfg({ ...cfg, original_size_training: enabled, patch_training: enabled ? false : cfg.patch_training,
+                    small_object_coverage: enabled ? false : cfg.small_object_coverage,
+                    patchcore_crop_enabled: enabled && sam2 ? false : cfg.patchcore_crop_enabled });
+                  setDirty(true);
+                }} />원본 크기로 학습
+            </label>}
             <div className="form-grid">
-              {numeric("입력 크기 (px)", "input_size", 32, 4096)}
+              {original ? <p>{sam2 ? "SAM2는 같은 크기의 원본 이미지와 마스크를 사용합니다." : "판정 영역 전체를 원본 해상도로 사용합니다."}</p>
+                : cfg.training_mode.startsWith("upstream") ? <p>모델 입력 / 패치 크기: {selectedModel?.input_size[0] ?? cfg.input_size}px (고정)</p>
+                : numeric("입력 크기 (px)", "input_size", 32, 4096)}
               {numeric("배치 크기", "batch_size", 1, 1024)}
             </div>
-            <Check label="중앙 크롭 사용" value={Boolean(cfg.patchcore_crop_enabled)}
-              onChange={(v) => set("patchcore_crop_enabled", v)} />
-            {cfg.patchcore_crop_enabled && <>
+            {!(original && sam2) && <Check label="중앙 크롭 사용" value={Boolean(cfg.patchcore_crop_enabled)}
+              onChange={(v) => set("patchcore_crop_enabled", v)} />}
+            {cfg.patchcore_crop_enabled && !(original && sam2) && <>
               <div className="form-grid">
                 {numeric("크롭 가로 (px)", "patchcore_crop_width", 1, 65536)}
                 {numeric("크롭 세로 (px)", "patchcore_crop_height", 1, 65536)}
               </div>
-              <p className="muted">원본 중앙 {cfg.patchcore_crop_width ?? project.training.patchcore_crop_width}×{cfg.patchcore_crop_height ?? project.training.patchcore_crop_height} px → 모델 입력 {cfg.input_size}×{cfg.input_size} px.
+              <p className="muted">원본 중앙 {cfg.patchcore_crop_width ?? project.training.patchcore_crop_width}×{cfg.patchcore_crop_height ?? project.training.patchcore_crop_height} px{original ? "를 그대로 사용합니다." : ` → 모델 입력 ${cfg.input_size}×${cfg.input_size} px.`}
                 모든 태스크의 학습과 추론에 적용하며 박스와 마스크도 함께 자릅니다. 원본보다 큰 크롭은 사용할 수 없습니다. 분류와 이상 탐지는 크롭 안의 내용에 맞는 이미지 라벨이 필요합니다.</p>
             </>}
             {!patch && (
@@ -381,6 +419,32 @@ export function Training({
                     </Field>
                   )}
                 </div>
+                {options.capabilities.patch_training && <div className="form-grid">
+                  <label><input type="checkbox" checked={!original && (cfg.patch_training ?? false)}
+                    disabled={original || (project.task === "detect" && options.capabilities.resume)}
+                    onChange={e => set("patch_training", e.target.checked)} />패치 학습</label>
+                  {cfg.patch_training && !original && <>
+                    <Field label="패치 배율"><select value={cfg.patch_scale ?? 1}
+                      disabled={project.task === "detect" && options.capabilities.resume}
+                      onChange={e => set("patch_scale", Number(e.target.value))}>
+                      {[1, .75, .5, .35, .25].map(v => <option key={v} value={v}>{v}</option>)}
+                    </select></Field>
+                    {project.task !== "classify" && <Field label="이미지당 학습 패치 (0=전체)"><input type="number" min="0" max="256"
+                      disabled={project.task === "detect" && options.capabilities.resume}
+                      value={cfg.patches_per_image ?? 0} onChange={e => set("patches_per_image", Number(e.target.value))} /></Field>}
+                    {options.capabilities.small_object_coverage && <label>
+                      <input type="checkbox" checked={Boolean(cfg.patches_per_image && cfg.small_object_coverage)}
+                        disabled={!cfg.patches_per_image || options.capabilities.resume}
+                        onChange={e => set("small_object_coverage", e.target.checked)} />작은 물체가 포함된 패치 우선 선택
+                    </label>}
+                    <p className="muted">{project.task === "classify" ? "모든 패치를 합쳐 원본 한 장의 클래스를 학습합니다. 배치는 패치 묶음 크기입니다."
+                      : project.task === "detect" ? "박스를 함께 자르고 추론 시 원본 좌표로 합칩니다. 검증 mAP는 패치 단위입니다." : "패치 크기는 입력 크기입니다."}</p>
+                  </>}
+                </div>}
+                {options.capabilities.detection_foreground_supervision && <label>
+                  <input type="checkbox" checked={cfg.detection_foreground_supervision ?? false}
+                    onChange={e => set("detection_foreground_supervision", e.target.checked)} />전경 보조 학습 (실험)
+                </label>}
                 <div className="form-grid">
                   {[
                     ["수평 반전 확률", "horizontal_flip", 1],
@@ -486,7 +550,7 @@ export function Training({
             <div className="stats">
               <Stat label="Best epoch" value={best || "—"} />
               {Object.entries(bestMetrics).map(([key, value]) =>
-                <Stat key={key} label={`Best ${key}`} value={number(value)} />)}
+                <Stat key={key} label={`Best ${metricLabel(key)}`} value={metricNumber(key, value)} />)}
             </div>
             <LossChart
               train={train}
@@ -496,16 +560,18 @@ export function Training({
             />
             {selectedRun && (
               <p className="muted">
-                선정 지표: {selectedRun.best_metric_name} ={" "}
-                {number(selectedRun.best_metric)}
+                선정 지표: {metricLabel(selectedRun.best_metric_name)} ={" "}
+                {number(trainingSelectionValue(selectedRun, project.task))}
               </p>
             )}
             <h3>종합 평가 지표 — Best epoch {best || "—"}</h3>
+            {project.task === "detect" && !!best && <p className="muted">{detectionEvaluationText(detectionEvaluation)}</p>}
             {Object.keys(bestMetrics).length ? <table aria-label="Best epoch 종합 평가 지표">
               <thead><tr><th>저장 지표</th><th>값</th></tr></thead>
               <tbody>{Object.entries(bestMetrics).map(([key, value]) =>
-                <tr key={key}><td>{key}</td><td>{number(value)}</td></tr>)}</tbody>
+                <tr key={key}><td>{metricLabel(key)}</td><td>{metricNumber(key, value)}</td></tr>)}</tbody>
             </table> : <p className="muted">저장된 Best 지표가 없습니다.</p>}
+            {project.task === "detect" && !!detectionClasses?.length && <DetectionClassTable rows={detectionClasses} />}
           </Panel>
           <LayerDebug snapshot={selectedIndex === CURRENT_RUN
             ? [...events].reverse().find(e => e.event === "layer_debug")?.args[0] ?? selectedRun?.config_snapshot.layer_debug?.latest
@@ -540,8 +606,8 @@ export function Training({
                   </td>
                   <td>{r.status}</td>
                   <td>{r.best_epoch || "—"}</td>
-                  <td>{r.best_metric_name}</td>
-                  <td>{number(r.best_metric)}</td>
+                  <td>{metricLabel(r.best_metric_name)}</td>
+                  <td>{number(trainingSelectionValue(r, project.task))}</td>
                   <td>
                     {r.checkpoint_path && (
                       <a
@@ -570,6 +636,21 @@ export function Training({
       </Panel>
     </>
   );
+}
+
+function DetectionClassTable({ rows }: { rows: Config[] }) {
+  const columns = [
+    ["ap_50", "AP@0.50"], ["ap_50_95", "AP@0.50–0.95"], ["precision", "Precision"], ["recall", "Recall"],
+    ["tp", "TP"], ["fp", "FP"], ["fn", "FN"], ["support", "정답 박스"],
+  ].filter(([key]) => rows.some(row => key in row));
+  return <div className="table-scroll">
+    <table aria-label="클래스별 검증 지표">
+      <thead><tr><th>클래스</th>{columns.map(([key, label]) => <th key={key}>{label}</th>)}</tr></thead>
+      <tbody>{rows.map((row, i) => <tr key={row.class_id ?? i}><td>{row.name}</td>
+        {columns.map(([key]) => <td key={key}>{row[key] == null ? "—" :
+          ["tp", "fp", "fn", "support"].includes(key) ? String(row[key]) : number(row[key])}</td>)}</tr>)}</tbody>
+    </table>
+  </div>;
 }
 
 function LayerDebug({ snapshot }: { snapshot?: Config }) {

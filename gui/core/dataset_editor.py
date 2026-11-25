@@ -70,8 +70,14 @@ def annotation_revision(project, image, split):
         sidecars(project, image, split), key=lambda row: str(row[1])
     ):
         values.append([kind, str(path), hashlib.sha256(path.read_bytes()).hexdigest()])
-    stat=Path(image).stat()
-    return fingerprint({"classes": project.data.class_names, "labels": values,'image':[stat.st_size,stat.st_mtime_ns]})
+    # Windows/SMB may preserve the same size and timestamp across a rewrite.
+    # Content identity must participate in the edit revision as well.
+    image_hash = hashlib.sha256()
+    with Path(image).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            image_hash.update(block)
+    return fingerprint({"classes": project.data.class_names, "labels": values,
+                        "image": image_hash.hexdigest()})
 
 
 def read_annotations(path, task, count):
@@ -161,6 +167,8 @@ def scan_dataset(project, cancelled=lambda: False, overlay_limit=0):
             except (OSError, ValueError) as exc:
                 error = str(exc)
                 items = []
+            if error:
+                classes.clear()
             counts.update(classes)
             for item in items:
                 item["class"] = names[item["class_id"]]
@@ -183,6 +191,9 @@ def scan_dataset(project, cancelled=lambda: False, overlay_limit=0):
             if object_task:
                 record.update(regions=region_names, region_items=items,
                               size=list(size) if size else None)
+            if project.task == "segment":
+                record["training_target"] = ("error" if error else
+                                             "mask" if annotated else "automatic_background")
             records.append(record)
         summary = {
             "split": split,
@@ -202,6 +213,16 @@ def scan_dataset(project, cancelled=lambda: False, overlay_limit=0):
         "root": project.data.root,
         "images": records,
     }
+    if project.task == "segment":
+        from core.dataset_links import orphan_masks
+
+        result["orphan_masks"] = orphan_masks(project)
+        affected_splits = {row["split"] for row in result["orphan_masks"]}
+        for record in records:
+            if record["split"] in affected_splits and not record["annotated"]:
+                # An external rename must not look like a confirmed background.
+                record["training_target"] = "unresolved_annotation"
+                record["error"] = "이름 변경 여부 확인 필요: [정답 연결 복구]"
     if overlays is not None:
         result["overlays"] = overlays
     return result

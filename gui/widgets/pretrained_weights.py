@@ -24,6 +24,7 @@ from builtin_assets import (  # noqa: E402
 
 # 가중치 → 그 가중치로 시작하는 모델 (사용자가 '무엇을 받아야 하는지' 고를 수 있게)
 USED_BY = {
+    "swin_small_imagenet": "Mask2Former Swin-Small 분할 교사",
     "efficientnet_b0": "EfficientNet-B0 분류",
     "efficientnet_b1": "EfficientNet-B1 분류",
     "resnet18": "ResNet18 분류 · UNet ResNet18 분할",
@@ -32,9 +33,18 @@ USED_BY = {
     "wide_resnet50_2": "PatchCore 이상 탐지 (ImageNet 백본)",
     "convnext_v1_tiny": "ConvNeXt Tiny 분류",
     "mobilenet_v2": "U-Net MobileNetV2 분할 (경량)",
+    "shufflenet_v2_x1_0": "U-Net ShuffleNetV2 x1.0 분할",
+    "mobilenetv4_small_encoder": "U-Net MobileNetV4 Conv-S 분할",
+    "efficientnet_b1_encoder": "U-Net EfficientNet-B1 분할",
+    "bisenetv2_backbone": "BiSeNetV2 분할 (ImageNet 백본)",
+    "stdc1_backbone": "STDC1 분할 (ImageNet 백본)",
     "dinov2_vits14": "DINOv2 ViT-S/14 분류·분할",
+    "dinov2_vitl14": "DINOv2 ViT-L/14 분류",
+    "siglip2_so400m_cls": "SigLIP 2 So400m/16 분류",
     "dinov2_vitb14": "DINOv2 ViT-B/14 분류·분할",
     "libreyolo_classify_mobilenetv4_small": "MobileNetV4 분류",
+    "libreyolo_classify_mobilenetv4_medium": "MobileNetV4 Medium 분류",
+    "libreyolo_detect_dfine_nano": "D-FINE Nano 탐지 (COCO)",
     "libreyolo_detect_9t": "LibreYOLO9 탐지",
     "re_detr_v4_small": "RT-DETRv4 S 탐지",
     "re_detr_v4_medium": "RT-DETRv4 M 탐지",
@@ -52,7 +62,7 @@ def choose_and_import(parent, asset_id: str) -> bool:
     from pathlib import Path
     expected = Path(ASSET_FILES[asset_id]).name
     path, _ = QFileDialog.getOpenFileName(
-        parent, f"{asset_id} 가중치 파일 선택 ({expected})", "", "PyTorch 가중치 (*.pth *.pt);;모든 파일 (*)")
+        parent, f"{asset_id} 가중치 파일 선택 ({expected})", "", "모델 가중치 (*.pth *.pt *.tar *.safetensors);;모든 파일 (*)")
     if not path:
         return False
     try:

@@ -42,6 +42,23 @@ for task in ("classify", "segment"):
         builtin_config["backend"] = "builtin"
         (root / "builtin.json").write_text(json.dumps(builtin_config, ensure_ascii=False), encoding="utf-8")
 
+# Exercise the same FP32 SDK buffers with an FP16 internal convolution.
+half_nodes = [
+    helper.make_node("Cast", ["input_image"], ["pixels16"], to=TensorProto.FLOAT16),
+    helper.make_node("Conv", ["pixels16", "weights16"], ["logits16"], kernel_shape=[1, 1]),
+    helper.make_node("Cast", ["logits16"], ["seg_mask"], to=TensorProto.FLOAT),
+]
+weights16 = helper.make_tensor("weights16", TensorProto.FLOAT16, [2, 1, 1, 1], [1., -1.])
+half_output = helper.make_tensor_value_info("seg_mask", TensorProto.FLOAT, [1, 2, 2, 3])
+half_graph = helper.make_graph(half_nodes, "segment_fp16", inputs, [half_output], [weights16])
+half_model = helper.make_model(half_graph, opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
+onnx.checker.check_model(half_model)
+onnx.save(half_model, root / "segment_fp16.onnx")
+half_config = json.loads((root / "segment.json").read_text(encoding="utf-8"))
+half_config.update(model_path="segment_fp16.onnx", verification="fp16_compared",
+                   export={"precision": "float16", "io_precision": "float32"})
+(root / "segment_fp16.json").write_text(json.dumps(half_config), encoding="utf-8")
+
 # Generic detection contract: one normalized cx/xy box, objectness and two
 # class logits.  It exercises C++ sigmoid decoding and class-aware NMS without
 # downloading a model.
@@ -86,6 +103,38 @@ redetr_config.update({"backend": "redetr_v4", "model_path": "redetr.onnx",
 redetr_softmax_config = json.loads(json.dumps(redetr_config))
 redetr_softmax_config["postprocessing"]["class_scores"] = "softmax"
 (root / "redetr_softmax.json").write_text(json.dumps(redetr_softmax_config, ensure_ascii=False), encoding="utf-8")
+
+# Output validation must still inspect every element after caching the tensor
+# length. Exercise real runtime outputs, including the last element/last class.
+for bad_name, bad_value in (("nan", float("nan")), ("posinf", float("inf")), ("neginf", -float("inf"))):
+    for position in (0, 6, 11):
+        name = f"segment_{bad_name}_{position}"
+        values = [0.25] * 12
+        values[position] = bad_value
+        output = helper.make_tensor_value_info("seg_mask", TensorProto.FLOAT, [1, 2, 2, 3])
+        node = helper.make_node("Constant", [], ["seg_mask"], value=helper.make_tensor(
+            "bad_output", TensorProto.FLOAT, [1, 2, 2, 3], values))
+        model = helper.make_model(helper.make_graph([node], name, inputs, [output]),
+                                  opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
+        onnx.checker.check_model(model)
+        onnx.save(model, root / f"{name}.onnx")
+        config = json.loads((root / "segment.json").read_text(encoding="utf-8"))
+        config["model_path"] = f"{name}.onnx"
+        (root / f"{name}.json").write_text(json.dumps(config), encoding="utf-8")
+    for field in ("boxes", "scores"):
+        name = f"redetr_{field}_{bad_name}"
+        boxes, scores = [0.5, 0.5, 0.5, 0.5], [10.0, -10.0]
+        (boxes if field == "boxes" else scores)[-1] = bad_value
+        nodes = [helper.make_node("Constant", [], ["pred_boxes"], value=helper.make_tensor(
+            "boxes", TensorProto.FLOAT, [1, 1, 4], boxes)),
+            helper.make_node("Constant", [], ["pred_logits"], value=helper.make_tensor(
+                "scores", TensorProto.FLOAT, [1, 1, 2], scores))]
+        model = helper.make_model(helper.make_graph(nodes, name, inputs, redetr_outputs),
+                                  opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
+        onnx.checker.check_model(model)
+        onnx.save(model, root / f"{name}.onnx")
+        config = dict(redetr_config, model_path=f"{name}.onnx")
+        (root / f"{name}.json").write_text(json.dumps(config), encoding="utf-8")
 
 # Minimal SAM2-style encoder/decoder graphs. They keep both high-resolution
 # feature outputs and every prompt input in the graph contract while returning
@@ -239,6 +288,8 @@ shutil.rmtree(bundle, ignore_errors=True)
 bundle.mkdir()
 for name in ("classify.json", "classify.onnx"):
     (bundle / name).write_bytes((root / name).read_bytes())
+# Exercise full streaming chunks and a short final read in the native SHA256.
+(bundle / "checksum-boundary.bin").write_bytes(bytes(range(256)) * 512 + b"partial-read-tail")
 files = {}
 for path in sorted(bundle.iterdir()):
     files[path.name] = {"size": path.stat().st_size,
@@ -306,7 +357,7 @@ key = bytes(range(32))  # Public fixture key, not for production.
 encrypted_names = []
 # Other CTests deliberately leave invalid/absolute-path JSONs in this folder.
 # Re-running CTest must only encrypt the valid fixtures produced above.
-for name in ("classify", "builtin", "segment", "detect", "redetr", "redetr_softmax",
+for name in ("classify", "builtin", "segment", "segment_fp16", "detect", "redetr", "redetr_softmax",
              "sam2", "anomaly", "patchcore", "close_logits", "runtime_optimization",
              "classify_nested", "sam2_nested"):
     config_path = root / f"{name}.json"

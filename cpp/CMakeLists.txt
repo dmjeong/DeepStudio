@@ -200,6 +200,16 @@ if(VISION_BUILD_DEMO)
     target_link_libraries(vision_demo PRIVATE vision_inference)
     install(TARGETS vision_demo DESTINATION bin)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../example/cpp/native_patches/main.cpp")
+    add_executable(native_patch_example ../example/cpp/native_patches/main.cpp)
+    target_link_libraries(native_patch_example PRIVATE vision_inference)
+    install(TARGETS native_patch_example DESTINATION bin)
+endif()
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND
+   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../example/cpp/dense_models/main.cpp")
+    add_executable(dense_model_example ../example/cpp/dense_models/main.cpp)
+    target_link_libraries(dense_model_example PRIVATE vision_inference)
+endif()
 install(TARGETS efficientnet_cpu_benchmark efficientnet_background_demo DESTINATION bin)
 
 # ── 설치 설정 ────────────────────────────────────────
@@ -220,12 +230,22 @@ message(STATUS "═════════════════════�
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(whole_region_preprocess_test tests/whole_region_preprocess_test.cpp)
+    target_include_directories(whole_region_preprocess_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(whole_region_preprocess_test PRIVATE ${OpenCV_LIBS})
+    add_test(NAME whole_region_preprocess_contract COMMAND whole_region_preprocess_test)
     add_executable(preprocess_probe tests/preprocess_probe.cpp)
     target_include_directories(preprocess_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
     target_link_libraries(preprocess_probe PRIVATE ${OpenCV_LIBS})
     # 분할 판정 기준·판정 영역 계약의 Python 일치 테스트용 (tests/test_cpp_segment_rules.py, SEGMENT_PROBE)
     add_executable(segment_probe tests/segment_probe.cpp)
     target_link_libraries(segment_probe PRIVATE vision_inference)
+    add_executable(anomaly_probe tests/anomaly_probe.cpp)
+    target_link_libraries(anomaly_probe PRIVATE vision_inference)
+    add_executable(detect_probe tests/detect_probe.cpp)
+    target_link_libraries(detect_probe PRIVATE vision_inference)
+    add_executable(classify_probe tests/classify_probe.cpp)
+    target_link_libraries(classify_probe PRIVATE vision_inference)
     add_executable(classification_worker_test tests/classification_worker_test.cpp)
     target_link_libraries(classification_worker_test PRIVATE vision_inference)
     add_test(NAME classification_worker_contract COMMAND classification_worker_test "${CMAKE_BINARY_DIR}/test-models")
@@ -253,4 +273,61 @@ if(BUILD_TESTING)
     target_link_libraries(c_api_contracts PRIVATE vision_runtime ${OpenCV_LIBS})
     add_test(NAME c_api_contracts COMMAND c_api_contracts "${CMAKE_BINARY_DIR}/test-models")
     set_tests_properties(c_api_contracts PROPERTIES FIXTURES_REQUIRED deployment_models)
+    # Opt-in real DINOv2 weights; regular CI remains offline and lightweight.
+    set(VISION_DINOV2_FIXTURES "" CACHE PATH "DINOv2 real-weight smoke fixture directory")
+    if(VISION_DINOV2_FIXTURES)
+        add_executable(dinov2_deployment tests/dinov2_deployment.cpp)
+        target_link_libraries(dinov2_deployment PRIVATE vision_runtime vision_inference)
+        add_test(NAME dinov2_deployment COMMAND dinov2_deployment "${VISION_DINOV2_FIXTURES}")
+    endif()
+endif()
+
+# Windows searches the EXE directory and System32 before PATH. Stage the exact
+# SDK DLL beside every executable/shared library, as the public examples do;
+# a PATH-only setup can silently load Windows' incompatible onnxruntime.dll.
+if(WIN32)
+    get_filename_component(_vision_ort_lib_dir "${ONNXRUNTIME_LIB}" DIRECTORY)
+    unset(VISION_ORT_DLL CACHE)
+    find_file(VISION_ORT_DLL NAMES onnxruntime.dll
+        PATHS "${_vision_ort_lib_dir}" "${_vision_ort_lib_dir}/../bin"
+              "${ONNXRUNTIME_ROOT}/lib" "${ONNXRUNTIME_ROOT}/bin"
+        NO_DEFAULT_PATH)
+    if(NOT VISION_ORT_DLL)
+        message(FATAL_ERROR "Matching onnxruntime.dll not found beside the selected ONNX Runtime SDK library.")
+    endif()
+
+    # All native binaries share their configuration directory. Deploy once
+    # before linking: per-target POST_BUILD copies race with parallel copies
+    # and vcpkg's app-local dependency reader (Windows denies open DLL writes).
+    set(_vision_runtime_dir "${CMAKE_CURRENT_BINARY_DIR}")
+    if(CMAKE_CONFIGURATION_TYPES)
+        string(APPEND _vision_runtime_dir "/$<CONFIG>")
+    endif()
+    set(_vision_runtime_files "${VISION_ORT_DLL}")
+    foreach(_opencv_target IN LISTS OpenCV_LIBS)
+        if(TARGET ${_opencv_target})
+            get_target_property(_opencv_type ${_opencv_target} TYPE)
+            if(_opencv_type STREQUAL "SHARED_LIBRARY")
+                list(APPEND _vision_runtime_files "$<TARGET_FILE:${_opencv_target}>")
+            endif()
+        endif()
+    endforeach()
+    add_custom_target(vision_runtime_dlls
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_vision_runtime_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${_vision_runtime_files} "${_vision_runtime_dir}"
+        VERBATIM)
+    get_property(_vision_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_target IN LISTS _vision_targets)
+        get_target_property(_type ${_target} TYPE)
+        if(_type STREQUAL "EXECUTABLE" OR _type STREQUAL "SHARED_LIBRARY")
+            set_target_properties(${_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${_vision_runtime_dir}")
+            foreach(_config IN LISTS CMAKE_CONFIGURATION_TYPES)
+                string(TOUPPER "${_config}" _config_upper)
+                set_target_properties(${_target} PROPERTIES
+                    "RUNTIME_OUTPUT_DIRECTORY_${_config_upper}" "${_vision_runtime_dir}")
+            endforeach()
+            add_dependencies(${_target} vision_runtime_dlls)
+        endif()
+    endforeach()
 endif()

@@ -134,10 +134,11 @@ def test_cpp_segment_matches_the_desktop_judgement(tmp_path, scale, region):
 
 def test_export_page_shows_the_region_and_the_rules_that_go_into_the_model(tmp_path):
     pytest.importorskip("PySide6")
+    from PySide6.QtCore import QCoreApplication, QEvent
     from PySide6.QtWidgets import QApplication
     from core.segment_defects import save_model_rules
     from widgets.export_widget import ExportWidget
-    QApplication.instance() or QApplication([])
+    app = QApplication.instance() or QApplication([])
     checkpoint = _checkpoint(tmp_path, 1.0, (70, 45))
     widget = ExportWidget()
     widget.ckpt_edit.setText(str(checkpoint))
@@ -148,3 +149,5 @@ def test_export_page_shows_the_region_and_the_rules_that_go_into_the_model(tmp_p
     widget._refresh_deploy_preview()
     assert "crack 면적 ≥ 3px · 점수 ≥ 0.85" in widget.deploy_info.text()
     widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()

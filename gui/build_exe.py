@@ -67,6 +67,11 @@ REQUIRED_RUNTIME_MODULES = {
     "Pillow": "PIL",
     "PyTorch": "torch",
     "torchvision": "torchvision",
+    "timm": "timm",
+    "Mask2Former": "transformers.models.mask2former.modeling_mask2former",
+    "SegFormer": "transformers.models.segformer.modeling_segformer",
+    "SciPy": "scipy",
+    "safetensors": "safetensors",
     "NumPy": "numpy",
     "ONNX": "onnx",
     "ONNX Runtime": "onnxruntime",
@@ -76,6 +81,8 @@ REQUIRED_RUNTIME_MODULES = {
     "SAM2": "sam2",
     "Hugging Face Hub": "huggingface_hub",
 }
+if sys.platform == "win32":
+    REQUIRED_RUNTIME_MODULES["OpenVINO"] = "openvino"
 
 
 def _native_runtime_arguments() -> list[str]:
@@ -156,17 +163,15 @@ def build():
     if PYTHON_DIR not in sys.path:
         sys.path.insert(0, PYTHON_DIR)
     # 빠진 사전학습 가중치는 빌드를 막지 않는다. 그 모델을 쓸 때 앱의 Settings · 모델 관리에서 가져온다.
-    os.makedirs(BUILTIN_ASSETS_DIR, exist_ok=True)
-    from builtin_assets import SOURCE_URLS, missing_assets
-    previous = os.environ.get("DVS_BUILTIN_ASSETS_DIR")
-    os.environ["DVS_BUILTIN_ASSETS_DIR"] = BUILTIN_ASSETS_DIR
-    try:
-        missing = missing_assets(bundle_only=True)
-    finally:
-        if previous is None:
-            os.environ.pop("DVS_BUILTIN_ASSETS_DIR", None)
-        else:
-            os.environ["DVS_BUILTIN_ASSETS_DIR"] = previous
+    from builtin_assets import SOURCE_URLS, missing_assets, builtin_asset_root
+    # Verify and package the same root, including an explicit caller override.
+    asset_root = builtin_asset_root()
+    asset_root.mkdir(parents=True, exist_ok=True)
+    missing = missing_assets(bundle_only=True)
+    if missing and os.environ.get("DVS_REQUIRE_ALL_BUILTIN_ASSETS") == "1":
+        print("오프라인 설치본에 필요한 사전학습 가중치가 누락되었습니다: " + ", ".join(missing))
+        print("build.bat weights로 준비를 완료한 뒤 installer를 다시 실행하세요.")
+        return 1
     if missing:
         print(f"[warning] 설치본에 넣지 못한 사전학습 가중치 {len(missing)}개 (빌드는 계속):")
         for model_id in missing:
@@ -185,6 +190,11 @@ def build():
         "--name", APP_NAME,
         "--windowed",                    # 콘솔 창 없이 실행 (GUI)
         "--noconfirm",                   # 기존 빌드 덮어쓰기
+        # This is a new interpreter: the sys.path edits above do not reach
+        # PyInstaller's Analysis. Include dynamic model imports, not just .py data.
+        "--paths", GUI_DIR,
+        "--paths", PYTHON_DIR,
+        "--paths", PROJECT_ROOT,
         "--additional-hooks-dir", os.path.join(GUI_DIR, "pyinstaller_hooks"),
 
         # 아이콘 (있으면)
@@ -192,7 +202,7 @@ def build():
 
         # 데이터 파일 포함
         "--add-data", f"{RESOURCES_DIR}{os.pathsep}resources",
-        "--add-data", f"{BUILTIN_ASSETS_DIR}{os.pathsep}builtin_assets",
+        "--add-data", f"{builtin_asset_root()}{os.pathsep}builtin_assets",
         "--add-data", f"{PYTHON_DIR}{os.pathsep}python",
         "--add-data", f"{os.path.join(PROJECT_ROOT, 'licenses')}{os.pathsep}licenses",  # DINOv2 Apache-2.0 고지
         "--add-data", f"{os.path.join(PROJECT_ROOT, 'model_sdk', 'schemas')}{os.pathsep}model_sdk/schemas",
@@ -204,12 +214,45 @@ def build():
         "--hidden-import", "PySide6.QtGui",
         # PyInstaller의 Qt hook에만 의존하지 않고 Qt DLL·플러그인과 shiboken을
         # 함께 수집한다. Windows EXE가 시작 시 PySide6를 못 찾는 회귀를 막는다.
-        "--collect-all", "PySide6",
+        # Collect the runtime files without importing unused Qt3D/QML/WebEngine
+        # Python modules. Their hooks can spend minutes scanning QML plugins;
+        # this application uses QtCore/QtGui/QtWidgets (declared above).
+        "--collect-binaries", "PySide6",
+        "--collect-data", "PySide6",
         "--collect-all", "shiboken6",
         # Shipped native model families are imported lazily from the worker.
         # Collect their package and package data so the installed EXE does not
         # fail only when a user selects LibreYOLO/RT-DETRv4.
         "--collect-all", "libreyolo",
+        "--collect-all", "timm",
+        "--collect-submodules", "segmentation_backbones",
+        "--hidden-import", "segmentation_models",
+        "--hidden-import", "modern_segmentation",
+        "--hidden-import", "eomt",
+        "--hidden-import", "dinomaly",
+        "--hidden-import", "dinomaly_runtime",
+        "--hidden-import", "train_dinomaly",
+        "--hidden-import", "dense_deployment",
+        "--hidden-import", "native_detection_export",
+        "--hidden-import", "upstream_original_size",
+        "--hidden-import", "sam2_native",
+        "--hidden-import", "quantize_dense",
+        "--hidden-import", "export_fp16_onnx",
+        "--hidden-import", "benchmark_fp16",
+        "--hidden-import", "detection_quantization",
+        "--hidden-import", "segmentation_distillation",
+        "--hidden-import", "classification_distillation",
+        "--hidden-import", "siglip2_classifier",
+        "--hidden-import", "transformer_segmenters",
+        "--collect-submodules", "transformers.models.mask2former",
+        "--collect-submodules", "transformers.models.segformer",
+        "--collect-submodules", "transformers.models.swin",
+        "--hidden-import", "transformers.models.auto.configuration_auto",
+        "--hidden-import", "transformers.models.auto.modeling_auto",
+        "--hidden-import", "core.dinomaly_trainer",
+        "--collect-submodules", "scipy.optimize",
+        "--copy-metadata", "scipy",
+        "--collect-all", "pycocotools",
         "--collect-all", "sam2",
         "--collect-all", "hydra",
         "--collect-all", "omegaconf",
@@ -225,7 +268,9 @@ def build():
         "--hidden-import", "numpy",
         "--hidden-import", "onnx",
         "--hidden-import", "onnxruntime",
+        "--hidden-import", "onnxruntime.transformers.float16",
         "--hidden-import", "model_crypto",
+        "--hidden-import", "dinov2_segmentation",
         "--hidden-import", "dinov2",
         "--hidden-import", "cryptography.hazmat.primitives.ciphers.aead",
         "--hidden-import", "psutil",
@@ -262,11 +307,16 @@ def build():
 
         # 합성 불량 생성 엔진
         "--hidden-import", "core.defect_generator",
+        "--hidden-import", "core.segmentation_synthesis",
+        "--hidden-import", "core.segmentation_synthesis_store",
+        "--hidden-import", "core.synthesis_variation",
+        "--hidden-import", "widgets.segmentation_synthesis_widget",
+        "--hidden-import", "core.project_generation",
+        "--hidden-import", "widgets.project_generation_widget",
 
         # OpenCV (합성 불량 + 이미지 전처리)
         "--hidden-import", "cv2",
 
-        "--paths", PROJECT_ROOT,
         "--hidden-import", "webapp.worker",
         "--hidden-import", "webapp.jobs",
         "--hidden-import", "webapp.storage",
@@ -284,11 +334,16 @@ def build():
         "--exclude-module", "IPython",
         "--exclude-module", "jupyter",
         "--exclude-module", "notebook",
+        # OpenVINO's converter has a built-in stub when telemetry is absent.
+        "--exclude-module", "openvino_telemetry",
 
         # 엔트리포인트
         os.path.join(GUI_DIR, "main.py"),
     ]
-    cmd[cmd.index(os.path.join(GUI_DIR, "main.py")):cmd.index(os.path.join(GUI_DIR, "main.py"))] = _native_runtime_arguments()
+    # The Windows installer carries OpenVINO's wheel. On macOS/Linux run the
+    # source app for OpenVINO benchmarks instead of freezing its native plugins.
+    openvino_argument = "--hidden-import" if sys.platform == "win32" else "--exclude-module"
+    cmd[-1:-1] = [openvino_argument, "openvino", *_native_runtime_arguments()]
 
     print("\n 빌드 명령어:")
     print(f"  {' '.join(cmd[:6])} ...")
@@ -309,6 +364,11 @@ def build():
             if not os.path.isfile(exe_path):
                 print(f"빌드 결과 파일 없음: {exe_path}")
                 return 1
+            if sys.platform == "win32":
+                if PROJECT_ROOT not in sys.path:
+                    sys.path.insert(0, PROJECT_ROOT)
+                from tools.windows_desktop_smoke import require_frozen_python_dll
+                require_frozen_python_dll(Path(exe_path).parent)
             print("\n" + "=" * 60)
             print("빌드 성공!")
             print(f"  실행 파일: {exe_path}")

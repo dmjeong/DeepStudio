@@ -40,7 +40,7 @@ def test_release_script_verifies_payload_before_wix_build():
     script = (WINDOWS / "build_release.ps1").read_text(encoding="utf-8")
     assert "collect_payloads.py" in script and "validate_payloads.py" in script
     assert "--manifest" in script
-    assert "WixToolset.Bal.wixext" in script
+    assert 'WixToolset.BootstrapperApplications.wixext/$WixVersion' in script
     assert "THIRD_PARTY_NOTICES.md" in script
     assert "external_downloads" not in script
     assert "WixToolset.Util.wixext" in script
@@ -50,7 +50,7 @@ def test_release_script_verifies_payload_before_wix_build():
     assert '$wix.Source --version' in script
     assert '$WixVersion -notmatch' in script
     assert 'WiX version mismatch' in script
-    assert '[string] $WixVersion = "7.0.0"' in script
+    assert '[string] $WixVersion = "5.0.2"' in script
 
 
 def test_third_party_notice_names_optional_model_sources():
@@ -70,12 +70,13 @@ def test_pyinstaller_build_includes_model_pack_runtime_and_optional_native_sdk()
     assert "--add-binary" in script
     assert "packaging" in script and "windows" in script and "models" in script
     assert "check_runtime_dependencies" in script
-    assert '"--collect-all", "PySide6"' in script
+    assert '"--collect-binaries", "PySide6"' in script
+    assert '"--collect-data", "PySide6"' in script
     assert '"--collect-all", "shiboken6"' in script
     assert '"--collect-all", "libreyolo"' in script
     assert '"--collect-all", "sam2"' in script
     assert '"--hidden-import", "huggingface_hub"' in script
-    assert '"--add-data", f"{BUILTIN_ASSETS_DIR}{os.pathsep}builtin_assets"' in script
+    assert '"--add-data", f"{builtin_asset_root()}{os.pathsep}builtin_assets"' in script
 
 
 def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():
@@ -84,7 +85,8 @@ def test_windows_builder_installs_the_gui_runtime_with_the_build_interpreter():
     assert 'set "DVS_ACCELERATOR=auto"' in script
     assert "python -m pip install -r requirements.txt" in script
     assert "SAM2_BUILD_CUDA=0" in script
-    assert "prepare_builtin_assets.py --output builtin_assets" in script
+    assert "python ..\\python\\prepare_builtin_assets.py" in script
+    assert "prepare_builtin_assets.py --output builtin_assets" not in script
     assert "pip show pyinstaller" not in script
 
 
@@ -105,6 +107,8 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
                       cpp / "include", cpp / "src", csharp):
         directory.mkdir(parents=True, exist_ok=True)
     (app / "DeepVisionStudio.exe").write_bytes(b"app")
+    (app / "_internal").mkdir()
+    (app / "_internal" / "python311.dll").write_bytes(b"runtime fixture")
     (examples / "README.md").write_text("example", encoding="utf-8")
     (examples / "assets" / "test.onnx").write_bytes(b"onnx")
     (examples / "cpp" / "CMakeLists.txt").write_text("cmake", encoding="utf-8")
@@ -113,6 +117,7 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
         (examples / "cpp" / name).write_text("example code", encoding="utf-8")
     for name in ("with_opencv/CMakeLists.txt", "with_evision/CMakeLists.txt",
                  "with_evision/roi_example.h", "with_evision/roi_example.cpp",
+                 "dense_models/main.cpp", "dense_models/CMakeLists.txt", "dense_models/build.bat",
                  "nlohmann/json.hpp", "nlohmann/LICENSE.MIT", "nlohmann/CMakeLists.txt",
                  "with_evision/classifier.h", "with_evision/bw8_preprocess.h"):
         path = examples / "cpp" / name
@@ -124,6 +129,7 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     (cpp / "include" / "vision_inference.h").write_text("header", encoding="utf-8")
     (cpp / "include" / "ort_vs2017.cmake").write_text("compatibility script", encoding="utf-8")
     (cpp / "src" / "vision_inference.cpp").write_text("source", encoding="utf-8")
+    (cpp / "src" / "dense_tiles.h").write_text("tile implementation", encoding="utf-8")
     (csharp / "VisionRuntime.csproj").write_text("runtime", encoding="utf-8")
     (csharp / "VisionRuntime.cs").write_text("source", encoding="utf-8")
     notice = tmp_path / "THIRD_PARTY_NOTICES.md"
@@ -141,6 +147,7 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     )
     assert {item.name for item in payload.iterdir()} == {"app", "Examples", "THIRD_PARTY_NOTICES.md"}
     assert (payload / "Examples/cpp/vision-runtime/src/vision_inference.cpp").is_file()
+    assert (payload / "Examples/cpp/vision-runtime/src/dense_tiles.h").read_text() == "tile implementation"
     assert (payload / "Examples/cpp/with_evision/bw8_preprocess.h").is_file()
     assert (payload / "Examples/cpp/with_opencv/CMakeLists.txt").is_file()
     assert (payload / "Examples/cpp/vision-runtime/include/ort_vs2017.cmake").read_text(encoding="utf-8") == "compatibility script"
@@ -151,6 +158,17 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     assert (payload / "Examples/cpp/encrypted.cpp").is_file()
     assert (payload / "Examples/csharp/encrypted/Program.cs").is_file()
     simple["validate_simple_payload"](payload)
+    runtime = payload / "app" / "_internal"
+    dll = runtime / "python311.dll"
+    assert dll.read_bytes() == b"runtime fixture"
+    dll.write_bytes(b"")
+    with pytest.raises(simple["PayloadStageError"], match="Python DLL"):
+        simple["validate_simple_payload"](payload)
+    dll.write_bytes(b"runtime fixture")
+    moved = runtime.rename(runtime.with_name("moved"))
+    with pytest.raises(simple["PayloadStageError"], match="Python DLL"):
+        simple["validate_simple_payload"](payload)
+    moved.rename(runtime)
     for required in ("Examples/cpp/build_encrypted.cmake", "Examples/cpp/with_evision/encrypted.cpp"):
         path = payload / required
         original = path.read_bytes()
@@ -172,7 +190,7 @@ def test_simple_installer_build_path_is_explicit_and_skips_model_catalog():
     assert "stage_simple_payload.py" in release
     assert "--skip-model-catalog" in release
     assert "stage_simple_payload.py" in simple
-    assert "-Simple" in simple
+    assert "Simple = $true" in simple
     assert '"installer"' in batch
     assert "build_simple_installer.ps1" in batch
     assert "--skip-model-catalog" in validator
@@ -333,6 +351,53 @@ def test_pyinstaller_native_runtime_argument_is_opt_in_and_filters_library_files
     args = build["_native_runtime_arguments"]()
     assert args == ["--add-binary", f"{runtime / f'onnxruntime{suffix}'}{os.pathsep}.",
                     "--add-binary", f"{runtime / f'vision_runtime{suffix}'}{os.pathsep}."]
+
+
+def test_pyinstaller_checks_and_packages_the_same_asset_override(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import builtin_assets
+    builder = runpy.run_path(str(ROOT / "gui" / "build_exe.py"))["build"]
+    namespace = builder.__globals__
+    for name in ("check_pyinstaller", "check_runtime_dependencies", "check_training_accelerator"):
+        monkeypatch.setitem(namespace, name, lambda: True)
+    monkeypatch.setitem(namespace, "_native_runtime_arguments", lambda: [])
+    root = tmp_path / "custom weights"
+    monkeypatch.setenv("DVS_BUILTIN_ASSETS_DIR", str(root))
+    checked = []
+
+    def missing(*, bundle_only):
+        assert bundle_only and root.is_dir()
+        checked.append(builtin_assets.builtin_asset_root())
+        return []
+
+    def capture(command, **kwargs):
+        assert f"{root}{os.pathsep}builtin_assets" in command
+        search_paths = [command[i + 1] for i, value in enumerate(command[:-1]) if value == "--paths"]
+        assert namespace["PYTHON_DIR"] in search_paths
+        assert namespace["GUI_DIR"] in search_paths
+        assert namespace["PROJECT_ROOT"] in search_paths
+        assert kwargs["env"]["DVS_BUILTIN_ASSETS_DIR"] == str(root)
+        return SimpleNamespace(returncode=23)  # stop before looking for a built EXE
+
+    monkeypatch.setattr(builtin_assets, "missing_assets", missing)
+    monkeypatch.setattr(namespace["subprocess"], "run", capture)
+    assert builder() == 23
+    assert checked == [root]
+
+
+def test_offline_installer_cannot_continue_with_missing_pretrained_assets(tmp_path, monkeypatch):
+    import builtin_assets
+    builder = runpy.run_path(str(ROOT / "gui" / "build_exe.py"))["build"]
+    namespace = builder.__globals__
+    for name in ("check_pyinstaller", "check_runtime_dependencies", "check_training_accelerator"):
+        monkeypatch.setitem(namespace, name, lambda: True)
+    monkeypatch.setenv("DVS_BUILTIN_ASSETS_DIR", str(tmp_path / "weights"))
+    monkeypatch.setenv("DVS_REQUIRE_ALL_BUILTIN_ASSETS", "1")
+    monkeypatch.setattr(builtin_assets, "missing_assets", lambda **kwargs: ["resnet18"])
+    def unexpected_build(*args, **kwargs):
+        pytest.fail("An offline installer must not freeze incomplete model assets")
+    monkeypatch.setattr(namespace["subprocess"], "run", unexpected_build)
+    assert builder() == 1
 
 
 def test_payload_wrapper_scripts_collect_and_verify_exact_bytes(tmp_path):

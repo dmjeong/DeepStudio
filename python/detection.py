@@ -2,6 +2,34 @@
 import numpy as np
 
 
+def foreground_supervision_loss(logits, targets):
+    """Train a stride-4 foreground head on the cells covered by true boxes."""
+    import torch
+    from torch.nn import functional as F
+
+    _, _, height, width = logits.shape
+    boxes = targets[..., 1:5].float()
+    sizes = boxes[..., 2:]
+    valid = (sizes > 0).all(dim=-1).to(torch.float32)
+    scale = boxes.new_tensor([width, height])
+    left, top = ((boxes[..., :2] - sizes / 2).clamp(0, 1) * scale).floor().long().unbind(-1)
+    right, bottom = ((boxes[..., :2] + sizes / 2).clamp(0, 1) * scale).ceil().long().unbind(-1)
+
+    # Add box corners then prefix-sum, so overlapping boxes share the same
+    # foreground mask without allocating a separate feature map for each box.
+    stride = width + 1
+    raster = valid.new_zeros((logits.shape[0], (height + 1) * stride))
+    corners = torch.cat((top * stride + left, bottom * stride + right,
+                         top * stride + right, bottom * stride + left), dim=1)
+    raster.scatter_add_(1, corners, torch.cat((valid, valid, -valid, -valid), dim=1))
+    foreground = raster.reshape(-1, height + 1, stride).cumsum(1).cumsum(2)[:, :height, :width] > 0
+    mask = foreground.to(torch.float32)
+    losses = F.binary_cross_entropy_with_logits(logits[:, 0].float(), mask, reduction="none")
+    background = 1 - mask
+    return ((losses * mask).sum() / mask.sum().clamp_min(1)
+            + (losses * background).sum() / background.sum().clamp_min(1)) * .5
+
+
 def postprocess_detections(predictions, confidence=0.25, iou_threshold=0.5, max_detections=300):
     values = np.asarray(predictions, dtype=np.float64)
     if values.ndim != 2 or values.shape[1] < 6 or not np.isfinite(values).all():

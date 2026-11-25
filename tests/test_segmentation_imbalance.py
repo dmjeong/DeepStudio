@@ -234,9 +234,12 @@ def test_training_records_the_loss_and_pixel_class_weights(tmp_path):
     assert np.isclose(np.dot(counts, weights) / sum(counts), 1.0)
 
 
-def test_class_weights_need_training_pixels_of_every_class(tmp_path):
-    with pytest.raises(ValueError, match="dent"):
-        _train(_dataset(tmp_path / "data", with_dent=False), tmp_path / "run", class_weights="balanced")
+def test_class_weights_preserve_absent_class_channels(tmp_path):
+    best = _train(_dataset(tmp_path / "data", with_dent=False), tmp_path / "run", class_weights="balanced")
+    config = json.loads((best.parent / "training.json").read_text())["training_config"]
+    assert config['class_pixel_counts'][2] == 0
+    assert config['class_weight_values'][2] == 1.0
+    assert len(config['class_weight_values']) == 3
 
 
 def test_default_training_loss_is_ce_dice(tmp_path):

@@ -18,6 +18,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -291,7 +292,9 @@ std::string sha256_file(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) throw std::invalid_argument("Deployment bundle file cannot be opened.");
     Sha256 sha;
-    std::array<uint8_t, 1024 * 1024> buffer{};
+    // Windows callers commonly have a 1 MiB stack. A 1 MiB local array
+    // overflows before hashing even a tiny bundle. Keep bounded I/O on heap.
+    std::vector<uint8_t> buffer(64 * 1024);
     while (stream) {
         stream.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
         const auto count = stream.gcount();

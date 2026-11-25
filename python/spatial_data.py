@@ -1,53 +1,106 @@
 """검출 박스와 인스턴스 분할 폴리곤 라벨의 공통 검증."""
 from pathlib import Path
+
 import numpy as np
 
 EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff'}
 
 
-def image_files(root):
+def image_files(root, *, extensions=EXTENSIONS):
     root = Path(root)
-    return sorted(p for p in root.rglob('*') if p.is_file() and p.suffix.lower() in EXTENSIONS
+    return sorted(p for p in root.rglob('*') if p.is_file() and p.suffix.lower() in extensions
                   and not any(part.startswith('.') for part in p.relative_to(root).parts))
 
 
-def labeled_semantic_pairs(image_root, mask_root):
-    """(이미지, 마스크) 쌍과 마스크 없는 이미지 목록.
+def semantic_file_index(root):
+    """Keep nested paths; reject two extensions claiming the same image identity."""
+    root = Path(root)
+    result = {}
+    for path in image_files(root):
+        key = path.relative_to(root).with_suffix('')
+        if key in result:
+            raise ValueError(f'이미지/마스크 이름 중복: {result[key]}, {path}')
+        result[key] = path
+    return result
 
-    분할 학습은 마스크 없는 이미지를 결함 없는(전부 배경) 이미지로 학습한다 (dataset.SegmentationDataset).
-    이미지 없는 마스크와 이름 중복은 여전히 오류다.
+
+def orphan_mask_message(paths):
+    paths = sorted(map(str, paths))
+    shown = '\n'.join(paths[:3])
+    return (f'마스크에 대응하는 이미지 누락: {len(paths)}개\n{shown}\n'
+            '이미지 이름을 바꾸면 정답 마스크도 같은 이름으로 연결해야 합니다. '
+            '프로젝트 저장만으로 파일 이름은 동기화되지 않습니다. '
+            '데이터셋 화면의 [정답 연결 복구]에서 이전 정답과 새 이미지를 연결하세요. '
+            '이후 이름 변경은 이미지 우클릭 [이름 변경 (정답 함께)]을 사용하세요.')
+
+
+def labeled_semantic_pairs(image_root, mask_root):
+    """Return only existing pairs and list missing masks, without choosing training policy.
+
+    semantic_training_pairs includes the missing masks as automatic background.
+    semantic_pairs is the separate strict importer contract.
     """
-    def indexed(root):
-        result = {}
-        for path in image_files(root):
-            key = path.relative_to(root).with_suffix('')
-            if key in result:
-                raise ValueError(f'이미지/마스크 이름 중복: {result[key]}, {path}')
-            result[key] = path
-        return result
-    images, masks = indexed(Path(image_root)), indexed(Path(mask_root)) if Path(mask_root).is_dir() else {}
-    for key in masks.keys() - images.keys():
-        raise ValueError(f'마스크에 대응하는 이미지 누락: {masks[key]}')
+    if Path(mask_root).exists() and not Path(mask_root).is_dir():
+        raise ValueError(f'마스크 폴더 경로가 파일입니다: {mask_root}')
+    images = semantic_file_index(image_root)
+    masks = semantic_file_index(mask_root) if Path(mask_root).is_dir() else {}
+    orphans = [masks[key] for key in masks.keys() - images.keys()]
+    if orphans:
+        raise ValueError(orphan_mask_message(orphans))
     pairs = [(str(image), str(masks[key])) for key, image in images.items() if key in masks]
     unlabeled = sorted(str(image) for key, image in images.items() if key not in masks)
     return pairs, unlabeled
 
 
+def semantic_training_pairs(image_root, mask_root):
+    """Every semantic image participates: a missing mask means background.
+
+    Existing bad masks are not missing masks. Polygon-only labels must be
+    converted/saved as a semantic mask before training, never treated as empty.
+    The second return value records which images use automatic background.
+    """
+    pairs, unlabeled = labeled_semantic_pairs(image_root, mask_root)
+    image_root = Path(image_root)
+    label_root = Path(mask_root).parent.parent / "labels" / Path(mask_root).name
+    # Also support the full images/ and masks/ trees used by crop snapshots.
+    if Path(mask_root).name == "masks":
+        label_root = Path(mask_root).parent / "labels"
+    for image in unlabeled:
+        label = label_root / Path(image).relative_to(image_root).with_suffix('.txt')
+        if label.is_file() and label.read_text(encoding='utf-8-sig').strip():
+            raise ValueError(f"폴리곤 라벨만 있고 픽셀 마스크가 없습니다: {label}. "
+                             "라벨링 화면에서 열고 저장하여 마스크를 생성하세요.")
+    return sorted([*pairs, *((image, None) for image in unlabeled)]), unlabeled
+
+
+def load_semantic_mask(image_path, mask_path, num_classes=None):
+    """Read and validate original labels BEFORE resizing; None alone is background."""
+    from PIL import Image
+    with Image.open(image_path) as image:
+        size = image.size
+    if mask_path is None:
+        return np.zeros((size[1], size[0]), dtype=np.uint8), size
+    with Image.open(mask_path) as mask:
+        if mask.mode not in ('P', 'L', 'I', 'I;16', 'I;16L', 'I;16B'):
+            raise ValueError(f"정답 마스크는 클래스 인덱스 이미지여야 합니다: {mask_path}")
+        if mask.size != size:
+            raise ValueError(f"이미지/마스크 원본 크기 불일치: {image_path} / {mask_path}")
+        values = np.array(mask)
+    valid = values[values != 255]
+    limit = 255 if num_classes is None else num_classes
+    if values.ndim != 2 or (valid.size and (valid.min() < 0 or valid.max() >= limit)):
+        raise ValueError(f"정답 마스크 클래스 범위 오류: {mask_path}")
+    return values, size
+
+
 def semantic_pairs(image_root, mask_root):
     """동일 상대 경로의 이미지/마스크를 연결하고 누락과 중복을 알린다."""
-    def indexed(root):
-        result = {}
-        for path in image_files(root):
-            key = path.relative_to(root).with_suffix('')
-            if key in result:
-                raise ValueError(f'이미지/마스크 이름 중복: {result[key]}, {path}')
-            result[key] = path
-        return result
-    images, masks = indexed(Path(image_root)), indexed(Path(mask_root))
+    images, masks = semantic_file_index(image_root), semantic_file_index(mask_root)
     for key in images.keys() - masks.keys():
         raise ValueError(f'정답 마스크 누락: {images[key]}')
-    for key in masks.keys() - images.keys():
-        raise ValueError(f'마스크에 대응하는 이미지 누락: {masks[key]}')
+    orphans = [masks[key] for key in masks.keys() - images.keys()]
+    if orphans:
+        raise ValueError(orphan_mask_message(orphans))
     return [(str(image), str(masks[key])) for key, image in images.items()]
 
 
@@ -90,7 +143,7 @@ def read_spatial_labels(path, task, num_classes):
     return rows
 
 
-def validate_spatial_dataset(root, task, num_classes):
+def validate_spatial_dataset(root, task, num_classes, *, extensions=EXTENSIONS):
     root = Path(root)
     if num_classes < 1:
         raise ValueError('검출/분할 클래스 목록 필요')
@@ -98,7 +151,7 @@ def validate_spatial_dataset(root, task, num_classes):
     seen = set()
     for split in ('train', 'val'):
         image_root, label_root = root / 'images' / split, root / 'labels' / split
-        images = image_files(image_root)
+        images = image_files(image_root, extensions=extensions)
         if not images:
             raise ValueError(f'{split} 이미지 없음: {image_root}')
         if not label_root.is_dir():

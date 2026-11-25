@@ -602,6 +602,12 @@ class InferenceWidget(QWidget, InferenceOperations):
             "QCheckBox { color: #E8EAEF; font-size: 12px; }"
         )
         gradcam_row.addWidget(self.gradcam_checkbox)
+        self.region_names_check = QCheckBox("클래스명")
+        self.region_names_check.setChecked(True)
+        self.region_names_check.setToolTip("검출한 각 영역에 모델의 클래스 이름을 표시합니다.")
+        self.region_names_check.toggled.connect(self._update_region_labels)
+        self.region_names_check.hide()
+        gradcam_row.addWidget(self.region_names_check)
 
         alpha_label = QLabel("강도:")
         alpha_label.setStyleSheet("color: #8A92A4; font-size: 11px;")
@@ -648,6 +654,9 @@ class InferenceWidget(QWidget, InferenceOperations):
         range_hint.setWordWrap(True)
         range_hint.setStyleSheet("color: #8A92A4; font-size: 11px;")
         self.image_label_hint = range_hint.text()
+        self._heatmap_display_controls = [alpha_label, self.gradcam_alpha_combo]
+        self._heatmap_display_controls.extend(range_row.itemAt(i).widget() for i in range(range_row.count())
+                                               if range_row.itemAt(i).widget() is not None)
         range_hint.deleteLater()
         self.heatmap_lower_spin.setToolTip(self.image_label_hint)
         self.heatmap_upper_spin.setToolTip(self.image_label_hint)
@@ -676,14 +685,17 @@ class InferenceWidget(QWidget, InferenceOperations):
         compare_layout = QHBoxLayout(compare_box)
         compare_layout.setContentsMargins(0, 0, 0, 0)
         self.original_label = ResultImageLabel("원본")
+        self.original_label.setMinimumSize(240, 180)
+        self.original_label.setStyleSheet(self.image_label.styleSheet())
         self.original_label.hide()
-        compare_layout.addWidget(self.original_label)
-        compare_layout.addWidget(self.image_label)
+        compare_layout.addWidget(self.original_label, 1)
+        compare_layout.addWidget(self.image_label, 1)
         self.image_label.view_changed.connect(self.original_label.set_view)
         self.original_label.view_changed.connect(self.image_label.set_view)
         self._view_stack.addWidget(compare_box)
         self.compare_check = QCheckBox("원본 비교")
-        self.compare_check.toggled.connect(self.original_label.setVisible)
+        self.compare_check.toggled.connect(self._on_compare_toggled)
+        self.compare_check.setToolTip("선택한 이미지의 원본(왼쪽)과 결과(오른쪽)를 나란히 표시합니다.")
         gradcam_row.addWidget(self.compare_check)
         self.image_label.setToolTip("휠: 확대 / 드래그: 이동 / 더블 클릭: 화면 맞춤 / 마우스 위치: 원본 픽셀\n" + self.image_label_hint)
 
@@ -734,6 +746,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.task_details_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.task_details_scroll.setMaximumHeight(150)
         self.task_details_label = QLabel()
+        self.task_details_label.setTextFormat(Qt.TextFormat.PlainText)
         self.task_details_label.setWordWrap(True)
         self.task_details_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.task_details_scroll.setWidget(self.task_details_label)
@@ -874,9 +887,13 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._preview_cache.clear()
         self._inference_results.clear()
         self._current_preview_rgb = None
+        self._display_original(None)
         self._current_result = None
+        self.image_label.set_regions([])
         if self._current_image and os.path.isfile(self._current_image):
             self._show_image(self._current_image)
+        else:
+            self.image_label.setText("이미지를 불러와 주세요")
         self.image_label.set_result()
         self._batch_results.clear()
         self._batch_times.clear()
@@ -944,7 +961,7 @@ class InferenceWidget(QWidget, InferenceOperations):
     def _activate_model(self, *, path, device, model=None, patchcore=None,
                         gradcam=None, class_names=(),
                         input_size=(224, 224), normalization=None, threshold=None, info="", process=False,
-                        score_normalized=False, center_crop=None, tiling=None):
+                        score_normalized=False, center_crop=None, task=None, tiling=None):
         from center_crop import validate_center_crop
         center_crop = validate_center_crop(patchcore.center_crop if patchcore is not None else center_crop)
         if self._gradcam is not None:
@@ -955,6 +972,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._infer_device = device
         self._active_checkpoint = path
         self._process_model = process
+        self._active_task = task or getattr(model, "task", "anomaly" if patchcore is not None else "")
         self.class_names = list(class_names)
         self._input_size = tuple(input_size)
         self._normalization = normalization
@@ -963,6 +981,10 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._anomaly_threshold = threshold
         self.result_review.set_saved_threshold(threshold, normalized=score_normalized)
         self._clear_results()
+        self.region_names_check.setVisible(self._active_task == "segment")
+        if self._active_task == "segment":
+            self.gradcam_checkbox.setChecked(False)
+        self._update_region_labels()
         crop_info = f" | 중앙 크롭: {center_crop['width']}×{center_crop['height']} px" if center_crop else ""
         self.model_info.setText(info + crop_info)
         self.model_info.setStyleSheet("color: #34C759;")
@@ -974,7 +996,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         self.result_review.set_model_path(path if self._model_task == "segment" else None)
         self.gradcam_checkbox.setEnabled(gradcam is not None)
         self.gradcam_checkbox.setToolTip(
-            "모델 출력에 대한 민감도 히트맵. 커스텀 분할에서는 체크를 해제하면 클래스 마스크를 표시합니다." if gradcam is not None else
+            "모델 반응을 보는 별도 히트맵입니다. 분할 결과는 기본으로 검출 영역과 클래스명을 표시합니다." if gradcam is not None else
             "이 엔진의 Grad-CAM은 지원하지 않습니다. PatchCore는 자체 이상 맵을 표시합니다.")
         self._update_device_info()
         self._region_changed()
@@ -991,7 +1013,8 @@ class InferenceWidget(QWidget, InferenceOperations):
             control.setVisible(self._shows_heatmap())
 
     def _gradcam_requested(self):
-        return self.gradcam_checkbox.isChecked() and self._shows_heatmap()
+        return (self.gradcam_checkbox.isEnabled() and self.gradcam_checkbox.isChecked()
+                and self._shows_heatmap())
 
     def _segment_rules(self):
         """분할 결과가 있으면 지금 판정 기준으로 다시 판정한다. 다른 태스크는 None(기존 동작)."""
@@ -1025,7 +1048,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         if self._model_inspection is not None or self._inference_worker is not None:
             return
         try:
-            desktop_manager().require_idle()
+            desktop_manager().require_idle("inspect_model", {"device": self.infer_device_combo.currentData()})
             if not os.path.isfile(path):
                 raise ValueError("가중치 파일 선택 필요")
         except (RuntimeError, ValueError) as exc:
@@ -1059,7 +1082,9 @@ class InferenceWidget(QWidget, InferenceOperations):
             device_label = self._device_manager.get_device_label(device)
             patchcore_info = result.get("patchcore")
             upstream = bool(result.get("upstream"))
-            if patchcore_info is not None:
+            if patchcore_info is not None and patchcore_info.get("model_id") == "dinomaly_vits14":
+                info = f"Dinomaly 준비 완료 | 고정 DINOv2-S + 재구성기 | 디바이스: {device_label}"
+            elif patchcore_info is not None:
                 count = int(patchcore_info["memory_bank_size"])
                 if count < 1:
                     raise ValueError("PatchCore 메모리 뱅크가 비어 있습니다")
@@ -1073,23 +1098,28 @@ class InferenceWidget(QWidget, InferenceOperations):
             self._model_inspection_failed(str(exc))
             return
         self._model_task = str(task)
+        if result.get("preprocessing_policy") == "libreyolo_full_frame_v1":
+            info += " | 입력 영역 전체 사용 · 자동 자르기 없음"
+            if result.get("preprocessing_migrated"):
+                info += " | 구형 모델 전처리 변경 · 판정 재확인 필요"
         if result.get("tiling"):
             scale = float(result["tiling"].get("scale", 1.0))
             info += (" | 패치 학습 모델 · " + ("원본 해상도" if scale == 1 else f"배율 {scale:.0%}")
-                     + " · 판정 영역 한 번에 추론")
+                     + " · 저장된 영역 처리 규칙으로 추론")
         if result.get("sam2"):
             info += f" | SAM2 {result['sam2']} · 격자 점 자동 분할"
         self._activate_model(path=path, device=device, class_names=names,
-                             input_size=shape, threshold=result.get("anomaly_threshold"), info=info, process=True,
+                             input_size=shape, threshold=result.get("anomaly_threshold"), info=info, process=True, task=task,
                              center_crop=(result.get("center_crop") if patchcore_info is None else
                                           patchcore_info.get("center_crop")),
                              score_normalized=patchcore_info is not None)
         self.sam2_row.setVisible(bool(result.get("sam2")))
-        self.gradcam_checkbox.setEnabled(patchcore_info is None and not upstream)
-        if patchcore_info is None and not upstream:
+        supported = result.get("gradcam_supported", patchcore_info is None and not upstream)
+        self.gradcam_checkbox.setEnabled(bool(supported))
+        if supported:
             self.gradcam_checkbox.setToolTip("추론 프로세스에서 지원하는 모델의 Grad-CAM을 계산합니다.")
         elif upstream:
-            self.gradcam_checkbox.setToolTip("LibreYOLO native .pt 추론의 Grad-CAM은 현재 지원하지 않습니다.")
+            self.gradcam_checkbox.setToolTip("이 LibreYOLO 모델의 Grad-CAM은 지원하지 않습니다. 탐지 모델은 박스를 표시합니다.")
 
     def _model_inspection_failed(self, message):
         active = f"\n기존 모델 유지: {self._active_checkpoint}" if self._active_checkpoint else ""
@@ -1113,13 +1143,20 @@ class InferenceWidget(QWidget, InferenceOperations):
 
     def _restore_inference_job(self, job_id):
         from core.desktop_jobs import PersistentInferenceCache, desktop_manager, inference_result
-        cache = PersistentInferenceCache(desktop_manager().directory(job_id))
+        try:
+            directory = desktop_manager().directory(job_id)
+        except FileNotFoundError:
+            QMessageBox.information(self, "추론 결과", "삭제된 추론 결과입니다. 추론을 다시 실행하세요.")
+            return
+        cache = PersistentInferenceCache(directory)
         self._clear_results()
         self._preview_cache = cache
         self._batch_images = list(cache.entries)
         self.result_review.set_saved_threshold(None)
         self.result_review.set_context(self._batch_images, self.project)
         self._inference_results = {p: inference_result(row) for p, row in cache.entries.items()}
+        if any(result.task == "segment" for result in self._inference_results.values()):
+            self.gradcam_checkbox.setChecked(False)
         self._batch_results = {i: self._inference_results[p] for i, p in enumerate(self._batch_images)}
         for result in self._inference_results.values():
             self.result_review.update_result(result)
@@ -1143,6 +1180,9 @@ class InferenceWidget(QWidget, InferenceOperations):
             from core.inference_loading import _sam2_model_id
             if _sam2_model_id(path, checkpoint):
                 # SAM2는 추론 프로세스에서 불러온다 (공식 Hiera 가중치 + 미세조정 디코더, 장치 선택 그대로)
+                self._start_model_inspection(path)
+                return True
+            if checkpoint.get("type") == "dinomaly":
                 self._start_model_inspection(path)
                 return True
             if checkpoint.get("type") == "patchcore":
@@ -1197,6 +1237,7 @@ class InferenceWidget(QWidget, InferenceOperations):
             return False
 
     def _load_patchcore_model(self, checkpoint, ckpt_path):
+        from patchcore_data import anomaly_input_shape
         device = self._device_manager.get_device(self.infer_device_combo.currentData())
         candidate = PatchCore.load(ckpt_path, device=device)
         info = candidate.get_info()
@@ -1204,7 +1245,7 @@ class InferenceWidget(QWidget, InferenceOperations):
             raise ValueError("PatchCore 메모리 뱅크가 비어 있습니다")
         self._activate_model(
             path=ckpt_path, device=device, patchcore=candidate,
-            input_size=(candidate.input_size, candidate.input_size),
+            input_size=anomaly_input_shape(candidate.input_size),
             threshold=candidate.normalized_threshold, score_normalized=True,
             info=f"PatchCore 준비 완료 | 메모리 뱅크: {info['memory_bank_size']:,}개 패치 | "
                  f"백본: {info.get('backbone', '저장 모델')} | "
@@ -1291,17 +1332,28 @@ class InferenceWidget(QWidget, InferenceOperations):
     def _show_image(self, filepath: str):
         """이미지 표시"""
         self._current_preview_rgb = None
+        self._original_preview_rgb = None
+        self._original_image_path = None
+        self.image_label.set_regions([])
         pixmap = QPixmap(filepath)
         if not pixmap.isNull():
             self.image_label.setPixmap(pixmap)
             self.original_label.setPixmap(pixmap)
+            self.original_label.set_result("원본", "#8A92A4")
+            self.original_label.set_view(self.image_label._zoom, self.image_label._pan)
             from PIL import Image
             with Image.open(filepath) as source:
                 pixels = np.array(source)
+            from core.image_display import display_rgb
+            self._original_preview_rgb = display_rgb(pixels)
+            self._original_image_path = filepath
             self.image_label.set_pixel_source(pixels)
             self.original_label.set_pixel_source(pixels)
         else:
             self.image_label.setText("이미지 표시 불가")
+            self.original_label.setText("원본 이미지 표시 불가")
+            self.original_label.set_pixel_source(None)
+            self.image_label.set_pixel_source(None)
         result = self._current_result
         if result is not None and result.image_path == filepath:
             self.image_label.set_result(result.summary, result.color)
@@ -1315,7 +1367,7 @@ class InferenceWidget(QWidget, InferenceOperations):
             return
         from core.desktop_jobs import desktop_manager
         try:
-            desktop_manager().require_idle()
+            desktop_manager().require_idle("infer", {"device": self.infer_device_combo.currentData()})
         except RuntimeError as exc:
             QMessageBox.warning(self, "작업 진행 중", str(exc))
             return
@@ -1343,6 +1395,8 @@ class InferenceWidget(QWidget, InferenceOperations):
                 "project": project_view(self.project) if self.project else {}}, self._preview_cache, self)
         else:
             state = {name: getattr(self, name, None) for name in InferenceEngine.STATE_FIELDS}
+            from core.segmentation_evaluation import project_snapshot
+            state["_evaluation_project"] = project_snapshot(getattr(self, "project", None))
             from core.inference_worker import InferenceWorker
             worker = InferenceWorker(InferenceEngine(state, gradcam=self._gradcam_requested(), input_region=region,
                                                      segment_review=self._segment_review(),
@@ -1425,6 +1479,7 @@ class InferenceWidget(QWidget, InferenceOperations):
         from dataclasses import replace
         started = time.perf_counter()
         self._stage_timings = {}
+        self._original_preview_rgb = None
         self.gradcam_enabled = self.gradcam_checkbox.isChecked()
         self._current_image = image_path
         self._current_result = None
@@ -1475,6 +1530,8 @@ class InferenceWidget(QWidget, InferenceOperations):
         raw_result = result
         result = effective_result(result, self.result_review.threshold, self._segment_rules())
         self._current_result = result
+        self.region_names_check.setVisible(result.task == "segment")
+        self._update_region_labels()
         if render_card or self.result_review.threshold is not None:
             self._render_result_card(result)
         self._last_infer_time = result.elapsed_sec
@@ -1558,12 +1615,20 @@ class InferenceWidget(QWidget, InferenceOperations):
         elif result.task == "segment" and "pixel_counts" in details:
             title = "세그멘테이션 픽셀 분포"
             total = sum(int(value) for value in details["pixel_counts"].values())
-            names = list(details.get("class_names") or [])
-
-            def label(key):  # 번호 대신 클래스 이름 (모델에 이름이 없으면 번호)
-                return names[int(key)] if int(key) < len(names) else f"클래스 {key}"
-            lines = [f"{label(key)}: {int(value):,} px ({int(value) / total:.1%})" if total else f"{label(key)}: 0 px"
-                     for key, value in sorted(details["pixel_counts"].items(), key=lambda item: int(item[0]))]
+            names = details.get("class_names") or []
+            for key, value in sorted(details["pixel_counts"].items(), key=lambda item: int(item[0])):
+                name = names[int(key)] if 0 <= int(key) < len(names) else f"클래스 {key}"
+                lines.append(f"{name}: {int(value):,} px" + (f" ({int(value) / total:.1%})" if total else ""))
+            from core.segmentation_evaluation import evaluation_lines
+            evaluation = details.get("segmentation_evaluation") or {}
+            if evaluation:
+                title = "세그멘테이션 클래스별 평가 · 픽셀 분포"
+            found = []
+            if "region_count" in details:
+                found = [f"검출 영역: {details['region_count']}개"]
+                if details.get("region_labels_truncated"):
+                    found.append("모든 영역을 색으로 표시하며, 클래스 이름은 큰 영역 256개까지만 표시합니다.")
+            lines = found + evaluation_lines(evaluation) + ["", "예측 픽셀 분포"] + lines
         elif result.task == "segment" and details.get("num_detections") is not None:
             title = "세그멘테이션 결과"
             lines = [f"분할 객체: {int(details['num_detections'])}개"]
@@ -1659,7 +1724,7 @@ class InferenceWidget(QWidget, InferenceOperations):
                 preview = None
         try:
             self._preview_cache.put(result.image_path, preview, self._heatmap_cache,
-                                    self.gradcam_info.text())
+                                    self.gradcam_info.text(), original=getattr(self, "_original_preview_rgb", None))
         except (OSError, ValueError) as exc:
             self.gradcam_info.setText(f"결과 이미지 캐시 저장 실패: {exc}. 추론 시작으로 다시 저장해 주세요.")
 
@@ -1670,6 +1735,8 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._current_image = image_path
         self._current_result = None
         self._current_preview_rgb = None
+        self._display_original(None)
+        self.image_label.set_regions([])
         result = self._inference_results.get(image_path)
         if result is None:
             self._show_image(image_path)
@@ -1686,6 +1753,12 @@ class InferenceWidget(QWidget, InferenceOperations):
             if entry is None:
                 raise OSError("저장된 결과 이미지 없음")
             self.gradcam_info.setText(entry["info"])
+            original = entry.get("original")
+            if original is None and os.path.isfile(image_path):
+                from PIL import Image
+                with Image.open(image_path) as source:
+                    original = np.array(source.convert("RGB"))
+            self._display_original(original)
             if entry["heatmap"] is not None:
                 self._heatmap_cache = entry["heatmap"]
                 self._render_cached_heatmap()
@@ -1753,10 +1826,69 @@ class InferenceWidget(QWidget, InferenceOperations):
         self._schedule_heatmap_render()
 
     def _on_gradcam_toggled(self, checked):
+        self._update_region_labels()
         if self._heatmap_cache is not None:
             self._schedule_heatmap_render()
         elif checked and self._gradcam is not None:
             self.gradcam_info.setText("Grad-CAM을 표시하려면 추론을 실행해 주세요.")
+
+    def _update_region_labels(self, *_):
+        result = getattr(self, "_current_result", None)
+        task = (result.task if result is not None else "") or getattr(self, "_active_task", "")
+        self.gradcam_checkbox.setText("모델 반응 (Grad-CAM)" if task == "segment" else "Grad-CAM")
+        for control in self._heatmap_display_controls:
+            control.setVisible(task != "segment" or self.gradcam_checkbox.isChecked())
+        details = (result.details or {}) if result is not None else {}
+        regions = details.get("segmentation_regions", []) if result is not None and result.task == "segment" else []
+        self.image_label.set_regions(regions, details.get("original_size"))
+        heatmap = getattr(self, "_heatmap_cache", None)
+        visible = self.region_names_check.isChecked() and not (
+            heatmap is not None and heatmap.get("kind") == "Grad-CAM" and self.gradcam_checkbox.isChecked())
+        self.image_label.set_regions_visible(visible)
+        for cell in getattr(self, "_grid_cells", []):
+            cell.thumb_label.set_regions_visible(self.region_names_check.isChecked()
+                                                and not getattr(cell, "_showing_heatmap", False))
+
+    def _on_compare_toggled(self, checked):
+        self.original_label.setVisible(checked)
+        if checked:
+            self._switch_view_mode("single")
+            # A hidden panel must never retain the previous image. Prefer the
+            # inference snapshot; the file at this path may have changed since.
+            path = self._current_image
+            if not path:
+                self._display_original(None)
+            elif getattr(self, "_original_image_path", None) != path:
+                original = None
+                try:
+                    entry = self._preview_cache.get(path)
+                    if entry is not None:
+                        original = entry.get("original")
+                    if original is None:
+                        from PIL import Image
+                        with Image.open(path) as source:
+                            original = np.array(source.convert("RGB"))
+                except (OSError, ValueError, KeyError):
+                    pass
+                self._display_original(original)
+            self.original_label.set_view(self.image_label._zoom, self.image_label._pan)
+
+    def _display_original(self, original):
+        self._original_preview_rgb = original
+        self._original_image_path = self._current_image if original is not None else None
+        if original is None:
+            self.original_label.setText("저장된 원본 없음")
+            self.original_label.set_pixel_source(None)
+            self.image_label.set_pixel_source(None)
+            return
+        from core.image_display import display_rgb
+        original = display_rgb(original)
+        h, w = original.shape[:2]
+        image = QImage(original.data, w, h, original.strides[0], QImage.Format.Format_RGB888).copy()
+        self.original_label.setPixmap(QPixmap.fromImage(image))
+        self.original_label.set_result("원본", "#8A92A4")
+        self.original_label.set_pixel_source(original)
+        self.image_label.set_pixel_source(original)
 
     def _schedule_heatmap_render(self, *_):
         if self._heatmap_cache is not None:
@@ -1826,13 +1958,11 @@ class InferenceWidget(QWidget, InferenceOperations):
         pixmap = QPixmap.fromImage(qimage)
         self.image_label.setPixmap(pixmap)
         cache = self._heatmap_cache
-        if cache is not None and cache.get("original") is not None:
-            original = np.ascontiguousarray(cache["original"])
-            h, w = original.shape[:2]
-            qimage = QImage(original.data, w, h, original.strides[0], QImage.Format.Format_RGB888).copy()
-            self.original_label.setPixmap(QPixmap.fromImage(qimage))
-            self.image_label.set_pixel_source(original)
-            self.original_label.set_pixel_source(original)
+        original = getattr(self, "_original_preview_rgb", None)
+        if cache is not None and cache.get("image_path") == self._current_image:
+            original = cache.get("original", original)
+        self._display_original(original)
+        self.original_label.set_view(self.image_label._zoom, self.image_label._pan)
 
     def _run_batch_inference(self):
         """
@@ -2021,6 +2151,7 @@ class InferenceWidget(QWidget, InferenceOperations):
 
             # 썸네일 이미지 로드 및 설정
             pixmap = QPixmap()
+            heatmap_visible = False
             try:
                 entry = self._preview_cache.get(img_path, thumbnail=True)
                 if entry is not None:
@@ -2032,6 +2163,7 @@ class InferenceWidget(QWidget, InferenceOperations):
                             if preview is None:
                                 preview = cached_map["original"]
                         else:
+                            heatmap_visible = True
                             _, preview = render_heatmap(
                                 cached_map["activation"], cached_map["original"],
                                 self.gradcam_alpha_combo.currentData(),
@@ -2053,6 +2185,12 @@ class InferenceWidget(QWidget, InferenceOperations):
             if pixmap.isNull():
                 pixmap = QPixmap(img_path)
             cell.set_image(pixmap)
+            cell._showing_heatmap = heatmap_visible
+            result = self._batch_results.get(i)
+            if result is not None and result.task == "segment":
+                details = result.details or {}
+                cell.thumb_label.set_regions(details.get("segmentation_regions", []), details.get("original_size"))
+                cell.thumb_label.set_regions_visible(self.region_names_check.isChecked() and not heatmap_visible)
 
             # 셀 클릭 → 단일 뷰로 전환 + 상세 표시
             cell.clicked.connect(self._on_grid_cell_clicked)

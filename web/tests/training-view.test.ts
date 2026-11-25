@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CURRENT_RUN, initialRunIndex, runModel, trainingView, savedBestMetrics } from "../src/training-view.ts";
+import { CURRENT_RUN, detectionEvaluationText, initialRunIndex, runModel, trainingView,
+  savedBestMetrics, trainingSelectionValue } from "../src/training-view.ts";
 import type { Event, Job, Run } from "../src/api.ts";
 
 const saved: Run = {
@@ -95,4 +96,32 @@ test("모델의 모든 저장 지표를 Best 에폭에서 읽고 시간·마지�
     { event: "epoch_finished", args: [3, .1, .2, { mAP_50_95: .2 }] },
   ]);
   assert.deepEqual(live.bestMetrics, { mAP_50_95: .7, recall: .9, train_loss: .5, val_loss: .4 });
+});
+
+test("기존 탐지 지표는 Best 에폭의 AP와 AR을 읽고 잘못 표기된 P/R은 제외한다", () => {
+  const run = { ...saved, best_epoch: 11, best_metric_name: "metrics/mAP50-95", best_metric: .2,
+    metrics_history: { epoch: [11, 12], "metrics/mAP50-95": [.5, .2], "metrics/mAP50(B)": [.8, .3],
+      "metrics/precision": [.5, .2], "metrics/recall": [.9, .4] },
+    config_snapshot: { engine: "upstream", model_id: "re_detr_v4_small", training: { patch_training: true },
+      best_selection: { epoch: 11, metrics: { "metrics_mAP50-95": .2 } } } };
+  const view = trainingView([run], 0, false, [], null, "detect");
+  assert.deepEqual(view.bestMetrics, { mAP_50: .8, mAP_50_95: .5, AR100: .9, precision: null, recall: null });
+  assert.equal(trainingSelectionValue(run, "detect"), .5);
+  assert.equal(runModel(run), "re_detr_v4_small");
+  assert.match(detectionEvaluationText(view.detectionEvaluation), /패치별/);
+  assert.equal(trainingSelectionValue({ ...run,
+    metrics_history: { epoch: [11, 12], "metrics/mAP50-95": [null, .2] },
+    config_snapshot: { ...run.config_snapshot, upstream_result: { best_epoch: 11, best_mAP50_95: .55 } },
+  }, "detect"), .55);
+});
+
+test("현재 탐지 Best의 클래스별 집계와 P/R 임계값을 보존한다", () => {
+  const perClass = [{ name: "scratch", tp: 7, fp: 3, fn: 2, support: 9 }];
+  const view = trainingView([], CURRENT_RUN, true, [
+    { event: "best_epoch_updated", args: [2, .5, .4, { mAP_50_95: .7, precision: .7, detection_tp: 7,
+      detection_per_class: perClass, detection_evaluation: { unit: "image", protocol: "coco", confidence: .25, iou: .5 } }] },
+  ], null, "detect");
+  assert.equal(view.bestMetrics.precision, .7);
+  assert.deepEqual(view.detectionClasses, perClass);
+  assert.match(detectionEvaluationText(view.detectionEvaluation), /confidence ≥ 0.25, IoU ≥ 0.50/);
 });

@@ -9,9 +9,11 @@ release-specific SBOM.
 
 | Component | Use | Upstream license / source |
 |---|---|---|
+| WiX Toolset 5.0.2 | Windows MSI/Setup build and Burn bootstrapper | MS-RL; `licenses/WiX-5.0.2-LICENSE.txt`; source: https://github.com/wixtoolset/wix/tree/v5.0.2 |
 | PyTorch / torchvision | Python training and built-in model adapters | BSD-style license; https://github.com/pytorch/pytorch/blob/main/LICENSE |
 | OpenCV | image conversion and C++ preprocessing | Apache-2.0; https://github.com/opencv/opencv/blob/4.x/LICENSE |
 | ONNX Runtime | Python and C++ CPU inference | MIT; https://github.com/microsoft/onnxruntime/blob/main/LICENSE |
+| OpenVINO 2026.4.0 | Desktop ONNX CPU benchmark and optional C++ classification runtime | Apache-2.0; https://github.com/openvinotoolkit/openvino/blob/2026.4.0/LICENSE. The frozen app carries the wheel's license and its oneDNN, oneTBB and runtime notices in `openvino-2026.4.0.dist-info/licenses`. |
 | nlohmann/json | C++ manifest parsing | MIT; https://github.com/nlohmann/json/blob/develop/LICENSE.MIT |
 | WiX Toolset | Windows MSI/Burn build tool | MIT; https://github.com/wixtoolset/wix/blob/main/LICENSE |
 | LibreYOLO 1.5.0 | 기본 LibreMobileNetV4 / LibreYOLO9 / Re-DETR v4 native runtime | MIT for the library; https://github.com/LibreYOLO/libreyolo/blob/release/LICENSE and the bundled third-party list at https://github.com/LibreYOLO/libreyolo/blob/release/NOTICE |
@@ -20,6 +22,14 @@ release-specific SBOM.
 | Meta DINOv2 ViT-S/14, ViT-B/14 | Adapted backbone (`python/dinov2.py`) and official LVD-142M pretrained weights; classification and segmentation heads are trained locally | Apache-2.0; https://github.com/facebookresearch/dinov2/blob/main/LICENSE; bundled text: `licenses/DINOv2-APACHE-2.0.txt` |
 | cryptography | Python AES-GCM model containers and model-pack signatures | Apache-2.0 OR BSD-3-Clause; https://github.com/pyca/cryptography/blob/main/LICENSE |
 | OpenSSL 3 | Native encrypted-model loader on non-Windows builds | Apache-2.0; https://github.com/openssl/openssl/blob/openssl-3.0/LICENSE.txt |
+| timm 1.0.31 | MobileNetV4 Conv-S / EfficientNet-B1 segmentation encoders | Apache-2.0; bundled text: `licenses/timm-LICENSE.txt`; exact weight revisions and notices: `licenses/segmentation-candidates.md` |
+| CoinCheung BiSeNetV2 | Adapted CPU/ONNX-compatible segmentation implementation and maintainer-published ImageNet backbone | MIT repository; bundled text: `licenses/bisenet-LICENSE.txt`; exact weight source/hash and provenance: `licenses/segmentation-candidates.md` |
+| MichaelFan01 STDC-Seg | Adapted STDC1 segmentation and boundary training with authors' ImageNet backbone | MIT repository; bundled text: `licenses/stdc-LICENSE.txt`; changes, source hashes and weight provenance: `licenses/segmentation-candidates.md` |
+| EfficientViT | B0/B1 segmentation backbone and adapted head | Apache-2.0; `licenses/EfficientViT-LICENSE.txt`; exact provenance and modifications: `licenses/modern-dense-models.md` |
+| SCTNet | Small segmentation backbone | MIT; `licenses/SCTNet-LICENSE.txt`; source/weight distinction: `licenses/modern-dense-models.md` |
+| EoMT | DINOv2-S query segmentation adapter | MIT; `licenses/EoMT-LICENSE.txt`; Studio adaptations: `licenses/modern-dense-models.md` |
+| Dinomaly | DINOv2-S normal-feature reconstruction | Apache-2.0; `licenses/Dinomaly-LICENSE.txt`; Studio variant: `licenses/modern-dense-models.md` |
+| SciPy | EoMT Hungarian assignment during training | BSD-3-Clause; https://github.com/scipy/scipy/blob/main/LICENSE.txt; include installed distribution notices in frozen releases |
 
 The Windows native encrypted-model loader uses the OS-provided BCrypt API and
 does not ship an OpenSSL DLL. Python cryptography wheels can contain OpenSSL;
@@ -38,6 +48,16 @@ before redistribution.
 
 ## DINOv2 adaptation
 
+Copyright (c) Meta Platforms, Inc. and affiliates. `python/dinov2_segmentation.py`
+adapts the non-register ViT-S/14 backbone to standard PyTorch operations. Changes:
+removed xformers/training-only machinery and remote loading; added a semantic
+segmentation decoder, native-resolution detail path, padding and BW8 normalization
+adapter. The official backbone state dictionary is loaded strictly.
+Reference source verified at revision `7764ea0f912e53c92e82eb78a2a1631e92725fc8`.
+The fixed official weight is
+https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth,
+SHA256 `b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9`.
+This applies to the basic DINOv2 model, not the separately licensed XRay-DINO or
 Copyright (c) Meta Platforms, Inc. and affiliates. `python/dinov2.py` re-implements
 the non-register ViT-S/14 and ViT-B/14 backbones of facebookresearch/dinov2 with
 standard PyTorch operations and the same parameter names, so the official state
@@ -49,12 +69,43 @@ Deep Vision Studio additions. Fixed official weights:
 https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth
 (SHA256 `b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9`) and
 https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth
-(SHA256 `0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73`).
+(SHA256 `0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73`), and
+https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_pretrain.pth
+(SHA256 `d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428`).
 This applies to the basic DINOv2 models, not the separately licensed XRay-DINO or
 Cell-DINO models. Include `licenses/DINOv2-APACHE-2.0.txt` with redistributed builds.
+
+## SigLIP 2 So400m/16 image encoder
+
+Google Research's SigLIP 2 weights and Big Vision code are released under
+Apache-2.0. Deep Vision Studio uses the vision-only timm 1.0.31 architecture and
+checkpoint `timm/vit_so400m_patch16_siglip_384.v2_webli`, revision
+`5269a45a3c4b03a8efae511eac9bcacdf4bf55e9`, SHA-256
+`542bac8ad54c1effc887315d3d6448fed01a26c900064bc47f342ed5e3e5fb62`.
+The adapter adds a project-specific classification head and converts the
+application's normalized RGB or gray input to the encoder's normalization.
+The original and converted weight repositories both identify the weight license
+as Apache-2.0. Include `licenses/SigLIP2-APACHE-2.0.txt` and
+`licenses/timm-LICENSE.txt` when redistributing.
+Sources: https://github.com/google-research/big_vision,
+https://huggingface.co/google/siglip2-so400m-patch16-384,
+https://huggingface.co/timm/vit_so400m_patch16_siglip_384.v2_webli.
 
 ## C++ example bundled JSON header
 
 `example/cpp/nlohmann/json.hpp`: nlohmann/json v3.12.0, unmodified single header.
 Copyright (c) 2013-2025 Niels Lohmann. MIT license included at
 `example/cpp/nlohmann/LICENSE.MIT`. Source: https://github.com/nlohmann/json/tree/v3.12.0
+
+## Segmentation teacher training
+
+The Mask2Former and SegFormer adapters use Hugging Face Transformers 4.57.6
+(Apache-2.0). The default Mask2Former encoder uses Microsoft's Swin-Small
+ImageNet-1K checkpoint, revision `1e8f54cc3d19ded9cda11db863080c79b1096289`.
+The publisher's model card declares Apache-2.0. The segmentation decoder
+is initialized for the project's classes. The SegFormer adapter starts with
+random parameters or weights supplied by the user. Redistribution includes
+no NVIDIA SegFormer or ADE20K Mask2Former weights.
+
+- [Transformers license](https://github.com/huggingface/transformers/blob/v4.57.6/LICENSE)
+- [Microsoft Swin-Small model card](https://huggingface.co/microsoft/swin-small-patch4-window7-224/tree/1e8f54cc3d19ded9cda11db863080c79b1096289)

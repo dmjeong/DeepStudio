@@ -33,7 +33,13 @@ def validate_config(config):
         contract = model_input_contract(config["model_config"], channels)
         if prep.get("grayscale_adapter", contract["input_adapter"]) != contract["input_adapter"]:
             raise ValueError("모델과 전처리 입력 변환 방식 불일치")
-    validate_center_crop(prep.get("center_crop"))
+    crop = validate_center_crop(prep.get("center_crop"))
+    native = prep.get("original_size_region")
+    if native is not None and (not isinstance(native, list) or len(native) != 2
+                               or any(type(d) is not int for d in native)
+                               or native != [config["input_width"], config["input_height"]]
+                               or (crop and native != [crop["width"], crop["height"]])):
+        raise ValueError("분류 원본 판정 영역이 모델 입력 또는 중앙 크롭과 다릅니다.")
     for key in ("normalize_mean", "normalize_std"):
         values = np.asarray(config.get(key, []), dtype=np.float32)
         if values.shape != (channels,) or not np.isfinite(values).all() or (key.endswith("std") and np.any(values <= 0)):
@@ -65,14 +71,18 @@ class ImageClassifier:
     def preprocess(self, rgb):
         """GRAY [H,W]/[H,W,1] 또는 RGB/RGBA uint8 배열을 모델 입력으로 변환한다."""
         from center_crop import center_crop_box
-        from opencv_preprocess import convert_channels, resize
+        from opencv_preprocess import convert_channels, require_native_region, resize
         cfg = self.config
         rgb = np.asarray(rgb)
         if rgb.ndim not in (2, 3) or rgb.dtype != np.uint8 or not rgb.size:
             raise ValueError("비어 있지 않은 uint8 이미지 필요")
         box = center_crop_box((rgb.shape[1], rgb.shape[0]), cfg["preprocessing"].get("center_crop"))
         pixels = convert_channels(rgb[box[1]:box[3], box[0]:box[2]], cfg["input_channels"])
-        pixels = resize(pixels, (cfg["input_height"], cfg["input_width"]))
+        native = cfg["preprocessing"].get("original_size_region")
+        if native is None:
+            pixels = resize(pixels, (cfg["input_height"], cfg["input_width"]))
+        else:
+            require_native_region(pixels, native)
         chw = pixels[None] if pixels.ndim == 2 else pixels.transpose(2, 0, 1)
         return np.ascontiguousarray(((chw.astype(np.float32) / np.float32(255) - self.mean) / self.std)[None])
 

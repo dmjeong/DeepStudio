@@ -5,6 +5,25 @@ import os
 from pathlib import Path
 
 
+def parallel_cpu_job(kind, payload):
+    """Only explicitly selected CPU readers can coexist with another app's job."""
+    return kind in {"infer", "inspect_model"} and str((payload or {}).get("device", "cpu")).lower() == "cpu"
+
+
+def process_alive(pid, started):
+    """A reused PID must not keep an abandoned job alive."""
+    import psutil
+    if not isinstance(pid, int) or pid <= 0 or not isinstance(started, (int, float)):
+        return False
+    try:
+        process = psutil.Process(pid)
+        return process.create_time() == started and process.is_running() and process.status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
+        return True  # Never rewrite/delete a potentially live job on an inspection failure.
+
+
 @contextmanager
 def exclusive_file(path, message="다른 계산 프로세스가 종료 처리 중입니다. 잠시 후 다시 시도하세요."):
     path = Path(path)

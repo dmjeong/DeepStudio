@@ -50,6 +50,12 @@ class Label:
         self.result_text = text
         self.result_color = color
 
+    def set_regions(self, regions, image_size=None):
+        self.regions = list(regions)
+
+    def set_pixel_source(self, pixels):
+        self.pixels = pixels
+
     def text(self):
         return self.value
 
@@ -110,7 +116,7 @@ class InferenceContractTests(unittest.TestCase):
                 created.append(self)
 
         jobs = ModuleType("core.desktop_jobs")
-        jobs.desktop_manager = lambda: SimpleNamespace(require_idle=lambda: None)
+        jobs.desktop_manager = lambda: SimpleNamespace(require_idle=lambda *args: None)
         worker_module = ModuleType("core.inference_worker")
         worker_module.InferenceWorker = Mock(return_value=Mock())
         self.ns.update(InferenceEngine=Engine, QPushButton=object)
@@ -125,7 +131,7 @@ class InferenceContractTests(unittest.TestCase):
                 widget._batch_images = ["gray.png"]
                 widget._input_region_request = lambda: {"mode": "model"}
                 widget._clear_results = lambda: None
-                widget.gradcam_checkbox = SimpleNamespace(isChecked=lambda: checked)
+                widget.gradcam_checkbox = SimpleNamespace(isChecked=lambda: checked, isEnabled=lambda: True)
                 widget._preview_cache = object()
                 widget.findChildren = lambda _: []
                 for name in ("infer_device_combo", "ckpt_edit", "crop_mode_combo", "crop_json_edit",
@@ -192,6 +198,8 @@ class InferenceContractTests(unittest.TestCase):
         widget._clear_heatmap_preview = lambda: None
         widget._cache_inference_result = lambda _: None
         widget._render_result_card = lambda _: None
+        widget.region_names_check = Mock()
+        widget._update_region_labels = Mock()
         widget._grid_cells = []
         widget.model, widget._patchcore_model = object(), None
         errors = []
@@ -204,7 +212,7 @@ class InferenceContractTests(unittest.TestCase):
         widget._inference_results = {}
         items = []
         widget.project = None
-        widget.class_names = []  # 실제 위젯은 __init__에서 빈 목록으로 둔다 (배치 결과 필터가 읽음)
+        widget.class_names = []
         widget.result_review = SimpleNamespace(threshold=None, set_context=lambda *_, **__: items.clear(),
                                                update_result=items.append)
         widget.batch_time_label = Label()
@@ -235,11 +243,16 @@ class InferenceContractTests(unittest.TestCase):
         self.ns["QPixmap"] = lambda _: SimpleNamespace(isNull=lambda: True)
         widget = self.methods("_show_image")()
         widget.image_label = Label()
+        widget.original_label = Label()
+        widget.original_label.set_pixel_source("previous pixels")
         widget._current_result = None
         widget.image_label.setText("previous image")
         widget.image_path_label = Label()
         widget._show_image("missing.png")
         self.assertEqual(widget.image_label.text(), "이미지 표시 불가")
+        self.assertEqual(widget.original_label.text(), "원본 이미지 표시 불가")
+        self.assertIsNone(widget.original_label.pixels)
+        self.assertIsNone(widget.image_label.pixels)
         self.assertEqual(widget.image_path_label.text(), "missing.png")
 
     def test_patchcore_classmethod_return_and_selected_device_are_used(self):

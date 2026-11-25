@@ -81,6 +81,7 @@ class DetectionAnnotationTests(unittest.TestCase):
         from PySide6.QtWidgets import QApplication, QDialog
         from core.project import ProjectManager
         from widgets.dataset_widget import DatasetWidget
+        from widgets.obb_annotation import OBBAnnotationDialog
         app = QApplication.instance() or QApplication([])
         with tempfile.TemporaryDirectory() as directory:
             project = ProjectManager.create_new('detect', 'detect', str(Path(directory) / 'project'), ['part'])
@@ -96,8 +97,8 @@ class DetectionAnnotationTests(unittest.TestCase):
                 image = Path(project.data.train_dir) / source.name
                 self.assertTrue(image.is_file())
                 page._selected_paths = {str(image)}
-                with patch('widgets.obb_annotation.OBBAnnotationDialog') as dialog:
-                    dialog.return_value.exec.return_value = QDialog.DialogCode.Rejected
+                with patch('widgets.obb_annotation.OBBAnnotationDialog', wraps=OBBAnnotationDialog) as dialog, \
+                        patch('widgets.annotation_navigation.AnnotationWindow.exec', return_value=QDialog.DialogCode.Rejected):
                     page.annotate_btn.click()
                     self.assertEqual(dialog.call_args.kwargs['task'], 'detect')
                     self.assertEqual(dialog.call_args.args[0], str(image))

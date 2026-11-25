@@ -12,8 +12,10 @@ import time
 import traceback
 from datetime import datetime
 
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
 from webapp.storage import digest, json_value, read_json, restore_project, write_json
-from webapp.locking import exclusive_file
+from webapp.locking import exclusive_file, parallel_cpu_job
 
 
 class JobContext:
@@ -91,14 +93,19 @@ def _train_builtin_project(context, project, device, *, class_report=False):
     from train_builtin import train_builtin
 
     model_id = project.model.model_id
+    if model_id == "dinomaly_vits14":
+        from core.dinomaly_trainer import train_project
+        return train_project(context, project, device)
     from builtin_models import BUILTIN_MODEL_SPECS
     spec = BUILTIN_MODEL_SPECS.get(model_id)
     if spec is None or spec.task != project.task:
         return None
     cfg, data = project.training, project.data
+    original_size = bool(getattr(cfg, "original_size_training", False))
     run_id = ProjectManager.new_run_id(task=project.task, model_name=model_id,
                                        input_size=cfg.input_size,
-                                       project_dir=project.project_dir)
+                                       project_dir=project.project_dir,
+                                       original_size=original_size)
     run_dir = Path(project.project_dir) / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     context.emit("log_message", [f"기본 모델 학습: {model_id}"])
@@ -152,23 +159,30 @@ def _train_builtin_project(context, project, device, *, class_report=False):
                          val_split=data.val_split,
                          freeze_backbone=project.model.freeze_backbone,
                          backbone_lr_mult=project.model.backbone_lr_mult,
+                         mask2former_num_queries=(cfg.mask2former_num_queries
+                                                  if model_id == "mask2former_swin_small" else None),
                          output_dir=run_dir,
                          device=str(device),
+                         use_amp=cfg.use_amp,
                          resume=resume, initial_weights=initial_weights,
                          pretrained=cfg.training_mode == "builtin_finetune",
                          selection_metric=cfg.selection_metric,
                          class_names=(list(data.class_names) if project.task == "segment" else None),
                          segmentation_loss=cfg.segmentation_loss,
+                         teacher_checkpoint=cfg.teacher_checkpoint or None,
+                         distillation_alpha=cfg.distillation_alpha,
+                         distillation_temperature=cfg.distillation_temperature,
                          class_weights=(cfg.class_weights if project.task == "segment" else "none"),
                          # 데스크톱에서 켜는 분할 패치 학습 (프로젝트 설정 그대로 전달)
                          patch_training=bool(getattr(cfg, "patch_training", False)) and project.task == "segment",
                          patches_per_image=int(getattr(cfg, "patches_per_image", 0)),
                          patch_scale=float(getattr(cfg, "patch_scale", 1.0)),
+                         original_size_training=original_size,
                          # 데스크톱 요청만: 결함 클래스별 IoU와 '전부 배경' 경고를 로그에 (웹 로그는 그대로)
                          class_report=bool(class_report) and project.task == "segment",
                          # 데스크톱 요청만: 학습한 중앙 크롭을 체크포인트에 남겨 추론·내보내기가 같은 영역을 본다
                          # (이전에는 크롭 데이터로 학습하고 원본 전체를 추론했다). 웹 동작은 그대로.
-                         center_crop=crop if class_report else None,
+                         center_crop=crop if class_report or original_size else None,
                          log=log, should_stop=context.cancelled)
     if not best.is_file():
         record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
@@ -181,6 +195,7 @@ def _train_builtin_project(context, project, device, *, class_report=False):
     training_state_path = run_dir / "training.json"
     training_state = (json.loads(training_state_path.read_text(encoding="utf-8"))
                       if training_state_path.is_file() else {})
+    applied_training = training_state.get("training_config", {})
     metric = float(checkpoint.get("metric") or 0.0)
     best_epoch = int(training_state.get("best_epoch") or (int(checkpoint.get("epoch", 0)) + 1))
     completed_epochs = int(training_state.get("completed_epochs") or best_epoch)
@@ -218,8 +233,10 @@ def _train_builtin_project(context, project, device, *, class_report=False):
         hyperparameters=training_hyperparameters(
             project, engine="builtin",
             effective={"device": str(device), "model_id": model_id,
-                       "center_crop": list(crop) if crop else None},
-            applied=training_state.get("training_config", {}),
+                       "use_amp": applied_training.get("use_amp", False),
+                       "input_size": training_state.get("input_size", cfg.input_size),
+                       "center_crop": crop},
+            applied=applied_training,
         ))
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status=(
@@ -228,7 +245,7 @@ def _train_builtin_project(context, project, device, *, class_report=False):
                        best_metric_name=metric_name, checkpoint_path=named_checkpoint,
                        metrics_history=metrics_history, lr_history=lr_history,
                        config_snapshot={"engine": "builtin", "model_id": model_id,
-                                        "training": training_state.get("training_config", {}),
+                                        "training": applied_training,
                                         "center_crop": crop, "best_selection": selection})
     project.runs.append(record)
     context.emit("training_finished", [metric, best_epoch, named_checkpoint])
@@ -245,9 +262,16 @@ def _train_upstream_project(context, project, device):
     from core.training_artifacts import publish_best, training_hyperparameters
     cfg, data = project.training, project.data
     run_id = ProjectManager.new_run_id(task=project.task, model_name=model_id,
-                                       input_size=cfg.input_size, project_dir=project.project_dir)
+                                       input_size=cfg.input_size, project_dir=project.project_dir,
+                                       original_size=cfg.original_size_training)
     run_dir = Path(project.project_dir) / "runs" / run_id
     history = []
+    if project.task == "detect":
+        from core.metrics import DETECTION_CONFIDENCE, DETECTION_MATCH_IOU
+        detection_evaluation = {"unit": "patch" if cfg.patch_training else "image", "split": "val",
+                                "protocol": "coco", "confidence": DETECTION_CONFIDENCE, "iou": DETECTION_MATCH_IOU}
+    else:
+        detection_evaluation = None
 
     def progress(event):
         if event.get("event") == "training_started":
@@ -266,6 +290,9 @@ def _train_upstream_project(context, project, device):
                 )
             ])
             return
+        if event.get("event") == "preprocessing_configured":
+            context.emit("log_message", [event["message"]])
+            return
         if event.get("event") != "epoch_finished":
             return
         history.append(dict(event))
@@ -278,28 +305,60 @@ def _train_upstream_project(context, project, device):
         if event.get("learning_rate") is not None:
             context.emit("lr_updated", [int(event["epoch"]), float(event["learning_rate"])])
         if event.get("is_best"):
+            display = ({**metrics, "detection_evaluation": detection_evaluation,
+                        "detection_per_class": event.get("detection_per_class", [])}
+                       if detection_evaluation else metrics)
             context.emit("best_epoch_updated", [int(event.get("best_epoch") or event["epoch"]),
-                                                 float(event["train_loss"]), float(event["val_loss"]), metrics])
+                                                 float(event["train_loss"]), float(event["val_loss"]), display])
         context.emit("progress_updated", [int(event["epoch"]), int(event["total_epochs"])])
         context.emit("log_message", [f"Epoch {event['epoch']}/{event['total_epochs']} | train={event['train_loss']:.5f} | val={event['val_loss']:.5f} | {event['metric_name']}={event['metric']:.5f} | {event['epoch_time_sec']:.1f}s"])
 
     spec = get_upstream_spec(model_id)
     mode = str(cfg.training_mode)
     source = project.model.pretrained_weights or None
+    if detection_evaluation:
+        context.emit("log_message", [
+            "객체 탐지 검증: " + ("패치 단위" if cfg.patch_training else "이미지 단위")
+            + " · Best는 mAP@0.50–0.95 · Precision/Recall은 점수 0.25 및 IoU 0.50"
+        ])
     context.emit("log_message", [f"기본 native 모델 학습: {spec.family}/{spec.size}"])
+    from center_crop import configured_center_crop
     result = train_upstream_model(
-        model_id, data_root=data.root, class_names=list(data.class_names), output_dir=run_dir,
+        model_id, original_size_training=cfg.original_size_training, data_root=data.root, class_names=list(data.class_names), output_dir=run_dir,
         epochs=cfg.epochs, batch_size=cfg.batch_size, learning_rate=cfg.learning_rate,
         device=str(device), weights=source, pretrained=mode == "upstream_finetune", resume=mode == "upstream_resume",
         use_amp=cfg.use_amp, patience=cfg.early_stop_patience,
-        val_split=data.val_split, seed=0, emit=progress)
-    checkpoint = result.get("best_checkpoint") or result.get("last_checkpoint")
+        val_split=data.val_split, seed=0, emit=progress,
+        center_crop=configured_center_crop(cfg),
+        augmentation={key: getattr(cfg.augmentation, key) for key in ("horizontal_flip", "rotation", "color_jitter")},
+        patch_training=cfg.patch_training, patch_scale=cfg.patch_scale, patches_per_image=cfg.patches_per_image,
+        small_object_coverage=getattr(cfg, "small_object_coverage", False))
+    checkpoint = result.get("best_checkpoint")
+    if not checkpoint and spec.task != "detect":
+        checkpoint = result.get("last_checkpoint")
     if not checkpoint or not Path(checkpoint).is_file():
-        raise RuntimeError("upstream 학습이 best.pt 또는 last.pt를 만들지 않았습니다")
+        raise RuntimeError("학습 결과에 Best 에폭의 체크포인트가 없습니다.")
     metric_name = (history[-1].get("metric_name", "metric") if history else "metric")
-    best_metric = float(result.get("best_metric") if result.get("best_metric") is not None
-                        else (history[-1]["metric"] if history else 0.0))
-    best_epoch = int(result.get("best_epoch") or (history[-1]["epoch"] if history else 0))
+    best_epoch = int(result.get("best_epoch") or 0)
+    selected = next((event for event in history if int(event["epoch"]) == best_epoch), None)
+    best_metric = result.get("best_metric")
+    if best_metric is None:
+        best_metric = result.get("best_mAP50_95")
+    if selected is not None:
+        metric_name = selected["metric_name"]
+        best_metric = selected["metric"]
+    if best_epoch < 1 or best_metric is None:
+        raise RuntimeError("저장된 Best 에폭과 평가 점수를 확인할 수 없습니다.")
+    best_metric = float(best_metric)
+    best_eval = {}
+    if detection_evaluation:
+        metric_name = "mAP_50_95"
+        saved = result.get("best_validation") or {}
+        if saved.get("epoch") != best_epoch:
+            saved = {}
+        best_eval = {**saved.get("metrics", {}), **(selected or {}).get("metrics", {}),
+                     "mAP_50_95": best_metric, "task": "detect", "detection_evaluation": detection_evaluation,
+                     "per_class": (selected or {}).get("detection_per_class", saved.get("per_class", []))}
     metrics_history = {"train_loss": [float(item["train_loss"]) for item in history],
                        "epoch": [int(item["epoch"]) for item in history],
                        "val_loss": [float(item["val_loss"]) for item in history],
@@ -314,23 +373,31 @@ def _train_upstream_project(context, project, device):
         checkpoint, run_dir, metrics_history, epoch=best_epoch, metric=metric_name, value=best_metric,
         direction=direction, engine="upstream", task=project.task,
         policy="upstream_native_is_best", formula=metric_name,
+        evaluation_metrics=best_eval,
         hyperparameters=training_hyperparameters(
             project, engine="upstream",
             effective={"device": str(device), "model_id": model_id,
-                       "input_size": spec.input_size, "use_amp": cfg.use_amp},
+                       "input_size": result.get("input_size", spec.input_size), "use_amp": cfg.use_amp},
             applied={"pretrained": mode == "upstream_finetune",
                      "resume": mode == "upstream_resume", "val_split": data.val_split,
-                     "seed": 0},
+                     "seed": 0, "augmentation": result.get("applied_augmentation", {}),
+                     "patch_training": cfg.patch_training, "patch_scale": cfg.patch_scale,
+                     "small_object_coverage": result.get("small_object_coverage", False),
+                     "patches_per_image": 0 if spec.task == "classify" else cfg.patches_per_image,
+                     "image_batch": 1 if cfg.patch_training and spec.task == "classify" else cfg.batch_size,
+                     "evaluation_unit": "patch" if cfg.patch_training and spec.task == "detect" else "image"},
         ))
     record = RunRecord(run_id=run_id, started_at=datetime.now().isoformat(),
                        finished_at=datetime.now().isoformat(), status="completed",
                        epochs_done=len(history), best_metric=best_metric, best_epoch=best_epoch,
                        best_metric_name=metric_name, checkpoint_path=named_checkpoint,
-                       metrics_history=metrics_history,
+                       metrics_history=metrics_history, eval_results=best_eval,
                        config_snapshot={"engine": "upstream", "model_id": model_id,
                                         "upstream_family": spec.family, "upstream_size": spec.size,
                                         "upstream_result": result, "best_selection": selection})
     project.runs.append(record)
+    if best_eval:
+        context.emit("eval_finished", [best_eval])
     context.emit("training_finished", [best_metric, best_epoch, named_checkpoint])
     return record
 
@@ -348,7 +415,8 @@ def _train_sam2_project(context, project, device):
     from sam2_trainer import train_sam2
     cfg, data = project.training, project.data
     run_id = ProjectManager.new_run_id(task=project.task, model_name=model_id,
-                                       input_size=1024, project_dir=project.project_dir)
+                                       input_size=1024, project_dir=project.project_dir,
+                                       original_size=cfg.original_size_training)
     run_dir = Path(project.project_dir) / "runs" / run_id
     history = []
 
@@ -364,8 +432,10 @@ def _train_sam2_project(context, project, device):
             return
         if event.get("event") == "training_started":
             context.emit("progress_updated", [0, int(event["total_epochs"])])
+            size = event.get("input_size", 1024)
+            dimensions = f"{size[1]}×{size[0]}" if isinstance(size, (tuple, list)) else f"{size}×{size}"
             context.emit("log_message", [
-                f"SAM2.1 native worker 준비 완료: {event['size']} | 1024 입력 | "
+                f"SAM2.1 native worker 준비 완료: {event['size']} | {dimensions} 입력 | "
                 "image encoder 고정, prompt encoder·mask decoder 학습"
             ])
             return
@@ -390,7 +460,7 @@ def _train_sam2_project(context, project, device):
 
     source = project.model.pretrained_weights if cfg.training_mode == "sam2_transfer" else None
     result = train_sam2(
-        model_id, data.root, output_dir=run_dir, epochs=cfg.epochs, batch_size=cfg.batch_size,
+        model_id, data.root, original_size_training=cfg.original_size_training, output_dir=run_dir, epochs=cfg.epochs, batch_size=cfg.batch_size,
         learning_rate=cfg.learning_rate, weight_decay=cfg.weight_decay, device=str(device),
         use_amp=cfg.use_amp, input_size=1024, class_names=list(data.class_names), initial_checkpoint=source,
         horizontal_flip=cfg.augmentation.horizontal_flip, rotation=cfg.augmentation.rotation,
@@ -416,7 +486,7 @@ def _train_sam2_project(context, project, device):
         hyperparameters=training_hyperparameters(
             project, engine="sam2",
             effective={"device": str(device), "model_id": model_id,
-                       "input_size": 1024, "use_amp": cfg.use_amp},
+                       "input_size": result.get("input_size", 1024), "use_amp": cfg.use_amp},
             applied={"image_encoder_frozen": True,
                      "trained_modules": ["prompt_encoder", "mask_decoder"]},
         ))
@@ -426,7 +496,7 @@ def _train_sam2_project(context, project, device):
         best_metric=float(result.get("best_metric") or 0.0), best_epoch=int(result.get("best_epoch") or 0),
         best_metric_name=metric_name, checkpoint_path=named_checkpoint, metrics_history=metrics_history,
         config_snapshot={
-            "engine": "sam2", "model_id": model_id, "input_size": 1024,
+            "engine": "sam2", "model_id": model_id, "input_size": result.get("input_size", 1024),
             "training_contract": "semantic-mask-to-positive-point-object-mask-v1",
             "frozen_modules": ["image_encoder"], "sam2_result": result, "best_selection": selection,
         },
@@ -514,6 +584,8 @@ def infer(context, payload):
                                    threads=payload.get("threads", max(1, min(4, os.cpu_count() or 1))),
                                    # 데스크톱 추론만 보내는 분할 결함 분석·SAM2 자동 분할 설정. 웹 요청에는 없다.
                                    segment_review=payload.get("segment_review"), sam2=payload.get("sam2"))
+    from core.segmentation_evaluation import project_snapshot
+    engine._evaluation_project = project_snapshot(payload.get("project"))
     if callable(getattr(engine, "prepare", None)):
         engine.prepare()
     if getattr(engine, "runtime_warning", ""):
@@ -537,12 +609,17 @@ def infer(context, payload):
             if engine._current_preview_rgb is not None:
                 arrays["preview"] = engine._current_preview_rgb
             if result.status != "error" and (engine._heatmap_cache is None or engine._heatmap_cache.get("original") is None):
-                from PIL import Image
-                from core.image_display import display_rgb
-                with Image.open(path) as source:
-                    arrays["original"] = display_rgb(np.array(source.convert("RGB") if source.mode == "P" else source))
+                original = getattr(engine, "_original_preview_rgb", None)
+                if original is None:
+                    from PIL import Image
+                    from core.image_display import display_rgb
+                    with Image.open(path) as source:
+                        original = display_rgb(np.array(source.convert("RGB") if source.mode == "P" else source))
+                arrays["original"] = original
             cache = engine._heatmap_cache
             if cache is not None:
+                if cache.get("image_path", path) != path:
+                    raise ValueError("원본/반응 맵과 추론 결과의 이미지 경로가 다릅니다")
                 for key in ("original", "activation", "base_image", "valid_mask"):
                     if cache.get(key) is not None:
                         arrays[key] = cache[key]
@@ -621,6 +698,9 @@ def export(context, payload):
                                validation_dir=validation_dir,
                                allow_precision_fallback=payload.get("allow_precision_fallback", False),
                                encryption_key_path=payload.get("encryption_key_path") or None,
+                               precision=payload.get("precision", "float32"),
+                               calibration_dir=payload.get("calibration_dir") or None,
+                               calibration_count=payload.get("calibration_count", 16),
                                sam2_model_id=sam2_model_id,
                                log=lambda line: context.emit("log_message", [line]))
     validation = result.get("classification_validation")
@@ -730,12 +810,18 @@ def inspect_model(context, payload):
             engine._upstream_task if getattr(engine, "_upstream_model", None) is not None else
             "segment" if getattr(engine, "_sam2_predictor", None) is not None else
             getattr(engine.model, "task", "classify"))
+    from core.upstream_gradcam import supports_upstream_gradcam
+    gradcam_supported = (supports_upstream_gradcam(engine._upstream_model, task)
+                         if engine._upstream_model is not None else engine.model is not None)
     return {"status": "completed", "output": {"class_names": list(engine.class_names or []),
         "input_size": engine._input_size, "task": task, "weights": payload["weights"],
         "center_crop": engine._center_crop,
         "device": str(engine._infer_device), "anomaly_threshold": engine._anomaly_threshold,
         "patchcore": engine._patchcore_model.get_info() if engine._patchcore_model is not None else None,
         "upstream": getattr(engine, "_upstream_model", None) is not None,
+        "gradcam_supported": gradcam_supported,
+        "preprocessing_policy": getattr(engine._upstream_model, "studio_input_policy", None),
+        "preprocessing_migrated": bool(getattr(engine._upstream_model, "studio_legacy_preprocessing", False)),
         "sam2": getattr(engine, "_sam2_model_id", None),
         "tiling": getattr(engine, "_tiling", None),
         "weights_sha256": digest(payload["weights"])}}
@@ -767,7 +853,43 @@ def datagen_generate(context, payload):
 
 
 
-OPERATIONS = {"datagen_train": datagen_train, "datagen_generate": datagen_generate,
+def seg_synthesis(context, payload):
+    from core.segmentation_synthesis_store import SynthesisStore, SynthesisAnalysisError
+    import cv2
+    cv2.setNumThreads(2)
+    store = SynthesisStore(restore_project(payload["project"]))
+    values = {k: v for k, v in payload.items() if k not in {"project", "operation", "threads"}}
+    operation = payload["operation"]
+    if operation not in {"analyze", "generate", "save_images", "publish"}:
+        raise ValueError("SEG 합성 작업 종류 오류")
+    try:
+        result = getattr(store, operation)(context=context, **values)
+        if "analysis" in result:
+            write_json(context.directory / "segmentation-analysis.json", result["analysis"])
+        return {"status": "completed", "output": result}
+    except SynthesisAnalysisError as exc:
+        write_json(context.directory / "segmentation-analysis.json", exc.report)
+        return {"status": "failed", "error": str(exc), "output": {"analysis": exc.report}}
+    except InterruptedError:
+        return {"status": "cancelled", "output": {}}
+
+
+def project_generation(context, payload):
+    from core.project_generation import ProjectGenerationStore
+    import cv2
+    cv2.setNumThreads(2)
+    store = ProjectGenerationStore(restore_project(payload["project"]))
+    operation = payload["operation"]
+    if operation not in {"generate", "publish"}:
+        raise ValueError("프로젝트 데이터 생성 작업 종류 오류")
+    values = {k: v for k, v in payload.items() if k not in {"project", "operation"}}
+    try:
+        return {"status": "completed", "output": getattr(store, operation)(context=context, **values)}
+    except InterruptedError:
+        return {"status": "cancelled", "output": {}}
+
+
+OPERATIONS = {"project_generation": project_generation, "seg_synthesis": seg_synthesis, "datagen_train": datagen_train, "datagen_generate": datagen_generate,
               "train": train, "infer": infer, "export": export,
               "pack_train": pack_train, "pack_infer": pack_infer, "pack_export": pack_export,
               "defects": defects, "defect_publish": defect_publish, "delete_class": delete_class,
@@ -780,6 +902,8 @@ def run_job(request_path, monitor_parent=True):
     started = time.perf_counter()
     try:
         request = read_json(request_path)
+        import psutil
+        write_json(request_path.parent / "worker.json", {"pid": os.getpid(), "started": psutil.Process().create_time()})
         context = JobContext(request_path.parent, monitor_parent=monitor_parent,
                              parent_pid=request.get("parent_pid"), parent_started=request.get("parent_started"))
         # 작업 프로세스에서만 모델 라이브러리를 가져오고 CPU 자원을 제한한다.
@@ -788,7 +912,9 @@ def run_job(request_path, monitor_parent=True):
         if request["kind"] in {"train", "infer", "export"}:
             import torch
             torch.set_num_threads(threads)
-        with exclusive_file(request_path.parent.parent / "compute.lock"):
+        lock = (request_path.parent / "compute.lock" if parallel_cpu_job(request["kind"], request["payload"])
+                else request_path.parent.parent / "compute.lock")
+        with exclusive_file(lock):
             result = OPERATIONS[request["kind"]](context, request["payload"])
     except Exception as exc:
         traceback.print_exc()

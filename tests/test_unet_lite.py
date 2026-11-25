@@ -100,5 +100,5 @@ def test_training_page_offers_only_scratch_and_local_start(tmp_path):
     combo.setCurrentIndex(combo.findData("unet_lite"))
     modes = [widget.mode_combo.itemData(i) for i in range(widget.mode_combo.count())]
     assert modes == ["builtin_scratch", "builtin_transfer"]
-    assert widget.mode_combo.currentData() == "builtin_scratch" and "라이선스" in widget.mode_desc.text()
+    assert widget.mode_combo.currentData() == "builtin_scratch" and "사전학습" in widget.mode_desc.text()
     widget.deleteLater()

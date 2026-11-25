@@ -3,7 +3,8 @@
   <Package Name="Deep Vision Studio" Manufacturer="Deep Vision Studio" Version="$(var.Version)"
            UpgradeCode="9B5C5E1E-6C0B-4BB9-AE9B-2A0A1B6D2C8A" Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer Deep Vision Studio is already installed." />
-    <MediaTemplate EmbedCab="yes" />
+    <MediaTemplate EmbedCab="$(var.EmbedCab)" CabinetTemplate="$(var.CabinetPrefix){0}.cab"
+                   MaximumUncompressedMediaSize="200" />
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="DeepVisionStudio" />
     </StandardDirectory>

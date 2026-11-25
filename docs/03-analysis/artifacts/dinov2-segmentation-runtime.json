@@ -1,0 +1,127 @@
+{
+  "platform": "macOS-26.5-arm64-arm-64bit",
+  "processor": "arm",
+  "torch": "2.14.1",
+  "onnxruntime": "1.29.0",
+  "weights_sha256": "b938bf1bc15cd2ec0feacfe3a1bb553fe8ea9ca46a7e1d8d00217f29aef60cd9",
+  "data": "synthetic geometric masks, not inspection accuracy",
+  "runs": [
+    {
+      "channels": 1,
+      "training_epochs": 40,
+      "class_weights": "balanced",
+      "synthetic_validation_mIoU": 0.9905664953139147,
+      "best_epoch": 26,
+      "checkpoint_reload_inference": "passed",
+      "onnx": "passed",
+      "encrypted_batch1_2_exact": true,
+      "cpu_benchmark": {
+        "size": [
+          392,
+          392
+        ],
+        "channels": 1,
+        "threads": 4,
+        "warmup": 5,
+        "iterations": 20,
+        "median_ms": 87.83822925761342,
+        "p95_ms": 91.95653419010341,
+        "scope": "in-memory uint8 resize+normalize+ORT+argmax; excludes disk, rendering and camera",
+        "max_logit_error": 9.942054748535156e-05
+      }
+    },
+    {
+      "channels": 3,
+      "training_epochs": 40,
+      "class_weights": "balanced",
+      "synthetic_validation_mIoU": 0.9966919248709566,
+      "best_epoch": 36,
+      "checkpoint_reload_inference": "passed",
+      "onnx": "passed",
+      "encrypted_batch1_2_exact": true,
+      "cpu_benchmark": {
+        "size": [
+          392,
+          392
+        ],
+        "channels": 3,
+        "threads": 4,
+        "warmup": 5,
+        "iterations": 20,
+        "median_ms": 85.82116710022092,
+        "p95_ms": 87.02838304452598,
+        "scope": "in-memory uint8 resize+normalize+ORT+argmax; excludes disk, rendering and camera",
+        "max_logit_error": 5.7220458984375e-05
+      }
+    }
+  ],
+  "cpu": "Apple M4",
+  "reference_revision": "7764ea0f912e53c92e82eb78a2a1631e92725fc8",
+  "reference_parity": [
+    {
+      "input": [
+        224,
+        224
+      ],
+      "max_errors": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "input": [
+        70,
+        98
+      ],
+      "max_errors": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "input": [
+        518,
+        518
+      ],
+      "max_errors": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "unet_reference_same_settings": {
+    "size": [
+      392,
+      392
+    ],
+    "channels": 1,
+    "threads": 4,
+    "warmup": 5,
+    "iterations": 20,
+    "median_ms": 39.175104815512896,
+    "p95_ms": 39.86300816759467,
+    "scope": "in-memory uint8 resize+normalize+ORT+argmax; excludes disk, rendering and camera",
+    "max_logit_error": 1.4901161193847656e-07
+  },
+  "native_sdk": {
+    "compiler": "Apple Clang C++17 Release",
+    "onnxruntime": "1.29.0",
+    "cpp_plain_mask_matches_python": true,
+    "c_abi_plain_encrypted_padded_bw8_mask_matches_python": true,
+    "repeats_per_c_abi_session": 3,
+    "ctest_passed": 1,
+    "managed_csharp_executed": false
+  },
+  "actual_prepare_cli_download": "passed_https_sha256_manifest",
+  "regression": {
+    "passed": 1273,
+    "skipped": 12,
+    "exit_code": 0
+  }
+}
