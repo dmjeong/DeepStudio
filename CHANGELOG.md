@@ -1,3 +1,7 @@
+# 22.92 — 파일명 날짜 기반 다중 모델 CSV 교체 (+0.1)
+
+- `index,camtype,task,name` 네 열로 여러 암호화 분류 모델을 관리합니다. `sevision_ai_261126_16H.dvsenc`의 날짜·시간을 비교하고 하나의 감시 스레드에서 새 모델만 준비 후 교체합니다. CSeVision 사용 예제와 샘플 CSV를 제공합니다. [코드와 사용법](example/cpp/with_evision/FILENAME_CSV_MODELS.md)
+
 # 22.82 — C++ CSV 모델 자동 교체 예제 (+0.1)
 
 - 암호화 분류 모델의 버전을 CSV로 감시하고, 새 모델을 초기화·준비 추론한 뒤 `shared_ptr`로 교체하는 C++17 예제를 추가했습니다. 실패 시 기존 모델을 유지하며 이전 모델 해제도 감시 스레드에서 처리합니다. [사용 방법](example/cpp/with_evision/CSV_MODEL_RELOAD.md)

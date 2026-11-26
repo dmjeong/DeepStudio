@@ -119,6 +119,8 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
                  "with_evision/roi_example.h", "with_evision/roi_example.cpp",
                  "with_evision/csv_model_watcher.h", "with_evision/csv_reload.cpp",
                  "with_evision/csv_reload_test.cpp", "with_evision/CSV_MODEL_RELOAD.md",
+                 "with_evision/csv_model_manager.h", "with_evision/sevision_csv_example.cpp",
+                 "with_evision/models.csv", "with_evision/FILENAME_CSV_MODELS.md",
                  "dense_models/main.cpp", "dense_models/CMakeLists.txt", "dense_models/build.bat",
                  "nlohmann/json.hpp", "nlohmann/LICENSE.MIT", "nlohmann/CMakeLists.txt",
                  "with_evision/classifier.h", "with_evision/bw8_preprocess.h"):
@@ -143,6 +145,9 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     (examples / "assets/reload").mkdir()
     (examples / "assets/reload/models.csv").write_text("slot,task,model_file,model_version\n", encoding="utf-8")
     (examples / "assets/reload/model.dvsenc").write_bytes(b"reload example")
+    (examples / "assets/filename-reload").mkdir()
+    (examples / "assets/filename-reload/models.csv").write_text("index,camtype,task,name\n", encoding="utf-8")
+    (examples / "assets/filename-reload/sevision_ai_261126_16H.dvsenc").write_bytes(b"filename example")
     for name in ("cpp/encrypted.cpp", "cpp/build_encrypted.bat", "cpp/build_encrypted.cmake", "cpp/with_evision/encrypted.cpp", "cpp/model_crypto.h", "csharp/encrypted/EncryptedExample.csproj", "csharp/encrypted/Program.cs"):
         p = examples / name; p.parent.mkdir(parents=True, exist_ok=True); p.write_text("encrypted example")
     (cpp / "include/model_crypto.h").write_text("crypto loader")
@@ -159,6 +164,11 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     assert (payload / "Examples/cpp/with_evision/CSV_MODEL_RELOAD.md").is_file()
     assert (payload / "Examples/assets/reload/model.dvsenc").read_bytes() == b"reload example"
     assert (payload / "Examples/assets/reload/models.csv").is_file()
+    assert (payload / "Examples/cpp/with_evision/csv_model_manager.h").is_file()
+    assert (payload / "Examples/cpp/with_evision/sevision_csv_example.cpp").is_file()
+    assert (payload / "Examples/cpp/with_evision/models.csv").is_file()
+    assert (payload / "Examples/assets/filename-reload/sevision_ai_261126_16H.dvsenc").read_bytes() == b"filename example"
+    assert (payload / "Examples/assets/filename-reload/models.csv").is_file()
     assert (payload / "Examples/cpp/with_opencv/CMakeLists.txt").is_file()
     assert (payload / "Examples/cpp/vision-runtime/include/ort_vs2017.cmake").read_text(encoding="utf-8") == "compatibility script"
     for name in ("classifier.h", "example_paths.h", "self_test.cpp", "setup_vs2017.bat", "setup_vs2017.py"):

@@ -37,6 +37,13 @@ def main():
     (output / "models.csv").write_text(
         "slot,task,model_file,model_version\n"
         "chip,classify,model.dvsenc,20261126_010000_000001\n", encoding="utf-8")
+    # File-name release timestamps are independent of the encrypted export timestamp.
+    filename_output = assets / "filename-reload"
+    filename_output.mkdir(exist_ok=True)
+    (filename_output / "models.csv").write_bytes(
+        (ROOT / "example/cpp/with_evision/models.csv").read_bytes())
+    for name in ("sevision_ai_261126_16H.dvsenc", "sevision_side_261126_15H.dvsenc"):
+        (filename_output / name).write_bytes((output / "model.dvsenc").read_bytes())
 
 
 if __name__ == "__main__":

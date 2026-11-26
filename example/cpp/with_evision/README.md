@@ -6,8 +6,12 @@
 암호화 모델은 [암호화 예제](../../ENCRYPTED_MODELS.md)를 따른다. `encrypted.cpp`는
 `.dvsenc` 로드·복호화·준비 추론 후 같은 `InferEvision()` / `InferBW8()`을 사용한다.
 
-프로그램 실행 중 CSV로 최신 모델을 교체하려면 [CSV 모델 교체 예제](CSV_MODEL_RELOAD.md)를 따른다.
-`csv_model_watcher.h`를 추가하고 `Snapshot()`으로 받은 `shared_ptr`에서 기존 추론을 호출한다.
+**파일명 날짜로 여러 모델을 교체할 때:** [CSeVision 코드와 네 열 CSV](FILENAME_CSV_MODELS.md).
+`index,camtype,task,name`을 사용하며 `sevision_ai_261126_16H.dvsenc`처럼 이름에서 버전을 읽는다.
+[샘플 CSV](models.csv), [실행 가능한 예제](sevision_csv_example.cpp)를 제공한다.
+
+고정 파일명과 별도 버전 열을 쓰는 기존 방식은 [CSV 모델 교체 예제](CSV_MODEL_RELOAD.md)를 따른다.
+두 방식 모두 `Snapshot()`으로 받은 `shared_ptr`에서 기존 추론을 호출한다.
 
 ## 기존 프로그램에 넣기
 
