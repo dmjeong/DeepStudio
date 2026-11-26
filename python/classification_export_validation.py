@@ -14,6 +14,53 @@ import torch
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 PROBABILITY_ATOL = .001
 MINIMUM_PROBABILITY_MARGIN = 1e-6
+SYNTHETIC_POLICY = "classification_synthetic_probe_v2"
+
+
+class ClassificationValidationError(ValueError):
+    """Keep each failing input/profile in JSON instead of flattening away context."""
+
+    def __init__(self, message, attempts, *, policy, image_count=0):
+        self.validation_attempts = attempts
+        self.numerical_diagnostic = {"classification_validation": {
+            "policy": policy, "image_count": image_count, "attempts": attempts}}
+        details = []
+        for row in attempts:
+            detail = f"입력={row.get('checking', 'graph_export')}: {row.get('reason', '실패')}"
+            if detail not in details:
+                details.append(detail)
+        super().__init__(message + " " + " | ".join(value[:300] for value in details[:3]) +
+                         f" (후보 {len(attempts)}개 상세 결과는 진단 JSON에 기록)")
+
+
+def _normalization(preprocessing, channels):
+    mean = np.asarray(preprocessing.get("normalize_mean", preprocessing.get("mean")), np.float32)
+    std = np.asarray(preprocessing.get("normalize_std", preprocessing.get("std")), np.float32)
+    if (mean.shape != (channels,) or std.shape != (channels,)
+            or not np.isfinite(mean).all() or not np.isfinite(std).all() or np.any(std <= 0)):
+        raise ValueError("분류 합성 검증용 정규화 메타데이터 오류")
+    return mean, std
+
+
+def classification_image_probe(shape, preprocessing, *, seed=42):
+    """Generate real 8-bit-domain pixels, then apply the declared normalization.
+
+    A Gaussian drawn directly in normalized space can correspond to negative
+    pixels or pixels above 255. Such tensors must not be called image-domain
+    probes, or prevent the remaining image-domain checks from running.
+    """
+    mean, std = _normalization(preprocessing, shape[1])
+    pixels = np.random.default_rng(seed).integers(0, 256, size=tuple(shape), dtype=np.uint8)
+    raw = pixels.astype(np.float32) / np.float32(255.)
+    return torch.from_numpy((raw - mean[None, :, None, None]) / std[None, :, None, None])
+
+
+def classification_center_probe(shape, preprocessing):
+    mean, std = _normalization(preprocessing, shape[1])
+    # Usually normalized zero. Even a custom mean outside [0, 1] must not
+    # create physically impossible pixels. Allocate only this one probe.
+    center = torch.from_numpy((np.clip(mean, 0., 1.) - mean) / std).view(1, -1, 1, 1)
+    return center.expand(tuple(shape)).contiguous()
 
 
 def compare_classification(reference, actual, probability_atol=PROBABILITY_ATOL,
@@ -52,10 +99,7 @@ def compare_classification(reference, actual, probability_atol=PROBABILITY_ATOL,
 def synthetic_classification_probes(dummy, preprocessing):
     """Build deterministic probes constrained to the declared image domain."""
     channels, height, width = dummy.shape[1:]
-    mean = np.asarray(preprocessing.get("normalize_mean", preprocessing.get("mean")), np.float32)
-    std = np.asarray(preprocessing.get("normalize_std", preprocessing.get("std")), np.float32)
-    if mean.shape != (channels,) or std.shape != (channels,) or not np.isfinite(std).all() or np.any(std <= 0):
-        raise ValueError("분류 합성 검증용 정규화 메타데이터 오류")
+    mean, std = _normalization(preprocessing, channels)
 
     def normalize(raw):
         raw = np.asarray(raw, np.float32)
@@ -63,8 +107,8 @@ def synthetic_classification_probes(dummy, preprocessing):
             raw = np.broadcast_to(raw, (channels, height, width)).copy()
         return torch.from_numpy((raw - mean[:, None, None]) / std[:, None, None]).unsqueeze(0)
 
-    probes = [("seeded_normal", dummy.detach().cpu().float()),
-              ("normalized_zero", torch.zeros_like(dummy).cpu())]
+    probes = [("seeded_image", classification_image_probe(dummy.shape, preprocessing)),
+              ("normalization_center", classification_center_probe(dummy.shape, preprocessing))]
     for name, value in (("black", 0.), ("midgray", .5), ("white", 1.)):
         probes.append((name, normalize(np.full((channels, height, width), value, np.float32))))
     horizontal = np.linspace(0., 1., width, dtype=np.float32)[None, :]
@@ -94,6 +138,7 @@ def export_validated_synthetic_fp32(reference, spec, path, dummy, *, opset,
     from onnx_session import cpu_session_options
 
     probes = synthetic_classification_probes(dummy, spec["preprocessing"])
+    dummy = probes[0][1]
     if dynamic_batch:
         probes.append(("dynamic_batch_2", torch.cat((probes[2][1], probes[4][1]), dim=0)))
     with torch.inference_mode(), torch.autocast(device_type="cpu", enabled=False):
@@ -124,7 +169,7 @@ def export_validated_synthetic_fp32(reference, spec, path, dummy, *, opset,
                 for count in thread_counts:
                     settings = {"graph_optimization_level": level, "num_threads": count}
                     row = {"graph": graph, **settings, "passed": False,
-                           "policy": "classification_synthetic_probe_v1"}
+                           "policy": SYNTHETIC_POLICY}
                     session = None
                     try:
                         session = ort.InferenceSession(str(path), cpu_session_options(**settings),
@@ -168,8 +213,9 @@ def export_validated_synthetic_fp32(reference, spec, path, dummy, *, opset,
                         session = None
                         attempts.append(row)
         if winner is None:
-            raise ValueError("결정론적 분류 판정 검증을 통과한 FP32 후보가 없습니다: " +
-                             " | ".join(row.get("reason", "") for row in attempts if row.get("reason")))
+            raise ClassificationValidationError(
+                "결정론적 분류 판정 검증을 통과한 FP32 후보가 없습니다:",
+                attempts, policy=SYNTHETIC_POLICY)
         graph, model, settings, selected = winner
         shutil.copyfile(best_path, path)
         # Reload the exact artifact that will be shipped and repeat all probes.
@@ -184,13 +230,14 @@ def export_validated_synthetic_fp32(reference, spec, path, dummy, *, opset,
         model = copy.deepcopy(model)
         model.inference_optimization = {**getattr(model, "inference_optimization", {}),
             "fallback": graph, "compute_precision": "float32", "io_precision": "float32",
-            "classification_policy": "classification_synthetic_probe_v1"}
-        report = {"policy": "classification_synthetic_probe_v1", "image_count": 0,
+            "classification_policy": SYNTHETIC_POLICY}
+        report = {"policy": SYNTHETIC_POLICY, "image_count": 0,
                   "probe_count": len(probes),
                   "criteria": {"top1_equal": True, "probability_atol": PROBABILITY_ATOL,
                                "minimum_margin_error_ratio": 2,
                                "minimum_probability_margin": MINIMUM_PROBABILITY_MARGIN},
                   "scope": "deterministic_synthetic_probes_only",
+                  "input_domain": "normalized_pixels_0_to_1",
                   "custom_thresholds_validated": False,
                   "selected": selected, "attempts": attempts}
         return model, settings, report
@@ -250,6 +297,7 @@ def export_validated_fp32(reference, spec, path, dummy, *, validation_dir,
     from onnx_session import cpu_session_options
     from opencv_preprocess import read_image
 
+    dummy = classification_image_probe(dummy.shape, spec["preprocessing"])
     files, corpus = collect_image_corpus(validation_dir, spec["class_names"])
     config = create_inference_config(Path(path).parent, "classify", spec["num_classes"],
         (spec["input_height"], spec["input_width"]), spec["in_channels"], Path(path).name,
@@ -270,7 +318,9 @@ def export_validated_fp32(reference, spec, path, dummy, *, validation_dir,
             pixels = read_image(file, spec["in_channels"])
             hashes.append(hashlib.sha256(pixels.tobytes()).hexdigest())
             expected.append(reference(torch.from_numpy(processor.preprocess(pixels))).numpy().copy())
-        probes = [dummy, torch.zeros_like(dummy)]
+        # Direct callers may still supply a Gaussian tracing tensor. It is not
+        # evidence about deployable images; use bounded pixels for verification.
+        probes = [dummy, classification_center_probe(dummy.shape, spec["preprocessing"])]
         if dynamic_batch:
             probes.append(dummy.repeat(2, 1, 1, 1))
         probe_reference = [reference(probe).numpy().copy() for probe in probes]
@@ -333,8 +383,10 @@ def export_validated_fp32(reference, spec, path, dummy, *, validation_dir,
                 runtime = None  # Do not keep idle ORT thread pools alive while profiling.
                 attempts.append(row)
     if winner is None:
-        raise ValueError("실제 이미지 분류 검증을 통과한 FP32 후보가 없습니다. 전체 FP64로 자동 전환하지 않습니다. "
-                         + " | ".join(row.get("reason", "") for row in attempts))
+        best_path.unlink(missing_ok=True)
+        raise ClassificationValidationError(
+            "실제 이미지 분류 검증을 통과한 FP32 후보가 없습니다. 전체 FP64로 자동 전환하지 않습니다.",
+            attempts, policy="classification_dataset_v1", image_count=len(files))
     graph, model, settings, result = winner
     shutil.copyfile(best_path, path)
     best_path.unlink()
@@ -350,6 +402,7 @@ def export_validated_fp32(reference, spec, path, dummy, *, validation_dir,
             raise ValueError("최종 검증 중 이미지가 변경되었습니다")
         compare_classification(expected[index], runtime.logits(processor.preprocess(pixels)))
     report = {"policy": "classification_dataset_v1", "image_count": len(files),
+              "probe_policy": SYNTHETIC_POLICY, "input_domain": "normalized_pixels_0_to_1",
               "criteria": {"top1_equal": True, "probability_atol": PROBABILITY_ATOL,
                            "minimum_margin_error_ratio": 2},
               "dataset_sha256": hashlib.sha256("".join(hashes).encode()).hexdigest(),

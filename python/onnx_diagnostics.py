@@ -34,6 +34,9 @@ def comparison(reference, actual, *, atol=1e-3, rtol=5e-4, classification=False)
     if classification:
         result["top1_equal"] = bool(ref.ndim == 2 and
                                    np.array_equal(ref.argmax(1), out.argmax(1)))
+        if ref.ndim == 2:
+            result["reference_top1"] = ref.argmax(1).tolist()
+            result["actual_top1"] = out.argmax(1).tolist()
         result["passed"] = result["passed"] and result["top1_equal"]
     return result
 
@@ -72,6 +75,8 @@ def conclusion(report):
     if sessions.get("all", {}).get("passed") is False and sessions.get("disabled", {}).get("passed"):
         return "ort_optimization_difference"
     precision = report.get("pytorch_fp64_vs_fp32", {})
+    if precision.get("top1_equal") is False:
+        return "pytorch_precision_decision_sensitive"
     if "passed" in precision and not precision["passed"]:
         return "pytorch_precision_sensitive"
     return "unresolved_graph_or_runtime_difference"
@@ -85,6 +90,7 @@ EXPLANATIONS = {
     "ort_thread_difference": "ONNX Runtime 스레드 수를 제한하면 통과함. 실행 스레드에 따른 차이 확인",
     "ort_optimization_difference": "ONNX Runtime 최적화를 끄면 통과함. 실행 최적화에 따른 차이 확인",
     "pytorch_precision_sensitive": "PyTorch 자체도 FP32·FP64 출력이 다름. 수치 민감도 확인, 재학습 필요 여부는 미확정",
+    "pytorch_precision_decision_sensitive": "PyTorch 자체에서 FP32·FP64의 분류 판정까지 달라짐. FP64 자동 변환으로 해결됐다고 판단할 수 없음; 실제 이미지 비교 필요",
     "unresolved_graph_or_runtime_difference": "그래프 변환 또는 런타임 연산 차이 추가 조사 필요",
 }
 

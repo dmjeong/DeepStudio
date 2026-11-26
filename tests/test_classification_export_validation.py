@@ -8,7 +8,10 @@ import pytest
 import torch
 
 import export_onnx
-from classification_export_validation import compare_classification, collect_image_corpus
+from classification_export_validation import (
+    SYNTHETIC_POLICY, classification_image_probe, synthetic_classification_probes,
+    compare_classification, collect_image_corpus,
+)
 from checkpoint import make_checkpoint_metadata
 from efficientnet import EfficientNet
 
@@ -51,8 +54,9 @@ def test_wrong_rank_confidence_boundary_or_nonfinite_never_pass(ref, out):
         compare_classification(ref, out)
 
 
-@pytest.mark.parametrize("corrupt", [False, True])
+@pytest.mark.parametrize("corrupt", [False, True, "actual_image"])
 def test_real_images_choose_fp32_and_reload_or_preserve_existing_file(tmp_path, corrupt):
+    import onnxruntime as ort
     from onnx_classifier import OnnxClassifier
     names = ["a", "b"]
     data = tmp_path / "images"
@@ -68,19 +72,48 @@ def test_real_images_choose_fp32_and_reload_or_preserve_existing_file(tmp_path, 
     torch.save(checkpoint, source)
     output.write_bytes(b"previous")
     real_export = export_onnx.export_to_onnx
+    real_session = ort.InferenceSession
+
+    class ImageMismatch:
+        def __init__(self, session):
+            self.session = session
+
+        def __getattr__(self, name):
+            return getattr(self.session, name)
+
+        def run(self, names, feed, *args, **kwargs):
+            values = self.session.run(names, feed, *args, **kwargs)
+            # Only the actual black image changes class. The random and
+            # normalized-zero probes still pass, which cannot certify images.
+            if np.allclose(next(iter(feed.values())), -.449 / .226):
+                values[0] = values[0][:, ::-1].copy()
+            return values
+
+    def session_factory(*args, **kwargs):
+        session = real_session(*args, **kwargs)
+        return ImageMismatch(session) if corrupt == "actual_image" else session
 
     def altered_export(candidate, dummy, path, *args, **kwargs):
         candidate = copy.deepcopy(candidate)
         with torch.no_grad():
-            candidate.classifier[1].bias.add_(torch.tensor([-5., 5.]) if corrupt else .02)
+            candidate.classifier[1].bias.add_(torch.tensor([-5., 5.]) if corrupt is True else .02)
         return real_export(candidate, dummy, path, *args, **kwargs)
 
     with patch.object(export_onnx, "export_to_onnx", side_effect=altered_export), \
+            patch.object(ort, "InferenceSession", side_effect=session_factory), \
             patch("efficientnet_precision.prepare_precision_export", side_effect=AssertionError("FP64 must not run")):
         if corrupt:
             with pytest.raises(ValueError, match="통과한 FP32 후보가 없습니다"):
                 export_onnx.export_checkpoint(source, output, validation_dir=data, log=lambda _: None)
             assert output.read_bytes() == b"previous"
+            diagnostic = json.loads(output.with_suffix(".export-error.json").read_text(encoding="utf-8"))
+            validation = diagnostic["numerical_diagnostic"]["classification_validation"]
+            assert validation["image_count"] == 2
+            assert validation["attempts"]
+            assert all(not row["passed"] for row in validation["attempts"])
+            failed_input = "image_1" if corrupt == "actual_image" else "seeded"
+            assert all(row["checking"] == failed_input for row in validation["attempts"])
+            assert all("판정 불일치" in row["reason"] for row in validation["attempts"])
             return
         result = export_onnx.export_checkpoint(source, output, validation_dir=data, dynamic_batch=True, log=lambda _: None)
     report = result["classification_validation"]
@@ -134,7 +167,8 @@ def test_no_automatic_whole_fp64_export(tmp_path):
         precision.assert_not_called()
 
 
-def test_synthetic_policy_exports_fast_fp32_when_logits_shift_but_decisions_match(tmp_path):
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_synthetic_policy_exports_only_if_decisions_match(tmp_path, corrupt):
     from onnx_classifier import OnnxClassifier
     names = ["a", "b"]
     model = EfficientNet(num_classes=2).eval()
@@ -146,25 +180,41 @@ def test_synthetic_policy_exports_fast_fp32_when_logits_shift_but_decisions_matc
                       model_state_dict=model.state_dict())
     source, output = tmp_path / "model.pt", tmp_path / "model.onnx"
     torch.save(checkpoint, source)
+    output.write_bytes(b"previous onnx")
+    output.with_suffix(".json").write_bytes(b"previous config")
     real_export = export_onnx.export_to_onnx
 
     def shifted_export(candidate, dummy, path, *args, **kwargs):
         candidate = copy.deepcopy(candidate)
         target = candidate.model if hasattr(candidate, "model") else candidate
         with torch.no_grad():
-            target.classifier[1].bias.add_(.02)
+            target.classifier[1].bias.add_(torch.tensor([-8., 8.]) if corrupt else .02)
         return real_export(candidate, dummy, path, *args, **kwargs)
 
     with patch.object(export_onnx, "export_to_onnx", side_effect=shifted_export):
+        if corrupt:
+            with pytest.raises(ValueError, match="판정 불일치|top-1 불일치") as caught:
+                export_onnx.export_checkpoint(source, output, dynamic_batch=True, log=lambda _: None)
+            assert output.read_bytes() == b"previous onnx"
+            assert output.with_suffix(".json").read_bytes() == b"previous config"
+            assert len(str(caught.value)) < 1600
+            diagnostic = json.loads(output.with_suffix(".export-error.json").read_text(encoding="utf-8"))
+            numeric = diagnostic["numerical_diagnostic"]
+            rows = [row for row in numeric["runtime_attempts"] if row.get("policy") == SYNTHETIC_POLICY]
+            assert len(rows) >= 8
+            assert all(row["checking"] == "seeded_image" and not row["passed"] for row in rows)
+            assert all("판정 불일치" in row["reason"] for row in rows)
+            assert set(numeric["initial_failures"]) == {"optimized", "unfused_fp32"}
+            return
         result = export_onnx.export_checkpoint(source, output, dynamic_batch=True, log=lambda _: None)
     report = result["classification_validation"]
-    assert report["policy"] == "classification_synthetic_probe_v1"
+    assert report["policy"] == SYNTHETIC_POLICY
     assert report["probe_count"] == 13
     assert report["selected"]["max_logit_error"] > .019
     assert report["selected"]["max_probability_error"] < 1e-6
     assert report["selected"]["model_median_ms"] > 0
     manifest = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
-    assert manifest["export"]["verification_policy"] == "classification_synthetic_probe_v1"
+    assert manifest["export"]["verification_policy"] == SYNTHETIC_POLICY
     assert manifest["export"]["compute_precision"] == "float32"
     assert manifest["schema_version"] == 6
     classifier = OnnxClassifier(result["config_path"])
@@ -175,6 +225,87 @@ def test_synthetic_policy_exports_fast_fp32_when_logits_shift_but_decisions_matc
 def test_exact_probability_tie_never_passes_relaxed_policy():
     with pytest.raises(ValueError, match="경계 근처"):
         compare_classification([[0., 0.]], [[0., 0.]])
+
+
+@pytest.mark.parametrize("mean,std", [
+    ([.485, .456, .406], [.229, .224, .225]),
+    ([.449], [.226]),
+    ([-.1, .5, 1.1], [.2, .3, .4]),
+])
+def test_every_synthetic_probe_is_within_checkpoint_pixel_domain(mean, std):
+    shape = (1, len(mean), 100, 100)
+    metadata = {"normalize_mean": mean, "normalize_std": std}
+    # Include an explicitly invalid caller tensor; it must never leak into
+    # tracing, warmup or validation in the image-domain policy.
+    dummy = torch.full(shape, 1000.)
+    probes = synthetic_classification_probes(dummy, metadata)
+    assert len(probes) == 12
+    assert len({name for name, _ in probes}) == 12
+    for name, probe in probes:
+        assert tuple(probe.shape) == shape, name
+        assert probe.dtype == torch.float32 and probe.is_contiguous(), name
+        raw = probe.numpy() * np.array(std, np.float32)[None, :, None, None]
+        raw += np.array(mean, np.float32)[None, :, None, None]
+        assert np.isfinite(raw).all(), name
+        assert raw.min() >= -2e-7 and raw.max() <= 1 + 2e-7, name
+    # Caller and both global RNGs stay untouched. Export checks must be repeatable.
+    torch_rng, numpy_rng = torch.get_rng_state().clone(), np.random.get_state()
+    repeat = classification_image_probe(shape, metadata)
+    torch.testing.assert_close(repeat, probes[0][1], rtol=0, atol=0)
+    assert torch.equal(torch_rng, torch.get_rng_state())
+    assert numpy_rng[0] == np.random.get_state()[0]
+    np.testing.assert_array_equal(numpy_rng[1], np.random.get_state()[1])
+    assert numpy_rng[2:] == np.random.get_state()[2:]
+    assert torch.all(dummy == 1000.)
+
+
+@pytest.mark.parametrize("mean,std", [
+    ([float("nan")], [.2]), ([.5], [float("inf")]),
+    ([.5], [0.]), ([.5], [-.2]), ([.5, .5], [.2]),
+])
+def test_invalid_normalization_cannot_create_verification_probe(mean, std):
+    with pytest.raises(ValueError, match="정규화 메타데이터"):
+        classification_image_probe((1, 1, 100, 100), {"mean": mean, "std": std})
+
+
+def test_old_rgb_gaussian_probe_contains_impossible_pixels():
+    sample = torch.randn(1, 3, 100, 100, generator=torch.Generator().manual_seed(42))
+    raw = sample * torch.tensor([.229, .224, .225]).view(1, 3, 1, 1)
+    raw += torch.tensor([.485, .456, .406]).view(1, 3, 1, 1)
+    # Reproduce the invalid-domain defect without attributing the customer's
+    # private checkpoint's class disagreement to it.
+    assert raw.min() < 0 and raw.max() > 1
+    assert ((raw < 0) | (raw > 1)).sum() > 0
+
+
+def test_rgb_100_export_checks_real_onnx_with_bounded_inputs(tmp_path):
+    from onnx_classifier import OnnxClassifier
+    model = EfficientNet("efficientnet_b0", 4, 3).eval()
+    checkpoint = make_checkpoint_metadata("classify", 4, ["a", "b", "c", "d"], (100, 100), 3)
+    checkpoint.update(engine="efficientnet", model_config=model.checkpoint_config(),
+                      model_state_dict=model.state_dict())
+    source, output = tmp_path / "rgb.pt", tmp_path / "rgb.onnx"
+    torch.save(checkpoint, source)
+    verify = export_onnx.verify_onnx
+    checked = []
+
+    def check_inputs(path, probe, candidate, **kwargs):
+        raw = probe.numpy() * np.array([.229, .224, .225], np.float32)[None, :, None, None]
+        raw += np.array([.485, .456, .406], np.float32)[None, :, None, None]
+        assert raw.min() >= -2e-7 and raw.max() <= 1 + 2e-7
+        checked.append(probe.shape[0])
+        return verify(path, probe, candidate, **kwargs)
+
+    with patch.object(export_onnx, "verify_onnx", side_effect=check_inputs):
+        result = export_onnx.export_checkpoint(source, output, dynamic_batch=True, log=lambda _: None)
+    assert result["verification"] == "passed" and {1, 2}.issubset(checked)
+    manifest = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+    assert manifest["export"]["verification_input_domain"] == "normalized_pixels_0_to_1"
+    runtime = OnnxClassifier(result["config_path"])
+    probe = classification_image_probe((1, 3, 100, 100),
+        {"mean": [.485, .456, .406], "std": [.229, .224, .225]}, seed=19)
+    with torch.no_grad():
+        export_onnx.validate_classification_outputs(model(probe).numpy(), runtime.logits(probe.numpy()))
 
 
 def test_web_export_worker_uses_complete_project_corpus_and_explicit_options(tmp_path):

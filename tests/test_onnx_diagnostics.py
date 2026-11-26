@@ -23,7 +23,10 @@ def test_numerical_summary_distinguishes_rank_and_scale():
     assert not result["passed"] and result["top1_equal"]
     assert result["max_abs_error"] == 28
     assert result["failed_elements"] == 1
-    assert not comparison(np.array([[0., 1e-5]]), np.array([[1e-5, 0.]]), classification=True)["passed"]
+    assert result["reference_top1"] == result["actual_top1"] == [0]
+    flipped = comparison(np.array([[0., 1e-5]]), np.array([[1e-5, 0.]]), classification=True)
+    assert not flipped["passed"]
+    assert flipped["reference_top1"] == [1] and flipped["actual_top1"] == [0]
     assert not comparison(np.array([np.inf]), np.array([np.inf]))["passed"]
 
 
@@ -33,6 +36,8 @@ def test_conclusions_require_measured_evidence():
     assert conclusion({"onnx_sessions": {"all_default": {"passed": False}, "all": {"passed": True}}}) == "ort_thread_difference"
     assert conclusion({"onnx_sessions": {"all": {"error": "failed to load"}, "disabled": {"passed": True}}}) == "unresolved_graph_or_runtime_difference"
     assert conclusion({"pytorch_fp64_vs_fp32": {"passed": False}}) == "pytorch_precision_sensitive"
+    assert conclusion({"pytorch_fp64_vs_fp32": {"passed": False, "top1_equal": True}}) == "pytorch_precision_sensitive"
+    assert conclusion({"pytorch_fp64_vs_fp32": {"passed": False, "top1_equal": False}}) == "pytorch_precision_decision_sensitive"
     assert conclusion({"state": {"nonfinite_tensors": ["bn.weight"]}}) == "invalid_model_state"
     assert conclusion({"pytorch_repeat": {"passed": False, "finite": False}}) == "pytorch_nonfinite_output"
 

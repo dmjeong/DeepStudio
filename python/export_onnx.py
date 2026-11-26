@@ -892,6 +892,10 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                 log(f"추론 최적화: {model.inference_optimization}")
             generator = torch.Generator().manual_seed(42)
             dummy = torch.randn(1, spec["in_channels"], spec["input_height"], spec["input_width"], generator=generator)
+            if backend == "efficientnet":
+                from classification_export_validation import classification_image_probe, classification_center_probe
+                dummy = classification_image_probe(dummy.shape, spec["preprocessing"])
+                log("분류 검증 입력: 0~255 픽셀 생성 후 체크포인트의 정규화 적용 (이미지 범위 보존)")
             log(f"ONNX 그래프 생성: opset={opset_version}, 입력={tuple(dummy.shape)}")
             redetr_outputs = ["pred_boxes", "pred_logits"] if backend == "redetr_v4" else None
             export_kwargs = {} if redetr_outputs is None else {"output_names": redetr_outputs}
@@ -915,6 +919,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                 def verify_candidate(candidate, settings=None):
                     nonlocal failed_probe, failed_probe_name
                     probes = [("seeded", dummy), ("zero", torch.zeros_like(dummy))]
+                    if backend == "efficientnet":
+                        probes[1] = ("zero", classification_center_probe(dummy.shape, spec["preprocessing"]))
                     if dynamic_batch:
                         probes.append(("dynamic_batch_2", dummy.repeat(2, 1, 1, 1)))
                     for probe_name, probe in probes:
@@ -986,14 +992,18 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
                                 if runtime_settings is not None:
                                     break
                         if runtime_settings is None and spec["task"] == "classify":
-                            from classification_export_validation import export_validated_synthetic_fp32
+                            from classification_export_validation import export_validated_synthetic_fp32, SYNTHETIC_POLICY
                             try:
                                 model, runtime_settings, classification_validation = export_validated_synthetic_fp32(
                                     reference_model, spec, staged_model, dummy, opset=opset_version,
                                     dynamic_batch=dynamic_batch, log=log)
                             except Exception as decision_error:
-                                runtime_attempts.append({"graph": "classification_synthetic_probe_v1",
-                                    "passed": False, "error": str(decision_error)})
+                                details = getattr(decision_error, "validation_attempts", [])
+                                if details:
+                                    runtime_attempts.extend(details)
+                                else:
+                                    runtime_attempts.append({"graph": SYNTHETIC_POLICY,
+                                        "passed": False, "error": str(decision_error)})
                                 log(f"분류 판정 기반 FP32 후보 없음: {decision_error}")
                             else:
                                 runtime_attempts.extend(classification_validation["attempts"])
@@ -1064,6 +1074,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
             manifest["export"]["io_precision"] = "float32"
             manifest["export"]["compute_precision"] = model.inference_optimization.get("compute_precision", "float32")
             manifest["export"]["verification_reference"] = "original_checkpoint_pytorch"
+            if verify:
+                manifest["export"]["verification_input_domain"] = "normalized_pixels_0_to_1"
             if classification_validation is not None:
                 manifest["export"]["classification_validation"] = classification_validation
                 manifest["export"]["strict_logit_tolerance_diagnostic_only"] = manifest["export"].pop("verification_tolerance")
@@ -1125,16 +1137,21 @@ def _raise_efficientnet_verification_error(model, path, probe, probe_name, opset
         numeric = {"diagnostic_error": str(diagnostic_error)}
         summary = f"추가 수치 진단 실패: {diagnostic_error}"
     numeric["runtime_attempts"] = attempts
-    attempt_details = "\n".join(
-        f"{item.get('graph', 'unfused_fp32')}/{item.get('graph_optimization_level', 'n/a')}/"
-        f"{item.get('num_threads', 'n/a')} threads/{item.get('probe', 'unknown')}: "
-        f"{item.get('error', item.get('reason', '통과'))}"
-        for item in attempts)
+    numeric["initial_failures"] = {"optimized": str(optimized_error), "unfused_fp32": str(original_error)}
+    # The full candidate list belongs in JSON, not in a multi-screen error
+    # popup. Prefer an observed class change over a generic numeric mismatch.
+    failures = [item for item in attempts if not item.get("passed", False)]
+    representative = next((item for item in failures
+        if any(word in item.get("error", item.get("reason", ""))
+               for word in ("판정 불일치", "top-1 불일치"))), failures[-1] if failures else {})
+    reason = str(representative.get("error", representative.get("reason", original_error)))
+    checked = representative.get("probe", representative.get("checking", probe_name))
     log("수치 진단: " + summary)
     raise ExportVerificationError(
         f"최적화·원본 그래프 및 실행 설정 모두 ONNX 검증 실패.\n"
-        f"최적화: {optimized_error}\n원본 FP32: {original_error}\n"
-        f"실행 설정 재시도:\n{attempt_details}\n수치 진단: {summary}", numeric
+        f"대표 실패 (입력={checked}): {reason[:300]}\n"
+        f"수치 진단: {summary}\n"
+        f"실행 후보 {len(attempts)}개 및 최초 실패의 상세 결과는 진단 JSON에 기록합니다.", numeric
     ) from original_error
 
 
@@ -1306,7 +1323,10 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
                 report_location = f"\n상세 진단 파일: {diagnostic_path}"
         except OSError:
             report(json.dumps(diagnostic, ensure_ascii=False))
-        raise ValueError(f"ONNX 내보내기 실패 [{diagnostic['stage']}]: {error}{report_location}") from error
+        # Structured verification failures already contain the diagnostic
+        # summary. Repeating the last log line here makes that popup redundant.
+        stage = "" if hasattr(error, "numerical_diagnostic") else f" [{diagnostic['stage']}]"
+        raise ValueError(f"ONNX 내보내기 실패{stage}: {error}{report_location}") from error
     else:
         try:
             if diagnostic_path is not None:
