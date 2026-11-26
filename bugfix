@@ -1,25 +1,33 @@
-QFont::setPointSize: Point size <= 0 (-1), must be greater than 0
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\swin\modeling_swin.py:289: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
-  if width % self.patch_size[1] != 0:
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\swin\modeling_swin.py:292: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
-  if height % self.patch_size[0] != 0:
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\swin\modeling_swin.py:681: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
-  was_padded = pad_values[3] > 0 or pad_values[5] > 0
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\swin\modeling_swin.py:682: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
-  if was_padded:
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\swin\modeling_swin.py:330: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
-  should_pad = (height % 2 == 1) or (width % 2 == 1)
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\swin\modeling_swin.py:331: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
-  if should_pad:
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\mask2former\modeling_mask2former.py:1315: TracerWarning: torch.as_tensor results are registered as constants in the trace. You can safely ignore this warning if you use this function to create tensors out of constant variables that would be the same every time you call this function. In any other case, this might cause the trace to be incorrect.
-  spatial_shapes = torch.as_tensor(spatial_shapes_list, dtype=torch.long, device=input_embeds_flat.device)
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\mask2former\modeling_mask2former.py:943: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
-  if total_elements != sequence_length:
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\mask2former\modeling_mask2former.py:963: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
-  if reference_points.shape[-1] == 2:
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\mask2former\modeling_mask2former.py:964: TracerWarning: torch.tensor results are registered as constants in the trace. You can safely ignore this warning if you use this function to create tensors out of constant variables that would be the same every time you call this function. In any other case, this might cause the trace to be incorrect.
-  offset_normalizer = torch.tensor(
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\mask2former\modeling_mask2former.py:1510: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
-  if attn_weights.size() != (batch_size * self.num_heads, target_len, source_len):
-C:\Users\dm5720.jeong\AppData\Local\Programs\Python\Python314\Lib\site-packages\transformers\models\mask2former\modeling_mask2former.py:1540: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
-  if attn_output.size() != (batch_size * self.num_heads, target_len, self.head_dim):
+체크포인트 및 ONNX 의존성 로드
+내보내기 시작: efficientnet
+추론 최적화: {'conv_bn_fused': 69, 'channels_last': False}
+ONNX 그래프 생성: opset=17, 입력=(1, 3, 100, 100)
+ONNX Runtime 검증: 원본 체크포인트 PyTorch 출력과 비교 (atol=0.001, rtol=0.0005, probes=seeded+zero)
+고속 FP32 후보 제외 — 다른 실행 방식 검사 중: ONNX 검증 실패: 최대 오차 220.30338 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=189.14587, ONNX=-31.157501, 허용 오차의 1.329e+04배; 출력 범위 PyTorch=[189.14587, 715.16644], ONNX=[-31.157501, 669.11316]
+원본 FP32 그래프로 재시도: Conv/BN 사전 융합·상수 폴딩·단순화 제외
+원본 그래프 실행 설정 재시도: 최적화=all, CPU 4 threads
+원본 그래프 실행 설정 재시도: 최적화=basic, CPU 4 threads
+원본 그래프 실행 설정 재시도: 최적화=disabled, CPU 4 threads
+BatchNorm 계수 고정 그래프로 재시도: PyTorch 정규화 계수 보존, Conv 융합 제외
+BatchNorm 연산 방식: native_batch_norm_affine
+BatchNorm 연산 방식: native_batch_norm_affine_fma
+분류 판정 기반 FP32 검증: 유효 픽셀 범위의 결정론적 입력 12개, top-1·softmax 확률·판정 마진 검사
+분류 판정 기반 FP32 후보 없음: 결정론적 분류 판정 검증을 통과한 FP32 후보가 없습니다: 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3]
+ONNX 수치 원인 진단: 실행 최적화·FP64·중간 레이어 비교 중
+수치 진단: PyTorch 자체도 FP32·FP64 출력이 다름. 수치 민감도 확인, 재학습 필요 여부는 미확정; 진단 그래프 최초 차이: features.4; 누적 차이 관측: features.4.0.block.0.0 (단일 연산 원인 미확정)
+내보내기 진단 저장: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\semes_ai.export-error.json
+
+오류: ONNX 내보내기 실패 [수치 진단: PyTorch 자체도 FP32·FP64 출력이 다름. 수치 민감도 확인, 재학습 필요 여부는 미확정; 진단 그래프 최초 차이: features.4; 누적 차이 관측: features.4.0.block.0.0 (단일 연산 원인 미확정)]: 최적화·원본 그래프 및 실행 설정 모두 ONNX 검증 실패.
+최적화: ONNX 검증 실패: 최대 오차 220.30338 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=189.14587, ONNX=-31.157501, 허용 오차의 1.329e+04배; 출력 범위 PyTorch=[189.14587, 715.16644], ONNX=[-31.157501, 669.11316]
+원본 FP32: ONNX 검증 실패: 최대 오차 150.20404 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=189.14587, ONNX=38.941833, 허용 오차의 7337배; 출력 범위 PyTorch=[189.14587, 715.16644], ONNX=[38.941833, 648.64514]
+실행 설정 재시도:
+unfused_fp32/all/4 threads/seeded: ONNX 검증 실패: 최대 오차 150.20404 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=189.14587, ONNX=38.941833, 허용 오차의 7337배; 출력 범위 PyTorch=[189.14587, 715.16644], ONNX=[38.941833, 648.64514]
+unfused_fp32/basic/4 threads/seeded: ONNX 검증 실패: 최대 오차 404.8037 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=189.14587, ONNX=-10.515671, 허용 오차의 3.191e+04배; 출력 범위 PyTorch=[189.14587, 715.16644], ONNX=[-10.515671, 563.92896]
+unfused_fp32/disabled/4 threads/seeded: ONNX 검증 실패: 최대 오차 425.74312 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=189.14587, ONNX=-26.047455, 허용 오차의 1.534e+04배; 출력 범위 PyTorch=[189.14587, 715.16644], ONNX=[-26.047455, 561.96277]
+native_batch_norm_affine/disabled/4 threads/seeded: ONNX 검증 실패: 최대 오차 425.74312 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=189.14587, ONNX=-26.047455, 허용 오차의 1.534e+04배; 출력 범위 PyTorch=[189.14587, 715.16644], ONNX=[-26.047455, 561.96277]
+native_batch_norm_affine/disabled/1 threads/seeded: ONNX 검증 실패: 최대 오차 425.58743 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=189.14587, ONNX=-24.31102, 허용 오차의 1.623e+04배; 출력 범위 PyTorch=[189.14587, 715.16644], ONNX=[-24.31102, 559.76318]
+native_batch_norm_affine_fma/disabled/4 threads/seeded: ONNX 검증 실패: 최대 오차 421.09477 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=189.14587, ONNX=-20.796814, 허용 오차의 1.842e+04배; 출력 범위 PyTorch=[189.14587, 715.16644], ONNX=[-20.796814, 567.09155]
+native_batch_norm_affine_fma/disabled/1 threads/seeded: ONNX 검증 실패: 최대 오차 173.06046 (atol=0.001, rtol=0.0005); 실패 원소 (0, 2): PyTorch=189.14587, ONNX=105.66103, 허용 오차의 1551배; 출력 범위 PyTorch=[189.14587, 715.16644], ONNX=[105.66103, 640.71198]
+classification_synthetic_probe_v1/n/a/n/a threads/unknown: 결정론적 분류 판정 검증을 통과한 FP32 후보가 없습니다: 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3] | 분류 판정 불일치: PyTorch=[1], ONNX=[3]
+수치 진단: PyTorch 자체도 FP32·FP64 출력이 다름. 수치 민감도 확인, 재학습 필요 여부는 미확정; 진단 그래프 최초 차이: features.4; 누적 차이 관측: features.4.0.block.0.0 (단일 연산 원인 미확정)
+상세 진단 파일: D:\SVM\DeepStudio\TEST\CLT\Classification\260918\CLT_CIB3D\exports\semes_ai.export-error.json
