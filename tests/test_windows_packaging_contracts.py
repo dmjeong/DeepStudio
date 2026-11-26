@@ -120,6 +120,7 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
                  "with_evision/csv_model_watcher.h", "with_evision/csv_reload.cpp",
                  "with_evision/csv_reload_test.cpp", "with_evision/CSV_MODEL_RELOAD.md",
                  "with_evision/csv_model_manager.h", "with_evision/sevision_csv_example.cpp",
+                 "with_evision/sevision_csv_example.h",
                  "with_evision/models.csv", "with_evision/FILENAME_CSV_MODELS.md",
                  "dense_models/main.cpp", "dense_models/CMakeLists.txt", "dense_models/build.bat",
                  "nlohmann/json.hpp", "nlohmann/LICENSE.MIT", "nlohmann/CMakeLists.txt",
@@ -166,6 +167,7 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     assert (payload / "Examples/assets/reload/models.csv").is_file()
     assert (payload / "Examples/cpp/with_evision/csv_model_manager.h").is_file()
     assert (payload / "Examples/cpp/with_evision/sevision_csv_example.cpp").is_file()
+    assert (payload / "Examples/cpp/with_evision/sevision_csv_example.h").is_file()
     assert (payload / "Examples/cpp/with_evision/models.csv").is_file()
     assert (payload / "Examples/assets/filename-reload/sevision_ai_261126_16H.dvsenc").read_bytes() == b"filename example"
     assert (payload / "Examples/assets/filename-reload/models.csv").is_file()

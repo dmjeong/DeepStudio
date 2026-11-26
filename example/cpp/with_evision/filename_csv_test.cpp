@@ -1,4 +1,5 @@
 #include "csv_model_manager.h"
+#include "sevision_csv_example.h"
 #include "../example_paths.h"
 #include <iostream>
 
@@ -70,12 +71,18 @@ struct Readers {
     std::atomic<bool> running{true};
     std::atomic<int> errors{0};
     std::vector<std::thread> threads;
-    explicit Readers(CsvModelManager& manager) {
-        for (int i = 0; i < 4; ++i) threads.emplace_back([this, &manager, i] {
+    explicit Readers(CsvModelManager& manager) : Readers([&manager](int i) {
+        return manager.Snapshot(i % 2 ? 7 : 0, i % 2 ? "SIDE" : "TOP");
+    }) {}
+    explicit Readers(CSeVision& vision) : Readers([&vision](int i) {
+        return std::atomic_load(&vision.thd_classifier.at(i % 2 ? 7 : 0));
+    }) {}
+    explicit Readers(std::function<std::shared_ptr<dvs_bw8::Classifier>(int)> snapshot) {
+        for (int i = 0; i < 4; ++i) threads.emplace_back([this, snapshot, i] {
             const std::vector<uint8_t> frame(240 * 224, 255);
             while (running.load()) {
                 try {
-                    auto model = manager.Snapshot(i % 2 ? 7 : 0, i % 2 ? "SIDE" : "TOP");
+                    auto model = snapshot(i);
                     if (!model) throw std::runtime_error("Missing live model");
                     auto result = model->InferBW8(frame.data(), 224, 224, 240);
                     if (result.class_id != 0 || result.class_name != "white_v" + model->ModelVersion().substr(21, 1)) ++errors;
@@ -215,9 +222,64 @@ int main() {
         }, 50ms);
         Reject([&] { superseded.Start(); }, "Superseded startup accepted");
         Require(!superseded.Snapshot(0, "TOP"), "Superseded initial model published");
+
+        // User-owned periodic thread: only InitializeModel / ChangeModel.
+        // Direct atomic_load on fixed map entries, with no manager or watcher.
+        const auto key_file = temp.path / "manual.key";
+        std::filesystem::copy_file(assets / "example-only.key", key_file);
+        std::string error;
+        CSeVision manual;
+        Require(!manual.ChangeModel(error), "Change before initialization accepted");
+        Text(csv, Rows("16H", "23H")); // First model valid, second absent.
+        Require(!manual.InitializeModel(csv, directory, key_file, error) && manual.thd_classifier.empty(),
+                "Manual initialization published partial models");
+        Text(csv, Rows());
+        Require(manual.InitializeModel(csv, directory, key_file, error), "Manual initialization failed");
+        const auto revision = [&] {
+            return std::atomic_load(&manual.thd_classifier.at(0))->ModelVersion().back();
+        };
+        Require(!manual.InitializeModel(csv, directory, key_file, error), "Repeated initialization accepted");
+        // Unchanged CSV must work without opening the model/key again.
+        std::filesystem::remove(key_file);
+        Require(manual.ChangeModel(error) && error.empty(), "Unchanged CSV read key again");
+        std::filesystem::copy_file(assets / "example-only.key", key_file);
+        auto held = std::atomic_load(&manual.thd_classifier.at(0));
+        std::weak_ptr<dvs_bw8::Classifier> manual_old = held;
+        Readers manual_readers(manual);
+        Model(assets / "reload/v2.dvsenc", directory / Top("17H"));
+        Text(csv, Rows("17H"));
+        std::this_thread::sleep_for(100ms);
+        Require(revision() == '1', "Manual example unexpectedly has an automatic watcher");
+        Require(manual.ChangeModel(error) && revision() == '2', "Manual swap failed");
+        Require(held->ModelVersion().back() == '1', "Manual in-flight model changed");
+        Text(csv, Rows("18H"));
+        Require(manual.ChangeModel(error) && revision() == '2', "Manual retirement limit failed");
+        held.reset();
+        Wait([&] { return manual.ChangeModel(error) && revision() == '3'; });
+        Require(manual_old.expired(), "Manual previous model was not reclaimed");
+        manual_readers.Stop();
+        Require(manual_readers.errors.load() == 0, "Manual shared_ptr swap corrupted inference");
+
+        std::filesystem::remove(directory / Top("19H"));
+        Text(csv, Rows("19H"));
+        Require(!manual.ChangeModel(error) && revision() == '3', "Manual missing file dropped active model");
+        Model(assets / "reload/bad-shape-v4.dvsenc", directory / Top("19H"));
+        Require(!manual.ChangeModel(error) && revision() == '3', "Manual invalid shape published");
+        Model(assets / "reload/v4.dvsenc", directory / Top("19H"));
+        auto bad_key = dvs_crypto::ReadFile(key_file); bad_key[0] ^= 1;
+        Text(key_file, std::string(bad_key.begin(), bad_key.end()));
+        Require(!manual.ChangeModel(error) && revision() == '3', "Manual wrong key accepted");
+        Model(assets / "example-only.key", key_file);
+        Require(manual.ChangeModel(error) && revision() == '4', "Manual same-CSV retry failed");
+        Text(csv, Rows());
+        Require(manual.ChangeModel(error) && revision() == '4', "Manual downgrade accepted");
+        Text(csv, Rows("19H") + "90,AUX,classify," + Side("15H") + "\n");
+        Require(!manual.ChangeModel(error) && manual.thd_classifier.size() == 2,
+                "Manual map structure changed while inference can read it");
         std::cout << "PASS: filename date validation, four-column CSV, multiple cameras, concurrent reload, "
                      "no unchanged reload, independent updates, retirement, missing-file retry, bad key/tamper/shape, "
-                     "downgrade/routing rejection, new index, initial failure and superseded CSV\n";
+                     "downgrade/routing rejection, new index, initial failure and superseded CSV; "
+                     "two-function manual reload, direct atomic reads, no auto watcher, retry and retirement\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n'; return 1;

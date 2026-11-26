@@ -8,10 +8,13 @@
 
 **파일명 날짜로 여러 모델을 교체할 때:** [CSeVision 코드와 네 열 CSV](FILENAME_CSV_MODELS.md).
 `index,camtype,task,name`을 사용하며 `sevision_ai_261126_16H.dvsenc`처럼 이름에서 버전을 읽는다.
-[샘플 CSV](models.csv), [실행 가능한 예제](sevision_csv_example.cpp)를 제공한다.
+[함수 두 개만 옮길 코드](sevision_csv_example.h), [샘플 CSV](models.csv),
+[실행 가능한 예제](sevision_csv_example.cpp)를 제공한다.
+`InitializeModel()`은 시작할 때 한 번, `ChangeModel()`은 사용자의 기존 스레드에서 주기적으로 호출한다.
+추론은 기존처럼 `atomic_load(&thd_classifier.at(index))`로 모델을 받아 실행한다.
 
 고정 파일명과 별도 버전 열을 쓰는 기존 방식은 [CSV 모델 교체 예제](CSV_MODEL_RELOAD.md)를 따른다.
-두 방식 모두 `Snapshot()`으로 받은 `shared_ptr`에서 기존 추론을 호출한다.
+이 자동 감시 방식은 `Snapshot()`으로 받은 `shared_ptr`에서 기존 추론을 호출한다.
 
 ## 기존 프로그램에 넣기
 

@@ -1,3 +1,7 @@
+# 23.02 — CSeVision CSV 사용법을 두 함수로 단순화 (+0.1)
+
+- `InitializeModel()`로 최초 모델을 준비하고, 사용자 스레드에서 `ChangeModel()`을 호출해 CSV 변경을 확인합니다. 자동 스레드 생성과 Start/Stop/GetModel 호출 없이 기존 `atomic_load` 추론 방식을 사용합니다. [함수 두 개와 CSV](example/cpp/with_evision/FILENAME_CSV_MODELS.md)
+
 # 22.92 — 파일명 날짜 기반 다중 모델 CSV 교체 (+0.1)
 
 - `index,camtype,task,name` 네 열로 여러 암호화 분류 모델을 관리합니다. `sevision_ai_261126_16H.dvsenc`의 날짜·시간을 비교하고 하나의 감시 스레드에서 새 모델만 준비 후 교체합니다. CSeVision 사용 예제와 샘플 CSV를 제공합니다. [코드와 사용법](example/cpp/with_evision/FILENAME_CSV_MODELS.md)
