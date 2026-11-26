@@ -1,1 +1,57 @@
 
+bool CSeVision::ChangeModel() {
+	// button click 시 함수 실행되게 할 것
+	auto key = dvs_crypto::ReadKey(L"D:\\SVM\\CLT\\BIN\\semes_ai.key");
+
+	int width = 224, height = 224;
+	size_t pitch = 240;
+
+	try {
+		auto shadow = std::make_shared<dvs_bw8::Classifier>(L"D:\\SVM\\CLT\\BIN\\semes_ai.dvsenc", key);
+		dvs_crypto::Package pkgs(L"D:\\SVM\\CLT\\BIN\\semes_ai.dvsenc", key);
+		std::string strVersion = pkgs.Config().value("model_version", std::string("Missing"));
+		
+		// 최신 버전인 경우.. 인데, 그냥 엑셀로 할까?
+		// 모델이 여러개가 되면, 통합 load 함수가 필요하다.
+		if (strVersion != "Missing" && strVersion > strCurrVersion) {
+
+			std::vector<uint8_t> frame(pitch * height, 255);
+			auto result = shadow->InferBW8(frame.data(), width, height, pitch);
+
+			std::atomic_store(&thd_classifier, std::move(shadow));
+		}
+	}
+	catch (const std::exception& e) {
+		dvs_crypto::Wipe(key.data(), key.size());
+		LOG_SYS(_T("[DEEP] Shadow Model load fail: %S"), e.what());
+		return false;
+	}
+	dvs_crypto::Wipe(key.data(), key.size());
+}
+
+void CSeVision::InitializeModel()
+{
+	strCurrVersion = "";
+	auto key = dvs_crypto::ReadKey(L"D:\\SVM\\CLT\\BIN\\semes_ai.key");
+	try {
+		thd_classifier = std::make_shared<dvs_bw8::Classifier>(L"D:\\SVM\\CLT\\BIN\\semes_ai.dvsenc", key);
+	}
+	catch (const std::exception& e){
+		dvs_crypto::Wipe(key.data(), key.size());
+		LOG_SYS(_T("[DEEP] Model load fail: %S"), e.what());
+		throw;
+	}
+	dvs_crypto::Wipe(key.data(), key.size());
+	TRACE("[DEEP]모델 준비 완료: %.3f ms\n", thd_classifier->WarmupMilliseconds());
+
+	contexts.resize(omp_get_max_threads());
+	for (int i = 0; i < omp_get_max_threads(); i++)
+		contexts[i] = thd_classifier->CreateContext();
+
+	int width = 224, height = 224;
+	size_t pitch = 240;
+
+	std::vector<uint8_t> frame(pitch * height, 255);
+	auto result = thd_classifier->InferBW8(frame.data(), width, height, pitch);
+	TRACE("[DEEP]모델 초기 실행 속도: %.3f ms\n", result.inference_ms);
+}
