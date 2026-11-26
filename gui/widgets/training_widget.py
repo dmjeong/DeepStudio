@@ -124,7 +124,8 @@ class TrainingWidget(TrainingForm, QWidget):
         elif model_id in BUILTIN_SCRATCH_ONLY_IDS:
             # 사전학습 가중치가 없는 모델: 고를 수 없는 '사전학습으로 시작'은 보여 주지 않는다
             choices = [("builtin_scratch", f"{name} 처음부터 학습"),
-                       ("builtin_transfer", f"{name} 이전 학습 결과(.pt)로 이어서")]
+                       ("builtin_transfer", f"{name} 이전 학습 결과(.pt)로 이어서"),
+                       ("builtin_resume", f"{name} 중단한 학습 재개")]
             self.mode_desc.setText(f"선택 모델: {name}\n기본 사전학습 파일은 제공하지 않습니다. 내 데이터로 학습하거나 이전 학습 결과를 불러옵니다.")
         elif model_id in BUILTIN_ADAPTER_IDS:
             source = ("WebLI" if model_id.startswith("siglip2_") else

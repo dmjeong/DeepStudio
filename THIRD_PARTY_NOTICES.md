@@ -1,5 +1,11 @@
 # Third-party notices
 
+CrackSegNet Studio (`python/cracksegnet.py`) is an original paper-inspired
+implementation, not copied author code or an official reproduction. Reference:
+Yu, Mei and Zhu (2026), https://doi.org/10.3390/rs18213712. No author weights,
+figures or datasets are bundled. Implementation differences and dependency
+scope are documented in `docs/CRACKSEGNET_STUDIO.md`.
+
 Deep Vision Studio does not commit pretrained model weights to this source
 repository. The Windows build fetches the declared basic-model weights into
 the release payload. A release payload must include the exact source license

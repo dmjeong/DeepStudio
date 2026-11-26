@@ -1,3 +1,7 @@
+# 24.02 — CrackSegNet Studio 분할 모델 (+1.0)
+
+- 2026년 논문 기반 자체 구현을 기본 모델로 추가했습니다. RGB/BW8, 원본·패치 학습, FP32/FP16/INT8 ONNX 및 암호화 배포를 지원합니다. 공식 사전학습 가중치는 제공하지 않습니다. [구조·사용법·검증 범위](docs/CRACKSEGNET_STUDIO.md)
+
 # 23.02 — CSeVision CSV 사용법을 두 함수로 단순화 (+0.1)
 
 - `InitializeModel()`로 최초 모델을 준비하고, 사용자 스레드에서 `ChangeModel()`을 호출해 CSV 변경을 확인합니다. 자동 스레드 생성과 Start/Stop/GetModel 호출 없이 기존 `atomic_load` 추론 방식을 사용합니다. [함수 두 개와 CSV](example/cpp/with_evision/FILENAME_CSV_MODELS.md)

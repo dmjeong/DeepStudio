@@ -822,6 +822,41 @@
       }
     },
     {
+      "model_id": "cracksegnet",
+      "family": "CrackSegNet",
+      "variant": "Studio",
+      "task": "segment",
+      "runtimes": [
+        "windows_native",
+        "onnx"
+      ],
+      "capabilities": [
+        "cpp",
+        "csharp",
+        "export_onnx",
+        "infer",
+        "train"
+      ],
+      "input_size": [
+        256,
+        256
+      ],
+      "input_channels": [
+        1,
+        3
+      ],
+      "release_status": "export_verified",
+      "pretrained_asset": "",
+      "notes": "2026 논문 기반 자체 구현(공식 재현 아님). 사전학습 없음. 변형 합성곱·픽셀 재배열·지역 그래프 주의. 후보 선별 없이 전체 영역 분할, 패치 학습은 같은 크기 타일 추론. 정확도·CPU 속도는 검사 데이터로 비교하세요.",
+      "metadata": {
+        "surfaces": [
+          "desktop"
+        ],
+        "implementation": "cracksegnet_studio_v1",
+        "reference": "https://doi.org/10.3390/rs18213712"
+      }
+    },
+    {
       "model_id": "unet_mobilenetv2",
       "family": "U-Net",
       "variant": "MobileNetV2",

@@ -43,6 +43,7 @@ BUILTIN_MODEL_SPECS = {
     "dinov2_vitb14_seg": BuiltinModelSpec("dinov2_vitb14_seg", "segment", (448, 448), (1, 3)),
     # 초경량 U-Net: 사전학습 가중치 없이 처음부터 학습(라이선스 걱정 없음). 원본 해상도 패치 학습용.
     "unet_lite": BuiltinModelSpec("unet_lite", "segment", (256, 256), (1, 3)),
+    "cracksegnet": BuiltinModelSpec("cracksegnet", "segment", (256, 256), (1, 3)),
     # 경량 사전학습 백본 U-Net: MobileNetV2(ImageNet) 인코더 + Lite 폭 디코더. 넓게 보면서 빠르다.
     "unet_mobilenetv2": BuiltinModelSpec("unet_mobilenetv2", "segment", (512, 512), (1, 3)),
 }
@@ -54,7 +55,7 @@ for _model_id in MODERN_SEGMENT_IDS:
     BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (448, 448), (1, 3))
 for _model_id in TRANSFORMER_SEGMENT_IDS:
     BUILTIN_MODEL_SPECS[_model_id] = BuiltinModelSpec(_model_id, "segment", (512, 512), (1, 3))
-SCRATCH_ONLY_MODELS = frozenset({"unet_lite"})
+SCRATCH_ONLY_MODELS = frozenset({"unet_lite", "cracksegnet"})
 
 # 새로 학습하는 머리 부분(나머지는 사전학습 백본: 백본 학습률 배수·동결 대상)과,
 # 클래스 순서가 다른 체크포인트로 추가 학습할 때 버리는 마지막 분류층.
@@ -69,6 +70,7 @@ HEAD_PREFIXES = {
     "dinov2_vits14_seg": ("neck.", "detail", "fuse", "head."),
     "dinov2_vitb14_seg": ("neck.", "detail", "fuse", "head."),
     "unet_lite": ("",),  # 사전학습 백본이 없어 전부 머리(같은 학습률)
+    "cracksegnet": ("",),
     "unet_mobilenetv2": ("dec", "head."),
 }
 CLASS_HEAD_PREFIX = {
@@ -79,6 +81,7 @@ CLASS_HEAD_PREFIX = {
     "dinov2_vitl14_cls": "head.", "siglip2_so400m_cls": "head.",
     "dinov2_vits14_seg": "head.", "dinov2_vitb14_seg": "head.",
     "unet_lite": "head.", "unet_mobilenetv2": "head.",
+    "cracksegnet": "head.",
 }
 HEAD_PREFIXES.update({model_id: ("dec.", "head.") for model_id in SEGMENT_CANDIDATES})
 HEAD_PREFIXES["bisenetv2"] = ("net.head.", "net.aux")
@@ -151,6 +154,7 @@ _GRADCAM_TARGET_LAYERS = {
     "dinov2_vitl14_cls": "feature_map", "siglip2_so400m_cls": "feature_map",
     "dinov2_vits14_seg": "neck", "dinov2_vitb14_seg": "neck",
     "unet_lite": "e4",
+    "cracksegnet": "up.4.fuse",
     "unet_mobilenetv2": "encoder.17",
 }
 _GRADCAM_TARGET_LAYERS.update({model_id: "dec.3" for model_id in SEGMENT_CANDIDATES})
@@ -563,6 +567,11 @@ def build_builtin_model(model_id: str, num_classes: int, in_channels: int = 3, *
     elif model_id == "unet_mobilenetv2":
         model = UNetMobileNetV2(int(num_classes), in_channels,
                                 pretrained=pretrained, weights_path=backbone_weights)
+    elif model_id == "cracksegnet":
+        if pretrained or backbone_weights is not None:
+            raise ValueError("CrackSegNet Studio는 공식 사전학습 가중치가 없습니다. 처음부터 학습하거나 Studio 학습 결과(.pt)를 사용하세요.")
+        from cracksegnet import CrackSegNetStudio
+        model = CrackSegNetStudio(int(num_classes), in_channels)
     elif model_id == "unet_lite":
         if pretrained or backbone_weights is not None:
             raise ValueError("초경량 U-Net은 사전학습 가중치가 없습니다. '처음부터 학습'을 선택하세요.")

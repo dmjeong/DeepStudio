@@ -317,6 +317,8 @@ jobs:
       - name: Verify trained segmentation candidates and encrypted models in C++
         env:
           SEGMENT_PROBE: ${{ github.workspace }}/build/segment_probe
+          DVS_ONNX_TENSOR_PROBE: ${{ github.workspace }}/build/onnx_tensor_probe
+          QT_QPA_PLATFORM: offscreen
           DVS_REQUIRE_SEGMENT_PRETRAINED: "1"
           OMP_NUM_THREADS: "2"
           MKL_NUM_THREADS: "2"
@@ -326,6 +328,8 @@ jobs:
           python python/prepare_builtin_assets.py --only mobilenetv4_small_encoder,efficientnet_b1_encoder,shufflenet_v2_x1_0,bisenetv2_backbone,stdc1_backbone --strict
           python -m pytest -q tests/test_segmentation_candidates.py -k training_export_quantization_and_cpp
           python -m pytest -q tests/test_segmentation_pretrained.py
+          python -m pip install PySide6
+          python -m pytest -q tests/test_cracksegnet.py
       - name: Verify modern dense models FP32 INT8 encryption and native parity
         env:
           DVS_RUN_MODERN_INTEGRATION: "1"

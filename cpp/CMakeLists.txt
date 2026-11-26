@@ -230,6 +230,8 @@ message(STATUS "═════════════════════�
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(onnx_tensor_probe tests/onnx_tensor_probe.cpp)
+    target_link_libraries(onnx_tensor_probe PRIVATE vision_inference)
     add_executable(whole_region_preprocess_test tests/whole_region_preprocess_test.cpp)
     target_include_directories(whole_region_preprocess_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
     target_link_libraries(whole_region_preprocess_test PRIVATE ${OpenCV_LIBS})

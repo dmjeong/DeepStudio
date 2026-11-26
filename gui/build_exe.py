@@ -227,6 +227,7 @@ def build():
         "--collect-all", "timm",
         "--collect-submodules", "segmentation_backbones",
         "--hidden-import", "segmentation_models",
+        "--hidden-import", "cracksegnet",
         "--hidden-import", "modern_segmentation",
         "--hidden-import", "eomt",
         "--hidden-import", "dinomaly",

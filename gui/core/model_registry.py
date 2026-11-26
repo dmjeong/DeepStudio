@@ -255,6 +255,12 @@ def builtin_model_specs() -> tuple[ModelSpec, ...]:
         "export_verified", metadata=desktop,
         notes="초경량 U-Net(사전학습 없음, 라이선스 걱정 없음); 원본 해상도 패치 학습으로 1~2px 결함, 3504×1504 CPU 약 0.25초"))
     specs.append(ModelSpec(
+        "cracksegnet", "CrackSegNet", "Studio", "segment", ("windows_native", "onnx"), common, (256, 256), (1, 3),
+        "export_verified", metadata={**desktop, "implementation": "cracksegnet_studio_v1",
+                                     "reference": "https://doi.org/10.3390/rs18213712"},
+        notes="2026 논문 기반 자체 구현(공식 재현 아님). 사전학습 없음. 변형 합성곱·픽셀 재배열·지역 그래프 주의. "
+              "후보 선별 없이 전체 영역 분할, 패치 학습은 같은 크기 타일 추론. 정확도·CPU 속도는 검사 데이터로 비교하세요."))
+    specs.append(ModelSpec(
         "unet_mobilenetv2", "U-Net", "MobileNetV2", "segment", ("windows_native", "onnx"), common, (512, 512), (1, 3),
         "export_verified", pretrained_asset="MobileNet_V2_Weights.IMAGENET1K_V1", metadata=desktop,
         notes="경량 사전학습 백본 U-Net(ImageNet MobileNetV2 + 얇은 디코더); ResNet18 U-Net처럼 넓게 보고 "

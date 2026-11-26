@@ -285,7 +285,7 @@ def deployment_preview(checkpoint_path):
     task = checkpoint.get("task")
     has_global_attention = str(model_id).startswith("dinov2_") or model_id in {
         "mask2former_swin_small", "segformer_b2", "efficientvit_b0_seg", "efficientvit_b1_seg",
-        "sctnet_s", "eomt_dinov2_small",
+        "sctnet_s", "eomt_dinov2_small", "cracksegnet",
     }
     preview = {"task": task, "patch": bool(tiling) and task == "segment", "vit": has_global_attention,
                "region": tiling.get("region"), "scale": float(tiling.get("scale", 1.0)), "rules": None}
@@ -501,6 +501,9 @@ def export_to_onnx(model, dummy_input, output_path, opset_version=17,
     import torch
     from torch.onnx import _constants
     maximum = getattr(_constants, "ONNX_MAX_OPSET", 17)
+    minimum = getattr(model, "minimum_onnx_opset", 11)
+    if type(opset_version) is int and opset_version < minimum:
+        raise ValueError(f"선택 모델은 ONNX opset {minimum} 이상이 필요합니다. 기본값 17을 사용하세요.")
     if type(opset_version) is not int or not 11 <= opset_version <= maximum:
         raise ValueError(f"설치된 PyTorch의 ONNX opset 범위: 11~{maximum}. 기본값 17을 사용하세요.")
     output_name = OUTPUT_NAMES[task]

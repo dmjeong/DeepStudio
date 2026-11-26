@@ -44,12 +44,12 @@ BUILTIN_ADAPTER_IDS = LOCAL_TRANSFORMER_TEACHERS | frozenset({
     "deeplabv3plus_resnet34", "unet_resnet18", "dinov2_vits14",
     "dinov2_vits14_cls", "dinov2_vitb14_cls", "dinov2_vitl14_cls", "siglip2_so400m_cls",
     "dinov2_vits14_seg", "dinov2_vitb14_seg",
-    "unet_lite", "unet_mobilenetv2",
+    "unet_lite", "unet_mobilenetv2", "cracksegnet",
     "efficientvit_b0_seg", "efficientvit_b1_seg", "sctnet_s", "eomt_dinov2_small",
     "unet_mobilenetv4_small", "unet_shufflenetv2", "unet_efficientnet_b1", "bisenetv2", "stdc1",
 })
 # 사전학습 가중치가 없는 기본 모델 (python/builtin_models.SCRATCH_ONLY_MODELS와 같은 목록)
-BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite"})
+BUILTIN_SCRATCH_ONLY_IDS = frozenset({"unet_lite", "cracksegnet"})
 
 UPSTREAM_ADAPTER_IDS = frozenset({
     "libreyolo_classify_mobilenetv4_small", "libreyolo_detect_9t",

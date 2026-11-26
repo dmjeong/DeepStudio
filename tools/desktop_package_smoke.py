@@ -54,7 +54,7 @@ def run(output, *, require_cuda_runtime=True):
     stage("imports_ready")
     import importlib
     runtime_modules = ("timm", "scipy", "safetensors", "model_dependencies", "segmentation_models",
-                       "modern_segmentation", "eomt", "dinomaly", "dense_deployment",
+                       "modern_segmentation", "cracksegnet", "eomt", "dinomaly", "dense_deployment",
                        "quantize_dense", "export_fp16_onnx", "benchmark_fp16",
                        "onnxruntime.transformers.float16", "dinov2_segmentation", "core.project_generation",
                        "widgets.project_generation_widget")

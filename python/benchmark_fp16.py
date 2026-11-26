@@ -77,7 +77,12 @@ def convert_benchmark_fp16(fp32_path, output_dir) -> Path:
                 options.optimized_model_filepath = str(folded)
                 ort.InferenceSession(str(source), options, providers=["CPUExecutionProvider"])
                 model = onnx.load(folded)
-        model = convert_float_to_float16(model, keep_io_types=True)
+        # Learned subpixel coordinates are geometry, not just features. Half
+        # precision can move sampling positions on larger images. Preserve the
+        # deformable branch (including offset prediction) in FP32, as in AMP.
+        protected = ([node.name for node in model.graph.node if "/deform/" in node.name]
+                     if architecture == "cracksegnet" else [])
+        model = convert_float_to_float16(model, keep_io_types=True, node_block_list=protected)
         # The converter appends the I/O and blocked-operator Cast nodes.
         _sort_graph_nodes(model.graph)
         onnx.checker.check_model(model)
@@ -90,6 +95,8 @@ def convert_benchmark_fp16(fp32_path, output_dir) -> Path:
     config["verification"] = "benchmark_only"
     config["export"] = {key: export[key] for key in ("opset", "dynamic_batch") if key in export}
     config["export"].update(precision="float16", io_precision="float32")
+    if protected:
+        config["export"]["fp32_preserved"] = "cracksegnet_deformable_sampling"
     onnx.save(model, model_path)
     manifest_path.write_text(json.dumps(config, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     return manifest_path
