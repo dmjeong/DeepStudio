@@ -135,6 +135,7 @@ private:
             return v.get<int>();
         };
         const int schema = integer("schema_version");
+        model_version_ = doc.value("model_version", std::string());
         if ((schema != 5 && schema != 6) || doc.at("task") != "classify")
             throw std::invalid_argument("Expected Studio schema 5/6 classification JSON");
         width_ = integer("input_width"); height_ = integer("input_height");
@@ -290,6 +291,8 @@ public:
         return InferBW8(context, image.GetImagePtr(0, 0), image.GetWidth(), image.GetHeight(), image.GetRowPitch());
     }
     double WarmupMilliseconds() const { return warmup_ms_; }
+    // Copied at initialization; no disk I/O, decryption, or session creation.
+    const std::string& ModelVersion() const noexcept { return model_version_; }
 private:
     using Clock = std::chrono::steady_clock;
     static double Milliseconds(Clock::duration duration) { return std::chrono::duration<double, std::milli>(duration).count(); }
@@ -297,7 +300,7 @@ private:
     std::unique_ptr<Ort::Session> session_;
     std::unique_ptr<const Preprocessor> preprocess_; // Immutable prototype for new workspaces.
     int width_ = 0, height_ = 0, channels_ = 0, classes_ = 0;
-    std::string input_name_, output_name_;
+    std::string input_name_, output_name_, model_version_;
     std::vector<std::string> names_;
     double warmup_ms_ = 0;
     std::mutex pool_mutex_;

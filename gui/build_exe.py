@@ -238,6 +238,7 @@ def build():
         "--hidden-import", "sam2_native",
         "--hidden-import", "quantize_dense",
         "--hidden-import", "export_fp16_onnx",
+        "--hidden-import", "model_version",
         "--hidden-import", "benchmark_fp16",
         "--hidden-import", "detection_quantization",
         "--hidden-import", "segmentation_distillation",

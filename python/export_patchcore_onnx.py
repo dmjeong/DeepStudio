@@ -169,8 +169,11 @@ def export_patchcore_model(patchcore, output_path: str | Path, *, verify: bool =
     if isinstance(patchcore.input_size, (tuple, list)):
         config["preprocessing"]["original_size_region"] = [width, height]
     config_path = output.with_suffix(".json")
+    from model_version import stamp_model_version
+    stamp_model_version(config)
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     result = {"output_path": str(output), "config_path": str(config_path),
+            "model_version": config["model_version"], "model_exported_at": config["model_exported_at"],
             "file_size_mb": output.stat().st_size / (1024 * 1024), "backend": "patchcore",
             "task": "anomaly", "verification": config["verification"], "cpp_supported": True,
             "verification_tolerance": dict(VERIFICATION_TOLERANCE)}

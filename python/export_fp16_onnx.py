@@ -219,10 +219,13 @@ def export_fp16(export_reference, destination, *, validation_dir, log):
                 cfg["export"][key] = reference["export"][key]
         cfg["export"].update(verification_policy="fp16_cpu_comparison_v1", fp16_comparison=comparison)
         cfg.update(model_path=output.name, verification="fp16_compared")
+        from model_version import stamp_model_version
+        stamp_model_version(cfg)
         converted.write_text(json.dumps(cfg, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
         _publish(model, converted, output)
     log(f"FP16 배포 모델 저장 완료: {output}")
     return {"output_path": str(output), "config_path": str(output.with_suffix(".json")),
+            "model_version": cfg["model_version"], "model_exported_at": cfg["model_exported_at"],
             "backend": cfg["backend"], "task": cfg["task"], "cpp_supported": cfg["cpp_supported"],
             "precision": "float16", "verification": cfg["verification"], "fp16_comparison": comparison,
             "file_size_mb": output.stat().st_size / (1024 * 1024)}

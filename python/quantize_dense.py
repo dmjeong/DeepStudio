@@ -190,6 +190,8 @@ def quantize_dense(
         result["export"]["verification_policy"] = ("int8_detection_calibration_decisions_v1" if detect
                                                    else "int8_finite_and_calibration_comparison_v1")
         staged_json = Path(directory) / output.name
+        from model_version import stamp_model_version
+        stamp_model_version(result)
         staged_json.write_text(
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
         )

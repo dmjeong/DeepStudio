@@ -30,6 +30,7 @@ def _two_output_reference(checkpoint, output, *args, **kwargs):
         "cpp_supported": True, "input_name": "image", "output_names": ["scaled", "shifted"],
         "num_threads": 1, "input_channels": 1, "input_height": 4, "input_width": 4,
         "export": {"precision": "float32", "opset": 17, "dynamic_batch": True},
+        "model_version": "20200101_000000_000000", "model_exported_at": "2020-01-01T00:00:00+00:00",
     }))
     return {"config_path": str(manifest), "output_path": str(output)}
 
@@ -42,6 +43,8 @@ def test_public_fp16_checks_all_heads_and_batch_sizes(tmp_path, monkeypatch):
     result = export_onnx.export_checkpoint(tmp_path / "source.pt", output, precision="float16", dynamic_batch=True)
     cfg = json.loads(Path(result["config_path"]).read_text())
     assert cfg["verification"] == result["verification"] == "fp16_compared"
+    assert cfg["model_version"] == result["model_version"] != "20200101_000000_000000"
+    assert cfg["model_exported_at"] == result["model_exported_at"]
     assert cfg["export"]["io_precision"] == "float32"
     assert cfg["export"]["precision"] == "float16"
     assert cfg["model_path"] == output.name

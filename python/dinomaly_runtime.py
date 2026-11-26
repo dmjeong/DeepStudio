@@ -204,6 +204,8 @@ def export_dinomaly_checkpoint(
             "verification_reference": "original_checkpoint_pytorch",
         }
         manifest = Path(directory) / output.with_suffix(".json").name
+        from model_version import stamp_model_version
+        stamp_model_version(config)
         manifest.write_text(
             json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -213,6 +215,7 @@ def export_dinomaly_checkpoint(
     return {
         "output_path": str(output),
         "config_path": str(output.with_suffix(".json")),
+        "model_version": config["model_version"], "model_exported_at": config["model_exported_at"],
         "task": "anomaly",
         "backend": "dinomaly",
         "verification": config["verification"],

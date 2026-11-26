@@ -178,6 +178,8 @@ public:
         for (const auto& item : required) if (!models_.count(item.first)) throw std::invalid_argument("Missing encrypted graph");
     }
     const nlohmann::json& Config() const { return config_; }
+    // Legacy packages have no deployment timestamp; never invent one at load.
+    std::string ModelVersion() const { return config_.value("model_version", std::string()); }
     std::unique_ptr<Ort::Session> Session(const Ort::Env& env, const std::string& name,
                                          const Ort::SessionOptions& options) const {
         const auto span = models_.at(SafeName(name));

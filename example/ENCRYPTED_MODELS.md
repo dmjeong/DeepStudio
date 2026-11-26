@@ -31,6 +31,12 @@ eVision SDK는 실제 EROIBW8을 사용하는 기존 프로젝트의 것을 사�
 
 ## C++ eVision: 초기화 한 번, EROIBW8 반복 추론
 
+22.71부터 내보낸 모델은 생성 PC의 `연월일_시분초_마이크로초` 버전이 자동 기록됩니다.
+초기화 후 `classifier.ModelVersion()`으로 읽습니다. 예: `20261126_143052_123456`.
+이미 읽은 `dvs_crypto::Package`가 있으면 `package.ModelVersion()`으로도 읽을 수 있습니다.
+구형 모델은 빈 문자열이며 계속 로드할 수 있습니다. 재학습 없이 기존 `.pt`를 다시 내보내면 됩니다.
+[버전 형식과 갱신 규칙](../docs/RELEASE_22.71.md)
+
 프로그램 시작 때 클래스 멤버를 만들고, 이후 검사에서는 `InferEvision()`만 호출한다.
 `classifier`를 지역 변수로 매번 다시 만들지 않는다.
 

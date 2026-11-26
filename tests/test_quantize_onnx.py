@@ -99,6 +99,9 @@ def test_quantize_writes_an_int8_model_that_matches_fp32(exported):
     from quantize_onnx import compare, quantize_segment
     output = quantize_segment(exported / "m.json", exported / "calib", count=4, tile=32, log=lambda _m: None)
     config = json.loads(output.read_text(encoding="utf-8"))
+    source_version = json.loads((exported / "m.json").read_text(encoding="utf-8"))["model_version"]
+    assert config["model_version"] != source_version
+    assert config["model_exported_at"]
     assert config["model_path"] == "m_int8.onnx" and config["export"]["precision"] == "int8"
     assert config["export"]["quantization"]["calibration_images"] == 4
     assert config["export"]["quantization"]["calibration_tiles"] == 4 * 6   # 96×64 입력을 32 타일로 = 3×2

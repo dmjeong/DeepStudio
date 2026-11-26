@@ -61,6 +61,8 @@ def test_real_architecture_encrypted_export(tmp_path, monkeypatch, model_id, cha
                     encryption_key_path=key_path, dynamic_batch=True, log=lambda _: None)
         config, graphs = load_package(result["output_path"], read_key(key_path))
         assert config == reference["config"]
+        assert config["model_version"] == result["model_version"]
+        assert config["model_exported_at"] == result["model_exported_at"]
         restored = graphs[config["model_path"]]
         assert restored == reference["model"]
         assert result["encrypted"] and result["verification"] == "passed"

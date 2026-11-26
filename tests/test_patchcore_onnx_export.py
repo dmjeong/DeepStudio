@@ -43,6 +43,8 @@ def test_patchcore_wrapper_exports_and_verifies_fixed_bank(tmp_path, input_size)
     config = (tmp_path / "patchcore.json")
     assert config.is_file()
     manifest = json.loads(config.read_text())
+    assert manifest["model_version"] == result["model_version"]
+    assert manifest["model_exported_at"] == result["model_exported_at"]
     import onnxruntime as ort
     session = ort.InferenceSession(result["output_path"], providers=["CPUExecutionProvider"])
     assert manifest["input_name"] == session.get_inputs()[0].name

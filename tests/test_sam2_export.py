@@ -107,6 +107,8 @@ class Sam2ExportTests(unittest.TestCase):
             result = export_sam2_model(checkpoint, directory, verify=True, opset=17,
                                        log=lambda _: None)
             manifest = json.loads(Path(result["config_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["model_version"], result["model_version"])
+            self.assertEqual(manifest["model_exported_at"], result["model_exported_at"])
             self.assertEqual(manifest["preprocessing"]["original_size_region"], [3, 2])
             self.assertEqual(manifest["schema_version"], 5)
             self.assertEqual(manifest["backend"], "sam2")

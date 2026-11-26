@@ -678,6 +678,8 @@ def create_inference_config(output_dir, task, num_classes, input_size,
     if backend == "custom" and task == "anomaly":
         config["postprocessing"] = {"score": "mean_absolute_reconstruction_error",
                                     "threshold": 0.0, "map": "per_pixel_mean_absolute_error"}
+    from model_version import stamp_model_version
+    stamp_model_version(config)
     path = Path(output_dir) / config_filename
     path.write_text(json.dumps(config, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     return str(path)
@@ -802,7 +804,8 @@ def _export_upstream_checkpoint(checkpoint_path, output, checkpoint, *, opset_ve
     result = {"output_path": str(output), "config_path": str(config_path),
               "file_size_mb": output.stat().st_size / (1024 * 1024), "backend": backend,
               "verification": "passed" if verify else "skipped", "task": spec["task"],
-              "cpp_supported": manifest["cpp_supported"]}
+              "cpp_supported": manifest["cpp_supported"],
+              "model_version": manifest["model_version"], "model_exported_at": manifest["model_exported_at"]}
     log(f"내보내기 완료: {output}\n배포 설정: {config_path}\n검증: {result['verification']}")
     return result
 
@@ -1092,7 +1095,8 @@ def _export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_b
     result = {"output_path": str(output), "config_path": str(config_path),
               "file_size_mb": output.stat().st_size / (1024 * 1024),
               "backend": backend, "verification": "passed" if verify else "skipped",
-              "task": metadata["task"], "cpp_supported": manifest["cpp_supported"]}
+              "task": metadata["task"], "cpp_supported": manifest["cpp_supported"],
+              "model_version": manifest["model_version"], "model_exported_at": manifest["model_exported_at"]}
     if runtime_settings is not None:
         result["runtime_settings"] = runtime_settings
     if backend == "efficientnet":
@@ -1253,6 +1257,8 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
                               precision="int8", verification="int8_compared", file_size_mb=Path(destination).stat().st_size/1024**2)
                 manifest = json.loads(output_json.read_text(encoding="utf-8"))
                 result["quantization_comparison"] = manifest["export"]["quantization"].get("comparison", {})
+                # The converted model has its own timestamp, not the FP32 reference's.
+                result.update(model_version=manifest["model_version"], model_exported_at=manifest["model_exported_at"])
                 return result
         if encryption_key_path:
             if bundle_output is not None:
@@ -1261,6 +1267,8 @@ def export_checkpoint(checkpoint_path, output_path, opset_version=17, dynamic_ba
             result = encrypted_export(run_export, output_path, encryption_key_path, report)
         else:
             result = run_export(output_path)
+        if result.get("model_version"):
+            report(f"모델 버전: {result['model_version']} (내보낸 시각: {result['model_exported_at']})")
         if bundle_output is not None:
             from model_runtime.deployment_bundle import build_deployment_bundle
             source = result.get("output_dir") or result.get("output_path")

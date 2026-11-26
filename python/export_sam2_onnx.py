@@ -445,8 +445,11 @@ def export_sam2_model(checkpoint: dict, output_dir: str | Path, *, verify: bool 
     }
     if native_region is not None:
         config["preprocessing"]["original_size_region"] = native_region
+    from model_version import stamp_model_version
+    stamp_model_version(config)
     config_file.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     result = {"output_dir": str(output), "encoder_path": str(encoder_file),
+            "model_version": config["model_version"], "model_exported_at": config["model_exported_at"],
             "decoder_path": str(decoder_file), "config_path": str(config_file),
             "backend": "sam2", "task": "segment", "verification": config["verification"],
             "cpp_supported": True, "verification_tolerance": dict(VERIFICATION_TOLERANCE)}

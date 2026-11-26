@@ -56,6 +56,7 @@ def test_detection_int8_compares_real_decisions_and_preserves_output_on_failure(
     logs = []
     output = quantize_segment(config, images, log=logs.append)
     config_before = output.read_bytes()
+    assert json.loads(config_before)["model_version"] != manifest["model_version"]
     report = json.loads(config_before)["export"]["quantization"]["comparison"]
     assert report["fp32_positive_images"] == 1
     assert report["matched_boxes"] == report["fp32_boxes"] == report["int8_boxes"] == 4

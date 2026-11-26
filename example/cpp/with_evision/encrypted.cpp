@@ -12,6 +12,8 @@ int main() {
         // Initialization decrypts/authenticates and warms up ONCE.
         dvs_bw8::Classifier classifier(base / "assets/test.dvsenc", key);
         dvs_crypto::Wipe(key.data(), key.size());
+        std::cout << "Model version: " << (classifier.ModelVersion().empty()
+            ? "not recorded (legacy model)" : classifier.ModelVersion()) << '\n';
         std::vector<uint8_t> frame(224 * 224, 255);
         // In your eVision project, use instead:
         // auto result = classifier.InferEvision(roi); // EROIBW8&

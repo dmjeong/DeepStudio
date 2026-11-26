@@ -68,5 +68,7 @@ def test_classification_distillation_uses_teacher_in_training_only_and_exports_s
     model = tmp_path / "student-int8.onnx"
     result = export_checkpoint(student, model, precision="int8", calibration_dir=data / "val")
     cfg = json.loads(model.with_suffix(".json").read_text())
+    assert result["model_version"] == cfg["model_version"]
+    assert result["model_exported_at"] == cfg["model_exported_at"]
     assert result["verification"] == "int8_compared" and cfg["class_names"] == ["ng", "ok"]
     assert cfg["export"]["quantization"]["comparison"]["windows"] == 2

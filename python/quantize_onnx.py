@@ -359,6 +359,8 @@ def quantize_segment(config_path, calibration_dir, *, count=16, reduce_range=Fal
         comparison = compare(config_path, staged_json, calibration_dir, count=count, threads=2, log=log)
         comparison["scope"] = "calibration inputs; not independent accuracy evaluation"
         result["export"]["quantization"]["comparison"] = comparison
+        from model_version import stamp_model_version
+        stamp_model_version(result)
         staged_json.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         import os
         os.replace(staged_model, output_onnx)
