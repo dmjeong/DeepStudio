@@ -117,6 +117,8 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
         (examples / "cpp" / name).write_text("example code", encoding="utf-8")
     for name in ("with_opencv/CMakeLists.txt", "with_evision/CMakeLists.txt",
                  "with_evision/roi_example.h", "with_evision/roi_example.cpp",
+                 "with_evision/csv_model_watcher.h", "with_evision/csv_reload.cpp",
+                 "with_evision/csv_reload_test.cpp", "with_evision/CSV_MODEL_RELOAD.md",
                  "dense_models/main.cpp", "dense_models/CMakeLists.txt", "dense_models/build.bat",
                  "nlohmann/json.hpp", "nlohmann/LICENSE.MIT", "nlohmann/CMakeLists.txt",
                  "with_evision/classifier.h", "with_evision/bw8_preprocess.h"):
@@ -138,6 +140,9 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     (examples / "ENCRYPTED_MODELS.md").write_text("encrypted example", encoding="utf-8")
     (examples / "assets/test.dvsenc").write_bytes(b"ciphertext")
     (examples / "assets/example-only.key").write_bytes(bytes(range(32)))
+    (examples / "assets/reload").mkdir()
+    (examples / "assets/reload/models.csv").write_text("slot,task,model_file,model_version\n", encoding="utf-8")
+    (examples / "assets/reload/model.dvsenc").write_bytes(b"reload example")
     for name in ("cpp/encrypted.cpp", "cpp/build_encrypted.bat", "cpp/build_encrypted.cmake", "cpp/with_evision/encrypted.cpp", "cpp/model_crypto.h", "csharp/encrypted/EncryptedExample.csproj", "csharp/encrypted/Program.cs"):
         p = examples / name; p.parent.mkdir(parents=True, exist_ok=True); p.write_text("encrypted example")
     (cpp / "include/model_crypto.h").write_text("crypto loader")
@@ -149,6 +154,11 @@ def test_simple_installer_only_stages_the_app_and_public_examples(tmp_path):
     assert (payload / "Examples/cpp/vision-runtime/src/vision_inference.cpp").is_file()
     assert (payload / "Examples/cpp/vision-runtime/src/dense_tiles.h").read_text() == "tile implementation"
     assert (payload / "Examples/cpp/with_evision/bw8_preprocess.h").is_file()
+    assert (payload / "Examples/cpp/with_evision/csv_model_watcher.h").is_file()
+    assert (payload / "Examples/cpp/with_evision/csv_reload.cpp").is_file()
+    assert (payload / "Examples/cpp/with_evision/CSV_MODEL_RELOAD.md").is_file()
+    assert (payload / "Examples/assets/reload/model.dvsenc").read_bytes() == b"reload example"
+    assert (payload / "Examples/assets/reload/models.csv").is_file()
     assert (payload / "Examples/cpp/with_opencv/CMakeLists.txt").is_file()
     assert (payload / "Examples/cpp/vision-runtime/include/ort_vs2017.cmake").read_text(encoding="utf-8") == "compatibility script"
     for name in ("classifier.h", "example_paths.h", "self_test.cpp", "setup_vs2017.bat", "setup_vs2017.py"):

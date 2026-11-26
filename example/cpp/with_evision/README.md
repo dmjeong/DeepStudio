@@ -6,6 +6,9 @@
 암호화 모델은 [암호화 예제](../../ENCRYPTED_MODELS.md)를 따른다. `encrypted.cpp`는
 `.dvsenc` 로드·복호화·준비 추론 후 같은 `InferEvision()` / `InferBW8()`을 사용한다.
 
+프로그램 실행 중 CSV로 최신 모델을 교체하려면 [CSV 모델 교체 예제](CSV_MODEL_RELOAD.md)를 따른다.
+`csv_model_watcher.h`를 추가하고 `Snapshot()`으로 받은 `shared_ptr`에서 기존 추론을 호출한다.
+
 ## 기존 프로그램에 넣기
 
 ### 이미 있는 EROIBW8을 입력하기
